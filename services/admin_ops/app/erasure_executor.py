@@ -379,9 +379,17 @@ EXCLUDED_TABLES: dict[str, str] = {
                     "roll. Reaching across the service boundary to delete them "
                     "here would race that cron's own transaction.",
     # --- User-linked but carrying no personal data -------------------------
-    "auth_tokens": "single-use HMAC hashes for reset / verify, TTL ≤ 24 h. The "
-                   "raw token never existed in the DB, and the soft-delete at "
-                   "request time already blocks redemption.",
+    "auth_tokens": "single-use HMAC hashes. The raw token never existed in the "
+                   "DB. CORRECTED: this entry used to say 'reset / verify, TTL "
+                   "≤ 24 h' and rest on 'the soft-delete at request time "
+                   "already blocks redemption'. Both became wrong when PH3-B4b "
+                   "added the 'reapply_confirm' kind with a 168 h TTL, whose "
+                   "redeem path (apply_activation.redeem_reapply_token) checks "
+                   "the token row alone and NOT users.deleted_at — unlike "
+                   "activate() and every route in routers/auth.py. The rows "
+                   "stay excluded, but what blocks redemption for that kind is "
+                   "step 5l clearing the enrolment's reapply_token_hash, "
+                   "because a token nothing points at can apply nothing.",
     "user_roles": "a role grant is a role id plus a timestamp. The anonymised "
                   "users row is retained, so its grants are retained with it; "
                   "login is impossible anyway (password_hash NULL, deleted_at set).",
@@ -478,7 +486,15 @@ EXCLUDED_TABLES: dict[str, str] = {
                   "during the AR-5 audit and not previously redacted. Step 5l "
                   "redacts both to '[redacted]' (NULL stays NULL); "
                   "`held_at`/`reapply_override_at`/`reapply_override_by_user_id` "
-                  "and every ats_*/target_* column are untouched.",
+                  "and every ats_*/target_* column are untouched. PH3-B4b adds "
+                  "three more: `reapply_answers` is the CANDIDATE'S own staged "
+                  "screening answers and step 5l CLEARS it (not a marker — the "
+                  "live equivalent, application_answers, is hard-deleted in 5c); "
+                  "`reapply_resume_s3_key` names a real CV object and step "
+                  "1c-iii collects it for deletion in step 8, which is what "
+                  "reaches a draft-door attempt nobody confirmed; "
+                  "`reapply_requested_at`/`reapply_token_hash` are a timestamp "
+                  "and a hash, and go with the row.",
     "round_results": "per-round scores for an enrolment — score, percent, "
                      "criterion_scores, axes. Numbers and competency ids "
                      "against an anonymised applicant; same reasoning as "
@@ -1000,17 +1016,28 @@ async def _execute_one_erasure(
     # CV each application was sent with, and it can be an older object than both
     # the applicant's current CV and any scored one (an application still
     # waiting to be scored when the person re-applied). Same orphaning, same fix.
+    #
+    # reapply_resume_s3_key is the third: PH3-B4b stages a reapplication's CV
+    # there and applies it only once the candidate proves the address, so
+    # between those two moments that column is the ONLY thing naming the
+    # object. The draft door stages `drafts/{company}/{draft}.pdf`, which the
+    # applicant-prefix sweep below does not cover and which
+    # application_drafts.purge_expired stops naming once it deletes the
+    # submitted row — so without this an attempt nobody ever confirmed
+    # survived a completed erasure.
     scored_keys_result = await db.execute(
         text(
-            "SELECT e.scored_resume_s3_key, e.applied_resume_s3_key FROM enrolments e "
+            "SELECT e.scored_resume_s3_key, e.applied_resume_s3_key,"
+            "       e.reapply_resume_s3_key FROM enrolments e "
             "JOIN applicants a ON a.id = e.applicant_id "
             "WHERE a.user_id = :uid AND (e.scored_resume_s3_key IS NOT NULL "
-            "OR e.applied_resume_s3_key IS NOT NULL)"
+            "OR e.applied_resume_s3_key IS NOT NULL "
+            "OR e.reapply_resume_s3_key IS NOT NULL)"
         ),
         {"uid": uid_str},
     )
     for row in scored_keys_result.fetchall():
-        applicant_resume_keys += [str(k) for k in tuple(row)[:2] if k]
+        applicant_resume_keys += [str(k) for k in tuple(row)[:3] if k]
 
     # 1c-iv — the CV attached to an abandoned DRAFT (PH3-B4c). A draft that was
     # never submitted has no applicant row and no enrolment, so none of the
@@ -1065,6 +1092,36 @@ async def _execute_one_erasure(
         for company_id, offer_id in offer_prefixes.fetchall():
             applicant_resume_keys += await keys_under(
                 settings.s3_bucket_name, f"preboarding/{company_id}/{offer_id}/",
+                settings=settings,
+            )
+
+    # 1c-quater — every CV object under this person's own prefix, named by a
+    # column or not.
+    #
+    # WHY A SWEEP AND NOT ANOTHER COLUMN. A reapplication uploads a fresh key
+    # (`applicants/{company}/{applicant}-{hex}.pdf`) and adopts it into
+    # `enrolments.applied_resume_s3_key`. On the SECOND reapplication that
+    # column is repointed again, and the previous attempt's object is left
+    # named by nothing: `applicants.resume_s3_key` still holds the first CV,
+    # and `scored_resume_s3_key` never moves because a reopened enrolment
+    # keeps its score and so is never picked up for rescoring. Collecting
+    # strictly by column therefore completed an erasure and left a CV in the
+    # bucket — a §12 failure, and one that returns with every new column that
+    # names a resume.
+    #
+    # The prefix is the applicant's own id, which is a fixed-length UUID, so
+    # it cannot match a different applicant whose id merely starts the same
+    # way. Same mechanism, and the same reason, as the two prefix sweeps above.
+    applicant_prefixes = await db.execute(
+        text("SELECT company_id, id FROM applicants WHERE user_id = :uid"),
+        {"uid": uid_str},
+    )
+    if settings is not None:
+        from app.s3_client import keys_under  # noqa: PLC0415 — see step 8's import note
+
+        for company_id, applicant_id in applicant_prefixes.fetchall():
+            applicant_resume_keys += await keys_under(
+                settings.s3_bucket_name, f"applicants/{company_id}/{applicant_id}",
                 settings=settings,
             )
 
@@ -1911,16 +1968,49 @@ async def _execute_one_erasure(
     #    and every ats_*/target_* column are untouched: they are either
     #    timestamps/ids or the company's own assessment content, not prose a
     #    person wrote about the candidate.
+    #
+    #    THE WHOLE STAGED ATTEMPT GOES, not just its text. Clearing the
+    #    answers while leaving `reapply_requested_at` and
+    #    `reapply_token_hash` erased the DATA and left the STATE MACHINE: the
+    #    outstanding confirmation link (up to a week) still redeemed —
+    #    `redeem_reapply_token` checks the token row only, and
+    #    `staged_for_token` matches on `deleted_at IS NULL`, which erasure does
+    #    not set — so a completed erasure could be followed by the erased
+    #    person's own link putting them back into HR's live pipeline, with
+    #    `applied_resume_s3_key` pinned to an object step 8 had just deleted.
+    #    Nulling the key here strands nothing: step 1c-iii collected it before
+    #    this ran.
+    #
+    #    reapply_answers is CLEARED rather than marked.
+    #    The two above are HR's prose about the candidate, which the register
+    #    keeps as '[redacted]' so the fact that something was written survives.
+    #    This one is the CANDIDATE'S OWN answers to the screening questions,
+    #    staged by PH3-B4b until they confirm the address — and the live
+    #    equivalent, application_answers, is hard-DELETED in step 5c. Keeping a
+    #    marker here would preserve less than nothing: no prose, and a false
+    #    suggestion that the company had recorded something about them.
     enrolments_reasons_result = await db.execute(
         text(
             "UPDATE enrolments SET"
             " held_reason = CASE WHEN held_reason IS NULL THEN NULL ELSE '[redacted]' END,"
             " reapply_override_reason = CASE WHEN reapply_override_reason IS NULL THEN NULL"
-            "                                ELSE '[redacted]' END"
+            "                                ELSE '[redacted]' END,"
+            " reapply_answers = NULL, reapply_requested_at = NULL,"
+            " reapply_resume_s3_key = NULL, reapply_token_hash = NULL"
             " WHERE applicant_id IN (SELECT id FROM applicants WHERE user_id = :uid)"
             "   AND ((held_reason IS NOT NULL AND held_reason <> '[redacted]')"
             "     OR (reapply_override_reason IS NOT NULL"
-            "         AND reapply_override_reason <> '[redacted]'))"
+            "         AND reapply_override_reason <> '[redacted]')"
+            "     OR reapply_answers IS NOT NULL"
+            "     OR reapply_requested_at IS NOT NULL"
+            # All FOUR staging columns, not the two that happen to be written
+            # first. They are set and cleared together today, so a row holding
+            # only a key or a hash is not reachable — but the point of this
+            # clause is to stop a live state machine surviving an erasure, and
+            # a redeemable confirmation link left behind because the WHERE did
+            # not look for it is precisely that.
+            "     OR reapply_resume_s3_key IS NOT NULL"
+            "     OR reapply_token_hash IS NOT NULL)"
         ),
         {"uid": uid_str},
     )

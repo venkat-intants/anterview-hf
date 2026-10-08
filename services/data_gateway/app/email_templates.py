@@ -1240,6 +1240,37 @@ def _t_results_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     return loc["subject"], inner, text, loc["pre"]
 
 
+def _activation_expiry(lang: str) -> str:
+    """How long an apply-activation / reapply-confirmation link lasts, in words.
+
+    Both templates mint their link with `apply_activation_ttl_hours` and both
+    used to state "7 days" in three hardcoded translations. That is deployable
+    configuration: change the setting and the copy silently starts lying, and a
+    candidate told "7 days" about a link that died in one loses their only way
+    back into their application. One helper so the two cannot drift apart
+    either.
+    """
+    hours = settings.apply_activation_ttl_hours
+    days = max(1, round(hours / 24))
+    if lang == "hi":
+        return (
+            f"यह लिंक एक बार उपयोग हो सकता है और {days} दिनों में समाप्त हो जाएगा।"
+            if hours >= 24
+            else f"यह लिंक एक बार उपयोग हो सकता है और {hours} घंटे में समाप्त हो जाएगा।"
+        )
+    if lang == "te":
+        return (
+            f"ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, {days} రోజుల్లో ముగుస్తుంది."
+            if hours >= 24
+            else f"ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, {hours} గంటల్లో ముగుస్తుంది."
+        )
+    return (
+        f"This link can be used once and expires in {days} day(s)."
+        if hours >= 24
+        else f"This link can be used once and expires in {hours} hour(s)."
+    )
+
+
 def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     """Application confirmation, with a link to activate the account.
 
@@ -1285,7 +1316,7 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "signed_in": "You can follow its progress from your applications page.",
             "cta_view": "View my applications",
             "outro": "We will email you when there is news.",
-            "expiry": "This link can be used once and expires in 7 days.",
+            "expiry": _activation_expiry("en"),
         },
         "hi": {
             "subject": f"{job} के लिए आपका आवेदन मिल गया",
@@ -1297,7 +1328,7 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "signed_in": "आप अपने आवेदन पृष्ठ से इसकी प्रगति देख सकते हैं।",
             "cta_view": "मेरे आवेदन देखें",
             "outro": "कोई अपडेट होने पर हम आपको ईमेल करेंगे।",
-            "expiry": "यह लिंक एक बार उपयोग हो सकता है और 7 दिनों में समाप्त हो जाएगा।",
+            "expiry": _activation_expiry("hi"),
         },
         "te": {
             "subject": f"{job} కోసం మీ దరఖాస్తు అందింది",
@@ -1309,7 +1340,7 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "signed_in": "మీ దరఖాస్తుల పేజీ నుండి పురోగతిని చూడవచ్చు.",
             "cta_view": "నా దరఖాస్తులు చూడండి",
             "outro": "సమాచారం ఉన్నప్పుడు మేము ఇమెయిల్ చేస్తాము.",
-            "expiry": "ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, 7 రోజుల్లో ముగుస్తుంది.",
+            "expiry": _activation_expiry("te"),
         },
     }
     lang_key = lang if lang in copy else "en"
@@ -1336,6 +1367,107 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     else:
         text_parts += ["", c["signed_in"], apps_url]
     text_parts += ["", c["outro"]]
+    return c["subject"], inner, "\n".join(text_parts), lead_text
+
+
+def _t_reapplication_confirm(lang: str, ctx: dict) -> tuple[str, str, str, str]:
+    """Confirm a second application after a rejection — PH3-B4b.
+
+    ctx: name, job_title, company, confirm_url.
+
+    WHY THIS EMAIL EXISTS AT ALL
+    The public apply form is anonymous and identifies a person by an address
+    typed into it, so a second application to a role someone was turned down
+    for cannot be acted on when it arrives: that would let anyone holding the
+    link move a real candidate's status, replace their CV and spend an
+    exception granted to them. The attempt waits until this link is followed,
+    which is the only evidence that the person who typed the address is the
+    person who reads mail at it.
+
+    So the copy has to do something unusual: it may be read by somebody who
+    did NOT apply. It says plainly what will happen if they ignore it —
+    nothing — rather than pressing them to click, and it never mentions the
+    earlier rejection. Somebody else's employment history is not ours to
+    disclose to whoever is reading this inbox.
+    """
+    name = ctx.get("name")
+    job = ctx.get("job_title") or "the role"
+    company = ctx.get("company")
+    confirm_url = ctx.get("confirm_url") or settings.app_base_url
+    jobe = _esc(job)
+    orge = f"<strong>{_esc(company)}</strong>" if company else ""
+
+    def lead(lang_key: str, job_part: str, company_part: str) -> str:
+        if lang_key == "hi":
+            where = f"{company_part} में " if company_part else ""
+            return f"{where}{job_part} के लिए एक नया आवेदन मिला है।"
+        if lang_key == "te":
+            where = f"{company_part}లో " if company_part else ""
+            return f"{where}{job_part} కోసం కొత్త దరఖాస్తు అందింది."
+        at = f" at {company_part}" if company_part else ""
+        return f"A new application for {job_part}{at} has been received."
+
+    copy = {
+        "en": {
+            "subject": f"Confirm your application for {job}",
+            "why": (
+                "Because you have applied for this role before, we need you to "
+                "confirm it is really you before we send it to the hiring team."
+            ),
+            "cta": "Confirm my application",
+            "ignore": (
+                "If you did not apply, you do not need to do anything — ignore "
+                "this email and nothing will be sent on."
+            ),
+            "expiry": _activation_expiry("en"),
+        },
+        "hi": {
+            "subject": f"{job} के लिए अपने आवेदन की पुष्टि करें",
+            "why": (
+                "आपने इस भूमिका के लिए पहले भी आवेदन किया है, इसलिए भर्ती टीम को "
+                "भेजने से पहले हमें पुष्टि चाहिए कि यह वाकई आप हैं।"
+            ),
+            "cta": "मेरे आवेदन की पुष्टि करें",
+            "ignore": (
+                "अगर आपने आवेदन नहीं किया है तो आपको कुछ नहीं करना है — इस ईमेल को "
+                "अनदेखा करें, कुछ भी आगे नहीं भेजा जाएगा।"
+            ),
+            "expiry": _activation_expiry("hi"),
+        },
+        "te": {
+            "subject": f"{job} కోసం మీ దరఖాస్తును నిర్ధారించండి",
+            "why": (
+                "మీరు ఈ ఉద్యోగానికి గతంలో దరఖాస్తు చేశారు, కాబట్టి నియామక బృందానికి "
+                "పంపే ముందు ఇది నిజంగా మీరేనని నిర్ధారించాలి."
+            ),
+            "cta": "నా దరఖాస్తును నిర్ధారించండి",
+            "ignore": (
+                "మీరు దరఖాస్తు చేయకపోతే ఏమీ చేయనవసరం లేదు — ఈ ఈమెయిల్‌ను "
+                "పట్టించుకోకండి, ఏదీ ముందుకు పంపబడదు."
+            ),
+            "expiry": _activation_expiry("te"),
+        },
+    }
+    lang_key = lang if lang in copy else "en"
+    c = copy[lang_key]
+    lead_html = lead(lang_key, jobe, orge)
+    lead_text = lead(lang_key, job, company or "")
+
+    inner = _p(_greeting(lang, name)) + _p(lead_html)
+    inner += _p(c["why"])
+    inner += _button(confirm_url, c["cta"])
+    inner += _fallback_link("Or paste this link into your browser:", confirm_url)
+    inner += _p(
+        f'<span style="color:{_MUTED};font-size:13px;">{_esc(c["expiry"])}</span>'
+    )
+    inner += _p(
+        f'<span style="color:{_MUTED};font-size:13px;">{_esc(c["ignore"])}</span>'
+    )
+
+    text_parts = [
+        _greeting(lang, name), "", lead_text, "", c["why"], confirm_url, "",
+        c["expiry"], "", c["ignore"],
+    ]
     return c["subject"], inner, "\n".join(text_parts), lead_text
 
 
@@ -1862,7 +1994,7 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                "cta_set": "Set my password",
                "signed_in": "You can see your offer and onboarding from your applications page.",
                "cta_view": "View my applications",
-               "expiry": "This link can be used once and expires in 7 days.",
+               "expiry": _activation_expiry("en"),
                "fallback": "Or paste this link into your browser:"},
         "hi": {"subject": f"स्वागत है — {job} के लिए अपना खाता सेट करें",
                "lead": ((f"<strong>{orge}</strong> में " if company else "")
@@ -1871,7 +2003,7 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                "cta_set": "पासवर्ड सेट करें",
                "signed_in": "आप अपने आवेदन पृष्ठ से अपना ऑफ़र और ऑनबोर्डिंग देख सकते हैं।",
                "cta_view": "मेरे आवेदन देखें",
-               "expiry": "यह लिंक एक बार उपयोग हो सकता है और 7 दिनों में समाप्त हो जाएगा।",
+               "expiry": _activation_expiry("hi"),
                "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:"},
         "te": {"subject": f"స్వాగతం — {job} కోసం మీ ఖాతాను సెటప్ చేయండి",
                "lead": ((f"<strong>{orge}</strong>లో " if company else "")
@@ -1880,7 +2012,7 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                "cta_set": "పాస్‌వర్డ్ సెట్ చేయండి",
                "signed_in": "మీ దరఖాస్తుల పేజీ నుండి మీ ఆఫర్‌ను, ఆన్‌బోర్డింగ్‌ను చూడవచ్చు.",
                "cta_view": "నా దరఖాస్తులు చూడండి",
-               "expiry": "ఈ లింక్ ఒకసారి మాత్రమే పనిచేస్తుంది, 7 రోజుల్లో ముగుస్తుంది.",
+               "expiry": _activation_expiry("te"),
                "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:"},
     })
     plain = loc["lead"].replace("<strong>", "").replace("</strong>", "")
@@ -2088,6 +2220,7 @@ _BUILDERS = {
     "interview_invite": _t_interview_invite,
     "hr_credentials": _t_hr_credentials,
     "application_received": _t_application_received,
+    "reapplication_confirm": _t_reapplication_confirm,
     "decision": _t_decision,
     # A2/A3 — the five candidate lifecycle emails, each its own template:
     # reminder (exam / interview), expiry warning, no-show follow-up, results

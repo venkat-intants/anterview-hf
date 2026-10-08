@@ -99,6 +99,64 @@ def rate_limit(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
     return Depends(_dep)
 
 
+def rate_limit_window(
+    bucket: str, limit: int, window_seconds: int
+) -> Callable[..., Awaitable[None]]:
+    """Cap a route at *limit* requests per client IP over a LONGER window.
+
+    ``rate_limit`` bounds a burst; this bounds a sustained rate, and a route
+    that writes to object storage before it knows whether it will keep the
+    object needs both. Six per minute is a reasonable burst for a person
+    filling in a form and is also 8,640 uploads a day from one address.
+
+    Applied ALONGSIDE ``rate_limit`` rather than instead of it: separate
+    buckets, separate keys, and the tighter of the two answers first.
+
+    Same fail-open posture and the same 429 as ``rate_limit`` — see the module
+    docstring for why failing open is the right call here.
+    """
+
+    async def _dep(request: Request) -> None:
+        try:
+            ip = extract_client_ip(request)
+            redis = get_redis()
+            key = f"rl:{bucket}:{ip}"
+            # ONE round trip, and the TTL is set before the counter can be
+            # read. `incr` then `expire` on the first hit is two commands, and
+            # anything that interrupts between them — a dropped connection, a
+            # client disconnect propagating CancelledError through the
+            # dependency — leaves the key with NO expiry. Every later request
+            # then increments a key that never resets, and once it passes the
+            # cap that address is refused for ever with no recovery but manual
+            # Redis surgery. The per-minute limiter has the same shape and a
+            # 60-second blast radius; at an hour the window is long-lived by
+            # design, so the stranded key is both likelier and far worse.
+            #
+            # `SET key 0 EX w NX` creates-and-expires atomically and is a
+            # no-op once the key exists, so the TTL is always attached to a
+            # counter that starts at zero.
+            await redis.set(key, 0, ex=window_seconds, nx=True)
+            count: int = await redis.incr(key)
+        except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
+            _rate_limit_skipped.labels(
+                bucket=bucket, error_type=type(exc).__name__
+            ).inc()
+            log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+            return
+        if count > limit:
+            _rate_limit_exceeded.labels(bucket=bucket).inc()
+            log.warning("rate_limit.exceeded", bucket=bucket, window_seconds=window_seconds)
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                # The SAME sentence the per-minute limiter gives. Which of the
+                # two caps was hit is not something an anonymous caller needs
+                # to be able to tell apart.
+                detail="Too many requests. Please wait a minute and try again.",
+            )
+
+    return Depends(_dep)
+
+
 def rate_limit_context(
     bucket: str, per_minute: int, context_dep: Callable[..., Any],
 ) -> Callable[..., Awaitable[None]]:

@@ -40,6 +40,9 @@ GOOD_CADDY = """
 \t\trespond "Forbidden" 403
 \t}
 \thandle /apply* {
+\t\trequest_body {
+\t\t\tmax_size 6MB
+\t\t}
 \t\treverse_proxy 127.0.0.1:8002
 \t}
 \tlog {
@@ -121,8 +124,10 @@ def test_a_prefix_matched_but_not_proxied_is_caught(fake) -> None:
     """A `handle` that only responds is not routing; catching the block but not
     the proxy would be a false pass."""
     caddy = GOOD_CADDY.replace(
-        '\thandle /apply* {\n\t\treverse_proxy 127.0.0.1:8002\n\t}',
-        '\thandle /apply* {\n\t\trespond "Not Found" 404\n\t}',
+        '\thandle /apply* {\n\t\trequest_body {\n\t\t\tmax_size 6MB\n\t\t}\n'
+        '\t\treverse_proxy 127.0.0.1:8002\n\t}',
+        '\thandle /apply* {\n\t\trequest_body {\n\t\t\tmax_size 6MB\n\t\t}\n'
+        '\t\trespond "Not Found" 404\n\t}',
     )
     assert fake(caddy=caddy) == 1
 
@@ -137,6 +142,28 @@ def test_a_header_missing_from_cors_is_caught(fake, capsys) -> None:
     """Same-origin on the Space, dead on every split-origin deploy."""
     assert fake(cors='allow_headers=["Authorization"],\n') == 1
     assert "preflight" in capsys.readouterr().err
+
+
+def test_a_body_cap_that_disagrees_with_the_table_is_caught(fake, capsys) -> None:
+    """The cap and BODY_CAPS must agree, or AR-10's enumeration rots again.
+
+    That is not hypothetical. AR-10 described these caps in prose, which went
+    stale; the prose became an enumeration on 2026-10-04 and the enumeration was
+    wrong the NEXT DAY, when a VAPT pass retuned /apply* from 8MB to 6MB. This
+    check is why the table is now the only statement of them.
+    """
+    assert fake(caddy=GOOD_CADDY.replace("max_size 6MB", "max_size 9MB")) == 1
+    assert "BODY_CAPS says" in capsys.readouterr().err
+
+
+def test_a_capped_prefix_losing_its_cap_is_caught(fake, capsys) -> None:
+    """Deleting the block is the likelier regression than mistyping the number —
+    it looks like tidying up, and it uncaps an anonymous upload prefix."""
+    assert (
+        fake(caddy=GOOD_CADDY.replace("\t\trequest_body {\n\t\t\tmax_size 6MB\n\t\t}\n", ""))
+        == 1
+    )
+    assert "has no request_body block" in capsys.readouterr().err
 
 
 def test_an_exempt_header_is_not_required_to_be_redacted(fake) -> None:
@@ -243,17 +270,45 @@ def test_a_cap_above_the_limit_passes(fake, tmp_path: Path) -> None:
     assert fake(caddy=UPLOAD_CADDY, upload_limits=(ROW,)) == 0
 
 
-def test_a_block_with_no_cap_at_all_is_not_reported(fake, tmp_path: Path) -> None:
+def test_a_block_with_no_cap_at_all_is_not_reported(
+    fake, tmp_path: Path, monkeypatch
+) -> None:
     """Deliberate asymmetry, stated in the script's scope note: this check only
     says a cap is not too SMALL. Whether a route needs one is a judgement the
     checker cannot make, and reporting every uncapped prefix would turn a precise
-    gate into a list nobody reads."""
+    gate into a list nobody reads.
+
+    BODY_CAPS IS DROPPED FOR THIS ONE TEST, and that is the point rather than a
+    workaround. ``BODY_CAPS`` is the other, stricter contract: for the prefixes it
+    ENUMERATES it demands the cap exists and agrees, because AR-10 rests on
+    ``/apply*`` being capped at the edge. The fixture strips the cap off
+    ``/apply*``, so leaving the enumeration in place would have this test
+    exercising that contract instead of the asymmetry it is named for — it failed
+    exactly that way when the two checks first met, on the 2026-10-07 merge.
+    """
     _service_file(tmp_path, "_MAX = 999 * 1024 * 1024\n")
+    monkeypatch.setattr(
+        module, "BODY_CAPS", {k: v for k, v in module.BODY_CAPS.items() if k != "/apply*"}
+    )
     no_cap = UPLOAD_CADDY.replace(
         "\t\trequest_body {\n\t\t\tmax_size 6MB\n\t\t}\n", ""
     )
 
     assert fake(caddy=no_cap, upload_limits=(ROW,)) == 0
+
+
+def test_an_enumerated_cap_that_vanishes_is_reported(fake, tmp_path: Path, capsys) -> None:
+    """The other side of the test above, so the asymmetry is bounded rather than
+    general: a prefix listed in BODY_CAPS whose ``request_body`` block has gone is
+    a finding. Without this, the monkeypatch above could be loosened to "never
+    report a missing cap" and nothing would notice."""
+    _service_file(tmp_path, "_MAX = 999 * 1024 * 1024\n")
+    no_cap = UPLOAD_CADDY.replace(
+        "\t\trequest_body {\n\t\t\tmax_size 6MB\n\t\t}\n", ""
+    )
+
+    assert fake(caddy=no_cap, upload_limits=(ROW,)) == 1
+    assert "should cap bodies at 6MB" in capsys.readouterr().err
 
 
 def test_a_symbol_that_stopped_being_a_literal_is_reported_not_skipped(

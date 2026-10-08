@@ -27,6 +27,7 @@ VALIDATION IS SERVER-SIDE AND SHAPED BY THE KIND
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from typing import Any
 
@@ -50,6 +51,16 @@ EDITABLE_AFTER_ANSWERS: frozenset[str] = frozenset(
 
 MAX_QUESTIONS_PER_OPENING = 20
 MAX_OPTIONS = 12
+# A BYTE BOUND, not a nicety — round 12. Deduping a multi_choice answer caps
+# the stored list at MAX_OPTIONS ENTRIES, which is only a size bound if an
+# entry is small. Nothing capped an option's length, so a tenant with long
+# options still let an anonymous caller drive a multi-megabyte jsonb write
+# below `tail_from`, on accepting branches only — the same channel the dedupe
+# was added to close, in the one dimension the dedupe does not reach.
+#
+# 200 characters is a generous option label (the UI renders these as
+# checkboxes) and makes the worst stored choice answer 12 x 200 = 2.4 kB.
+MAX_OPTION_CHARS = 200
 MAX_ANSWER_CHARS = 4000
 
 
@@ -137,6 +148,23 @@ def validate_shape(*, kind: str, options: list[str] | None) -> list[str]:
         raise QuestionError(f"kind must be one of {sorted(QUESTION_KINDS)}")
     cleaned = [" ".join(str(o).split()) for o in (options or [])]
     cleaned = [o for o in cleaned if o][:MAX_OPTIONS]
+    # REFUSED, NOT TRUNCATED — round 13 corrected round 12 here.
+    #
+    # Truncating looked harmless and was not. Two options sharing a 200-char
+    # prefix collapsed to the same string, which then tripped the
+    # "Options must be distinct" check below — so an HR edit of a question that
+    # was legal yesterday started failing. And an option that differed BEFORE
+    # 200 chars was silently shortened on any round-trip edit, after which
+    # answers already stored against it were no longer members of `options`
+    # and the candidate's next submission was refused with "does not offer".
+    #
+    # Refusing puts the error where somebody can act on it, at the moment they
+    # author the question, and leaves stored data alone.
+    too_long = [o for o in cleaned if len(o) > MAX_OPTION_CHARS]
+    if too_long:
+        raise QuestionError(
+            f"An option may be at most {MAX_OPTION_CHARS} characters."
+        )
     if kind in CHOICE_KINDS:
         if len(cleaned) < 2:
             raise QuestionError("A choice question needs at least two options.")
@@ -327,11 +355,37 @@ def coerce_answer(question: dict[str, Any], raw: Any) -> Any:
 
     if kind == "number":
         try:
-            return float(str(raw).strip())
+            parsed = float(str(raw).strip())
         except (TypeError, ValueError) as exc:
             raise AnswerError(
                 f"'{prompt}' needs a number.", question_id=str(question["id"])
             ) from exc
+        # FINITE, OR IT IS NOT A NUMBER WE CAN STORE — round 12, and this was a
+        # working state oracle on both anonymous apply doors.
+        #
+        # `float("nan")`, `float("inf")` and `float("1e999")` all parse. The
+        # answers are then written with `json.dumps`, whose default
+        # `allow_nan=True` emits the bare tokens `NaN` and `Infinity` — which
+        # are not JSON, and which Postgres rejects with "Token \"NaN\" is
+        # invalid" when the text is cast to jsonb.
+        #
+        # That write happens BELOW `tail_from` and ONLY on the branches that
+        # accept an application: a refusal returns from `_refuse` before
+        # `store_answers` is reached. So one anonymous request with a `number`
+        # question answered "nan" produced 201 for an address that already has
+        # an application and 503 for an address that is free to apply —
+        # byte-identical replies within each group, no timing measurement, no
+        # concurrency, no infrastructure fault. AR-10 residue 1 accepts a
+        # 201/503 split caused by OPERATIONAL faults; it never contemplated one
+        # the caller triggers with a field value.
+        #
+        # Eleven rounds of review missed it because the five-state matrix
+        # submitted no answers at all. It now does.
+        if not math.isfinite(parsed):
+            raise AnswerError(
+                f"'{prompt}' needs a number.", question_id=str(question["id"])
+            )
+        return parsed
 
     if kind in CHOICE_KINDS:
         options = list(question["options"] or [])
@@ -353,9 +407,53 @@ def coerce_answer(question: dict[str, Any], raw: Any) -> Any:
                     f"'{prompt}' takes one answer.", question_id=str(question["id"])
                 )
             return chosen[0] if chosen else None
-        return chosen
+        # DEDUPED, AND THAT IS A SIZE BOUND — round 11 of PH3-B4b.
+        #
+        # Every entry is already known to be one of `options`, which
+        # `normalise_questions` caps at MAX_OPTIONS, so collapsing duplicates
+        # bounds the stored list at twelve entries however long the submitted
+        # one was. Without it, `{"<qid>": ["Python"] * 5_000_000}` passed
+        # validation — each entry is a valid option — and landed as a 50 MB
+        # jsonb write.
+        #
+        # That write sits BELOW `tail_from` on both apply doors and happens
+        # only on the branches that accept: a refusal returns before
+        # `store_answers` is reached. So its cost was a caller-chosen,
+        # one-request separation between "this address was rejected and is in
+        # cooldown" and "this address has never applied here" — measured at
+        # 1.75 seconds past a 400 ms pad, with byte-identical 201 replies.
+        # Third instance of that class; the first two were the CV parse (round
+        # 8) and the extracted CV text (round 10).
+        #
+        # Bounded HERE, at the one place a choice answer is produced, rather
+        # than at the two write sites or on one door's request model — which is
+        # what makes it hold for both doors and for any future caller of
+        # `validate_answers`. `dict.fromkeys` rather than `set` so the
+        # candidate's own ordering survives into what HR reads back.
+        #
+        # Duplicates carried no meaning to lose: an option is chosen or it is
+        # not, and the form cannot render the same box ticked twice.
+        picked = list(dict.fromkeys(chosen))
+        # AND A BOUND THAT HOLDS FOR OPENINGS AUTHORED BEFORE MAX_OPTION_CHARS
+        # EXISTED. Deduping bounds the stored list to MAX_OPTIONS ENTRIES, and
+        # `validate_shape` now bounds each entry — but only for questions
+        # written or edited since. Round 13 pointed out there is no backfill,
+        # so for an opening whose options predate that check the entry bound
+        # does not hold and round 11's caller-sized jsonb write stays open on
+        # exactly the configuration the comment claimed to have closed.
+        #
+        # Bounding the ANSWER rather than migrating the questions: the stored
+        # value is what the channel is made of, nothing already recorded has to
+        # change, and this runs above the branch so refusing is
+        # state-independent.
+        if sum(len(p) for p in picked) > MAX_OPTIONS * MAX_OPTION_CHARS:
+            raise AnswerError(
+                f"'{prompt}' is more than we can save.",
+                question_id=str(question["id"]),
+            )
+        return picked
 
-    text_value = str(raw).strip()[:MAX_ANSWER_CHARS]
+    text_value = _storable(str(raw), prompt, question_id=str(question["id"]))
     return text_value or None
 
 
@@ -420,5 +518,45 @@ async def store_answers(
         )
 
 
+def _storable(raw: str, prompt: str, *, question_id: str) -> str:
+    """A text answer Postgres can actually hold, trimmed to the cap.
+
+    THE SECOND HALF OF ROUND 12's ORACLE. A NUL (U+0000) anywhere in a text
+    answer survives ``str()`` and ``strip()``, and ``json.dumps`` faithfully
+    encodes it as an escape — which Postgres refuses on the cast to jsonb
+    ("cannot be converted to text"), because no ``text`` column can hold a NUL.
+    The write is below ``tail_from`` and only on the accepting branches, so the
+    refusing states still answered 201 while an address free to apply got a
+    503. One anonymous request, no timing, no concurrency.
+
+    REFUSED, NOT STRIPPED. Silently dropping characters from an answer HR will
+    read, and that a candidate may be assessed on, is worse than asking them to
+    retype: the stored answer would differ from what they submitted with nobody
+    told. The message names no code point — "cannot store" is all a legitimate
+    candidate needs, and a crafted request earns no diagnostics.
+
+    Lone surrogates (U+D800 to U+DFFF) go the same way. They encode fine in
+    JSON and fail at the UTF-8 boundary instead, which is the same defect one
+    layer down. Note this docstring deliberately spells both ranges as U+ text
+    rather than as escapes: written as escapes in a docstring, Python builds the
+    characters themselves, and the module then cannot be encoded at all — which
+    is how the first draft of this fix broke its own import.
+    """
+    if any(ch == "\x00" or 0xD800 <= ord(ch) <= 0xDFFF for ch in raw):
+        raise AnswerError(
+            f"'{prompt}' contains a character we cannot store. Please retype it.",
+            question_id=question_id,
+        )
+    return raw.strip()[:MAX_ANSWER_CHARS]
+
+
 def _json(value: Any) -> str:
-    return json.dumps(value)
+    """Serialise one answer for the jsonb column.
+
+    `allow_nan=False` as a BACKSTOP, not as the fix: `coerce_answer` already
+    refuses non-finite numbers, and this is here so a kind added later cannot
+    reintroduce round 12's oracle by returning a float nobody checked. It
+    raises `ValueError` rather than emitting `NaN`, which fails loudly in a
+    test instead of quietly at the database.
+    """
+    return json.dumps(value, allow_nan=False)

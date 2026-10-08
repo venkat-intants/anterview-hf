@@ -32,10 +32,13 @@ import {
 } from '@/design/components/icons';
 import {
   getPosting,
+  saveDraft,
   startDraft,
+  uploadDraftResume,
   submitApplication,
   type ApplicationResult,
   type AnswerValue,
+  type DraftStarted,
   type Posting,
   type PostingQuestion,
 } from '@/api/publicApply';
@@ -107,9 +110,17 @@ function Submitted({ result, title }: { result: ApplicationResult; title: string
   return (
     <Shell>
       <Panel className="text-center">
+        {/* One screen, one heading, for every submission. A reapplication does
+            have something extra to do, and an address we already hold is a
+            fact we hold — but saying either HERE says it to whoever typed the
+            address, and this form takes any address. A third review found the
+            `awaiting_confirmation` flag and the ids beside it told a stranger a
+            named person had applied and been rejected; a fourth found that
+            `already_applied` did the same on the second submission. Both
+            fields are gone from the reply. What differs travels by email. */}
         <CheckCircle2 className="mx-auto h-9 w-9 text-[var(--ui-ok)]" aria-hidden="true" />
         <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-          {result.already_applied ? t('apply.alreadyApplied') : t('apply.received')}
+          {t('apply.received')}
         </h1>
         <p className="mx-auto mt-2 max-w-[50ch] text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
           {result.message}
@@ -591,6 +602,17 @@ export default function PublicApply(): JSX.Element {
   // D5-1's "opt-in" rules out. Getting this wrong (joining the gate, or
   // defaulting it true) would be the worst outcome this screen could ship.
   const [rediscoveryConsent, setRediscoveryConsent] = useState(false);
+  // The saved draft, held here rather than read from `saveLater.data`, so the
+  // link appears the moment the draft exists instead of when the CV upload
+  // after it finishes. See the mutation below.
+  const [savedDraft, setSavedDraft] = useState<DraftStarted | null>(null);
+  const [cvCarried, setCvCarried] = useState(true);
+  // True while the answers and the CV are still travelling to the draft. The
+  // link is shown before this finishes on purpose — the draft exists and its
+  // token is the only way back — but somebody who opens it immediately would
+  // find a draft without the CV they just chose. So the page says it is still
+  // working rather than looking finished.
+  const [carryingOver, setCarryingOver] = useState(false);
   // The language of the emails this application sends — EN, HI or TE.
   const [language, setLanguage] = useState<'en' | 'hi' | 'te'>('en');
   // Step two. All optional — see STEPS below for why the step exists at all.
@@ -653,14 +675,64 @@ export default function PublicApply(): JSX.Element {
   // screen would ever say so. A dropped consent is worse than an absent
   // feature. Found in code review, 2026-09-26.
   const saveLater = useMutation({
-    mutationFn: () =>
-      startDraft(requisitionId, {
+    mutationFn: async () => {
+      const draft = await startDraft(requisitionId, {
         email: email.trim(),
         consentGranted: consent,
         rediscoveryOptIn: rediscoveryConsent,
         language,
         src: posting.data?.source,
-      }),
+      });
+
+      // SHOW THE LINK NOW. The draft exists from this line onwards and the
+      // token is the only way back into it, so it goes on screen before the
+      // carry-over below rather than after: the carry-over uploads a CV of up
+      // to 5 MB, and a person saving on a phone at a bus stop is exactly the
+      // person who closes the tab during it. Waiting for the whole mutation to
+      // resolve meant that tab closed with a draft on the server holding their
+      // email, their consent and their CV — and a token they had never seen.
+      setSavedDraft(draft);
+      setCarryingOver(true);
+
+      // Carry over what they have already given us. Starting a draft records
+      // only who they are and that they agreed; without this the person comes
+      // back to a form they have to fill in again — their name gone, their CV
+      // gone — which is not "continue where you left off".
+      //
+      // TWO independent attempts, not one. They used to share a try, so a
+      // transient failure on the cheap JSON save skipped the CV upload
+      // entirely: the cheap thing killed the valuable one. The CV is the part
+      // that costs a person real effort to produce again.
+      let cvCarried = !resume;
+      try {
+        await saveDraft(draft.resume_token, {
+          full_name: fullName.trim() || null,
+          phone: phone.trim() || null,
+          years_experience: yearsExperience === '' ? null : Number(yearsExperience),
+          current_company: currentCompany.trim() || null,
+          current_title: currentTitle.trim() || null,
+          linkedin_url: linkedinUrl.trim() || null,
+          github_url: githubUrl.trim() || null,
+          language,
+          answers,
+        });
+      } catch {
+        // The typed details are asked for again on the draft page, under
+        // "Check your details", so this one is genuinely recoverable in place.
+      }
+      try {
+        if (resume) {
+          await uploadDraftResume(draft.resume_token, resume);
+          cvCarried = true;
+        }
+      } catch {
+        // Not silent. "Saved" while their CV did not travel is a promise the
+        // page cannot keep — they would come back expecting it to be there.
+      }
+      setCvCarried(cvCarried);
+      setCarryingOver(false);
+      return draft;
+    },
   });
 
   function pickFile(file: File | null): void {
@@ -717,19 +789,21 @@ export default function PublicApply(): JSX.Element {
         prev.map((r, j) => (j === i ? { ...r, status: 'sending' } : r)),
       );
       try {
-        const result = await submitApplication(requisitionId, {
+        await submitApplication(requisitionId, {
           fullName: nameFromFilename(row.file.name),
           email: seedEmailFor(row.file.name),
           resume: row.file,
           consentGranted: true,
           source: posting.data?.source,
         });
+        // 'done' for every accepted row. The reply no longer says whether this
+        // address had applied before, because on an anonymous endpoint that
+        // answer is about the person rather than about this upload — and a
+        // 'duplicate' chip here would put it back on a screen. A genuine
+        // duplicate is still one enrolment (D-06); nothing is lost but the
+        // label.
         setSeedRows((prev) =>
-          prev.map((r, j) =>
-            j === i
-              ? { ...r, status: result.already_applied ? 'duplicate' : 'done' }
-              : r,
-          ),
+          prev.map((r, j) => (j === i ? { ...r, status: 'done' } : r)),
         );
       } catch (err) {
         const message = errText(err, 'failed');
@@ -1190,7 +1264,7 @@ export default function PublicApply(): JSX.Element {
               when consent is missing — it is visible and inert, so the reason
               it cannot be pressed is the checkbox directly above it. */}
           <div className="rounded-[12px] border border-border p-3">
-            {saveLater.data ? (
+            {savedDraft ? (
               <>
                 <p className="text-[12.5px] font-medium text-[var(--ui-text)]">
                   {t('apply.savedTitle')}
@@ -1198,13 +1272,27 @@ export default function PublicApply(): JSX.Element {
                 <input
                   readOnly
                   aria-label={t('apply.resumeLinkAria')}
-                  value={`${window.location.origin}/apply/draft#${saveLater.data.resume_token}`}
+                  value={`${window.location.origin}/apply/draft#${savedDraft.resume_token}`}
                   onFocus={(e) => e.currentTarget.select()}
                   className="mt-2 w-full rounded-[10px] border border-border bg-transparent px-2.5 py-2 text-[12px] text-[var(--ui-soft)]"
                 />
                 <p className="mt-1.5 text-[11.5px] text-[var(--ui-soft)]">
                   {t('apply.savedAgainst', { email: email.trim() })}
                 </p>
+                {carryingOver ? (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-soft)]">
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                    {t('apply.stillSaving')}
+                  </p>
+                ) : null}
+                {/* Said out loud. "Saved" while the CV did not travel is a
+                    promise this page cannot keep — they would come back
+                    expecting to find it there. */}
+                {!carryingOver && !cvCarried ? (
+                  <p className="mt-1.5 text-[11.5px] text-[var(--ui-warn)]">
+                    {t('apply.savedNoCv')}
+                  </p>
+                ) : null}
               </>
             ) : (
               <>

@@ -20,7 +20,7 @@ client deciding whether to show a field error or a dialogue.
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, HTTPException, Response, status
@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
 from app.application_questions import (
+    MAX_OPTION_CHARS,
     MAX_OPTIONS,
     QUESTION_KINDS,
     QuestionError,
@@ -50,7 +51,13 @@ class QuestionIn(BaseModel):
     kind: str
     required: bool = False
     help_text: str | None = Field(default=None, max_length=500)
-    options: list[str] = Field(default_factory=list, max_length=MAX_OPTIONS)
+    # `max_length` on a list is an ITEM COUNT, so each option needs its own
+    # bound — round 13. Without it a single option could be a megabyte, and
+    # `MAX_OPTIONS` x option length is what bounds the answers jsonb an
+    # anonymous caller can store.
+    options: list[Annotated[str, Field(max_length=MAX_OPTION_CHARS)]] = Field(
+        default_factory=list, max_length=MAX_OPTIONS
+    )
 
     @field_validator("kind")
     @classmethod
@@ -69,7 +76,9 @@ class QuestionPatch(BaseModel):
     prompt: str | None = Field(default=None, min_length=3, max_length=500)
     required: bool | None = None
     help_text: str | None = Field(default=None, max_length=500)
-    options: list[str] | None = Field(default=None, max_length=MAX_OPTIONS)
+    options: list[Annotated[str, Field(max_length=MAX_OPTION_CHARS)]] | None = (
+        Field(default=None, max_length=MAX_OPTIONS)
+    )
 
 
 class OrderIn(BaseModel):

@@ -155,7 +155,11 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
         nice_to_have_skills: form.nice_to_have_skills ?? [],
       }),
     onSuccess: (updated) => {
-      client.setQueryData(['requisition', requisition.id], updated);
+      client.setQueryData(['hr', 'requisition', requisition.id], updated);
+      // Location, salary and employment type are columns the openings list and
+      // the dashboard render, so writing the row alone leaves both stale.
+      void client.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
+      void client.invalidateQueries({ queryKey: ['hr', 'requisition-dashboard'] });
       toast.success('Posting updated.');
     },
     onError: (err: unknown) =>

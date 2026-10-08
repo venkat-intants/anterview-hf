@@ -116,12 +116,24 @@
 	# is the same mechanism that lets /hr/*, /jobs* and /exam* be both a React
 	# route and an API prefix. Only XHR (Accept: */*) reaches the backend.
 	handle /apply* {
+		# ANONYMOUS, AND THE ONLY UPLOAD ON THIS PREFIX IS A 5 MB CV.
+		#
 		# Sized from the handler's own limit, not guessed. A cap here is the ONLY
 		# control that works: fastapi 0.133 reads the whole request body before it
 		# solves a route's dependencies, so the in-handler size check and the
 		# rate_limit both run AFTER an arbitrarily large body has been buffered —
 		# a multipart file part lands in a SpooledTemporaryFile that rolls onto
 		# this container's disk. Pre-auth, pre-limit, one request (VAPT 2026-10-05).
+		#
+		# `_MAX_RESUME_BYTES` is therefore a bound on what the handler READS, not
+		# on what the service RECEIVES. docs/ACCEPTED-RISKS.md AR-10 residue 3
+		# recorded that the rate limits "never reach the upload at all"; this is
+		# the bound that does.
+		#
+		# 6MB, not the 8MB PH3-B4b first put here: 5 MB of CV plus multipart
+		# overhead, with the JSON answers field and the form text accounted for
+		# rather than given room to spare. The VAPT number is the one kept — it
+		# is derived from the same handler limit and is tighter.
 		request_body {
 			max_size 6MB
 		}

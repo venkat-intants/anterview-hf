@@ -125,6 +125,10 @@ export interface Requisition extends PostingFields {
   budget_basis?: BudgetBasis | null;
   budget_period?: BudgetPeriod | null;
   budget_notes?: string | null;
+  // ── Reapplying after a rejection (PH3-B4) ────────────────────────────
+  // Days a rejected candidate must wait before applying to THIS opening
+  // again. null = no waiting period. 0–1095 (three years) at the API.
+  reapply_cooldown_days?: number | null;
 }
 
 export interface Enrolment {
@@ -157,6 +161,8 @@ export interface RequisitionInput extends Partial<PostingFields> {
   budget_basis?: BudgetBasis | null;
   budget_period?: BudgetPeriod | null;
   budget_notes?: string | null;
+  /** Days before a rejected candidate may apply again; null = no wait. */
+  reapply_cooldown_days?: number | null;
 }
 
 /** An HR user at this company — who an opening can be assigned to. */
@@ -216,6 +222,23 @@ export function updateRequisition(
   body: Partial<RequisitionInput>,
 ): Promise<Requisition> {
   return apiPatch<Requisition>(`/hr/requisitions/${id}`, body);
+}
+
+/**
+ * Let one rejected candidate apply to this opening again now, despite its
+ * cooldown (PH3-B4).
+ *
+ * The reason is asked for and not required — the server records the override
+ * in the audit log either way, and requiring a reason produces "ok" a hundred
+ * times, which looks like information and is not.
+ */
+export function overrideReapplyCooldown(
+  enrolmentId: string,
+  reason?: string,
+): Promise<Enrolment> {
+  return apiPost<Enrolment>(`/hr/enrolments/${enrolmentId}/reapply-override`, {
+    reason: reason?.trim() || null,
+  });
 }
 
 /**

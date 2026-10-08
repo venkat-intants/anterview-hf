@@ -171,7 +171,7 @@ jobs:
           mypy shared/intelligence shared/agents shared/db shared/llm
           shared/observability shared/http_observability.py
           shared/metrics_auth.py shared/redis_factory.py
-          shared/s3.py shared/security.py
+          shared/s3.py shared/security.py shared/text.py
           --ignore-missing-imports
 
       - name: Test
@@ -410,9 +410,23 @@ jobs:
           CONSENT_IP_SALT: ci-only-salt-0123456789abcdef
           RATE_LIMIT_LOGIN_PER_MINUTE: '10000'
           RATE_LIMIT_API_PER_MINUTE: '10000'
-          S3_ENDPOINT: http://localhost:9000
-          S3_ACCESS_KEY_ID: ci-access-key
-          S3_SECRET_ACCESS_KEY: ci-secret-key
+          # NO S3 CREDENTIALS ON THIS STEP, deliberately, and the disk fallback
+          # turned on in their place.
+          #
+          # This step used to set S3_ENDPOINT=http://localhost:9000 with
+          # S3_ACCESS_KEY_ID — and there is no MinIO in `services:` above, so
+          # the endpoint answered nothing. `local_storage.enabled()` returns
+          # False whenever s3_access_key_id is set, so the fallback could not
+          # take over either: every upload hit a dead socket and the route
+          # answered 503. No `-m integration` test in this service uploaded an
+          # object, so nothing noticed for as long as that was true.
+          #
+          # The moment one did — the PH3-B4b indistinguishability matrix, which
+          # has to post a real CV to reach the branch it tests — it failed in
+          # CI while passing locally. The two credentials were placeholders for
+          # a service container that was never added; naming a real directory
+          # instead is what makes the step honest.
+          STORAGE_LOCAL_DIR: ${{ runner.temp }}/ci-uploads
         run: python -m pytest tests/ -q -m integration
 
       - name: Coverage
@@ -598,6 +612,24 @@ jobs:
         # Neither is reachable from any test that runs a service: they live in
         # config, and the Space variant fails as a 200.
         run: python ops/ci/check_routing_contract.py
+
+      - name: Every accepted risk's justification still holds
+        # Two dependency advisories are ACCEPTED rather than fixed —
+        # python-jose CVE-2026-85394 (CRITICAL, no patched release) and
+        # langgraph-sdk CVE-2026-104873 — and neither acceptance says "the risk
+        # is tolerable". Each says the vulnerability is UNREACHABLE HERE, on a
+        # claim about this codebase: every JWT decode restricts algorithms, and
+        # the langgraph SDK's affected auth API is not used at all.
+        #
+        # A claim like that is one commit from false and nothing would say so.
+        # The python-jose entry names its own re-check condition — "a decode
+        # added anywhere without `algorithms=`" — and this step is that
+        # condition, enforced rather than written down.
+        #
+        # It is also what a reviewer should read instead of trusting a pull
+        # request: the facts under a CRITICAL acceptance are mechanical, so a
+        # person should not have to take them on faith.
+        run: python ops/ci/check_accepted_risk_claims.py
 
       - name: The gate scripts' own tests
         # ops/ci/ had no tests, and the way a checker fails is silent: a parser
@@ -1080,6 +1112,475 @@ jobs:
           S3_SECRET_ACCESS_KEY: ci-secret-key
         run: python -m pytest tests/ -q -m integration
 
+  browser:
+    # The Playwright suite, which until this job existed ran only when somebody
+    # remembered to run it.
+    #
+    # WHY IT EXISTS. docs/PH3-ACCEPTANCE-CHECKLIST.md said so in its own
+    # header: "Run on demand, NOT in CI — .github/workflows/ci.yml has no
+    # Playwright step, so nothing gates these on a pull request. Six criteria
+    # below cite `e2e` as evidence; read that as 'this was demonstrated', not
+    # 'this is enforced', until the job exists." Six Phase 3 acceptance criteria
+    # and the whole PH3-B4b indistinguishability guard
+    # (web/e2e/apply-indistinguishable.spec.ts, which is the only thing in the
+    # repo that checks the anonymous apply door renders ONE screen rather than
+    # five) rested on evidence a pull request could not check.
+    #
+    # WHY IT NEEDS FOUR CONTAINERS AND A RUNNING SERVICE, unlike every other
+    # job here. These specs drive the real product end to end: a browser,
+    # against the real frontend, against the real API, against a migrated
+    # database, with real object storage for CVs and a real mailbox for the
+    # links candidates click. There is no mock layer to substitute — that is
+    # the point of the suite, and the reason writing it found three defects no
+    # unit test could have (the checklist's "Added 2026-09-27" note).
+    #
+    # IT IS SLOW: about 16 minutes for 28 specs at one worker. One worker is
+    # deliberate (playwright.config.ts explains it — the specs share one stack
+    # and data_gateway's background loops are not built to be raced), so this
+    # does not parallelise away. It runs alongside the other jobs rather than
+    # after them.
+    name: browser (playwright e2e)
+    runs-on: ubuntu-latest
+    # Generous but finite. A hung browser otherwise burns the 6-hour default.
+    #
+    # 45 -> 60 after the third run hit the cap. That run was failing every spec
+    # for an unrelated reason (see "Give the frontend its API endpoints"), so 45
+    # was never actually measured against a working suite — but a CI runner is
+    # slower than the laptop that finishes in 11 minutes, and s3mock is slower
+    # than the MinIO those 11 minutes were measured against, so the headroom is
+    # worth having before it is needed. If a run ever approaches this, the thing
+    # to question is the single worker (`playwright.config.ts` explains why) and
+    # not this number.
+    timeout-minutes: 60
+
+    # NONE OF THE VALUES BELOW ARE SECRETS. They are the same shape as the
+    # erasure-live and services jobs': fixed, obviously-fake strings for a
+    # throwaway container that is destroyed with the runner. Real secrets would
+    # be wrong here — this database is created, migrated, filled with invented
+    # people and thrown away inside one job.
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-only-not-a-real-secret-0123456789abcdef
+      EXAM_LINK_SECRET: ci-only-exam-secret-0123456789abcdef
+      INTERVIEW_LINK_SECRET: ci-only-interview-secret-0123456789ab
+      CONSENT_IP_SALT: ci-only-salt-0123456789abcdef
+      S3_ENDPOINT: http://localhost:9090
+      S3_ACCESS_KEY_ID: ci-access-key
+      S3_SECRET_ACCESS_KEY: ci-secret-key
+      S3_BUCKET_NAME: intants-uploads
+      # Both of these are copied from the working local config
+      # (services/data_gateway/.env) rather than left to their defaults, which
+      # are wrong for a plain-HTTP MinIO: `s3_use_ssl` defaults to true, and
+      # `s3_region` to the literal "auto", which is a Cloudflare R2 convention
+      # that the AWS SigV4 signer does not accept from every client.
+      S3_USE_SSL: 'false'
+      S3_REGION: us-east-1
+      # The three switches web/e2e/README.md requires of the service, and one
+      # it does not yet mention. Each is local-testing only, and the service
+      # REFUSES TO START with the first two on when APP_ENV is production or
+      # staging — so this configuration cannot be the one that ships.
+      #
+      # AI_FAKE_MODE makes scoring, question generation and embeddings
+      # deterministic stand-ins: no model spend, same answer every run, and a
+      # CV carrying "E2E-SCORE: 85" scores exactly 85.
+      AI_FAKE_MODE: 'true'
+      # TEST_HOOKS_ENABLED mounts /test-hooks/reconcile and /reminders so a spec
+      # can run the scoring pass now instead of waiting up to ten minutes.
+      TEST_HOOKS_ENABLED: 'true'
+      TEST_HOOKS_TOKEN: ci-only-test-hooks-token-0123456789abcdef
+      # RATE_LIMIT_LOGIN_PER_MINUTE, because the suite signs in far more than
+      # five times a minute from one address. Without it a full run loses about
+      # six specs in UNDER A SECOND EACH, which reads as six broken features
+      # rather than one missing variable.
+      RATE_LIMIT_LOGIN_PER_MINUTE: '1000'
+      # EMAIL_POLL_INTERVAL_SECONDS, which the README does not yet mention and
+      # which silently decides whether this suite is flaky. The mail worker
+      # sleeps `email_poll_interval_seconds` (default 60) between polls, while
+      # waitForMail's default patience is 30s. So any spec that enqueues a mail
+      # and waits the default passes only when the worker's tick happens to
+      # land inside its window. offer-preboarding has two such waits and failed
+      # on them; the backend had logged `email.enqueued` for the mail it was
+      # waiting for, so nothing was broken except the arithmetic. Two seconds
+      # removes the whole class rather than padding each timeout.
+      EMAIL_POLL_INTERVAL_SECONDS: '2'
+      # SCHEDULED_PUBLISH_INTERVAL_SECONDS, the same arithmetic one more time.
+      # It defaults to 300 s while `scheduled-publishing.spec.ts` waits 180 s
+      # for an opening to go live by itself — so that spec passes only when the
+      # publisher's tick happens to land inside its window. It is the one
+      # background worker with NO test hook (`/test-hooks` exposes `reconcile`
+      # and `reminders` only), which is exactly why that spec waits on the real
+      # timer rather than driving it.
+      #
+      # 60 is the floor the field allows (`ge=60`), so the worst case is a tick
+      # about a minute out — comfortably inside 180 s. Evidence it was needed:
+      # the two runs of commit 7c2862c, same code, one green and one with this
+      # spec failing both attempts.
+      #
+      # `reconciliation_interval_seconds` (1800) and `reminders_interval_seconds`
+      # (3600) are deliberately left alone: the suite drives both through
+      # `/test-hooks`, so their cadence never gates a spec, and shortening them
+      # would only add background churn.
+      SCHEDULED_PUBLISH_INTERVAL_SECONDS: '60'
+      # CORS, and this one cost three CI runs and roughly two hours of runner
+      # time. `cors_allowed_origins` defaults to **http://localhost:5173**,
+      # while this suite serves the app on **5174** — so the browser loads
+      # fine and every API call it makes is blocked. The symptom is not an
+      # error anywhere near the cause: 33 of 34 specs time out at 120s and
+      # retry, the job hits its cap, and the single spec that passes is the one
+      # that needs no API at all ("a signed-out visitor is sent to sign in").
+      #
+      # It works on a laptop because `services/data_gateway/.env` sets this,
+      # and that file is git-ignored. The e2e README documents the 5174 port in
+      # two places and did NOT document this requirement, which is why reading
+      # that README carefully was not enough; it is in the table there now.
+      CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
+      # THE SAME 5173-vs-5174 MISTAKE, THREE MORE TIMES. These build the links
+      # that go INTO EMAILS, and the suite reads those links out of Mailpit and
+      # navigates to them: the exam invitation, the offer, the draft's resume
+      # link, the reapplication confirmation. All three default to
+      # http://localhost:5173, so with the defaults every emailed link in CI
+      # would point at a dead port and most of the suite would fail one step
+      # after the mail arrived — journey-hire, exam-from-dashboard,
+      # offer-preboarding, save-and-resume, application-confirmation,
+      # reapply-cooldown, interview-scheduling.
+      #
+      # Found by SWEEPING the local .env against this block rather than by
+      # waiting for three more runs to fail one at a time. That sweep is the
+      # reason these are here before they broke anything, and it is the lesson
+      # from the four CI-only failures that preceded it: the gap was never one
+      # variable, it was a git-ignored file with 37 settings in it.
+      APP_BASE_URL: http://localhost:5174
+      EXAM_LINK_BASE_URL: http://localhost:5174
+      INTERVIEW_LINK_BASE_URL: http://localhost:5174
+      # So the bootstrap migration stops minting and PRINTING a random owner
+      # password into the CI log. Nothing signs in as this account — the suite
+      # provisions its own tenant — and a fixed, obviously-fake value is better
+      # than a fresh credential in a public build log on every run.
+      PLATFORM_OWNER_PASSWORD: ci-only-not-a-real-password-0123456789
+      # Second bucket, for interview scorecard PDFs. Created alongside the
+      # uploads one below: `interview-scorecard.spec.ts` exists, nothing creates
+      # buckets at runtime, and a missing bucket fails as an opaque S3 error
+      # rather than as "the bucket is missing".
+      S3_SCORECARD_BUCKET: intants-interview-scorecards
+      # SMTP needs no env: smtp_host/smtp_port default to localhost:1025, which
+      # is the Mailpit container below.
+      #
+      # What the SUITE needs to find the stack.
+      E2E_API_URL: http://localhost:8002
+      E2E_WEB_URL: http://localhost:5174
+      E2E_MAILPIT_URL: http://localhost:8025
+      E2E_TEST_HOOKS_TOKEN: ci-only-test-hooks-token-0123456789abcdef
+      # provision_tenant.py reads E2E_DATABASE_URL, and refuses any host that
+      # is not this machine and any APP_ENV that is not development or test.
+      # Both hold here, which is the point of the guard rather than a loophole:
+      # it writes accounts straight to the database because the product has no
+      # way to create a platform owner, and an account-creating endpoint added
+      # "for tests" would be attack surface production carries too.
+      E2E_DATABASE_URL: postgresql+asyncpg://ci:ci@localhost:5432/ci
+      # E2E_PYTHON is deliberately NOT set here. There is no virtualenv on the
+      # runner, so global-setup must be pointed at the interpreter the
+      # requirements went into — but it checks the value with
+      # `fs.existsSync(python)`, a FILE test, so the bare name `python` fails
+      # even though it is on PATH. That is what the first CI run of this job
+      # died on, after every container and service had come up:
+      # "No Python found at python." It is resolved to an absolute path in a
+      # step below, once setup-python has run.
+
+    services:
+      postgres:
+        # pgvector, NOT stock postgres:16 — applicants.embedding is a
+        # halfvec(3072) column and the first migration dies with
+        # `extension "vector" is not available` on the stock image. Same
+        # reasoning, and same image, as the services and erasure-live jobs.
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      mailpit:
+        # A real mailbox, because the specs read real links out of it: the exam
+        # invitation a candidate clicks, the offer, the code that accepts it,
+        # the draft's resume link. 1025 is SMTP (the service's default) and
+        # 8025 is the API web/e2e/support/mail.ts queries.
+        image: axllent/mailpit
+        ports: ['1025:1025', '8025:8025']
+      s3mock:
+        # Object storage for the CVs every apply uploads.
+        #
+        # NOT MinIO, which is what the local stack uses and what the first
+        # version of this job tried. MinIO's community images are no longer
+        # pullable anonymously from anywhere: `minio/minio` has been REMOVED
+        # from Docker Hub (its tag API answers "object not found") and
+        # `quay.io/minio/minio` answers 401 UNAUTHORIZED. The first CI run of
+        # this job failed on exactly that — "pull access denied for
+        # minio/minio, repository does not exist or may require docker login" —
+        # and it could not fail locally, because the laptop had the image
+        # cached from months earlier. Authenticating would mean a credential
+        # for a now-commercial product to run a test suite, which is not a
+        # trade worth making for a fixture.
+        #
+        # adobe/s3mock is free, pullable, and runs with its default command, so
+        # it is a plain service container rather than a `docker run` step.
+        # Verified against this app's own client settings before the switch:
+        # create-bucket, put, get and delete all behave, which they should —
+        # `shared/s3.py` already forces `addressing_style: "path"` and SigV4
+        # whenever an endpoint URL is set, which is what a non-AWS endpoint
+        # needs.
+        #
+        # NOTE for anyone running the stack locally: the same restriction
+        # applies to `intants-minio`. It works today only because the image is
+        # already on the machine; a fresh `docker pull` will fail.
+        image: adobe/s3mock:latest
+        ports: ['9090:9090']
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/data_gateway/requirements.txt
+
+      - name: Install data_gateway
+        # Only data_gateway: it is the one service the browser suite talks to.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r services/data_gateway/requirements.txt
+
+      - name: Point the suite at this runner's Python
+        # Absolute, because `web/e2e/global-setup.ts` validates E2E_PYTHON with
+        # `fs.existsSync`, which asks whether a FILE is there and not whether
+        # the name resolves on PATH. `command -v` rather than hardcoding
+        # `${{ env.pythonLocation }}/bin/python` so this keeps working if the
+        # setup-python action changes where it puts things.
+        run: |
+          py="$(command -v python)"
+          test -x "$py" || { echo "::error::no python on PATH"; exit 1; }
+          echo "E2E_PYTHON=$py" >> "$GITHUB_ENV"
+          echo "using $py"
+
+      - name: Create the S3 bucket
+        # The bucket must pre-exist: nothing in shared/s3.py or the routers
+        # creates it, so without this every apply fails on its CV upload.
+        #
+        # Created with boto3 — the same library the app uses, installed in the
+        # step above — rather than a client container. s3mock's own
+        # `initialBuckets` env is ignored by the current image (it is set and no
+        # bucket appears), and chasing which Spring property name this version
+        # wants would make the fixture depend on that. One API call does not.
+        run: |
+          python - <<'PY'
+          import boto3
+          from botocore.config import Config
+          s3 = boto3.client(
+              "s3",
+              endpoint_url="http://localhost:9090",
+              aws_access_key_id="ci-access-key",
+              aws_secret_access_key="ci-secret-key",
+              region_name="us-east-1",
+              use_ssl=False,
+              config=Config(s3={"addressing_style": "path"}, signature_version="s3v4"),
+          )
+          for bucket in ("intants-uploads", "intants-interview-scorecards"):
+              s3.create_bucket(Bucket=bucket)
+          print("buckets:", [b["Name"] for b in s3.list_buckets()["Buckets"]])
+          PY
+
+      - name: Migrate the database
+        working-directory: services/data_gateway
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m alembic upgrade head
+
+      - name: Start data_gateway
+        working-directory: services/data_gateway
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        # ONE uvicorn worker, which playwright.config.ts depends on: the specs
+        # assume a single event loop, and the background loops are not built to
+        # be raced. Logs go to a file so a failure can be read afterwards —
+        # the most useful evidence for a failing spec is usually what the
+        # service did, not what the browser saw.
+        run: |
+          python -m uvicorn app.main:app --port 8002 --log-level info \
+            > "$RUNNER_TEMP/data_gateway.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:8002/health/live >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:8002/health/live \
+            || { echo "::error::data_gateway never came up"; cat "$RUNNER_TEMP/data_gateway.log"; exit 1; }
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web
+        working-directory: web
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: web
+        # Only chromium: playwright.config.ts defines exactly one project.
+        run: npx playwright install --with-deps chromium
+
+      - name: Fetch the mediapipe assets
+        working-directory: web
+        # `web/public/mediapipe/` is git-ignored (.gitignore:186), so a fresh
+        # runner has neither the face-landmarker model nor the wasm beside it.
+        # `npm run dev` would fetch them through its `predev`, but the step
+        # below starts vite with `npx vite`, which runs no lifecycle script —
+        # so without this the proctoring assets are missing in CI and present
+        # on any laptop that has ever run the dev server. That asymmetry is
+        # the kind that makes a suite pass locally and fail only here.
+        #
+        # Deliberately NOT MEDIAPIPE_REQUIRED=1, unlike the `web` job's build.
+        # There the flag is the point: a production bundle whose proctoring is
+        # dead at runtime must not ship. Here the assets are a fixture, and a
+        # transient download failure should not fail a suite that is about
+        # applications, offers and reviews.
+        run: node scripts/fetch-mediapipe.mjs
+
+      - name: Give the frontend its API endpoints
+        working-directory: web
+        # WITHOUT THIS, EVERY SPEC FAILS, and the third CI run of this job is
+        # how that was found: all 34 tests timing out at 120s and retrying, so
+        # 43 minutes covered four of them before the job cap killed it. Even
+        # `auth.spec.ts › platform_owner lands on their own console` failed,
+        # which is as simple as this suite gets.
+        #
+        # The reason is `web/.env`, which sets `VITE_API_BASE_URL` to
+        # http://localhost:8002 and is GIT-IGNORED. Vite reads VITE_* at
+        # dev-server start, so on a laptop the frontend knows where
+        # data_gateway is and in CI it does not — every API call goes nowhere.
+        # The same shape as the mediapipe assets two steps up: a local,
+        # untracked file that makes everything work on one machine.
+        #
+        # `cp` from the tracked example rather than writing the values into
+        # this workflow, because `.env.example` is the repo's own documented
+        # procedure ("Copy this file to .env") and stays in step with it. The
+        # file names four services and only data_gateway runs here; the other
+        # three ports are simply unused, which is also true locally.
+        run: |
+          cp .env.example .env
+          grep -E '^VITE_(API_BASE_URL|APP_ENV|USE_MOCK)=' .env
+
+      - name: Start the web dev server
+        working-directory: web
+        # The DEV server, not a preview of the build, because some specs use
+        # development-only affordances on the apply page. Switching to
+        # `vite preview` would be faster and more production-like and would
+        # also quietly change what the suite can reach, so it is not done
+        # casually here.
+        run: |
+          npx vite --port 5174 > "$RUNNER_TEMP/vite.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:5174/ >/dev/null && break
+            sleep 2
+          done
+          curl -sf http://localhost:5174/ >/dev/null \
+            || { echo "::error::vite never came up"; cat "$RUNNER_TEMP/vite.log"; exit 1; }
+
+      - name: Check the browser could actually reach the API
+        # A five-second check in front of a forty-minute suite, added because
+        # three consecutive runs of this job spent their whole budget
+        # discovering a connectivity problem one request would have shown.
+        #
+        # It asks the question the specs ask: a cross-origin request from
+        # http://localhost:5174, which is what the browser sends. A missing
+        # `access-control-allow-origin` here is the CORS default pointing at
+        # 5173, and failing on it costs seconds instead of an hour of 120s
+        # timeouts whose logs blame whichever screen the spec happened to be on.
+        run: |
+          hdrs="$(curl -sS -D - -o /dev/null \
+            -H 'Origin: http://localhost:5174' \
+            http://localhost:8002/health/live)"
+          echo "$hdrs"
+          echo "$hdrs" | grep -qi '^access-control-allow-origin:' || {
+            echo "::error::data_gateway did not allow http://localhost:5174 — every API call the browser makes will be blocked. Check CORS_ALLOWED_ORIGINS (it defaults to port 5173)."
+            exit 1
+          }
+
+          # And the links that go into emails must point at the app under test.
+          # Asserted rather than trusted because all four of these default to
+          # :5173 while the suite serves on :5174, and a mismatch does not fail
+          # here — it fails one step after a candidate opens their email, in
+          # whichever spec got there first, which is a much worse place to read
+          # about it.
+          for pair in \
+            "APP_BASE_URL=$APP_BASE_URL" \
+            "EXAM_LINK_BASE_URL=$EXAM_LINK_BASE_URL" \
+            "INTERVIEW_LINK_BASE_URL=$INTERVIEW_LINK_BASE_URL"; do
+            name="${pair%%=*}"; value="${pair#*=}"
+            if [ "$value" != "$E2E_WEB_URL" ]; then
+              echo "::error::$name is '$value' but the suite drives $E2E_WEB_URL. Emailed links would point somewhere the browser is not."
+              exit 1
+            fi
+          done
+          echo "emailed links point at $E2E_WEB_URL"
+
+      - name: Run the browser suite
+        working-directory: web
+        # Through npm so CI and a laptop run the identical command, including
+        # scripts/run-e2e.mjs — which refuses to run when there are no specs,
+        # because Playwright treats "zero matching spec files" as SUCCESS and
+        # a green tick from a suite that asserted nothing is the exact failure
+        # this job is meant to end.
+        run: npm run e2e
+
+      - name: Keep the evidence
+        # ALWAYS, not `failure()`. With `retries: 1` a spec can fail its first
+        # attempt and pass its second: the job goes green, the artifact step
+        # never runs, and the only record is the word "flaky" in a summary line.
+        # That is precisely how a real bug gets mislabelled — on 2026-10-05
+        # `exam-from-dashboard` was recorded as flaky twice while it was
+        # actually failing on a 500 from `/apply/activate/target`, and the retry
+        # was passing by luck.
+        #
+        # Playwright's report keeps the first attempt's trace and screenshots
+        # even when the retry succeeds, so uploading on success is what makes a
+        # flake diagnosable instead of a label. `!cancelled()` rather than
+        # `always()` so a timed-out or cancelled job does not spend minutes
+        # uploading a partial report.
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          # `browser-report`, not `browser-failure`: it is uploaded on a green
+          # run too now, and a name that says "failure" on a passing job sends
+          # the next reader looking for one.
+          name: browser-report
+          # The report and traces, plus both server logs. A spec that fails
+          # here is usually explained by one of the logs rather than by the
+          # screenshot: the mail-poll arithmetic above was found by reading
+          # `email.enqueued` in the service log while the browser only knew
+          # that no mail had arrived.
+          path: |
+            web/playwright-report/
+            web/test-results/
+            ${{ runner.temp }}/data_gateway.log
+            ${{ runner.temp }}/vite.log
+          retention-days: 7
+          if-no-files-found: warn
+
   ci-ok:
     # The single required status. sync-to-space.yml keys its workflow_run gate
     # on this workflow's conclusion, and that is only `success` when every job
@@ -1087,7 +1588,7 @@ jobs:
     # check to require.
     name: ci-ok
     runs-on: ubuntu-latest
-    needs: [shared, services, invariants, migrations, web, security, docker, erasure-live]
+    needs: [shared, services, invariants, migrations, web, security, docker, erasure-live, browser]
     if: always()
     steps:
       - name: Verify every job succeeded
@@ -1100,6 +1601,7 @@ jobs:
           echo "security=${{ needs.security.result }}"
           echo "docker=${{ needs.docker.result }}"
           echo "erasure-live=${{ needs.erasure-live.result }}"
+          echo "browser=${{ needs.browser.result }}"
           if [ "${{ needs['erasure-live'].result }}" != "success" ] \
             || [ "${{ needs.shared.result }}" != "success" ] \
             || [ "${{ needs.services.result }}" != "success" ] \
@@ -1107,6 +1609,7 @@ jobs:
             || [ "${{ needs.migrations.result }}" != "success" ] \
             || [ "${{ needs.web.result }}" != "success" ] \
             || [ "${{ needs.security.result }}" != "success" ] \
+            || [ "${{ needs.browser.result }}" != "success" ] \
             || [ "${{ needs.docker.result }}" != "success" ]; then
             echo "::error::One or more CI jobs failed — deploy is blocked."
             exit 1

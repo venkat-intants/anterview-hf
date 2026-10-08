@@ -13,7 +13,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { PendingApproval, PublishSchedule, Requisition } from '../api/requisitions';
 
@@ -23,6 +23,7 @@ const cancelPublishSchedule = vi.fn();
 const submitRequisitionForApproval = vi.fn();
 const updateRequisition = vi.fn();
 const listPendingApprovals = vi.fn();
+const fetchRequisition = vi.fn();
 const approveRequisition = vi.fn();
 const rejectRequisition = vi.fn();
 
@@ -398,5 +399,132 @@ describe('the approval queue', () => {
     await userEvent.type(await screen.findByLabelText(/Note for Data Engineer/), 'Go ahead');
     await userEvent.click(screen.getByRole('button', { name: /^Approve$/ }));
     await waitFor(() => expect(approveRequisition).toHaveBeenCalledWith('req-9', 'Go ahead'));
+  });
+});
+
+// ===========================================================================
+// Reapplying after a rejection (PH3-B4, criterion 7)
+// ===========================================================================
+// The backend, its validation and its audit trail shipped with Phase 3; no
+// screen set the value, so an HR manager could not "define cooldown periods"
+// at all. These pin the screen that closes that.
+
+describe('the waiting period before reapplying', () => {
+  it('shows no waiting period as blank, not as zero', async () => {
+    // Blank and 0 are different answers: 0 says "apply again straight away",
+    // blank says nobody set one. Rendering null as "0" would silently claim
+    // the first.
+    renderPanel(requisition({ reapply_cooldown_days: null }));
+    const field = await screen.findByLabelText(/waiting period/i);
+    expect((field as HTMLInputElement).value).toBe('');
+    expect(screen.getByText(/Leave blank for no waiting period/)).toBeInTheDocument();
+  });
+
+  it('shows the days an opening already has', async () => {
+    renderPanel(requisition({ reapply_cooldown_days: 180 }));
+    expect(await screen.findByLabelText(/waiting period/i)).toHaveValue(180);
+  });
+
+  it('saves the days HR types', async () => {
+    const user = userEvent.setup();
+    updateRequisition.mockResolvedValue(requisition({ reapply_cooldown_days: 90 }));
+    renderPanel(requisition({ reapply_cooldown_days: null }));
+
+    await user.type(await screen.findByLabelText(/waiting period/i), '90');
+    await user.click(screen.getByRole('button', { name: /save waiting period/i }));
+
+    await waitFor(() =>
+      expect(updateRequisition).toHaveBeenCalledWith(requisition().id, {
+        reapply_cooldown_days: 90,
+      }),
+    );
+  });
+
+  it('clears it when the field is emptied', async () => {
+    const user = userEvent.setup();
+    updateRequisition.mockResolvedValue(requisition({ reapply_cooldown_days: null }));
+    renderPanel(requisition({ reapply_cooldown_days: 30 }));
+
+    await user.clear(await screen.findByLabelText(/waiting period/i));
+    await user.click(screen.getByRole('button', { name: /save waiting period/i }));
+
+    await waitFor(() =>
+      expect(updateRequisition).toHaveBeenCalledWith(requisition().id, {
+        reapply_cooldown_days: null,
+      }),
+    );
+  });
+
+  it('keeps zero as zero', async () => {
+    const user = userEvent.setup();
+    updateRequisition.mockResolvedValue(requisition({ reapply_cooldown_days: 0 }));
+    renderPanel(requisition({ reapply_cooldown_days: null }));
+
+    await user.type(await screen.findByLabelText(/waiting period/i), '0');
+    await user.click(screen.getByRole('button', { name: /save waiting period/i }));
+
+    await waitFor(() =>
+      expect(updateRequisition).toHaveBeenCalledWith(requisition().id, {
+        reapply_cooldown_days: 0,
+      }),
+    );
+  });
+
+  it('saves only the waiting period, leaving the budget alone', async () => {
+    // The panel holds several forms. Sending the whole panel's state would let
+    // saving one field quietly overwrite another; the server distinguishes
+    // "not sent" from "null", so each save sends only its own field.
+    const user = userEvent.setup();
+    renderPanel(requisition({ reapply_cooldown_days: null, budget_amount: 500000 }));
+
+    await user.type(await screen.findByLabelText(/waiting period/i), '45');
+    await user.click(screen.getByRole('button', { name: /save waiting period/i }));
+
+    await waitFor(() => expect(updateRequisition).toHaveBeenCalled());
+    const body = updateRequisition.mock.calls[0][1] as Record<string, unknown>;
+    expect(Object.keys(body)).toEqual(['reapply_cooldown_days']);
+  });
+});
+
+// ===========================================================================
+// What the panel saves has to reach the screen around it
+// ===========================================================================
+//
+// Every test above hands GovernancePanel a requisition as a prop, so none of
+// them could see the bug this one exists for: the panel refreshed the cache
+// entry ['requisition', id] while the page that renders it reads
+// ['hr', 'requisition', id]. Saving worked, the server was right, and the
+// badge on screen still said "Not submitted" until someone reloaded the tab.
+//
+// So this renders the panel the way WorkflowBuilder does — fed by a query on
+// the page's own key — and asserts on what the person ends up looking at.
+describe('a save reaching the page around the panel', () => {
+  function Host({ id }: { id: string }) {
+    const req = useQuery({
+      queryKey: ['hr', 'requisition', id],
+      queryFn: () => fetchRequisition() as Promise<Requisition>,
+    });
+    if (!req.data) return <p>Loading</p>;
+    return <GovernancePanel requisition={req.data} />;
+  }
+
+  it('updates the approval badge without a reload', async () => {
+    // The server has moved on; the question is whether the page notices.
+    fetchRequisition
+      .mockResolvedValueOnce(requisition({ approval_status: 'draft' }))
+      .mockResolvedValue(requisition({ approval_status: 'pending_approval' }));
+
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <Host id="req-1" />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /Submit for approval/ }));
+    expect(await screen.findByText('Waiting for approval')).toBeInTheDocument();
   });
 });

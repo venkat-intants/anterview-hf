@@ -891,11 +891,26 @@ const en = {
     // ── Public application form (no login) ─────────────────────────────
     // The advert's own meta/experience/salary lines reuse careers.* — same
     // strings, and two copies would drift.
+    reapply: {
+      title: 'Confirm your application',
+      lead:
+        'You have applied for this role before, so we need you to confirm it is really you before we send this application to the hiring team.',
+      confirmCta: 'Confirm my application',
+      confirming: 'Confirming…',
+      whatNext: 'The hiring team can see it now. We will email you when there is news.',
+      viewApplications: 'View my applications',
+      ignore:
+        'If you did not apply, you do not need to do anything. Close this page and nothing will be sent on.',
+      noToken: 'This page needs the link from your email. Open it from there.',
+      confirmed: 'Thanks — your application is with the hiring team again.',
+      alreadyConfirmed: 'This application has already been confirmed. There is nothing more to do.',
+      errExpired: 'This link is no longer valid. Apply again to get a new one.',
+      errConfirm: 'We could not confirm that just now. Please try the link again.',
+    },
     apply: {
       unavailableTitle: 'This opening is not accepting applications',
       unavailableDesc:
         'The role may have been filled or closed. If you were sent this link recently, check with whoever shared it — they will have the current one.',
-      alreadyApplied: 'You have already applied',
       received: 'Application received',
       reviewNote:
         'Your CV is with the hiring team for {{title}}. If they move you forward you will get an email with the next step; nothing is decided automatically.',
@@ -943,6 +958,9 @@ const en = {
       resumeLinkAria: 'Your resume link',
       savedAgainst:
         'We have also stored your progress against {{email}}. This link is the only way back in, so keep it somewhere safe.',
+      stillSaving: 'Still saving your CV — give it a moment before you close this.',
+      savedNoCv:
+        'Your CV did not upload, so you will need to add it again when you come back. Everything else was saved.',
       saving: 'Saving…',
       saveLater: 'Save and finish later',
       saveHint: 'We will give you a link that brings you back to this application.',
@@ -2085,11 +2103,26 @@ const hi = {
         temporary: 'अस्थायी',
       },
     },
+    reapply: {
+      title: 'अपने आवेदन की पुष्टि करें',
+      lead:
+        'आपने इस भूमिका के लिए पहले भी आवेदन किया है, इसलिए यह आवेदन भर्ती टीम को भेजने से पहले हमें पुष्टि चाहिए कि यह वाकई आप हैं।',
+      confirmCta: 'मेरे आवेदन की पुष्टि करें',
+      confirming: 'पुष्टि हो रही है…',
+      whatNext: 'भर्ती टीम अब इसे देख सकती है। कोई अपडेट होने पर हम आपको ईमेल करेंगे।',
+      viewApplications: 'मेरे आवेदन देखें',
+      ignore:
+        'अगर आपने आवेदन नहीं किया है तो आपको कुछ नहीं करना है। यह पृष्ठ बंद कर दें, कुछ भी आगे नहीं भेजा जाएगा।',
+      noToken: 'इस पृष्ठ के लिए आपके ईमेल वाला लिंक चाहिए। उसे वहीं से खोलें।',
+      confirmed: 'धन्यवाद — आपका आवेदन फिर से भर्ती टीम के पास है।',
+      alreadyConfirmed: 'इस आवेदन की पुष्टि पहले ही हो चुकी है। अब कुछ और करने की ज़रूरत नहीं।',
+      errExpired: 'यह लिंक अब मान्य नहीं है। नया पाने के लिए दोबारा आवेदन करें।',
+      errConfirm: 'हम अभी पुष्टि नहीं कर सके। कृपया लिंक दोबारा आज़माएँ।',
+    },
     apply: {
       unavailableTitle: 'यह भर्ती अभी आवेदन स्वीकार नहीं कर रही',
       unavailableDesc:
         'यह पद भर चुका होगा या बंद कर दिया गया होगा। अगर आपको यह लिंक हाल ही में भेजा गया था, तो जिसने भेजा है उनसे जाँचें — उनके पास मौजूदा लिंक होगा।',
-      alreadyApplied: 'आप पहले ही आवेदन कर चुके हैं',
       received: 'आवेदन मिल गया',
       reviewNote:
         'आपका CV {{title}} की नियुक्ति टीम के पास है। यदि वे आपको आगे बढ़ाते हैं तो आपको अगले चरण की जानकारी ईमेल से मिलेगी; कोई भी निर्णय स्वतः नहीं लिया जाता।',
@@ -2137,6 +2170,9 @@ const hi = {
       resumeLinkAria: 'आपका पुनः शुरू करने का लिंक',
       savedAgainst:
         'हमने आपकी प्रगति {{email}} के विरुद्ध भी सहेज ली है। वापस आने का यही एकमात्र रास्ता है, इसलिए इसे सुरक्षित रखें।',
+      stillSaving: 'आपका CV अभी सहेजा जा रहा है — बंद करने से पहले एक क्षण दें।',
+      savedNoCv:
+        'आपका CV अपलोड नहीं हो सका, इसलिए वापस आने पर आपको इसे दोबारा जोड़ना होगा। बाकी सब सहेज लिया गया है।',
       saving: 'सहेजा जा रहा है…',
       saveLater: 'सहेजें और बाद में पूरा करें',
       saveHint: 'हम आपको एक लिंक देंगे जो आपको इसी आवेदन पर वापस लाएगा।',
@@ -3237,11 +3273,26 @@ const te = {
         temporary: 'తాత్కాలిక',
       },
     },
+    reapply: {
+      title: 'మీ దరఖాస్తును నిర్ధారించండి',
+      lead:
+        'మీరు ఈ ఉద్యోగానికి గతంలో దరఖాస్తు చేశారు, కాబట్టి ఈ దరఖాస్తును నియామక బృందానికి పంపే ముందు ఇది నిజంగా మీరేనని నిర్ధారించాలి.',
+      confirmCta: 'నా దరఖాస్తును నిర్ధారించండి',
+      confirming: 'నిర్ధారిస్తున్నాం…',
+      whatNext: 'నియామక బృందం ఇప్పుడు దీన్ని చూడగలదు. ఏదైనా సమాచారం ఉంటే ఈమెయిల్ చేస్తాం.',
+      viewApplications: 'నా దరఖాస్తులు చూడండి',
+      ignore:
+        'మీరు దరఖాస్తు చేయకపోతే ఏమీ చేయనవసరం లేదు. ఈ పేజీని మూసివేయండి, ఏదీ ముందుకు పంపబడదు.',
+      noToken: 'ఈ పేజీకి మీ ఈమెయిల్‌లోని లింక్ అవసరం. దాన్ని అక్కడి నుండే తెరవండి.',
+      confirmed: 'ధన్యవాదాలు — మీ దరఖాస్తు మళ్లీ నియామక బృందం వద్ద ఉంది.',
+      alreadyConfirmed: 'ఈ దరఖాస్తు ఇప్పటికే నిర్ధారించబడింది. ఇంకేమీ చేయనవసరం లేదు.',
+      errExpired: 'ఈ లింక్ ఇక చెల్లదు. కొత్తది పొందడానికి మళ్లీ దరఖాస్తు చేయండి.',
+      errConfirm: 'ఇప్పుడే నిర్ధారించలేకపోయాం. దయచేసి లింక్‌ను మళ్లీ ప్రయత్నించండి.',
+    },
     apply: {
       unavailableTitle: 'ఈ ఉద్యోగానికి ప్రస్తుతం దరఖాస్తులు స్వీకరించడం లేదు',
       unavailableDesc:
         'ఈ పోస్టు భర్తీ అయి ఉండవచ్చు లేదా మూసివేయబడి ఉండవచ్చు. ఈ లింక్ మీకు ఇటీవల పంపినట్లయితే, పంపినవారితో సరిచూడండి — ప్రస్తుత లింక్ వారి వద్ద ఉంటుంది.',
-      alreadyApplied: 'మీరు ఇప్పటికే దరఖాస్తు చేశారు',
       received: 'దరఖాస్తు అందింది',
       reviewNote:
         'మీ CV {{title}} నియామక బృందం వద్ద ఉంది. వారు మిమ్మల్ని ముందుకు తీసుకెళ్తే తదుపరి దశ గురించి ఈమెయిల్ వస్తుంది; ఏ నిర్ణయమూ స్వయంచాలకంగా తీసుకోబడదు.',
@@ -3289,6 +3340,9 @@ const te = {
       resumeLinkAria: 'మీ తిరిగి ప్రారంభించే లింక్',
       savedAgainst:
         'మీ పురోగతిని {{email}} కింద కూడా భద్రపరిచాం. తిరిగి రావడానికి ఇదే ఏకైక మార్గం, కాబట్టి దీన్ని సురక్షితంగా ఉంచుకోండి.',
+      stillSaving: 'మీ CV ఇంకా భద్రపరుస్తున్నాం — మూసివేయడానికి ముందు కొంత సమయం ఇవ్వండి.',
+      savedNoCv:
+        'మీ CV అప్‌లోడ్ కాలేదు, కాబట్టి తిరిగి వచ్చినప్పుడు దాన్ని మళ్లీ జోడించాలి. మిగతావన్నీ భద్రపరచబడ్డాయి.',
       saving: 'భద్రపరుస్తున్నాం…',
       saveLater: 'భద్రపరిచి తర్వాత పూర్తి చేయండి',
       saveHint: 'ఈ దరఖాస్తుకు మిమ్మల్ని తిరిగి తీసుకొచ్చే లింక్‌ను మేము ఇస్తాం.',

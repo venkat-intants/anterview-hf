@@ -1,4 +1,10 @@
-# Phase 2 test coverage map
+# Test coverage map
+
+Two halves, built at different times and by different methods, so they are kept
+apart rather than blended: **Phase 2** below (Groups A–E), then **Phase 3** at
+the end of the file.
+
+## Phase 2
 
 Where each Phase 2 item (Groups A–E, and the defects fixed on 2026-09-16) is tested
 today, and what is still missing. Built on 2026-09-16 by reading the unit test
@@ -16,7 +22,8 @@ predate this map, so their cells describe intent, not a passing check:
 `smoke_group_b_api`, `smoke_group_b_ledger` and `smoke_group_b_requisitions`.
 
 Phase 3 work (application source, JD versions, requisition approval, scheduled
-publishing, reapplication, drafts) is not mapped here.
+publishing, reapplication, drafts) is mapped in **Phase 3** at the end of this
+file, not in the Group A–E tables below.
 
 
 Paths used below:
@@ -157,3 +164,236 @@ Background and DB items with no browser need (A1, A2, A3, A6, B2 and B4 invarian
 - the decision email's language
 - exam generation from round criteria with a stubbed LLM (C3)
 - a direct API set and edit of round `time_limit` and `deadline_days` (C2)
+
+---
+
+# Phase 3
+
+Added 2026-10-04, when the browser suite caught up with the Phase 3 backend.
+Built the other way round from the Phase 2 half above: by reading the specs and
+the `test_ph3_*` files and matching them to item codes the specs already cite in
+their headers, so every cell below names a file that exists.
+
+**Web unit cover, surveyed 2026-10-05.** This section first shipped without a
+*Web unit* column and said the survey "has not been redone for Phase 3", on the
+grounds that a column of `—` would read as "none exists" rather than "not looked
+at". It has now been done, and it did not need guessing: these tests cite their
+own PH3 item, so the mapping below is read off the files rather than inferred
+from their names.
+
+| Item | `web/src/__tests__/` |
+|---|---|
+| B0 | — none cites it |
+| B1 | `Careers`, `PublicApply`, `PublicApplyQuestions`, `PublicApplySteps` |
+| B2 | `Governance`, `PostingEditor`, `RequisitionClosePrompt` |
+| B3 | — none cites B3; the JD-versioning component tests cite B6 |
+| B4 | `Applicants`, `Governance`, `PublicApplySaveLater` |
+| B4a | `Governance` |
+| B4b | `ConfirmReapplication` |
+| B4c | `PublicApplySaveLater`, `ResumeApplication` |
+| B5 | `CandidateLocalisation`, `ResumeApplication` |
+| B6 | `JdVersionPanel` |
+
+So eight of the ten items have component-level cover as well. The two that do
+not are worth reading precisely rather than as gaps: **B0** is the shared
+publish predicate, which is a server-side agreement between the careers board
+and the apply door and has nothing a component test could hold; and **B3** and
+**B6** are the same JD-versioning feature from two angles, with `JdVersionPanel`
+citing only the latter.
+
+**Why Phase 3 needed browser tests at all.** The backend landed first and landed
+well: 254 unit tests across seven `test_ph3_*` files. But several Phase 3
+acceptance criteria are phrased as *"organizations can define…"* and
+*"authorized users can override…"*, and for a while those were true of the API
+and not of the product — no screen set the waiting period, no control called the
+override. A unit test cannot tell the difference. Each spec below exists because
+it asserts something structurally out of reach below the browser: two tabs at
+once, a real wait for a scheduled job, or one rendered screen compared against
+another.
+
+What is in the browser suite for Phase 3 (`E`):
+
+- `apply-source.spec.ts` — the same opening posted to several places with tagged links, and each application filed under where it came from.
+- `requisition-approval.spec.ts` — an opening needs someone else's approval before the public can apply; HR cannot approve their own.
+- `jd-versions.spec.ts` — an HR tab drafts new advert wording while a candidate tab still reads the old, and the history cannot be rewritten by going back to it.
+- `scheduled-publishing.spec.ts` — a schedule is set and the spec *waits* for the opening to go live, then reads the careers board and clicks what is on it. The slowest spec in the suite, and the only proof the board never advertises something that 404s.
+- `reapply-cooldown.spec.ts` — HR sets a waiting period, rejects someone, the candidate is refused, and HR then lets that one person through.
+- `apply-indistinguishable.spec.ts` — the anonymous apply door renders the **same screen** in four different states.
+- `save-and-resume.spec.ts` — an application left half-finished and picked up later.
+- `application-confirmation.spec.ts` — what a parser read off a CV, shown for correction before it becomes an application.
+
+| Item | What must hold | Unit | Integration / smoke | Browser e2e | Gap / recommended level |
+|---|---|---|---|---|---|
+| B0 | What the careers board lists and what the apply page accepts are the same set — the board never advertises an opening that 404s on click | U `test_ph3_publish_gate.py` (13) | S `smoke_ph3_apply.py` | E `scheduled-publishing.spec.ts`: reads the board, then clicks through to each advert on it | covered. This was once two hand-written copies of one predicate that had drifted, and only a browser can see the drift. |
+| B1 | An application records where it came from; a tagged link is honoured but the server decides what channel it means | U `test_ph3_source_tracking.py` (22) | S `smoke_ph3_apply.py` | E `apply-source.spec.ts` | covered. |
+| B2 | An opening cannot take public applications until someone other than its author approves it | U `test_ph3_requisition_approval.py` (32) | — | E `requisition-approval.spec.ts` | covered. The refusal is also enforced on the patch (`update_requisition` returns 409 for `public_apply_enabled` on an unapproved opening) rather than only at the publish gate. |
+| B3 | Advert wording can be reworked without changing what candidates are currently reading, and replaced wording stays in the record | U `test_ph3_jd_versions.py` (31) | — | E `jd-versions.spec.ts`: two contexts — HR drafting, candidate reading — and a revert that publishes rather than edits | covered, and only observable with two tabs. |
+| B4 | A per-opening waiting period after a rejection, and an authorized person can let one candidate through | U `test_ph3_reapplication.py` (50) | S `test_ph3_cooldown_indistinguishable.py` | E `reapply-cooldown.spec.ts` | covered end to end: the period is set on a screen and the override is clicked, which is what criteria 7–9 actually say. |
+| B4a | An opening goes live by itself at a scheduled time, and the console never states a time without saying how precise it is | U `test_ph3_scheduled_publishing.py` (35) | S `smoke_group_d_publish_waiting.py` | E `scheduled-publishing.spec.ts` (sets a schedule and waits for it) | covered. The honesty sentence lives in the UI — the publisher is an interval loop, so "09:00" alone is a promise the architecture does not make. |
+| B4b | The anonymous apply door answers **identically** whether the address has a live application, is inside the waiting period, is past it, has an override, or has never applied | U `test_ph3_reapplication.py` | S `test_ph3_cooldown_indistinguishable.py` (16): both doors, the stored reply, the work done, a storage outage, a read-only database, reply timing and the pad, and four crafted-input cases | E `apply-indistinguishable.spec.ts`: four states, one rendered screen, compared for equality | covered. See the gap note below on the fifth state. |
+| B4c | An application can be left half-finished and resumed | U `test_ph3_drafts_and_confirmation.py` (71) | S `test_ph5_e3_draft_rediscovery_db.py` | E `save-and-resume.spec.ts` | covered. |
+| B5 | What a parser read off a CV is shown for correction before it becomes an application | U `test_ph3_drafts_and_confirmation.py` | — | E `application-confirmation.spec.ts`; E `save-and-resume.spec.ts` | covered. |
+| B6 | JD Studio versioning: history is viewable, a revert is a publish rather than an edit, and only one version is live | U `test_ph3_jd_versions.py` (31) | — | E `jd-versions.spec.ts` (the version-aware half) | covered, as far as a browser can reach. See the correction below. |
+
+### A correction to this table's own B6 row
+
+The first version of the B6 row, written 2026-10-04, described the item as "an
+application is pinned to the advert version that was live when it was made" and
+marked it **partial?** on the grounds that "no browser test reads it back off an
+application".
+
+**Both halves of that were wrong, and in the way this file warns about most: it
+was a claim about the code written without reading the code.** There is no
+per-application JD-version pin to read back. `published_jd_version_id` sits on
+the **requisition** — which version is currently live — and the enrolment pins
+the *workflow* version and carries `target_jd_text`, a text snapshot that
+`applicants.ts` only ever sends as an upload field and no screen renders back.
+So the browser test said to be missing could not have been written, because
+the feature it would have tested does not exist. B6 is JD Studio versioning:
+history, revert-as-publish, one live version — and `jd-versions.spec.ts` covers
+the part that needs a browser, which is that a draft stays private while
+candidates keep reading the old advert.
+
+Recorded rather than quietly edited, because a **partial?** that is actually a
+misreading is worse than a real gap: a real gap gets closed, while this one
+would have sent somebody to write a test against a column that is not there.
+
+### Phase 3 gaps worth naming
+
+1. **The fifth state is not browser-reachable (B4b, accepted).**
+   `apply-indistinguishable.spec.ts` covers four of the five states. "Rejected,
+   and the waiting period has since elapsed" needs a rejection backdated past
+   the window; a browser cannot do that, `/test-hooks` offers only `reconcile`
+   and `reminders`, and `cooldown_days: 0` is not a substitute because the
+   backend returns at `if not cooldown_days` before it reads the ledger — a
+   different path. It stays covered by
+   `test_ph3_cooldown_indistinguishable.py`, which backdates in SQL. Adding a
+   backdating test hook would close it; that is a new test-only write path into
+   the decision ledger, which is a larger decision than the gap is worth.
+2. **`reapply-cooldown.spec.ts` asserts a denylist (B4b).** It checks the
+   refused screen contains none of `reject`, `turned down`,
+   `not able to consider`, `until 20`. A denylist only catches the phrasings
+   somebody thought of. `apply-indistinguishable.spec.ts` now asserts the
+   effect — the screens are equal — which is why the denylist is kept as a
+   fast, readable signal rather than removed: it names the specific wordings
+   that were once really there.
+3. **Web unit: surveyed 2026-10-05 and no longer a gap.** The mapping is in the
+   table near the top of this section, read off the tests' own PH3 citations
+   rather than inferred. Eight of ten items have component cover; B0 is a
+   server-side predicate with nothing a component test could hold, and B3/B6
+   are one feature whose component tests cite only B6.
+
+### The two specs that were not green, and what they turned out to be
+
+A full run on 2026-10-04 was 32 passed, 2 failed, 1 skipped. The skip is
+`coding-round`, which skips by design when no code runner is up. All eight
+Phase 3 specs passed. Both failures were chased to a cause, and neither was a
+Phase 3 defect — but one was a real bug and the other still is.
+
+**`offer-preboarding` — fixed, and it was arithmetic, not product.** It waited
+for the offer accept-code email and never saw it. The service log settled it in
+one line: `{"template": "offer_code", "event": "email.enqueued"}` — the backend
+had sent it. The mail worker sleeps `email_poll_interval_seconds` (**default
+60**) between polls, while `waitForMail`'s default patience is **30 s**, so the
+spec passed only when the worker's tick happened to land inside its window. It
+has two such waits, which is why it could honestly be committed as "runs green
+end to end" and then fail later. `EMAIL_POLL_INTERVAL_SECONDS=2` is now in the
+documented run env and in the CI job; the spec passes and runs a minute faster.
+
+**`review-round` — quarantined with `test.fixme`, cause narrowed, not closed.**
+Everything up to and including the hold passes. After the release the card
+offers the final Hire/Reject pair instead of "Passes this round". The controls
+are gated on `row.awaiting_review`, which `workflow_runner.py` computes as
+`review_round_id is not None and status != 'held'` — so the product's intent
+agrees with the spec, and the observed behaviour means `review_round_id` is no
+longer set when the card renders. A `page.reload()` first was tried and does not
+help, so it is not a stale page. It may be a race: the poll returns the instant
+the status leaves `held`, and a runner pass completing the round would clear
+`review_round_id` underneath the page.
+
+**It is pre-existing on `main`** — settled 2026-10-05 by comparison rather than
+by running it there, which an earlier version of this section said had to happen
+first. Every production file in the path is byte-identical to `main`:
+`hr_workflows.py` (which implements `release-hold`), `workflow_runner.py`
+(`awaiting_review`), `DecisionQueue.tsx` (the controls) and `workflows.ts` (the
+call). PH3-B4b changes 92 files and none is among them.
+
+The branch does touch `e2e/support/journeys.ts`, which this spec uses — named
+because leaving it out would make the comparison look more complete than it is.
+Three hunks: `aCandidate` appends a four-consonant tag to the name, and
+`applyThroughPublicForm` gains `expectReceived` and `src` with defaults that
+preserve the old behaviour. `shortlistFromApplicants`, the helper this spec
+leans on, is untouched, and the tag is cosmetic — the failing run found
+"Ravi Dkzm" on the board without trouble.
+
+So the ownership is settled and the CAUSE is not. C4's unit and smoke cover
+stays green; what is unguarded meanwhile is the browser path for releasing a
+hold and then passing the round. The spec carries the same reasoning at its
+`test.fixme`, so it travels with the code.
+
+Neither failure was caused by the `locale: 'en-GB'` pin — both were re-run with
+that line removed and failed identically. And rule out the three faults below
+before reading any failure as a defect: each produced a message pointing
+somewhere other than its cause, which is exactly how `offer-preboarding` spent
+a run looking like a broken email template.
+
+### Before reading any failure here as a defect
+
+Three environment faults account for most of the time lost to this suite on
+2026-10-04, and all three produced failures that read as product bugs.
+
+1. **A stale database looks exactly like a missing column, because it is one.**
+   Four Phase 3 specs failed with the draft door returning 500 —
+   `column "resume_text" of relation "application_drafts" does not exist` — with
+   the migration present in the branch the whole time. The dev database was at
+   `2577ba99b7fe`; head was `f1b3d5a7c9e2`. Check `alembic current` against
+   `alembic heads` before anything else, and run `alembic upgrade head` from
+   `services/data_gateway` with `PYTHONPATH` set to the repo root.
+2. **data_gateway needs `RATE_LIMIT_LOGIN_PER_MINUTE=1000`**, not only
+   `AI_FAKE_MODE` and `TEST_HOOKS_ENABLED`. Without it small runs pass and a
+   full run loses about six specs in **under a second each**, because the suite
+   signs in far more than five times a minute from one IP. Several
+   sub-second failures across unrelated specs is almost always the environment
+   rather than any of them. The full table is in `README.md`; the fixtures also
+   say so in the failure text.
+3. **The apply door's submission budget is shared by the whole suite** — see
+   the section below.
+
+### A budget any new apply spec has to live inside
+
+`POST /apply/{requisition_id}` and `POST /apply/draft/submit` share
+`rate_limit("public_apply_submit", 6)` — a fixed 60-second window, keyed on the
+client IP, counted across **both** doors. Everything in this suite runs from
+localhost, so separate browser contexts do not buy separate budgets, and a
+7th submission inside a minute gets "Too many requests. Please wait a minute and
+try again." rendered into the form.
+
+**`applyThroughPublicForm` now waits that out and resubmits**
+(`sendRespectingTheRateLimit` in `support/journeys.ts`), so this is no longer a
+way for a spec to fail — it is a way for one to take an extra ~65 seconds.
+Before that, it was the cause of the "flaky" `exam-from-dashboard` and
+`save-and-resume` in CI, and it took three attempts to find because the evidence
+is a page snapshot that only the failure artifact carries, and the artifact was
+not uploaded on a run that went green on retry. Verified by deliberately
+submitting seven times in a row: six took 3–8 s each and the seventh took 69.3 s
+and passed.
+
+Waiting rather than clearing the limiter is deliberate. The integration suite
+clears it only because it can reach Redis directly; from here that would mean a
+Redis client in the browser suite or a test-only endpoint whose purpose is
+switching a security control off — and `test_hooks.py` says of its own hooks that
+they "change nothing a pass would not change anyway".
+
+So the budget below still shapes what a spec should do, even though exceeding it
+no longer fails:
+
+`apply-indistinguishable.spec.ts` was written with four candidates and seven
+submissions and failed exactly there. It now walks one candidate through four
+states in sequence, which fits — and which is also the stronger design, so it
+stayed that way after the retry landed. There is also
+`rate_limit_window("public_apply_submit_hourly", 60, 3600)`, so the whole suite
+has 60 public submissions an hour from one machine to share — worth knowing
+before adding a spec that applies in a loop. Do not raise either limit for a
+test: they are the product's defence on an anonymous, unauthenticated write
+path, and a spec that needs more submissions than a real person could make is
+asking the wrong question.

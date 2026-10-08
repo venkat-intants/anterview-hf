@@ -68,8 +68,10 @@ vi.mock('../api/applicants', () => ({
 
 // The upload form's opening picker (B5).
 const listRequisitions = vi.fn();
+const overrideReapplyCooldown = vi.fn();
 vi.mock('../api/requisitions', () => ({
   listRequisitions: (...a: unknown[]) => listRequisitions(...a) as unknown,
+  overrideReapplyCooldown: (...a: unknown[]) => overrideReapplyCooldown(...a) as unknown,
 }));
 
 // PH5 wave-1 follow-up (B) — the upload form's source picker reads its
@@ -644,6 +646,156 @@ describe('Applicants — status badges', () => {
   });
 });
 
+// ===========================================================================
+// Letting a rejected candidate reapply (PH3-B4, criterion 9)
+// ===========================================================================
+// The endpoint and its audit trail shipped with Phase 3; no control called it,
+// so "authorized users can override cooldown restrictions" was not something
+// an HR manager could do. These pin the control that closes that.
+
+const REJECTED_APPLICATION = {
+  enrolment_id: 'en-rej',
+  requisition_id: 'r1',
+  opening_title: 'Backend Engineer',
+  status: 'rejected',
+  stored_status: 'rejected',
+  ats_overall: 55,
+  ats_breakdown: null,
+  ats_strengths: null,
+  ats_concerns: null,
+  ats_recommendation: null,
+  ats_summary: null,
+  best_exam_percent: null,
+  exam_passed: null,
+  interview_score: null,
+  scorecard_id: null,
+  applied_at: '2026-09-01T00:00:00Z',
+  is_latest: true,
+};
+
+async function openRejectedDrawer() {
+  listApplicants.mockResolvedValue([{ ...SCORED, status: 'rejected' }]);
+  listApplications.mockResolvedValue([REJECTED_APPLICATION]);
+  const user = userEvent.setup();
+  renderPage();
+  await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+  return user;
+}
+
+describe('letting a rejected candidate reapply', () => {
+  it('is offered on a rejected application', async () => {
+    await openRejectedDrawer();
+    expect(
+      await screen.findByRole('button', { name: /let bhavya nair reapply for backend engineer/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('is not offered to someone who was not rejected', async () => {
+    // A waiting period only applies after a rejection, so the control has no
+    // meaning anywhere else — and offering it would imply one exists.
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+    await screen.findByRole('button', { name: /^shortlist$/i });
+    expect(screen.queryByRole('button', { name: /reapply/i })).not.toBeInTheDocument();
+  });
+
+  it('says what it does before HR confirms, and that the rejection stands', async () => {
+    const user = await openRejectedDrawer();
+    await user.click(
+      await screen.findByRole('button', { name: /let bhavya nair reapply for backend engineer/i }),
+    );
+    expect(screen.getByText(/skips the waiting period/i)).toBeInTheDocument();
+    expect(screen.getByText(/earlier rejection stays on their record/i)).toBeInTheDocument();
+  });
+
+  it('asks for a reason but does not require one', async () => {
+    const user = await openRejectedDrawer();
+    overrideReapplyCooldown.mockResolvedValue({ id: 'en-rej' });
+
+    await user.click(
+      await screen.findByRole('button', { name: /let bhavya nair reapply for backend engineer/i }),
+    );
+    expect(screen.getByLabelText(/why/i)).toBeInTheDocument();
+    // Straight to confirm, with the box untouched.
+    await user.click(screen.getByRole('button', { name: /confirm bhavya nair may reapply/i }));
+
+    await waitFor(() =>
+      expect(overrideReapplyCooldown).toHaveBeenCalledWith('en-rej', ''),
+    );
+  });
+
+  it('sends the reason when HR writes one', async () => {
+    const user = await openRejectedDrawer();
+    overrideReapplyCooldown.mockResolvedValue({ id: 'en-rej' });
+
+    await user.click(
+      await screen.findByRole('button', { name: /let bhavya nair reapply for backend engineer/i }),
+    );
+    await user.type(screen.getByLabelText(/why/i), 'Asked us to reconsider after a new cert');
+    await user.click(screen.getByRole('button', { name: /confirm bhavya nair may reapply/i }));
+
+    await waitFor(() =>
+      expect(overrideReapplyCooldown).toHaveBeenCalledWith(
+        'en-rej',
+        'Asked us to reconsider after a new cert',
+      ),
+    );
+  });
+
+  it('says so on screen once it is done, so nobody grants it twice', async () => {
+    const user = await openRejectedDrawer();
+    overrideReapplyCooldown.mockResolvedValue({ id: 'en-rej' });
+
+    await user.click(
+      await screen.findByRole('button', { name: /let bhavya nair reapply for backend engineer/i }),
+    );
+    await user.click(screen.getByRole('button', { name: /confirm bhavya nair may reapply/i }));
+
+    expect(await screen.findByText(/may reapply now/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /let bhavya nair reapply/i })).not.toBeInTheDocument();
+  });
+
+  it('still says so after a reload, because the grant comes from the server', async () => {
+    // The chip used to be rendered from local component state alone — nothing
+    // read `reapply_override_at`, so an exception HR granted vanished on
+    // refresh and no screen could tell you whether it had been made. Here
+    // nobody clicks anything: the drawer is opened fresh on an application
+    // that already carries a grant.
+    listApplicants.mockResolvedValue([{ ...SCORED, status: 'rejected' }]);
+    listApplications.mockResolvedValue([
+      { ...REJECTED_APPLICATION, reapply_override_at: '2026-09-30T10:00:00Z' },
+    ]);
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+
+    expect(await screen.findByText(/may reapply now/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /let bhavya nair reapply/i }),
+      'and it is not offered twice',
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers the control when the server sends no grant at all', async () => {
+    // `undefined`, not `null` — an older cached response, or any caller that
+    // predates the field. `grantedAt !== null` was true for it, which hid the
+    // control behind a grant nobody had made.
+    listApplicants.mockResolvedValue([{ ...SCORED, status: 'rejected' }]);
+    const withoutTheField = { ...REJECTED_APPLICATION };
+    delete (withoutTheField as { reapply_override_at?: string | null })
+      .reapply_override_at;
+    listApplications.mockResolvedValue([withoutTheField]);
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+
+    expect(
+      await screen.findByRole('button', { name: /let bhavya nair reapply for backend engineer/i }),
+    ).toBeInTheDocument();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // A citation (or an evidence-trail link) naming one person
 // ---------------------------------------------------------------------------
@@ -681,6 +833,5 @@ describe('Applicants — applicant citation deep link', () => {
     await user.click(screen.getByRole('button', { name: /close drawer/i }));
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
-    expect(screen.getByText('Bhavya Nair')).toBeInTheDocument();
-  });
+    expect(screen.getByText('Bhavya Nair')).toBeInTheDocument();  });
 });

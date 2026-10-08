@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -127,7 +128,20 @@ async def enqueue_email(
             select(EmailEvent.id).where(EmailEvent.dedupe_key == dedupe_key)
         )
         if existing is not None:
-            log.info("email.enqueue.deduped", template=template, dedupe_key=dedupe_key)
+            # The key itself is NOT logged. Callers build it out of the facts
+            # the mail is about, and the reapplication notice's is
+            # "reapply-cooldown:{applicant}:{requisition}:{date}" — writing
+            # that to the application log records, in plain text, that a
+            # specific person is inside a rejection cooldown on a specific
+            # opening. That is the one fact this whole feature exists to keep
+            # from people who should not have it, and an app log is read by
+            # more of them than the mailbox is. The template and a digest are
+            # enough to debug a dedupe.
+            log.info(
+                "email.enqueue.deduped",
+                template=template,
+                dedupe_digest=hashlib.sha256(dedupe_key.encode()).hexdigest()[:12],
+            )
             return None
 
     # Company-branding: when this email belongs to a tenant company, resolve the

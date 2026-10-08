@@ -257,9 +257,21 @@ async def main() -> None:
         r = await c.post(f"/apply/{r_public}", data=form(), files=files())
         check("POST apply -> 201", r.status_code == 201, r.text[:200])
         out = r.json()
-        check("it is not reported as a duplicate", out["already_applied"] is False, str(out))
-        check("an enrolment was created", out["enrolment_id"] is not None, str(out))
-        applicant_id = out["applicant_id"]
+        # The reply echoes nothing stored — no `already_applied`, and the ids
+        # are blank — so the enrolment is confirmed in the database instead of
+        # from the body. See ApplicationOut for why the reply is a constant.
+        check("it is answered like any other submission",
+              out["message"].startswith("Thanks"), str(out))
+        async with factory() as db:
+            applicant_id = str(
+                await db.scalar(
+                    text(
+                        "SELECT id FROM applicants"
+                        " WHERE lower(btrim(email)) = 'priya@example.com'"
+                    )
+                )
+            )
+        check("an applicant was created", applicant_id != "None", str(out))
 
         async with factory() as db:
             row = (
@@ -317,11 +329,14 @@ async def main() -> None:
         r = await c.post(f"/apply/{r_public}", data=form(), files=files())
         check("re-applying to the same opening is not an error", r.status_code == 201,
               str(r.status_code))
-        check("it reports the existing application", r.json()["already_applied"] is True,
-              str(r.json()))
+        check("…and is answered EXACTLY as a first-time application is",
+              r.json()["message"].startswith("Thanks"), str(r.json()))
         check("…without echoing anything stored about them",
               r.json()["applicant_id"] == "" and r.json()["enrolment_id"] is None
               and r.json()["full_name"] == "Priya Sharma", str(r.json()))
+        check("…and carrying no field that varies by what we know",
+              set(r.json()) == {"applicant_id", "enrolment_id", "full_name", "message"},
+              str(r.json()))
         async with factory() as db:
             n_app = await db.scalar(text("SELECT count(*) FROM applicants"))
             n_enr = await db.scalar(

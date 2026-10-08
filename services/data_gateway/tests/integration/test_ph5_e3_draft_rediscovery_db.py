@@ -25,6 +25,7 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from fastapi import BackgroundTasks
 from shared.db.engine import build_engine, build_session_factory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -155,8 +156,9 @@ async def test_a_draft_with_the_flag_then_submit_writes_a_ledger_row(
     await _seed_company(db, company_id)
     req_id = await _seed_open_requisition(db, company_id=company_id, title="Fitter, opt-in")
 
+    address = f"asha-{uuid.uuid4().hex[:10]}@e3draft.example"
     body = DraftStartIn(
-        email=f"asha-{uuid.uuid4().hex[:10]}@e3draft.example",
+        email=address,
         consent_granted=True, rediscovery_opt_in=True,
     )
     started = await start_draft(
@@ -164,11 +166,32 @@ async def test_a_draft_with_the_flag_then_submit_writes_a_ledger_row(
     )
     await _confirm_ready_to_submit(db, token=started.resume_token, full_name="Asha K")
 
-    out = await submit_draft(request=_FakeRequest(), db=db, token=started.resume_token)  # type: ignore[arg-type]
-    assert out.already_applied is False
+    # `background` is a real parameter of the handler now: the object
+    # releases that used to be awaited between the commit and the reply are
+    # scheduled to run AFTER the response instead, because an awaited S3
+    # delete put 350-650 ms of client construction inside a 400 ms timing
+    # pad on the refusing states only (round 11). Calling the handler
+    # directly, as this file does, means the scheduled tasks never run —
+    # which is correct here: they are best-effort cleanup of an object no
+    # row points at, and nothing below asserts on them. The real
+    # end-to-end behaviour is covered through the ASGI app in
+    # test_ph3_cooldown_indistinguishable.py.
+    out = await submit_draft(
+        request=_FakeRequest(), db=db, token=started.resume_token,  # type: ignore[arg-type]
+        background=BackgroundTasks(),
+    )
+    # The reply is one constant now — `already_applied` is gone, as
+    # `awaiting_confirmation` went before it, because on an anonymous door a
+    # field that varies by what is stored about the address tells a stranger
+    # that a named person applied here. What this test needs from the reply
+    # is only that the submission was accepted.
+    assert out.message.startswith("Thanks")
 
     owner_user_id = await db.scalar(
-        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": uuid.UUID(out.applicant_id)},
+        # By address, not from the reply: the endpoint deliberately echoes no
+        # stored id back to an anonymous caller (see _ACCEPTED).
+        text("SELECT user_id FROM applicants WHERE lower(btrim(email)) = :em"),
+        {"em": address.lower()},
     )
     assert owner_user_id is not None
     row = (
@@ -194,8 +217,9 @@ async def test_a_draft_without_the_flag_writes_no_rediscovery_row_at_all(
     await _seed_company(db, company_id)
     req_id = await _seed_open_requisition(db, company_id=company_id, title="Fitter, no opt-in")
 
+    address = f"bala-{uuid.uuid4().hex[:10]}@e3draft.example"
     body = DraftStartIn(
-        email=f"bala-{uuid.uuid4().hex[:10]}@e3draft.example", consent_granted=True,
+        email=address, consent_granted=True,
     )
     assert body.rediscovery_opt_in is False  # the default this test relies on
     started = await start_draft(
@@ -203,11 +227,32 @@ async def test_a_draft_without_the_flag_writes_no_rediscovery_row_at_all(
     )
     await _confirm_ready_to_submit(db, token=started.resume_token, full_name="Bala R")
 
-    out = await submit_draft(request=_FakeRequest(), db=db, token=started.resume_token)  # type: ignore[arg-type]
-    assert out.already_applied is False
+    # `background` is a real parameter of the handler now: the object
+    # releases that used to be awaited between the commit and the reply are
+    # scheduled to run AFTER the response instead, because an awaited S3
+    # delete put 350-650 ms of client construction inside a 400 ms timing
+    # pad on the refusing states only (round 11). Calling the handler
+    # directly, as this file does, means the scheduled tasks never run —
+    # which is correct here: they are best-effort cleanup of an object no
+    # row points at, and nothing below asserts on them. The real
+    # end-to-end behaviour is covered through the ASGI app in
+    # test_ph3_cooldown_indistinguishable.py.
+    out = await submit_draft(
+        request=_FakeRequest(), db=db, token=started.resume_token,  # type: ignore[arg-type]
+        background=BackgroundTasks(),
+    )
+    # The reply is one constant now — `already_applied` is gone, as
+    # `awaiting_confirmation` went before it, because on an anonymous door a
+    # field that varies by what is stored about the address tells a stranger
+    # that a named person applied here. What this test needs from the reply
+    # is only that the submission was accepted.
+    assert out.message.startswith("Thanks")
 
     owner_user_id = await db.scalar(
-        text("SELECT user_id FROM applicants WHERE id = :a"), {"a": uuid.UUID(out.applicant_id)},
+        # By address, not from the reply: the endpoint deliberately echoes no
+        # stored id back to an anonymous caller (see _ACCEPTED).
+        text("SELECT user_id FROM applicants WHERE lower(btrim(email)) = :em"),
+        {"em": address.lower()},
     )
     assert owner_user_id is not None
     count = await db.scalar(
@@ -266,10 +311,33 @@ async def test_a_withdrawn_candidate_is_not_re_granted_through_the_draft_door(
     )
     await _confirm_ready_to_submit(db, token=started.resume_token, full_name="Chandra M")
 
-    out = await submit_draft(request=_FakeRequest(), db=db, token=started.resume_token)  # type: ignore[arg-type]
-    assert out.already_applied is False
+    # `background` is a real parameter of the handler now: the object
+    # releases that used to be awaited between the commit and the reply are
+    # scheduled to run AFTER the response instead, because an awaited S3
+    # delete put 350-650 ms of client construction inside a 400 ms timing
+    # pad on the refusing states only (round 11). Calling the handler
+    # directly, as this file does, means the scheduled tasks never run —
+    # which is correct here: they are best-effort cleanup of an object no
+    # row points at, and nothing below asserts on them. The real
+    # end-to-end behaviour is covered through the ASGI app in
+    # test_ph3_cooldown_indistinguishable.py.
+    out = await submit_draft(
+        request=_FakeRequest(), db=db, token=started.resume_token,  # type: ignore[arg-type]
+        background=BackgroundTasks(),
+    )
+    # The reply is one constant now — `already_applied` is gone, as
+    # `awaiting_confirmation` went before it, because on an anonymous door a
+    # field that varies by what is stored about the address tells a stranger
+    # that a named person applied here. What this test needs from the reply
+    # is only that the submission was accepted.
+    assert out.message.startswith("Thanks")
     # The EXISTING applicant, not a fresh one — proves this exercised the
     # sticky-withdrawal branch for the real identity, not a brand new guest.
-    assert out.applicant_id == str(applicant_id)
+    # Read from the database rather than the reply, which no longer echoes a
+    # stored id to an anonymous caller.
+    assert await db.scalar(
+        text("SELECT count(*) FROM applicants WHERE lower(btrim(email)) = :em"),
+        {"em": address.lower()},
+    ) == 1
 
     assert await _active_rediscovery_count(db, user_id=real_user) == 0

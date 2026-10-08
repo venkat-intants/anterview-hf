@@ -472,11 +472,28 @@ async def import_bank_questions(
     if language not in LANGUAGES:
         raise HTTPException(status_code=422, detail="language must be en, hi or te")
 
-    # read(limit + 1), not read(): an unbounded read pulls the entire spooled
-    # body into memory and only THEN measures it, so the cap described the
-    # request without limiting it. One byte over is all that is needed to know
-    # it is too big. Same pattern as the pre-auth paths in public_apply.py
+    # BOUNDED READ: read(limit + 1), not read(). An unbounded read pulls the
+    # entire spooled body into memory and only THEN measures it, so the cap
+    # described the request without limiting it. One byte past the limit is all
+    # it takes to know it is over. Same pattern as the pre-auth paths in
+    # public_apply.py and the apply door's `read(_MAX_RESUME_BYTES + 1)`
     # (review 2026-10-06).
+    #
+    # WHAT IT DOES NOT DO, because the first version of this comment claimed
+    # it did. FastAPI resolves an `UploadFile` parameter during dependency
+    # solving, which runs starlette's multipart parser to completion BEFORE
+    # the first line of this function — into a `SpooledTemporaryFile` that
+    # rolls to disk past 1 MB. So the service still receives and spools the
+    # whole body; measured at 20 MB with `file.size == 20971520` and the spool
+    # rolled. This bounds memory in the handler, not what arrives.
+    #
+    # The half that actually bounds arrival is an edge cap, and `handle /hr/*`
+    # NOW HAS ONE — 12MB, added by the upload-hardening change on `main`
+    # (2026-10-06) and sized from the largest single document behind the prefix.
+    # This comment said it had none, which was true when it was written and was
+    # false within a day; `ops/ci/check_routing_contract.py`'s BODY_CAPS is the
+    # machine-checked copy of that list, and it is the thing that caught this on
+    # merge. Prose about which prefixes are capped goes stale — read BODY_CAPS.
     content = await file.read(question_import.MAX_IMPORT_BYTES + 1)
     if not content:
         raise HTTPException(status_code=400, detail="The uploaded file is empty.")

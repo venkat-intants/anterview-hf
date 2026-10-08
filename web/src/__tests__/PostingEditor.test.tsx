@@ -14,7 +14,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import type { Requisition } from '../api/requisitions';
 
 const updateRequisition = vi.fn();
@@ -33,6 +33,8 @@ vi.mock('../lib/toast', () => ({
 }));
 
 import PostingEditor from '../components/workflow/PostingEditor';
+
+const fetchRequisition = vi.fn();
 
 function requisition(over: Partial<Requisition> = {}): Requisition {
   return {
@@ -202,5 +204,81 @@ describe('PostingEditor — everything is optional', () => {
   it('offers "not specified" as an employment type', () => {
     renderEditor();
     expect(screen.getByRole('option', { name: 'Not specified' })).toBeInTheDocument();
+  });
+});
+
+// ===========================================================================
+// What this panel saves has to reach the page around it
+// ===========================================================================
+// Every test above hands PostingEditor a requisition as a prop, which is
+// exactly the wiring the bug was in: the panel wrote to the cache entry
+// ['requisition', id] while WorkflowBuilder, the page that renders it, reads
+// ['hr', 'requisition', id]. Saving worked, the server was right, and the
+// screen did not move until someone reloaded.
+//
+// So this renders it the way the page does — fed by a query on the page's own
+// key — and asserts on what the person ends up looking at.
+describe('a posting save reaching the page around the panel', () => {
+  function Host({ id }: { id: string }) {
+    const req = useQuery({
+      queryKey: ['hr', 'requisition', id],
+      queryFn: () => fetchRequisition() as Promise<Requisition>,
+    });
+    if (!req.data) return <p>Loading</p>;
+    return <PostingEditor requisition={req.data} />;
+  }
+
+  it('shows the saved location without a reload', async () => {
+    fetchRequisition
+      .mockResolvedValueOnce(requisition({ location: 'Hyderabad' }))
+      .mockResolvedValue(requisition({ location: 'Bengaluru' }));
+    updateRequisition.mockResolvedValue(requisition({ location: 'Bengaluru' }));
+
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <Host id="req-1" />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByDisplayValue('Hyderabad');
+    await user.click(screen.getByRole('button', { name: 'Save posting' }));
+    await waitFor(() => expect(screen.getByLabelText(/Location/i)).toHaveValue('Bengaluru'));
+  });
+
+  it('tells the openings list and the dashboard too', async () => {
+    // The opening's own row is not the only screen showing what changed.
+    // DecisionQueue and RequisitionDashboard invalidate all three together;
+    // this panel invalidated one, so the staleness just moved one screen over.
+    fetchRequisition.mockResolvedValue(requisition());
+    updateRequisition.mockResolvedValue(requisition());
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+    });
+    const invalidated: string[] = [];
+    const spy = vi
+      .spyOn(client, 'invalidateQueries')
+      .mockImplementation((filters?: { queryKey?: readonly unknown[] }) => {
+        invalidated.push(JSON.stringify(filters?.queryKey ?? []));
+        return Promise.resolve();
+      });
+
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <Host id="req-1" />
+      </QueryClientProvider>,
+    );
+    await screen.findByRole('button', { name: 'Save posting' });
+    await user.click(screen.getByRole('button', { name: 'Save posting' }));
+
+    await waitFor(() => expect(invalidated.length).toBeGreaterThan(0));
+    expect(invalidated.some((k) => k.includes('"hr","requisitions"'))).toBe(true);
+    expect(invalidated.some((k) => k.includes('requisition-dashboard'))).toBe(true);
+    spy.mockRestore();
   });
 });

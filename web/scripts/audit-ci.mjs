@@ -25,6 +25,19 @@ const ALLOWLIST = {
   // and was pruned on 2026-10-03 because npm no longer reports it — this
   // script flags a stale entry, since an allowlist nobody prunes is how a real
   // advisory ends up excused by a line written for a different one.
+  //
+  // KEPT AS A NOTE, because the reachability analysis cost real work and the
+  // advisory may be re-published. This branch had argued for retaining the
+  // entry on the grounds that react-router-dom is still 7.18.2, which is
+  // inside the advisory's own range (>=7.12.0 <8.3.0), so npm going quiet
+  // means the advisory was withdrawn or re-scoped upstream rather than fixed
+  // here. Pruning is the better default and is kept; the analysis is this:
+  // the vulnerable path needs React Router RSC mode, and this app is a pure
+  // client-side SPA — src/main.tsx mounts with createRoot(), and there is no
+  // RSC, no SSR, no hydrateRoot and no StaticRouter/createStaticHandler
+  // anywhere in src/. Downgrading to 7.11.0 would also reintroduce the
+  // open-redirect advisories (GHSA-2j2x-hqr9-3h42, GHSA-wrjc-x8rr-h8h6) that
+  // 7.18.x fixes. If it returns, that is the reasoning — do not redo it.
 };
 
 function audit() {

@@ -178,10 +178,27 @@ CVE-2026-84304
 # will get to it". Re-review trigger is unchanged — each sprint.
 CVE-2026-84445
 
-# langgraph-sdk CVE-2026-104873 (HIGH) — authorization bypass in the
-# @auth.on.* resource decorators of a LangGraph API SERVER. We run no such
-# server and never import langgraph_sdk; it is a transitive langgraph
-# dependency. Fixed in 0.4.4, which langgraph==0.2.76 forbids
-# (`langgraph-sdk<0.2.0`) and which itself needs langchain-core>=1.4.0 against
-# our 0.3.86. Full reasoning and the unblock: scripts/pip-audit-ignore.txt.
+# --- langgraph-sdk 0.1.74 — CVE-2026-104873 (HIGH, fixed upstream) ----------
+# Added 2026-10-06. Published overnight; it broke `docker image builds
+# (interview_core)` and `(space)` with no code change, and it is the ONLY
+# finding in either scan — no OS-package CVEs, checked in the trivy output
+# rather than assumed from the Python audit failing at the same time.
+#
+# It reaches this file precisely because it is HIGH and HAS a patched release
+# (0.4.4), which is the flag combination the header above describes.
+#
+# Not exploitable here, and the advisory says so itself: "Only Python
+# deployments using `actions=` on the affected resource-scoped decorators are
+# affected." It is an authorization bypass in the `@auth.on.*` resource
+# decorators of a LangGraph API SERVER. `langgraph_sdk` is imported nowhere in
+# services/ or shared/ — it is transitive under langgraph — there is no
+# `@auth.on.*` decorator in the repo, and no langgraph.json, so no LangGraph
+# Platform deployment exists for its auth layer to serve.
+#
+# Unblock: NOT this pin, and for TWO independent reasons — the second from the
+# PyJWT-migration branch, kept because either one alone would hold this here.
+# langgraph==0.2.76 requires `langgraph-sdk<0.2.0,>=0.1.42`, so 0.4.4 is out of
+# range; and 0.4.4 itself needs langchain-core>=1.4.0 against our 0.3.86. Both
+# clear only with the LangGraph 1.x migration the pip-audit list already
+# tracks. Full reasoning there; keep both in step.
 CVE-2026-104873

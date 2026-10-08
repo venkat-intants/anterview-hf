@@ -24,7 +24,12 @@ from typing import Any
 import pytest
 from botocore.config import Config as BotoConfig
 
-from shared.s3 import _addressing_config, _resolve_endpoint, s3_client
+from shared.s3 import (
+    _addressing_config,
+    _resolve_endpoint,
+    aclose_s3_clients,
+    s3_client,
+)
 
 # Neither endpoint is ever contacted; they only exercise the two addressing modes.
 _MINIO_ENDPOINT = "http://localhost:9000"
@@ -227,9 +232,18 @@ def test_factory_stays_dependency_light() -> None:
     ``services.*`` here would break all four at container start. aioboto3 and
     botocore are on the allowlist only because all four services already pin
     them identically; widening it further should be a decision someone makes on
-    purpose, not a diff nobody notices."""
+    purpose, not a diff nobody notices.
+
+    ``asyncio`` was added on purpose, in round 13 of PH3-B4b: the client cache
+    needs a per-loop lock and the running loop as part of its key. It is
+    stdlib, every service already runs an event loop, and ``aioboto3`` could
+    not work without one — so it widens the allowlist by nothing in practice.
+    The reason this is written down rather than just added: this test was RED
+    on the branch that introduced the import, and the gate set being reported
+    at the time did not include ``shared/tests`` at all."""
     allowed = {
         "__future__",
+        "asyncio",
         "collections",
         "contextlib",
         "typing",
@@ -278,3 +292,390 @@ async def test_presigned_links_are_signature_v4_on_every_endpoint(endpoint: str,
 async def test_custom_endpoints_keep_path_style_with_sigv4() -> None:
     endpoint_url, config_s3, _ = await _client_meta(endpoint=_R2_ENDPOINT)
     assert config_s3 == {"addressing_style": "path"}
+
+
+# ==========================================================================
+# THE CLIENT CACHE — round 13's MEDIUM-2.
+#
+# The cache landed in round 12 as the fix for a state-correlated event-loop
+# stall on two ANONYMOUS endpoints: building an aioboto3 client is 180-450 ms
+# of synchronous botocore work, and only the refusing branches of
+# `POST /apply/...` delete the CV they were made to upload, so that stall was
+# readable from a concurrent request and told a caller which of five states an
+# address was in.
+#
+# It shipped with no tests. Round 13's audit then checked each of the three
+# guards `docs/ACCEPTED-RISKS.md` AR-10 claims "hold it" against a hypothetical
+# revert of the cache, and every one stayed green: two are structural checks on
+# `public_apply` and the third is unrelated config bounds. So the half of the
+# fix the register calls "the half that makes the property true" was the only
+# half nothing held.
+#
+# These are that half. Every one of them goes red if the cache is removed —
+# which is the property, not the API.
+#
+# No socket is opened here, for the reason in the module docstring: a client is
+# built from on-disk service model JSON, and credentials are passed explicitly
+# so botocore never engages its instance-metadata chain.
+# ==========================================================================
+
+
+async def _acquire() -> Any:
+    """One trip through the factory, returning the client it yields."""
+    async with s3_client(
+        endpoint=_MINIO_ENDPOINT,
+        region="us-east-1",
+        access_key=_KEY,
+        secret_key=_SECRET,
+        use_ssl=False,
+    ) as client:
+        return client
+
+
+async def test_the_same_loop_and_settings_reuse_one_client() -> None:
+    """THE TEST THAT GOES RED IF THE CACHE IS REMOVED.
+
+    Without the cache each call builds its own client, so these two are
+    different objects and the 180-450 ms synchronous construction is paid on
+    every upload and every delete. That cost is the channel; this identity is
+    the fix.
+    """
+    await aclose_s3_clients()
+    try:
+        first = await _acquire()
+        second = await _acquire()
+        assert first is second, (
+            "the factory built a second client for identical settings on one "
+            "event loop, so the cache is not in effect — every S3 call pays "
+            "180-450 ms of synchronous construction again, and on the anonymous "
+            "apply doors that cost is state-correlated (see AR-10 residue 2)"
+        )
+    finally:
+        await aclose_s3_clients()
+
+
+async def test_the_client_is_not_closed_when_the_caller_exits() -> None:
+    """The contract is still a context manager; the client outlives it.
+
+    This is the part that would break call sites if it regressed the other way:
+    `s3_client` keeps its `async with` shape so none of the thirty-odd call
+    sites changed, but closing on exit would make the cache useless and a
+    second caller would get a dead client.
+    """
+    await aclose_s3_clients()
+    try:
+        client = await _acquire()
+        # Usable after the context manager exited: a closed aiobotocore client
+        # raises on attribute access through its generated API.
+        assert client.meta.endpoint_url == _MINIO_ENDPOINT
+        assert await _acquire() is client
+    finally:
+        await aclose_s3_clients()
+
+
+async def test_different_settings_do_not_share_a_client() -> None:
+    """Two services in one process, or a credential rotation, must not collide.
+
+    The key carries the endpoint, region, both credentials and `use_ssl`, so a
+    different S3 configuration gets its own client rather than silently reusing
+    one signed for somewhere else.
+    """
+    await aclose_s3_clients()
+    try:
+        minio = await _acquire()
+        async with s3_client(
+            endpoint=_R2_ENDPOINT,
+            region="auto",
+            access_key=_KEY,
+            secret_key=_SECRET,
+        ) as r2:
+            assert r2 is not minio
+        async with s3_client(
+            endpoint=_MINIO_ENDPOINT,
+            region="us-east-1",
+            access_key="a-different-key",
+            secret_key=_SECRET,
+            use_ssl=False,
+        ) as rotated:
+            assert rotated is not minio
+    finally:
+        await aclose_s3_clients()
+
+
+async def test_closing_empties_the_cache_and_is_safe_to_repeat() -> None:
+    """`aclose_s3_clients` is called from four lifespans and must not be fussy.
+
+    Safe when nothing is cached, safe twice, and a later caller rebuilds rather
+    than receiving the client that was just closed.
+    """
+    from shared import s3 as s3mod
+
+    await aclose_s3_clients()
+    assert not s3mod._clients
+    await aclose_s3_clients()  # twice, from an empty state
+
+    first = await _acquire()
+    assert s3mod._clients
+    await aclose_s3_clients()
+    assert not s3mod._clients, "the cache still holds entries after closing"
+    assert not s3mod._stacks, "a stack was left behind, so a connector leaked"
+
+    second = await _acquire()
+    assert second is not first, "a closed client was handed back out"
+    await aclose_s3_clients()
+
+
+async def test_concurrent_first_callers_share_one_client() -> None:
+    """The per-loop lock. Without it the first N concurrent callers each build.
+
+    That matters beyond waste: two clients means two aiohttp connectors, and
+    the one that loses the race is never closed by `aclose_s3_clients` because
+    it was never the cached entry.
+    """
+    import asyncio
+
+    await aclose_s3_clients()
+    try:
+        clients = await asyncio.gather(*[_acquire() for _ in range(5)])
+        assert len({id(c) for c in clients}) == 1, (
+            "concurrent first callers built more than one client, so the "
+            "double-checked lock is not holding"
+        )
+    finally:
+        await aclose_s3_clients()
+
+
+def test_a_closed_loop_is_pruned_rather_than_reused() -> None:
+    """A client belongs to the loop that built it; the suite makes many loops.
+
+    Deliberately NOT an async test: it needs to own the loops. Keyed on the
+    loop OBJECT rather than `id(loop)` because CPython reuses addresses once an
+    object is collected — a reused id would be a cache HIT, and the prune only
+    runs on a miss, so the stale entry would never be seen.
+    """
+    import asyncio
+
+    from shared import s3 as s3mod
+
+    loop_a = asyncio.new_event_loop()
+    try:
+        first = loop_a.run_until_complete(_acquire())
+        assert len(s3mod._clients) == 1
+    finally:
+        loop_a.close()
+
+    # The entry survives its loop's close — nothing can await its aclose now.
+    assert len(s3mod._clients) == 1
+
+    loop_b = asyncio.new_event_loop()
+    try:
+        second = loop_b.run_until_complete(_acquire())
+        assert second is not first, "a client from a closed loop was handed out"
+        assert len(s3mod._clients) == 1, (
+            "the closed loop's entry was not pruned, so a long test run "
+            f"accumulates one client per loop: {len(s3mod._clients)} entries"
+        )
+        loop_b.run_until_complete(aclose_s3_clients())
+    finally:
+        loop_b.close()
+
+
+async def test_the_client_is_constructed_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Counts constructions, which identity cannot.
+
+    Round 14's requested defeat: every identity-based test above is satisfied
+    by any eviction policy, because an evicted-and-rebuilt client is a
+    different object only on the call that rebuilds. This counts.
+
+    HONEST LIMIT, and round 15 proved it: this does NOT catch a TTL. Both
+    reviewers built a 300-second expiry and all 28 tests here passed, because
+    every acquisition below happens within milliseconds and nothing advances a
+    clock — no window longer than the test's own runtime can expire inside it.
+    An earlier version of this docstring claimed otherwise ("a cap, a TTL, an
+    LRU or a per-call rebuild all show up here"), and AR-10 claimed this test
+    "actually holds the property". Both were wrong.
+
+    `test_the_cache_keeps_no_time_based_state` below is what closes the TTL
+    shape. The two together are the guard; this one alone is not.
+    """
+    import aioboto3
+
+    from shared import s3 as s3mod
+
+    await aclose_s3_clients()
+
+    real_session = aioboto3.Session
+    built = 0
+
+    class _CountingSession(real_session):  # type: ignore[misc, valid-type]
+        def client(self, *args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
+            nonlocal built
+            built += 1
+            return super().client(*args, **kwargs)
+
+    monkeypatch.setattr(s3mod.aioboto3, "Session", _CountingSession)
+    try:
+        for _ in range(6):
+            await _acquire()
+        assert built == 1, (
+            f"the client was constructed {built} times across six acquisitions. "
+            "Each construction is 180-450 ms of SYNCHRONOUS botocore work that "
+            "blocks the event loop, and on the anonymous apply doors that stall "
+            "is state-correlated because only the refusing branches delete the "
+            "CV they were made to upload (AR-10 residue 2)."
+        )
+        await _acquire()
+        assert built == 1, f"a later acquisition rebuilt the client ({built} total)"
+    finally:
+        await aclose_s3_clients()
+
+
+#: The only two functions allowed to remove an entry from the cache.
+_EVICTION_EXITS = frozenset({"aclose_s3_clients", "_prune_closed_loops"})
+
+#: The module-level dicts that together ARE the cache.
+_CACHE_NAMES = frozenset({"_clients", "_stacks", "_locks"})
+
+
+def test_nothing_evicts_from_the_cache_except_the_two_named_exits() -> None:
+    """NOTHING MAY EVICT, which is the property. Round 16 — fourth attempt.
+
+    The history matters more than the assertion, because each previous version
+    asserted something narrower than it claimed:
+
+    * Round 13's five tests compare object IDENTITY. Any eviction policy
+      satisfies them: a rebuilt client differs only on the call that rebuilds.
+    * Round 14 counted CONSTRUCTIONS and the register said it "actually holds
+      the property". A 300-second TTL passed all 28 tests — the suite makes
+      seven acquisitions in milliseconds and cannot advance a clock it does
+      not own.
+    * Round 15 asserted the module "reads no clock at all" and called that
+      "the only form that holds". It asserted no CALL NAMED one of five
+      strings. Both round-16 reviewers defeated it independently with
+      `loop.call_later(300.0, _evict, key)` — the event loop reads the clock on
+      the module's behalf, and `asyncio` is on the dependency allowlist
+      deliberately, for the per-loop lock. 835/835 green, ruff clean, and the
+      TTL demonstrably live. Three more spellings also miss: a sleeping
+      eviction task, `_tick = loop.time` then `_tick()` (round 15's own winning
+      defeat, re-spelled over two lines so the attribute access is not a
+      Call), and `getattr(loop, "time")()`. A counter cap (`_MAX_USES`) needs
+      no clock at all.
+
+    So this stops guessing at the MECHANISM and asserts the EFFECT. A TTL, an
+    LRU, a use-cap, a size cap and a clock-free counter all have one thing in
+    common: each must remove a key from the cache. Removing a key is what this
+    forbids, outside the two functions whose job it is. There is no cleverer
+    eviction to find because there is nowhere for one to put its `pop`.
+
+    If a future change genuinely needs to evict, it adds a named exit to
+    `_EVICTION_EXITS` — deliberately, with the reasoning written down, which is
+    the whole reason the constraint lives here and not in a comment.
+    """
+    import ast
+
+    source = pathlib.Path(__file__).parent.parent / "s3.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+
+    # Which function each line belongs to, so an eviction can be attributed.
+    owner: dict[int, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            for inner in ast.walk(node):
+                if hasattr(inner, "lineno"):
+                    owner.setdefault(inner.lineno, node.name)
+
+    offenders: list[str] = []
+
+    def _flag(lineno: int, what: str) -> None:
+        where = owner.get(lineno, "<module level>")
+        if where not in _EVICTION_EXITS:
+            offenders.append(f"{what} in {where}() at line {lineno}")
+
+    for node in ast.walk(tree):
+        # `_clients.pop(...)`, `_stacks.clear()`, `_locks.popitem()`
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            target = node.func.value
+            if (
+                isinstance(target, ast.Name)
+                and target.id in _CACHE_NAMES
+                and node.func.attr in {"pop", "popitem", "clear"}
+            ):
+                _flag(node.lineno, f"{target.id}.{node.func.attr}()")
+        # `del _clients[key]`
+        if isinstance(node, ast.Delete):
+            for t in node.targets:
+                if (
+                    isinstance(t, ast.Subscript)
+                    and isinstance(t.value, ast.Name)
+                    and t.value.id in _CACHE_NAMES
+                ):
+                    _flag(node.lineno, f"del {t.value.id}[...]")
+
+    assert not offenders, (
+        "something removes an entry from the client cache outside "
+        f"{sorted(_EVICTION_EXITS)}: {offenders}.\n\n"
+        "Every eviction policy — TTL, LRU, use-cap, size-cap — has to remove a "
+        "key, and each one reinstates the 180-450 ms SYNCHRONOUS botocore "
+        "construction on a cadence. On the anonymous apply doors that stall is "
+        "state-correlated, because only the refusing branches delete the CV "
+        "they were made to upload: it is the ~390 ms term round 12 read off a "
+        "CONCURRENT request at 24 of 25 (docs/ACCEPTED-RISKS.md AR-10 residue "
+        "2). If an eviction is genuinely needed, add its function to "
+        "_EVICTION_EXITS on purpose and say why."
+    )
+
+    # The exits must still exist, or this is excusing nothing.
+    defined = {
+        n.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    missing = _EVICTION_EXITS - defined
+    assert not missing, (
+        f"these named eviction exits no longer exist in shared/s3.py: "
+        f"{sorted(missing)} — this guard is now attributing evictions to "
+        "functions that are gone, which means it is excusing nothing and "
+        "hiding that."
+    )
+
+
+def test_the_cache_reads_no_clock_by_name() -> None:
+    """A BELT, not the buckle — and this docstring says so, unlike the last one.
+
+    `test_nothing_evicts_from_the_cache_except_the_two_named_exits` is what
+    holds the property. This check only catches the most obvious spellings of a
+    timed eviction, and round 16 showed four that it misses
+    (`loop.call_later`, a sleeping task, an aliased `loop.time`, and
+    `getattr`). It is kept because a direct `time.monotonic()` appearing here
+    is still a signal worth failing on early, and because deleting a check that
+    catches two real shapes to make a point about the two it does not would be
+    the wrong trade.
+
+    What it is NOT is evidence that the module cannot expire an entry. That
+    sentence was in the register for a round and was wrong.
+    """
+    import ast
+
+    source = pathlib.Path(__file__).parent.parent / "s3.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+
+    clocks = {"monotonic", "time", "perf_counter", "process_time", "clock"}
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = None
+            if isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+            elif isinstance(node.func, ast.Name):
+                name = node.func.id
+            if name in clocks:
+                found.append(f"{name}() at line {node.lineno}")
+
+    assert not found, (
+        "shared/s3.py reads a clock by name: " + "; ".join(found) + ". See "
+        "`test_nothing_evicts_from_the_cache_except_the_two_named_exits` for "
+        "why a timed eviction matters; that test is the one that holds, and "
+        "this one is the early signal."
+    )

@@ -8,7 +8,33 @@ document, in the document's own order and wording.
 **How each line was verified** is named, because "done" without that is an opinion.
 `unit` = a test in `services/data_gateway/tests/unit/`; `smoke` =
 `tests/integration/smoke_ph3_apply.py`, which runs the real endpoints against a real
-Postgres 16 and passes 57/57; `db` = asserted directly against the migrated schema.
+Postgres 16 and passes 57/57; `db` = asserted directly against the migrated schema;
+`e2e` = a Playwright journey in `web/e2e/`, driving the real browser against the real
+stack.
+
+**Enforced since 2026-10-05.** This paragraph used to say the opposite — "Run on
+demand, NOT in CI — `.github/workflows/ci.yml` has no Playwright step, so nothing gates
+these on a pull request… read that as 'this was demonstrated', not 'this is enforced',
+until the job exists." The job now exists: `browser (playwright e2e)` in `ci.yml` stands
+up Postgres, Redis, Mailpit and MinIO, migrates, runs data_gateway and the dev server,
+and runs the suite. It is in `ci-ok`'s `needs`, which is the single required status that
+`sync-to-space.yml` gates the deploy on — so every `e2e` citation below is now checked
+on a pull request, and a regression in one blocks the deploy rather than waiting for
+somebody to remember.
+
+Two caveats that keep this honest. `coding-round` skips by design when no code runner is
+up, so it is enforced only where one is. And `review-round` is quarantined with
+`test.fixme` — it fails after a released hold and the cause is narrowed but not closed;
+the reasoning travels with the spec and in `web/e2e/COVERAGE.md`. Neither is a Phase 3
+criterion, and all eight Phase 3 specs pass.
+
+**Added 2026-09-27: `e2e`.** Phase 3 shipped with none. Seven journeys now cover it,
+and writing them found three things no unit test could have: the reapplication rule
+never ran through the real form, every workflow panel refreshed a cache entry the page
+around it was not reading, and three of the four fields the CV parser produces never
+reached the screen that asks the candidate to check them. All three are fixed. The
+lesson is in the third: each was ✅ on the strength of a test written beside the code
+rather than against the product.
 
 ---
 
@@ -19,10 +45,10 @@ Postgres 16 and passes 57/57; `db` = asserted directly against the migrated sche
 | PH3-B1 Source tracking | 10 | 10 | |
 | PH3-B2 Requisition approval & budget | 12 | 12 | |
 | PH3-B3 JD versioning | 13 | 13 | |
-| PH3-B4 Application lifecycle & scheduled publishing | 17 | 15 | 2 ⚠️ — cooldown has no screen |
+| PH3-B4 Application lifecycle & scheduled publishing | 17 | 17 | 2 ⚠️ closed 2026-09-27 |
 | PH3-B5 Candidate confirmation | 12 | 12 | |
 | PH3-B6 JD Studio versioning | 13 | 13 | |
-| **Total** | **77** | **75** | **2 ⚠️, 0 ❌** |
+| **Total** | **77** | **77** | **0 ⚠️, 0 ❌** |
 
 Plus one story that is not in your document: **PH3-B0**, the shared publish gate. See
 the last section — it was pre-work, and it turned out to be a bug fix.
@@ -35,7 +61,7 @@ the last section — it was pre-work, and it turned out to be a bug fix.
 |---|---|---|---|
 | 1 | Application records support a candidate source/channel | ✅ | `enrolments.source` + `source_detail`, migration `c3e5a7b9d1f4`; `db` |
 | 2 | Public application URLs can contain a source identifier | ✅ | `GET /apply/{id}?src=…`; `smoke` |
-| 3 | The source identifier is captured when the candidate starts/applies | ✅ | echoed on the posting, sent back on submit; `smoke` |
+| 3 | The source identifier is captured when the candidate starts/applies | ✅ | echoed on the posting, sent back on submit; `smoke` + `e2e` |
 | 4 | Source is persisted against the application | ✅ | written in `enrol_applicant`, the only enrolment-creating code path; `unit` |
 | 5 | Source remains associated through workflow progression | ✅ | written once at creation, never rewritten — nothing carries it forward, so nothing can drop it |
 | 6 | Existing applications without source information continue to work | ✅ | column is `NOT NULL DEFAULT 'unknown'`; historical rows read as `unknown`; `db` |
@@ -103,8 +129,8 @@ even select it.
 | 5 | One version is clearly identified as current | ✅ | partial unique index — at most one `published` row, enforced by the database; `db` |
 | 6 | Publishing associates the requisition with the version | ✅ | `job_requisitions.published_jd_version_id`, written in the same transaction as the content copy |
 | 7 | Updating creates a new version rather than destroying the previous | ✅ | `record_edit` demotes then inserts; `unit` |
-| 8 | Previous versions remain viewable | ✅ | `GET …/jd/versions` returns full content, newest first |
-| 9 | Historical versions cannot be accidentally overwritten | ✅ | reverting is a *publish* of the old version, not an edit of it |
+| 8 | Previous versions remain viewable | ✅ | `GET …/jd/versions` returns full content, newest first; `e2e` reads the history in the console |
+| 9 | Historical versions cannot be accidentally overwritten | ✅ | reverting is a *publish* of the old version, not an edit of it; `e2e` restores v1 and finds v2 still there |
 | 10 | Existing requisitions without version history continue to work | ✅ | `db` — an opening with no JD gets no version, and still functions |
 | 11 | History is company/requisition scoped | ✅ | composite FK; `db` proves a cross-tenant insert is refused |
 | 12 | **Workflow evaluation criteria remain frozen** | ✅ | asserted three ways: the module, the routes and the migration all contain no `round_criteria` write; `unit` |
@@ -137,9 +163,9 @@ inventing an empty v1 would put a row in a history that never happened.
 | # | Acceptance criterion | | Evidence |
 |---|---|---|---|
 | 6 | Requisition supports configurable reapplication rules | ✅ | `reapply_cooldown_days` |
-| 7 | Organizations can define cooldown periods | ⚠️ | **API only** — `reapply_cooldown_days` (0–1095, NULL = none) on the requisition API; **no screen sets it**. See below. |
-| 8 | Cooldown validation occurs during application | ✅ | `smoke` — a rejected candidate is refused and told the date |
-| 9 | Authorized users can override cooldown restrictions | ⚠️ | **API only** — `POST /hr/enrolments/{id}/reapply-override`, audited; `smoke`; **no button in the HR console**. See below. |
+| 7 | Organizations can define cooldown periods | ✅ | "Reapplying" in the opening's Budget & approval panel; blank = no waiting period, 0 = zero, deliberately different; `web` + `e2e` |
+| 8 | Cooldown validation occurs during application | ✅ | `e2e` through the real form — which is how the defect below was found; `smoke` |
+| 9 | Authorized users can override cooldown restrictions | ✅ | "Let *name* reapply for *role*" on a rejected applicant, with an optional reason; `web` + `e2e` |
 | 10 | Existing applications remain unaffected | ✅ | no cooldown configured ⇒ no query is even issued; `unit` |
 
 ### Scheduled Publishing
@@ -147,9 +173,9 @@ inventing an empty v1 would put a row in a history that never happened.
 | # | Acceptance criterion | | Evidence |
 |---|---|---|---|
 | 11 | Requisition supports a future publish date/time | ✅ | `publish_at`, migration `f6b8d0e2a4c7` |
-| 12 | System automatically publishes at the scheduled time | ✅ | adaptive sleep; **see below** |
+| 12 | System automatically publishes at the scheduled time | ✅ | adaptive sleep; `e2e` sets a schedule and **waits** for it, telling the publisher nothing; **see below** |
 | 13 | Authorized users can modify the schedule | ✅ | `PUT …/publish-schedule` replaces |
-| 14 | Cancelled schedules do not publish | ✅ | `DELETE …/publish-schedule`; idempotent |
+| 14 | Cancelled schedules do not publish | ✅ | `DELETE …/publish-schedule`; idempotent; `e2e` |
 | 15 | Publishing actions are audited | ✅ | set / updated / cancelled / executed, the last attributed to whoever scheduled it |
 | 16 | Draft/cooldown/publishing behaviour is tested | ✅ | 47 + 23 + 27 tests; 40/40 `smoke` |
 
@@ -181,14 +207,73 @@ than being silently unscheduled or silently published.
 
 ---
 
-**⚠️ Criteria 7 and 9 — corrected 2026-09-17, previously marked ✅.** Both were
-marked done on the strength of an API field and an API endpoint. The criteria say
-*"Organizations can define"* and *"Authorized users can override"* — and an HR manager
-can do neither from the product: no screen sets `reapply_cooldown_days`, and no control
-calls `reapply-override`. The backend, its validation, its audit trail and its tests are
-real; the capability the criteria describe is not reachable by the people they name.
-Found while mapping where each Phase 3 change is visible. Closing it needs a cooldown
-field in the requisition editor and an override action on a rejected applicant.
+**✅ Criteria 7 and 9 — closed 2026-09-27.** They were marked ✅ on 2026-09-16 on the
+strength of an API field and an API endpoint, and corrected to ⚠️ on 2026-09-17: the
+criteria say *"Organizations can define"* and *"Authorized users can override"*, and an
+HR manager could do neither from the product. The backend was real; the capability the
+criteria describe was not reachable by the people they name.
+
+Both are now in the console. The waiting period is a field in the opening's Budget &
+approval panel, where blank and 0 mean different things — no waiting period at all, and
+a waiting period of zero days — and the override is a two-step action on a rejected
+applicant, named for the person and the role so it cannot be pressed on the wrong row.
+
+**And the rule itself did not work.** Closing this meant driving it through the real
+form for the first time, which is when `reapply-cooldown.spec.ts` failed: the public
+apply endpoint checked "have you applied here before" before it checked the cooldown,
+and returned `already_applied` to anyone who had ever been rejected. So nobody was
+refused by the waiting period, and nobody was let back in by an override either — the
+whole feature was unreachable from the only door candidates use. The `smoke` test that
+passed had soft-deleted the enrolment first, which skips that branch.
+
+Both doors — the one-shot form and a saved draft being finished — now share one
+predicate (`reapplication.gate`), because they had two hand-written copies of this
+decision and only one of them was fixed.
+
+**And a reapplication no longer takes effect on submission.** A security audit found
+that it could not: these endpoints are anonymous and identify a person by an address
+typed into a public form, and the requisition id is documented as not a secret. So one
+unauthenticated request could move a real person's status, overwrite the screening
+answers they had already given, attach a stranger's CV to their application, spend an
+override HR had granted them, and create a talent-pool consent they never gave.
+`final_decision.py` refuses an *authorised* HR manager from hiring over a rejection on
+the grounds that reopening someone is "a separate decision this does not make on
+anyone's behalf"; letting an anonymous caller make it was the same decision with less
+authority behind it.
+
+The application is still accepted anonymously and the cooldown still decides whether it
+is accepted at all. What changed is that it is STAGED on the rejected enrolment
+(`reapplication.stage`) and applied by `reapplication.confirm` only when a link emailed
+to the address is followed — a dedicated `reapply_confirm` token, because
+`stage_activation_email` mints nothing for someone who has already claimed their
+account and their reapplication would have waited for ever.
+
+The cooldown is re-evaluated at confirmation rather than trusted from submission, and
+the override is spent only when it is what allowed the reapplication.
+
+**What a candidate sees.** One screen and one sentence, for every submission. Not
+"identical for a refusal and a live application" — identical full stop, for all four
+states an address can be in: live application, rejected inside the waiting period,
+rejected past it, and never applied here at all.
+
+That is stronger than it was, and it had to be. The reply was made to *match* across
+those cases three times, and three times a difference survived somewhere adjacent: a
+409 naming the date, then `awaiting_confirmation` plus the real applicant and enrolment
+ids, then the draft row left readable. Each time the reply was still computed from
+stored state, so the branches stayed reachable — the fourth review found that a rejected
+address was answered "accepted" on *every* submission for ever while an address that had
+never applied was answered "accepted" once and "already applied" from the second time
+on. Two anonymous requests, and a stranger knew a named person had been turned down.
+
+So the reply is now a constant. `ApplicationOut` carries four fields, none of which
+depends on what is stored about the address, and every route returns the same object
+through one helper. Everything that genuinely differs — you already have an application
+with us, you were turned down, you may apply again on this date, confirm this really is
+you — is emailed to the address, which is the only place it is the reader's to know.
+
+Held down by `tests/integration/test_ph3_cooldown_indistinguishable.py`: all four states,
+both doors, up to three submissions each, comparing status and whole body, plus what
+`GET /apply/draft` reads back afterwards.
 
 ---
 
@@ -197,11 +282,11 @@ field in the requisition editor and an override action on a rejected applicant.
 | # | Acceptance criterion | | Evidence |
 |---|---|---|---|
 | 1 | Resume parsing continues to extract candidate information | ✅ | `app/resume_details.py`; `smoke` reads a real PDF |
-| 2 | Extracted information is presented for review | ✅ | `ResumeApplication.tsx` |
+| 2 | Extracted information is presented for review | ✅ | all five fields the parser produces — **three were missing until 2026-09-27**, see below; `web` + `e2e` |
 | 3 | Candidate can edit incorrect extracted information | ✅ | every field editable; `web` tests |
 | 4 | Required fields must be completed before confirmation | ✅ | name required, everything else optional; `smoke` |
 | 5 | Candidate explicitly confirms | ✅ | `POST …/confirm`, timestamped |
-| 6 | Only confirmed information is used for submission | ✅ | `smoke` — submission is refused until confirmed, and the **candidate's** corrected name is what lands |
+| 6 | Only confirmed information is used for submission | ✅ | `smoke` + `e2e` — the CV says one name, the candidate corrects it, and HR's console shows the correction |
 | 7 | Candidate corrections are persisted | ✅ | `smoke` — their name and years of experience, not the CV's |
 | 8 | The existing DPDP consent flow remains intact | ✅ | strengthened, not preserved — see PH3-B4c below |
 | 9 | Does not break when parsing produces incomplete information | ✅ | unparsed fields render empty and never block; `unit` + `web` |
@@ -253,6 +338,24 @@ the board's `careers.*` formatters rather than keeping a second copy of the same
 
 The dev-only seeding panel in `PublicApply.tsx` is deliberately **not** localised. It is
 excluded from production bundles and is addressed to whoever is running the seeder.
+
+**⚠️ → ✅ Criterion 2 — corrected 2026-09-27.** The screen presented the parsed NAME.
+`extract_contact_details` has always returned five fields — name, email, phone,
+LinkedIn and GitHub — and the upload handler stored all of them, but `_draft_out`
+carried two. So a form headed *"We read these from your CV. Please correct anything
+that is wrong"* showed one of the four things it had read, and the candidate typed in a
+phone number the parser already had.
+
+The test that should have caught this is the reason it survived. It read
+`assert set(ParsedDetails.model_fields) == {"full_name", "email"}` — a remembered list,
+written beside the shape it was describing, agreeing with it by construction. It now
+calls the parser on a CV and requires the screen to offer exactly the keys that come
+back, which fails in both directions: a field that goes missing, and a box the parser
+can never fill.
+
+All five are now seeded into the form where the candidate has not already given us
+something, each with the *"Your CV says …"* line underneath when the two disagree. The
+CV is quoted, never overwritten.
 
 **On the parsed field list (your doc's PH3-B5b).** Your document lists Name, Email, Phone,
 Location, Education, Experience, Skills as examples. The parser produces **name, email,
@@ -313,6 +416,12 @@ There is now one predicate in `app/publishing.py`, a test that fails the build i
 module starts spelling it out again, and a cross-check that asserts identity rather than
 similarity. PH3-B2's approval gate and PH3-B4a's schedule gate were each one line in one
 tuple as a result.
+
+`scheduled-publishing.spec.ts` closes the loop in the browser: it reads the careers
+board, clicks what is on it, and requires the apply page to open. That is the failure
+in its original shape — a listing and a click — rather than a comparison of predicates,
+and it is the only form of the test that would have failed on the day the drift
+appeared.
 
 ---
 
@@ -612,18 +721,82 @@ predated `96b51bf` and so silently omitted `test_phase2_pipeline_defects.py` and
 two web suites — the counts were real but were not "current main + this change",
 which is the only number worth quoting before a deploy.
 
+**Re-measured 2026-10-07**, after merging `origin/main` at `ef33267` (the PyJWT
+migration, the upload content-type allow-list and the bounded PDF/spreadsheet
+parsers). The previous numbers in this table were from 2026-10-05 and every one of
+them had moved; two were wrong in a way worth naming, because they were the two
+this branch's own work changed — `ops/ci` read 41 against an actual 109, and the
+routing gate read "24 prefixes, 4 headers" against 31 and 9. A totals table that
+nobody re-runs is a table that certifies the wrong tree.
+
 | | |
 |---|---|
-| `data_gateway` unit tests | 1,578 passed |
-| `admin_ops` tests | 163 passed |
-| `shared` tests | 676 passed |
-| Web tests | 976 passed |
-| End-to-end smoke against real Postgres | 60/60 |
-| `ruff` | clean |
-| `mypy` (root config, as CI runs it) | clean |
-| `bandit` SAST (MEDIUM+) vs baseline | 0 new findings |
-| `ops/ci` gate tests | 41 passed |
-| Routing / header contract gate | OK — 24 prefixes, 4 headers |
-| Alembic | 6 new migrations, single linear head, applied cleanly |
-| Erasure inventory (table + column) | both satisfied |
-| Web build | succeeds |
+| `data_gateway` unit tests | 3,165 passed |
+| `admin_ops` tests | 206 passed |
+| `shared` tests | 876 passed |
+| Web tests | 1,906 passed, 164 files |
+| Web typecheck (`npm run typecheck`) | clean |
+| `ruff` (all four services, `app/` + `tests/`) | clean |
+| `mypy` (root config, as CI runs it) | clean — 156 / 19 / 18 files |
+| `ops/ci` gate tests | 109 passed |
+| Routing / header contract gate | OK — 31 prefixes, 9 headers, 9 upload caps |
+| Accepted-risk claims gate | OK — every justification still holds |
+| Alembic | single linear head (`f1b3d5a7c9e2`) |
+
+**Three rows were deliberately NOT re-run here, and are left to CI rather than
+restated on stale evidence.** The integration smoke (60/60) and the erasure
+inventory both need a live migrated Postgres, which this pass did not stand up.
+`bandit` cannot be checked on a Windows machine at all: the committed baseline
+stores forward-slash paths, Windows bandit emits `services/admin_ops/app\config.py`
+with a backslash, so **zero** baseline entries match and all 19 known MEDIUM+
+findings are reported as new — `ci.yml`'s own comment warns about exactly this in
+the opposite direction. `interview_core`'s mypy is the same shape: one error here
+(`Module "livekit" has no attribute "rtc"`) that CI does not have, because the
+Linux wheel provides `rtc` and this checkout's does not. Neither is a finding.
+
+---
+
+## Browser coverage (added 2026-09-27)
+
+Phase 3 shipped with none. **Eight** Playwright journeys now drive the real browser
+against the real stack, and all eight pass. The table below lists seven; the eighth,
+`apply-indistinguishable.spec.ts` (B4b), was added later and has its own row at the end.
+
+**Corrected 2026-10-07.** This paragraph said "Seven … They are not run by CI", which
+contradicted this document's own header two screens up. Both halves were stale: the
+eighth spec landed with PH3-B4b, and the `browser (playwright e2e)` job has gated every
+pull request since 2026-10-05. The count and the CI claim are the two things in this
+section a reader would take on trust, so they are corrected rather than left to rot — and
+the header is the authority on enforcement, not this paragraph.
+
+On timing: the suite is memory-hungry and has been flaky as a batch on an 8 GB machine
+(two specs wait on real clock time — a scheduled publish and an emailed confirmation).
+Locally the honest figure is "about eleven minutes with headroom", not a guarantee;
+in CI it runs in about five and a half with `EMAIL_POLL_INTERVAL_SECONDS=2`.
+
+| Spec | Stories | What only a browser can say |
+|---|---|---|
+| `requisition-approval.spec.ts` | B2 | HR has no Approve control at all, an unapproved opening refuses the public without telling them why, and the approver's note reaches the person who has to act on it |
+| `jd-versions.spec.ts` | B3, B6 | a draft is edited while a candidate has the advert open, and the advert does not move until it is published |
+| `scheduled-publishing.spec.ts` | B4a, B0 | an opening publishes itself with nothing in the test telling it to, and what the careers board lists opens when clicked |
+| `application-confirmation.spec.ts` | B5 | the CV says one name, the candidate says another, and HR sees the candidate's |
+| `save-and-resume.spec.ts` | B4, B4c | saving is offered and inert before consent, and a genuinely new browsing context comes back to the answers already given |
+| `reapply-cooldown.spec.ts` | B4 | a rejected candidate is refused by the waiting period with nothing leaked on screen, let through by an override, and — after confirming by email — is back in **HR's own view** as `new`. The confirmation leg was added after a review found the spec passed while the enrolment stayed rejected and the override went unspent: it proved the form accepted a submission, not that criterion 9 works |
+| `apply-source.spec.ts` | B1 | a campaign tag never costs an applicant, and is never shown to the person being counted |
+| `apply-indistinguishable.spec.ts` | B4b | one address walked through four states renders **one** screen, compared for equality rather than searched for forbidden words. Dates deliberately unmasked. The API matrix in `test_ph3_cooldown_indistinguishable.py` renders nothing, and the panel is a second place the leak can come back — `awaiting_confirmation`, `already_applied` and the ids were each removed after a review found them telling a stranger that a named person had been turned down |
+
+**Three defects were found by writing them**, each in a criterion already marked ✅:
+
+1. **The reapplication rule never ran.** `already_applied` was checked before the
+   cooldown, so the door candidates use never reached the rule. Detailed under B4.
+2. **Every workflow panel saved into a cache entry nobody read.** `GovernancePanel`,
+   `JdVersionPanel` and `PostingEditor` refreshed `['requisition', id]`; the page that
+   renders all three reads `['hr', 'requisition', id]`. Submitting an opening for
+   approval worked and the badge still said "Not submitted" until a reload. Every unit
+   test handed the panel a requisition as a prop — which is exactly the wiring the bug
+   was in.
+3. **Three of the four parsed CV fields never reached the screen.** Detailed under B5.
+
+The common shape is worth naming: all three passed tests written *beside* the code and
+failed the first test written *against the product*. That is the argument for this
+layer existing, not the coverage number.

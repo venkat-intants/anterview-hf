@@ -37,7 +37,11 @@ import {
   type Applicant,
   type ApplicantStatus,
 } from '@/api/applicants';
-import { listRequisitions, type Requisition } from '@/api/requisitions';
+import {
+  listRequisitions,
+  overrideReapplyCooldown,
+  type Requisition,
+} from '@/api/requisitions';
 import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
 import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
 import { useSourceOptions } from '@/lib/sourceOptions';
@@ -264,6 +268,111 @@ function RejectAction({
           aria-label={`Confirm ${ariaLabel.toLowerCase()}`}
         >
           Confirm reject
+        </Pill>
+        <Pill variant="ghost" onClick={() => setOpen(false)}>
+          Cancel
+        </Pill>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Let one rejected candidate apply to this opening again now (PH3-B4).
+ *
+ * Only offered on a rejected application, because that is the only state a
+ * cooldown applies to. The reason is optional on purpose: the server records
+ * the override in the audit log either way, and a required box produces "ok" a
+ * hundred times — which looks like information and is not. It is still asked
+ * for, because an exception is exactly what someone is later asked to justify.
+ */
+function ReapplyOverrideAction({
+  enrolmentId,
+  openingTitle,
+  candidateName,
+  grantedAt,
+}: {
+  enrolmentId: string;
+  openingTitle: string;
+  candidateName: string;
+  /** From the server, so the grant is still there after a refresh. */
+  grantedAt?: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [justDone, setJustDone] = useState(false);
+  // Local state only covers the moment between the click and the refetch. It
+  // used to be the ONLY record on any screen: nothing read
+  // `reapply_override_at`, so an exception HR granted disappeared on reload
+  // and there was no way to tell whether it had been made or spent.
+  //
+  // Truthiness, NOT `!== null`. An older cached response, or any caller that
+  // has not been given the field, sends `undefined` — and `undefined !== null`
+  // is true, which hid the "let them reapply" control behind a grant that was
+  // never made. A missing field means "we do not know of one", the same as a
+  // null.
+  const done = justDone || Boolean(grantedAt);
+
+  const grant = useMutation({
+    mutationFn: () => overrideReapplyCooldown(enrolmentId, reason),
+    onSuccess: () => {
+      setJustDone(true);
+      setOpen(false);
+      setReason('');
+      toast.success(`${candidateName} can apply to ${openingTitle} again now.`);
+    },
+    onError: (e: unknown) =>
+      toast.error(e instanceof Error ? e.message : 'Could not allow reapplying.'),
+  });
+
+  if (done) {
+    return (
+      <p className="text-[11.5px] text-[var(--ui-soft)]">
+        May reapply now
+      </p>
+    );
+  }
+
+  if (!open) {
+    return (
+      <Pill
+        variant="ghost"
+        onClick={() => setOpen(true)}
+        aria-label={`Let ${candidateName} reapply for ${openingTitle}`}
+      >
+        Let them reapply
+      </Pill>
+    );
+  }
+
+  return (
+    <div className="w-full space-y-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3">
+      <p className="text-[12px] text-[var(--ui-soft)]">
+        This skips the waiting period for {candidateName} on {openingTitle}. Their earlier
+        rejection stays on their record.
+      </p>
+      <div>
+        <label
+          htmlFor={`reapply-why-${enrolmentId}`}
+          className="block text-[12px] text-[var(--ui-soft)]"
+        >
+          Why <span className="text-[var(--ui-faint)]">(optional, kept in the audit log)</span>
+        </label>
+        <textarea
+          id={`reapply-why-${enrolmentId}`}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          rows={2}
+          className={inputCls}
+        />
+      </div>
+      <div className="flex gap-2">
+        <Pill
+          disabled={grant.isPending}
+          onClick={() => grant.mutate()}
+          aria-label={`Confirm ${candidateName} may reapply for ${openingTitle}`}
+        >
+          {grant.isPending ? 'Saving…' : 'Allow reapplying'}
         </Pill>
         <Pill variant="ghost" onClick={() => setOpen(false)}>
           Cancel
@@ -559,6 +668,14 @@ function ApplicantDrawer({
                               onReject(a.id, app.enrolment_id, reasonCode, reason)
                             }
                           />
+                          {app.stored_status === 'rejected' && app.enrolment_id ? (
+                            <ReapplyOverrideAction
+                              enrolmentId={app.enrolment_id}
+                              openingTitle={app.opening_title ?? 'this opening'}
+                              candidateName={a.full_name}
+                              grantedAt={app.reapply_override_at}
+                            />
+                          ) : null}
                         </div>
                       </li>
                     ))}
@@ -646,6 +763,14 @@ function ApplicantDrawer({
                   onReject(a.id, only?.enrolment_id, reasonCode, reason)
                 }
               />
+              {a.status === 'rejected' && only?.enrolment_id ? (
+                <ReapplyOverrideAction
+                  enrolmentId={only.enrolment_id}
+                  openingTitle={only.opening_title ?? 'this opening'}
+                  candidateName={a.full_name}
+                  grantedAt={only.reapply_override_at}
+                />
+              ) : null}
             </>
           )}
         </div>

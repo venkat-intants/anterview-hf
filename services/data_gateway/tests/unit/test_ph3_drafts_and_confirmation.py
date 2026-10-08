@@ -13,9 +13,10 @@ import inspect
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 APP = Path(__file__).resolve().parents[2] / "app"
 MIGRATION = (
@@ -541,7 +542,7 @@ def test_submission_applies_the_rules_a_draft_was_excused() -> None:
     src = inspect.getsource(submit_draft)
     assert "_open_posting" in src          # still live?
     assert "validate_answers" in src        # required questions answered?
-    assert "cooldown_check" in src          # cooldown passed?
+    assert "reapplication_gate" in src      # cooldown passed? (shared, not a copy)
 
 
 # ===========================================================================
@@ -596,9 +597,47 @@ async def test_replacing_the_cv_clears_the_confirmation() -> None:
 
     db = _db()
     await attach_resume(
-        db, draft_id=uuid.uuid4(), s3_key="k", filename="cv.pdf", parsed={}, now=NOW
+        db, draft_id=uuid.uuid4(), s3_key="k", filename="cv.pdf", parsed={},
+        resume_text="the text read out of the PDF", now=NOW,
     )
-    assert "confirmed_at = NULL" in db.execute.await_args_list[0].args[0].text
+    call = db.execute.await_args_list[0]
+    assert "confirmed_at = NULL" in call.args[0].text
+
+
+@pytest.mark.asyncio
+async def test_the_draft_keeps_the_text_read_out_of_the_cv() -> None:
+    """Round 10. Without it, a draft-door application is NEVER SCORED.
+
+    `reconciliation._UNSCORED_WORK_SQL` selects on `a.resume_text IS NOT NULL
+    AND length(trim(a.resume_text)) > 0`, so an applicant row created by this
+    door with no text matched nothing the reconciler looks for — not "scored
+    late", never scored, for the whole life of the door, while
+    `pending_enrichment=True` named an intent nothing could act on.
+    `upload_draft_resume` extracted the text to derive the confirmable fields
+    and then discarded it.
+
+    This asserts the column is both written here and carried onto the applicant
+    at submission, because either half alone leaves the door unscored.
+    """
+    from app.application_drafts import attach_resume
+    from app.routers.public_apply import submit_draft
+
+    db = _db()
+    await attach_resume(
+        db, draft_id=uuid.uuid4(), s3_key="k", filename="cv.pdf", parsed={},
+        resume_text="PRIYA SHARMA — senior engineer", now=NOW,
+    )
+    call = db.execute.await_args_list[0]
+    assert "resume_text = :rt" in call.args[0].text, (
+        "attach_resume no longer stores the extracted text, so the draft door "
+        "is back to never being scored"
+    )
+    assert call.args[1]["rt"] == "PRIYA SHARMA — senior engineer"
+
+    assert "resume_text=row.get(\"resume_text\")" in inspect.getsource(submit_draft), (
+        "the draft door no longer carries the stored text onto the applicant, "
+        "so the reconciler will never pick the application up"
+    )
 
 
 def test_the_confirmation_survives_the_draft() -> None:
@@ -733,12 +772,34 @@ def test_an_empty_or_unreadable_cv_returns_nothing_and_does_not_raise() -> None:
     assert extract_contact_details("\x00\x01\x02") == {}
 
 
-def test_the_confirmation_screen_only_offers_fields_the_parser_produces() -> None:
-    """An empty box labelled "Education" that can never fill in is worse than
-    not asking. PH3-B5b grows this shape when the parser grows."""
+def test_the_confirmation_screen_offers_exactly_what_the_parser_produces() -> None:
+    """Both directions, and the second one is the one that was wrong.
+
+    Nothing extra: an empty box labelled "Education" that can never fill in is
+    worse than not asking, so the shape may not grow ahead of the parser.
+
+    And nothing MISSING, which is what this test used to allow. It pinned the
+    literal set {full_name, email} while extract_contact_details had always
+    returned five keys, so the phone number and the two profile links were
+    read off the CV, stored, and then dropped on the way to the screen headed
+    "we read these from your CV". A test written against a remembered list
+    agrees with whatever it was written next to; this one asks the parser.
+    """
+    from app.resume_details import extract_contact_details
     from app.routers.public_apply import ParsedDetails
 
-    assert set(ParsedDetails.model_fields) == {"full_name", "email"}
+    cv = "\n".join(
+        [
+            "Priya Sharma",
+            "+91 98200 11223",
+            "priya@example.com",
+            "linkedin.com/in/priya",
+            "github.com/priya",
+        ]
+    )
+    produced = set(extract_contact_details(cv))
+    assert produced == {"full_name", "email", "phone", "linkedin_url", "github_url"}
+    assert set(ParsedDetails.model_fields) == produced
 
 
 # ===========================================================================
@@ -820,7 +881,15 @@ def test_submit_reuses_the_drafts_key_rather_than_copying_it() -> None:
     from app.routers.public_apply import submit_draft
 
     src = inspect.getsource(submit_draft)
+    # The Applicant and enrol_applicant take it directly; the reapplication
+    # path now takes it through `_stage_reapplication(cv_key=...)`, which both
+    # doors share. All the SAME key either way — the point of this test is
+    # that nothing copies the object.
     assert src.count('resume_s3_key=row["resume_s3_key"]') == 2
+    assert 'cv_key=row["resume_s3_key"]' in src, (
+        "the reapplication no longer stages the draft's own object, so "
+        "something is copying or re-uploading it"
+    )
 
 
 # ===========================================================================
@@ -928,16 +997,69 @@ async def test_every_other_submission_keeps_the_pointer() -> None:
 def test_the_already_applied_branch_deletes_the_object_it_released() -> None:
     """Clearing the pointer without deleting the object just makes the orphan
     unfindable, which is worse than leaving it addressable."""
-    from app.routers.public_apply import submit_draft
+    # Asserted against `_refuse`, which is where this now lives for BOTH
+    # doors and both refusal branches. It used to be four hand-written copies
+    # of these four steps, and one of them shipped clearing the pointer
+    # without deleting the object — so checking one shared function is a
+    # stronger guard than checking the copy this test happened to point at.
+    from app.routers.public_apply import _refuse, submit_draft
 
     src = inspect.getsource(submit_draft)
-    branch = src[src.index('existing["enrolment_id"] is not None'):]
-    branch = branch[: branch.index("return ApplicationOut")]
-    assert "release_resume=True" in branch
-    assert "_delete_from_s3" in branch
-    # Order matters: commit the cleared pointer BEFORE deleting the object, so a
-    # failed delete leaves an orphan rather than a dangling reference.
-    assert branch.index("db.commit") < branch.index("_delete_from_s3")
+    assert "_refuse(" in src, "the draft door no longer refuses through the shared path"
+
+    # `_refuse` is now the guarded shell; `_refuse_work` holds the two writes
+    # it guards. Both are asserted, because the split is the fix: a failure in
+    # either write must give the same 503 the accept path gives, not an
+    # unhandled 500 on the refusing states only.
+    import ast as _ast
+    import pathlib as _pathlib
+
+    from app.routers.public_apply import _refuse_work
+
+
+    body = inspect.getsource(_refuse) + inspect.getsource(_refuse_work)
+    assert "release_resume=True" in body
+    assert "_release_unadopted" in body
+
+    # PARSED, NOT INDEXED. These were `body.index(...)` comparisons, and the
+    # explanatory comment added to `_refuse`'s except block — "left
+    # `mark_submitted` one line above it unguarded" — made the first match for
+    # "mark_submitted" a COMMENT, 40 lines above the real call. The assertion
+    # below could then be satisfied with the two writes in either order. A
+    # comment silently de-fanged an order assertion in another file.
+    import app.routers.public_apply as _mod
+
+    tree = _ast.parse(_pathlib.Path(_mod.__file__).read_text(encoding="utf-8"))
+
+    def _calls(fn_name: str) -> dict[str, int]:
+        fn = next(
+            n
+            for n in _ast.walk(tree)
+            if isinstance(n, _ast.AsyncFunctionDef) and n.name == fn_name
+        )
+        out: dict[str, int] = {}
+        for n in _ast.walk(fn):
+            if isinstance(n, _ast.Call):
+                name = (
+                    n.func.attr
+                    if isinstance(n.func, _ast.Attribute)
+                    else getattr(n.func, "id", None)
+                )
+                if name and name not in out:
+                    out[name] = n.lineno
+        return out
+
+    work = _calls("_refuse_work")
+    # The draft is consumed BEFORE the mail: the notice owns a savepoint inside
+    # this transaction, and the single commit in `_refuse` covers both.
+    assert work["mark_submitted"] < work["_mail_cooldown_reason"], work
+
+    refuse = _calls("_refuse")
+    # And the object is released only AFTER the commit, so a failed delete
+    # leaves a findable orphan rather than a row naming a file that is gone.
+    assert refuse["commit"] < max(
+        ln for name, ln in refuse.items() if name == "_release_unadopted"
+    ), refuse
 
 
 # ===========================================================================
@@ -1011,3 +1133,74 @@ def test_a_storage_failure_refuses_rather_than_lying() -> None:
     assert "503" in guard or "SERVICE_UNAVAILABLE" in guard
     # And it must not still be swallowing the error into a warning.
     assert "draft_object_orphaned" not in src
+
+
+# ===========================================================================
+# A best-effort extra must not be able to undo the request that called it
+# ===========================================================================
+@pytest.mark.asyncio
+async def test_the_cooldown_notice_cannot_roll_back_its_caller() -> None:
+    """The notice owns a SAVEPOINT, not the caller's transaction.
+
+    It used to `commit()` on success and `rollback()` on failure — and on the
+    draft route the caller has already run `mark_submitted`, which consumes the
+    draft. A failure in here therefore threw that away, the caller's following
+    `commit()` committed nothing, and the CV object was deleted anyway. The
+    draft then stayed readable at `GET /apply/draft` for a rejected candidate
+    while a live one's answered 404, pointing at an object that no longer
+    existed: the exact channel round 3 closed, reopened by the fix for round 2.
+
+    `enqueue_email` is made to raise, which is reachable — `email_events
+    .dedupe_key` is UNIQUE while the dedupe is a SELECT-then-skip, so two
+    probes for one address in one window both pass the check and the second
+    raises on flush.
+    """
+    from app.reapplication import CooldownVerdict
+    from app.routers import public_apply
+
+    db = AsyncMock()
+    db.scalar = AsyncMock(side_effect=[uuid.uuid4(), "en", "Stored Name"])
+
+    # THE FAILURE HAPPENS AT SAVEPOINT EXIT, not inside `enqueue_email`.
+    # `enqueue_email` only does `db.add(...)`; the UNIQUE `dedupe_key`
+    # violation surfaces when the nested transaction flushes, which is
+    # `__aexit__`. An earlier version of this test patched `enqueue_email` to
+    # raise directly — which an implementation with NO savepoint at all would
+    # also have survived, so it proved nothing about the thing it is named
+    # for. Raising from `__aexit__` is the real shape.
+    nested = AsyncMock()
+    nested.__aenter__ = AsyncMock(return_value=nested)
+    nested.__aexit__ = AsyncMock(side_effect=IntegrityError("x", {}, Exception()))
+    db.begin_nested = MagicMock(return_value=nested)
+
+    with patch.object(public_apply, "enqueue_email", AsyncMock()):
+        await public_apply._mail_cooldown_reason(
+            db,
+            requisition_id=uuid.uuid4(),
+            company_id=uuid.uuid4(),
+            applicant_id=uuid.uuid4(),
+            address="someone@example.com",
+            job_title="Backend Engineer",
+            company_name="Acme",
+            verdict=CooldownVerdict(
+                allowed=False, until=datetime.now(tz=UTC) + timedelta(days=7)
+            ),
+        )
+
+    # It took a savepoint...
+    db.begin_nested.assert_called_once()
+    # ...and it touched neither end of the caller's transaction. Both of these
+    # were present before, and either one is enough to lose the caller's work.
+    db.commit.assert_not_awaited()
+    db.rollback.assert_not_awaited()
+
+
+def test_the_cooldown_notice_owns_no_transaction_boundary() -> None:
+    """And it stays that way. A `commit` or `rollback` reintroduced here is not
+    a local change: it reaches into whatever the caller had in flight."""
+    src = inspect.getsource(
+        __import__("app.routers.public_apply", fromlist=["x"])._mail_cooldown_reason
+    )
+    assert "db.commit()" not in src
+    assert "db.rollback()" not in src
+    assert "db.begin_nested()" in src

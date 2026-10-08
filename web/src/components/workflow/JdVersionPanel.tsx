@@ -93,7 +93,11 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
 
   function refresh(): void {
     void client.invalidateQueries({ queryKey: ['jd-history', requisition.id] });
-    void client.invalidateQueries({ queryKey: ['requisition', requisition.id] });
+    void client.invalidateQueries({ queryKey: ['hr', 'requisition', requisition.id] });
+    // Publishing a JD version rewrites the advert, which the openings list and
+    // the opening's dashboard both show.
+    void client.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
+    void client.invalidateQueries({ queryKey: ['hr', 'requisition-dashboard'] });
   }
 
   const save = useMutation({

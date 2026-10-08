@@ -453,6 +453,21 @@ def _read_workbook(content: bytes) -> list[list[str]]:
         # that was wrong: measured, a laced sheet fails inside `load_workbook` and
         # is caught by the handler above, not this one.
         #
+        # A LONE SURROGATE is the second one, measured on the PH3-B4b branch and
+        # kept here because it shows WHY the streaming half needs its own handler:
+        # `read_only=True` parses lazily, so `load_workbook` returns without
+        # touching the sheet XML and its handler sees nothing. openpyxl's writer
+        # emits the surrogate as an invalid character reference, and `iter_rows`
+        # then raises `xml.etree.ElementTree.ParseError: reference to invalid
+        # character number` — which used to leave as itself, a 500 from a file a
+        # stranger supplied.
+        #
+        # Nothing on this path needs `strip_unstorable`, and that is measured
+        # rather than assumed: a NUL is illegal in XML and openpyxl's own writer
+        # refuses it with `IllegalCharacterError`, and a lone surrogate cannot
+        # survive the reader, per the paragraph above. A sanitiser here would be
+        # dead code pretending to be a control.
+        #
         # WARNING, not info: neither caller logs — both do
         # `raise HTTPException(...) from exc` and the chained traceback is
         # discarded — so this line is the only trace, and a repeating openpyxl

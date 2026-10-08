@@ -37,6 +37,7 @@ from shared.http_observability import install_http_observability
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
+from shared.s3 import aclose_s3_clients, s3_client
 
 from app import reconciliation, reminders, scheduled_publishing
 from app.accommodations import purge as purge_accommodations
@@ -51,6 +52,7 @@ from app.interview_kits import purge_expired_notes
 from app.job_tasks import purge as purge_task_submissions
 from app.mailer import purge_old_email_events, start_email_worker, stop_email_worker
 from app.question_import import assert_xlsx_parser_hardened
+from app.reapplication import purge_stale_staged
 from app.redis_client import close_redis, get_redis, init_redis
 from app.retention import purge_expired_sessions
 from app.routers.accommodations import hr_router as accommodations_hr_router
@@ -324,6 +326,30 @@ async def _run_retention_job() -> None:
             "hire_checkin.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc),
         )
 
+    # Same tick again: reapplications staged and never confirmed (PH3-B4b). A
+    # staged attempt holds the candidate's screening answers and a CV, and past
+    # the token's own lifetime the link that would apply it cannot be redeemed
+    # — so the data is not merely old, it is unreachable. Same cron, same
+    # reason as the drafts below.
+    try:
+        async with factory() as session:
+            stale_keys = await purge_stale_staged(session)
+            await session.commit()
+        for key in stale_keys:
+            try:
+                await _delete_from_s3(key)
+            except Exception as exc:  # noqa: BLE001, PERF203 — as below
+                log.warning(
+                    "reapply.retention.object_orphaned",
+                    exc_type=type(exc).__name__,
+                )
+        if stale_keys:
+            log.info("reapply.retention.purged", objects=len(stale_keys))
+    except Exception as exc:  # broad — never let this cleanup kill the scheduler
+        log.error(
+            "reapply.retention.error", exc_type=type(exc).__name__, exc_msg=str(exc)
+        )
+
     # Same tick again: abandoned application drafts (PH3-B4c). An expired draft
     # holds a name, an email, a phone number and a CV — personal data past its
     # purpose, which is exactly what this cron is for. Deliberately NOT a
@@ -567,6 +593,43 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
         next_run_iso=next_run_iso,
     )
 
+    # WARM THE S3 CLIENT BEFORE SERVING, so no request pays for building it.
+    #
+    # `shared.s3` caches the client now (round 12 of PH3-B4b) because
+    # construction is 180-450 ms of SYNCHRONOUS botocore work that blocks the
+    # event loop — and on the anonymous apply doors that stall was
+    # state-correlated, since only the refusing branches delete the CV they
+    # were made to upload. Caching takes it to 4-12 ms after the first call;
+    # warming here means the first call is not a candidate's either.
+    #
+    # IT WARMS THE CACHE; IT DOES NOT CHECK REACHABILITY, and the log line
+    # below says so because round 13 noted the previous one read as though it
+    # did. `s3_client` opens no socket on entry when credentials are supplied —
+    # that is why this is safe to do at boot at all. A misconfigured endpoint,
+    # bucket or key is therefore NOT surfaced here; the first upload still
+    # fails exactly as it would have.
+    #
+    # Guarded on explicit credentials for a reason that is not obvious: with
+    # them empty, botocore engages its default credential chain, whose EC2
+    # instance-metadata leg blocks for minutes on a non-AWS host. Warming
+    # unconditionally would hang boot on every developer machine. The cost of
+    # the guard is that an instance-profile or IRSA deployment never warms, so
+    # on those the first request — possibly a candidate's anonymous apply —
+    # pays the construction plus a credential-chain round trip.
+    if settings.s3_access_key_id:
+        try:
+            async with s3_client(
+                endpoint=settings.s3_endpoint,
+                region=settings.s3_region,
+                access_key=settings.s3_access_key_id,
+                secret_key=settings.s3_secret_access_key,
+                use_ssl=settings.s3_use_ssl,
+            ):
+                pass
+            log.info("s3.client.cache_primed")
+        except Exception as exc:  # noqa: BLE001 — storage cold must not stop boot
+            log.warning("s3.client.warm_failed", error_type=type(exc).__name__)
+
     yield  # application runs here
 
     # --- shutdown ---
@@ -578,6 +641,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     await stop_email_worker()
     await dispose_engine()
     await close_redis()
+    # The cached S3 clients own an aiohttp connector each; close them with the
+    # rest. Safe when nothing was ever cached, and safe to call twice.
+    await aclose_s3_clients()
     log.info("service.stop", service=settings.service_name)
 
 

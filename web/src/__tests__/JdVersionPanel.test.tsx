@@ -274,3 +274,48 @@ describe('saving', () => {
     );
   });
 });
+
+// ===========================================================================
+// Publishing a version has to move the page around the panel
+// ===========================================================================
+// The panel's own history list reads ['jd-history', id], which was always
+// invalidated correctly — so every test here, and the browser journey too,
+// passed while the requisition itself went stale: the panel refreshed
+// ['requisition', id] and WorkflowBuilder reads ['hr', 'requisition', id].
+// The advert shown everywhere else on the page kept the old wording until a
+// reload. This asserts the key that was wrong, not the one that was right.
+describe('publishing a version and the page around it', () => {
+  it('invalidates the requisition the page actually reads, and the lists', async () => {
+    getJdHistory.mockResolvedValue(history([version({ status: 'draft', version: 2 })]));
+    publishJdVersion.mockResolvedValue(version({ status: 'published', version: 2 }));
+
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+    });
+    const invalidated: string[] = [];
+    const spy = vi
+      .spyOn(client, 'invalidateQueries')
+      .mockImplementation((filters?: { queryKey?: readonly unknown[] }) => {
+        invalidated.push(JSON.stringify(filters?.queryKey ?? []));
+        return Promise.resolve();
+      });
+
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={client}>
+        <JdVersionPanel requisition={requisition()} />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /^Publish v2$/ }));
+    await waitFor(() => expect(invalidated.length).toBeGreaterThan(0));
+
+    expect(
+      invalidated.some((k) => k.includes('"hr","requisition","req-1"')),
+      'the key WorkflowBuilder reads',
+    ).toBe(true);
+    expect(invalidated.some((k) => k.includes('"hr","requisitions"'))).toBe(true);
+    expect(invalidated.some((k) => k.includes('requisition-dashboard'))).toBe(true);
+    spy.mockRestore();
+  });
+});

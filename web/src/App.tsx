@@ -34,6 +34,7 @@ const ResumeApplication = lazy(() => import('./pages/ResumeApplication'));
 // Public because the emailed token IS the credential — the applicant has no
 // session yet, which is the whole point of the page.
 const ActivateAccount = lazy(() => import('./pages/ActivateAccount'));
+const ConfirmReapplication = lazy(() => import('@/pages/ConfirmReapplication'));
 // The public job board — one company's open roles, no session.
 const Careers = lazy(() => import('./pages/Careers'));
 // PH4 Wave 4 (A3/A4) — the candidate's own offer, magic-link token in the
@@ -182,6 +183,7 @@ export default function App() {
               /interview-invite above. */}
           <Route path="/apply/draft" element={<ResumeApplication />} />
           <Route path="/activate" element={<ActivateAccount />} />
+          <Route path="/reapply" element={<ConfirmReapplication />} />
           <Route path="/careers/:companySlug" element={<Careers />} />
           {/* Public offer — magic-link token in the URL #fragment, no login. */}
           <Route path="/offer" element={<PublicOffer />} />

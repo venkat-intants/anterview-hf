@@ -37,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import pdf_text
 from app.config import settings
 from app.database import get_db_session
-from app.dependencies import get_current_user
+from app.dependencies import require_password_changed
 from app.models import Job
 from app.s3_upload import upload_file
 
@@ -48,7 +48,12 @@ router = APIRouter(prefix="/jobs", tags=["jd"])
 # ---------------------------------------------------------------------------
 # Dependency shortcuts
 # ---------------------------------------------------------------------------
-CurrentUserDep = Annotated[User, Depends(get_current_user)]
+# `require_password_changed` — round 15, same reasoning as `agent.py`.
+# `_assert_jd_upload_authorized`'s rule 1 is "the platform owner bypasses
+# all tenant checks", so this router decides privilege in-handler too and
+# never reached the bootstrap-password gate. `POST /jobs/{job_id}/jd-document`
+# is a cross-tenant WRITE of a JD PDF and its extracted text.
+CurrentUserDep = Annotated[User, Depends(require_password_changed)]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 
 # Roles that may manage platform-level (seeded / created_by_user_id=NULL) jobs

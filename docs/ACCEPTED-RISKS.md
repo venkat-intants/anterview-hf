@@ -692,6 +692,737 @@ substantiated complaint — that is the decision recorded here, not a preference
 
 ---
 
+## AR-10 — The anonymous apply doors still leak which state an address is in, under a write failure and on demand
+
+| | |
+|---|---|
+| **Source finding** | PH3-B4b staged reapplication — code review + security review, rounds 1-14, 2026-09-28 to 2026-10-04 |
+| **Status** | **ACCEPTED — five residues; (4) closed on the one-shot door 2026-10-05, the other four open. The property itself holds on a healthy system and is tested** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a timing or enumeration report against the apply doors; (b) `public_apply_floor_exceeded_total` above noise — `PublicApplyTimingPadFailingOpen` in `ops/alerts/` is the consumer, added in round 10 because this trigger previously had no mechanism to fire; (c) a Redis outage coinciding with apply traffic; (d) a residency or privacy bid asking about enumeration resistance; (e) the write-set design in "Path to closure" becoming cheap enough to build |
+
+**What is accepted.** `POST /apply/{requisition_id}` and `POST /apply/draft/submit`
+are anonymous — no login, the caller supplies the email as a form field, and the
+requisition id is explicitly not a secret. They must answer identically whether
+that address has a live application, was rejected and is inside the waiting
+period, was rejected and the period elapsed, was rejected with an HR override,
+or has never applied here. Fourteen review rounds each found a way to tell those states apart — except
+the fourteenth, which could not, and said so. That is the first round where
+the answer to "is there a disclosure" was no. The reply body, the status code on a healthy system, the state
+left behind, what a second submission reads back, and the dominant timing term
+are all closed. FIVE residues were not, and are accepted here rather than in a
+commit message or a test docstring — four failure modes and one traded
+invariant. **(4) has since been closed on the one-shot door** (2026-10-05, by
+the test it was waiting for); it is kept below rather than deleted because its
+draft-door half is a property check and not a coverage proof, and because the
+reasoning in it is what that test was written against:
+
+1. **Any write-path failure after the probe still splits the states 201/503.**
+   `_require_write_capability` asks whether the transaction can write at all
+   before anything branches, so a read-only standby, `default_transaction_read_only`
+   or a maintenance window now refuses every state alike. It does not cover a
+   failure *during* the write: a full disk, a serialization failure or deadlock,
+   a statement timeout, a connection dropped mid-transaction, or a fault inside
+   `enrol_applicant` / `_ensure_guest_user` / `_record_apply_consent`. Those
+   reach the generic handler, which only the states that write can reach, so
+   they answer 503 while a live application and a cooldown answer 201. Two
+   anonymous requests during such a window separate "this address already has
+   an application here" from "this address is free to apply". The earlier
+   characterisation of this residue as "a disk-full primary" understated it:
+   several of these are ordinary production events rather than outages.
+
+   **THE MEASURED WRITE SET, per state and per door** (2026-10-05, rows
+   inserted by the submit alone, against a real Postgres; the draft door's
+   journey was built first so the numbers are the submit and not the four
+   calls before it):
+
+   | state | one-shot door | draft door |
+   |---|---|---|
+   | live application | *nothing* | *nothing* |
+   | rejected, in cooldown | `email_events` | `email_events` |
+   | rejected, elapsed | `email_events` | `email_events` |
+   | rejected, overridden | `email_events` | `email_events` |
+   | never applied here | `applicants`, `enrolments`, `users`, `dpdp_consent_ledger`, `stage_transitions`, `email_events` | `applicants`, `enrolments`, `stage_transitions`, `email_events` |
+
+   The doors differ only on the last row, and not in a way anyone outside can
+   see: the draft door already wrote `users` and `dpdp_consent_ledger` at
+   `start_draft`, so its submit writes fewer. That is a difference between
+   doors, not between states.
+
+   **What the vector changes about this residue.** It was written as though the
+   split were broadly "states that write" against "states that do not". It is
+   sharper and narrower than that:
+
+   * A live application writes **nothing at all**, on either door. No write
+     failure can make it answer anything but 201.
+   * The three rejected states write exactly one row, the staged notice — and
+     that write sits inside `begin_nested()`, a savepoint taken precisely so a
+     failing notice "must cost this notice and nothing else". A failure
+     confined to it is absorbed and still answers 201.
+   * So the state actually exposed to a mid-write failure is **"never applied
+     here"**, the one with four to six table writes and no savepoint around
+     them.
+
+   Which means this residue and residue (4) leak the SAME state by different
+   mechanisms: a write failure says "never applied here", and so does reaching
+   the concurrency exit. That is worth stating because it changes what closing
+   either one buys — they are not independent coverage of the same surface,
+   they are two doors onto one fact, and a reader comparing the five states
+   should expect (d) to be the one that separates.
+
+   Re-measure with the counts rather than trusting this table: snapshot
+   `applicants`, `application_drafts`, `dpdp_consent_ledger`, `email_events`,
+   `enrolments`, `stage_transitions` and `users`, submit one state, snapshot
+   again. The five states are already built by `_seeded_addresses` in
+   `test_ph3_cooldown_indistinguishable.py`, so the measurement is a loop over
+   that fixture and not a second hand-built approximation of the states.
+
+2. **The reply floor fails open, silently.** Each state-dependent term is absorbed
+by its own pad — the identity lookup by `apply_lookup_floor_ms`, everything
+below the gate by `apply_reply_floor_ms` — and each deadline is taken BEFORE
+the term it covers, which is what makes the absorption real. A branch that
+OVERRUNS its pad logs `public_apply.floor_exceeded` and answers immediately, so
+that term becomes readable again. Round 10 landed the counter
+and the alert this previously lacked — `public_apply_floor_exceeded_total`,
+labelled by `floor`, consumed by `PublicApplyTimingPadFailingOpen`. The
+contrast with `rate_limit`, which was instrumented while the privacy control
+it compensates for was not, is closed. **The pad still fails open**; what
+changed is that it now says so somewhere a person is paged.
+
+NOT the dense-CV mechanism any more, and this paragraph has now been wrong
+twice in the same way — read the correction before trusting the sentence that
+follows it. A single deadline was once spent by the CV parse, so a large PDF
+switched the control off; the parse and upload now sit BETWEEN the two pads,
+outside either budget, because they are the caller's own bytes and identical in
+every state.
+
+**Round 10 found a SECOND caller-sized term, inside the second pad, and this
+entry had already declared the class closed.** `resume_text` was written twice
+below `tail_from` — `applicants.resume_text` and `users.resume_text` — and both
+writes live only on the branch that creates an applicant. A refusal never
+reaches them; a returning applicant has a linked user and `_ensure_guest_user`
+returns early. So the only state that wrote the column was "this address has
+never applied here", the text was unbounded, and `_MAX_RESUME_BYTES` is not a
+bound on it because PDF extraction amplifies: a 0.81 MB PDF of repetitive text
+measured 14.19 MB of extracted characters. One request, one crafted PDF, and
+the accepting state overran a 400 ms budget justified as covering tens of
+milliseconds of fixed work. That is the round-8 dense-CV finding relocated one
+step BELOW the pad instead of above it.
+
+It is fixed, not accepted: `_MAX_RESUME_TEXT_CHARS` (100k characters) bounds the
+text where it is produced, so every write site inherits the bound, and
+`test_the_stored_resume_text_is_bounded_on_both_doors` fails if any door drops
+it. What this entry now accepts is overrun by work whose size the caller does
+NOT choose — and that sentence is load-bearing only for as long as nobody adds
+another caller-sized write below `tail_from`, which is twice now.
+
+**This paragraph has now been wrong three times, and the third version was
+written one round ago. Read the numbers, not the reasoning.**
+
+The previous version said storage latency mattered only "under
+degraded-but-up object storage", and that the overrun favoured the ACCEPTING
+branch because it runs ~15 round trips to a live application's two. Round 11
+measured both claims and both were false:
+
+* **It was not a degraded-storage condition. It was every request, on healthy
+  storage.** `_refuse` awaited a real `DeleteObject` between its commit and
+  `_reply`, and `shared.s3.s3_client` builds a fresh `aioboto3` Session and
+  client on every call with no caching. That construction alone is 180-450 ms
+  of local Python before a byte leaves the process; a whole delete measured
+  347-651 ms against a 400 ms pad. The pad was failing open on the refusing
+  states continuously, against loopback MinIO.
+* **The direction was backwards by roughly nine times.** Measured tails:
+  accepting ~54 ms, refusing ~470-495 ms. The reasoning about round-trip counts
+  was sound and irrelevant — one un-cached S3 client dwarfed fifteen database
+  round trips.
+
+**Fixed in two halves, and the first half alone was not enough — which is
+round 12's correction to round 11's fix and the reason this paragraph is on its
+fifth version.**
+
+Round 11 moved all five object releases that sit on a reply path to
+`BackgroundTasks` after the response, and measured every state leaving
+379-399 ms of the 400 ms pad unspent. That measurement is real and it was the
+wrong quantity. `shared.s3.s3_client` built a fresh client per call, and the
+construction is SYNCHRONOUS botocore work: an `asyncio.sleep(5ms)` monitor
+showed event-loop stalls of 349-533 ms matching construct+call almost exactly.
+So scheduling did not remove the term, it relocated it — out of the padded
+window and onto the same single-threaded worker, where round 12 read it off a
+CONCURRENT request, 24 of 25 correct from a single probe, with neither pad nor
+alert covering it. "Caching makes the term smaller, scheduling makes it
+absent" was the claim; scheduling made it invisible to the two guards that had
+just been written for it.
+
+The second half is the cache. `shared/s3.py` now keeps one client per
+(event loop, connection settings), and `app/main.py` warms it at startup and
+closes it in lifespan shutdown. Measured after: 487 ms on the constructing
+call, then 4.9-12.2 ms with 12-15 ms of loop lag — roughly fifty times less,
+and it comes off the CV UPLOAD too, which paid the same cost on every state
+and was the jitter this entry previously credited with being the only reason
+those oracles did not converge sooner. Scheduling and caching were never
+alternatives: scheduling keeps the term out of the pad, caching makes the term
+small enough not to matter wherever it runs.
+
+**The bounds are adequate, and round 14 is the first round with evidence of
+that rather than an argument for it.** Every previous measurement of the pads
+used the MINIMUM caller-chosen input — a ~650-byte PDF and no answers — while
+this residue's load-bearing sentence is about work whose size the caller does
+not choose. Round 14 measured the maximum the bounds allow instead (a CV
+saturating `_MAX_RESUME_TEXT_CHARS`, four `long_text` answers at
+`MAX_ANSWER_CHARS`). Unspent reply-pad budget against the 400 ms pad:
+
+    live 399.3ms | cooling 391.3ms | past 383.2ms | override 384.4ms | unknown 348.6ms
+
+Worst-case spread ~51 ms, all of it absorbed, better than 85% margin. Note what
+that implies about the test: `test_no_state_overruns_the_pad_that_is_meant_to_absorb_it`
+measures at the attacker's LEAST favourable input, so the upper bound it
+asserts is the easy one. Parameterising it over the worst case is open work.
+
+What holds it, stated accurately this time — the previous version said
+"three guards hold it now" and round 13 checked each one against a hypothetical
+revert of the cache and found all three stayed GREEN, which made that sentence
+this paragraph's fifth inaccuracy:
+
+* `test_no_object_release_is_awaited_on_a_reply_path` — structural,
+  deterministic, holds on any storage backend. Hardened in round 12, which
+  defeated the round-11 version in one edit because it excused `except`
+  handlers that actually reply. Holds the SCHEDULING half.
+* `test_no_state_overruns_the_pad_that_is_meant_to_absorb_it` — the first
+  upper bound this control ever had: fifteen guards and sixteen matrix tests
+  were green while a 600 ms term lived in a 400 ms pad, because every one of
+  them asserted only a LOWER bound. Holds the pad, not the cache: the
+  construction now happens in a background task after the response, where this
+  test cannot see it.
+* The config bounds — unrelated to either half, and listed here previously as
+  though they were.
+* `shared/tests/test_s3.py`'s cache suite — the CACHING half, which nothing
+  held when this register first claimed it was held, and which took three
+  rounds to actually hold. The history is worth keeping because each version
+  claimed more than it delivered:
+
+  - Round 13's five tests assert object IDENTITY. They go red if the cache is
+    removed while the context-manager API is kept, but any EVICTION policy
+    satisfies them — an evicted-and-rebuilt client is a different object only
+    on the call that rebuilds. Two of the five also go red by `AttributeError`
+    on `shared.s3._clients`, so they pin an internal name and would fail on a
+    harmless rename.
+  - Round 14 added `test_the_client_is_constructed_exactly_once`, and this
+    entry said it "actually holds the property". **It does not.** Both round-15
+    reviewers built a 300-second TTL and all 28 tests passed: every acquisition
+    happens within milliseconds and no test can advance a clock it does not
+    own. That claim is struck.
+  - Round 15 added `test_the_cache_keeps_no_time_based_state` and this entry
+    said it asserts "the module reads no clock at all" and that "asserting the
+    absence of the capability is the only form that holds". **Wrong, and this
+    was the fourth consecutive version of this claim to be wrong.** It asserted
+    no CALL NAMED one of five strings. Both round-16 reviewers defeated it
+    independently with `loop.call_later(300.0, _evict, key)` — the event loop
+    reads the clock on the module's behalf, and `asyncio` is on the
+    dependency-light allowlist deliberately, for the per-loop lock. 835/835
+    green, ruff clean, and the TTL demonstrably live. Three more spellings also
+    miss: a sleeping eviction task, `_tick = loop.time` then `_tick()` (round
+    15's own winning defeat re-spelled so the attribute access is not a Call),
+    and `getattr(loop, "time")()`. A use-counter cap needs no clock at all.
+  - Round 16 stopped guessing at the mechanism.
+    `test_nothing_evicts_from_the_cache_except_the_two_named_exits` asserts the
+    EFFECT: a TTL, an LRU, a use-cap and a size-cap all have exactly one thing
+    in common, which is that each must remove a key from the cache. Removing a
+    key outside `aclose_s3_clients` and `_prune_closed_loops` is what is
+    forbidden, so there is no cleverer eviction to find because there is
+    nowhere left for one to put its `pop`. Verified against all four shapes
+    above, including `del` rather than `pop`. The name-based clock check is
+    kept as an early signal and its docstring now says it is a belt and not
+    the buckle.
+
+    The reason this took four attempts is worth recording, because it is the
+    branch's whole pattern in miniature: each version asserted a PROXY for the
+    property — "does it import time", "does it call a clock", "does it call one
+    of these five clocks" — and a proxy has a hole somebody else can find. The
+    effect does not.
+
+The lesson is the one this entry states in its own voice and then broke four
+times: a control described here is not thereby guarded.
+
+What this residue now accepts is overrun of a pad by database work whose size
+the caller does not choose. The sentence is load-bearing only for as long as
+nobody puts another caller-sized or network term below `tail_from`, which has
+now happened FIVE times, listed so the next one is expected rather than
+surprising: the CV parse (round 8); the extracted CV text (round 10); the
+answers jsonb and the S3 delete (round 11); and a `users.resume_text` fill
+added by round 11's own consent fix, which round 12 counted as the fifth.
+
+That fifth one is now REVERTED rather than bounded, for a reason unrelated to
+timing: it wrote the `users` row, and `apply_activation` repoints
+`applicants.user_id` onto a candidate's real account once they claim it, so an
+anonymous submission could have written its own parsed CV text into a real
+account's row whenever that column was empty. It bought cosmetic parity on a
+column nothing on the draft door reads; it cost an anonymous cross-account
+write. The asymmetry it was closing stays open and recorded here instead: the
+draft door does not populate `users.resume_text`, and the place to fix that is
+the reconciler, which already holds the applicant's text and runs as nobody in
+particular.
+
+Every one of those five was found by a reviewer, none by the suite, and four
+of the five were introduced by the fix for the previous one.
+
+3. **Both rate limits fail open when Redis is unavailable.** The burst (6/min)
+   and sustained (60/hour) caps are the stated bound on the anonymous object
+   writes that storing the CV before the gate makes possible. During a Redis
+   outage there is no bound at all. This is the module's documented and
+   deliberate posture — a limiter that refuses everyone during an outage is
+   worse — but it means the bound is conditional, and the same outage disables
+   the JWT revocation epoch.
+
+   Two things the caps do NOT do. **They never reached the upload at all.**
+   FastAPI resolves route-level `dependencies=[...]` AFTER
+   `await request.form()`, and Starlette applies no size limit to a part that
+   carries a filename — it streams it into a `SpooledTemporaryFile` that rolls
+   to disk past 1 MB. So `_MAX_RESUME_BYTES` caps what the handler READS, not
+   what the service RECEIVES: the part is written to the container's filesystem
+   before either limiter runs, and the request is then refused 413. Verified
+   against the running service — a 64 MB anonymous part was fully spooled and
+   only then answered 429 by the limiter, so for that attack the caps are not
+   merely fail-open, they are structurally inapplicable.
+
+   The bound is now at the EDGE, where it belongs: `request_body { max_size
+   8MB }` on `handle /apply*` in both `Caddyfile` and `space/Caddyfile`. Being
+   an edge control is itself a caveat worth stating: a deployment that reaches
+   `data_gateway:8002` directly — a sidecar, a mesh, a port-forward, a future
+   topology that drops Caddy — has no cap at all, and nothing in the service
+   would report that. An
+   earlier version of this entry said there was "no total cap anywhere in this
+   repo", which was false and is corrected as a matter of record — four sibling
+   upload prefixes already had one (`/interviewer/*` at 1 MB,
+   `/hr/rounds/*/task/materials*`, `/offer*` and `/task*` at 11 MB). `/apply*`
+   was the only UNAUTHENTICATED upload prefix in the service and the only one
+   without a cap, which is the wrong way round. It also composed with residue
+   1: a caller who can fill the container filesystem can CAUSE the write
+   failure residue 1 splits 201/503 on, so accepting the two separately had
+   accepted an attacker-triggerable state oracle without saying so anywhere.
+
+   **Which prefixes are capped: see `BODY_CAPS` in
+   `ops/ci/check_routing_contract.py`, which CI holds both Caddyfiles to.**
+   Not restated here, and the reason is this entry's own history. Prose about
+   "sibling upload prefixes" went stale; it was replaced with an enumeration on
+   2026-10-04 — `/apply*` at 8 MB, four other prefixes capped, "every other
+   handle proxies with no cap" — and **that enumeration was wrong the next
+   day**, when the VAPT pass retuned `/apply*` to 6 MB and capped `/auth/*`,
+   `/careers*`, `/exam*` and `/interview-invite*`. An enumeration of a moving
+   target is prose that rots more slowly. The table is now in one place, a
+   mismatch between it and either Caddyfile fails the `invariants` job, and the
+   check was confirmed to fail by changing a cap and watching it do so.
+
+   What is still true and worth stating, because it is the part that bears on
+   this residue rather than on the numbers: the general `/hr/*` and `/jobs*`
+   remain **uncapped**.
+
+   That matters because the structural gap this entry describes is not specific
+   to `/apply*`. `question_banks.py` and `hr_exams.py` both do a bounded read
+   with a comment saying it is "BOUNDED READ, like the apply door's
+   `read(_MAX_RESUME_BYTES + 1)`" — the same handler-side cap, with the same
+   property that the part is spooled to the container filesystem before the
+   handler reads any of it. Those two sit under `/hr/*`, which has no edge cap,
+   so for an AUTHENTICATED caller the disk-filling primitive described above
+   still exists. Not re-accepted silently: the difference from `/apply*` is
+   that it needs a valid session for a real company, which is a named,
+   revocable actor rather than anyone holding a public link, and that is why it
+   is recorded here instead of being treated as the same risk. Capping `/hr/*`
+   at the edge is cheap and is the obvious next step; it is not done here
+   because `/hr/*` carries the bulk-CV upload path and picking a number for it
+   needs the measurement that `/apply*`'s 8 MB got, not a guess.
+
+   **And they are keyed per IP address**, so an attacker holding an IPv6 /64
+   has 2^64 independent 60/hour budgets, which makes "60 an hour" a bound on a
+   well-behaved client rather than on bulk enumeration. Still open.
+
+4. **The concurrency exit is state-correlated. CLOSED on the one-shot door
+   2026-10-05; still a property-only check on the draft door.**
+   `test_a_race_for_one_address_answers_the_same_and_leaves_one_of_everything`
+   in `test_ph3_cooldown_indistinguishable.py` races two submissions for a
+   never-applied address on both doors and asserts the two things this entry
+   names: that both racers are indistinguishable from each other and from all
+   five sequential states, and that exactly one applicant, one enrolment and
+   one guest identity survive. It also asserts the ARBITER exists
+   (`uq_applicants_company_email`) rather than assuming it, because the entry's
+   own point is that the index is created conditionally and the exit is
+   unreachable without it — a run on such a deployment would otherwise report
+   the property holding on the one configuration where it does not.
+
+   **On the one-shot door the test proves it entered the loser's branch**, by
+   requiring `public.apply.race_lost` in the captured output and retrying the
+   race until it appears. That mattered: the first version gathered two full
+   draft journeys, passed, and reached no race exit at all — four round trips
+   apart, the submits never collide, so the draft door now has its SUBMITS
+   raced rather than its whole journey.
+
+   **On the draft door branch entry is not asserted, because nothing the loser
+   does is observable from outside.** Three candidates were tried and each
+   fails for the same kind of reason: `public_apply.draft_object_orphaned` is
+   passed to `_best_effort_delete` as its `event`, and that helper logs only
+   from its `except` branch, so it fires when the release FAILS rather than
+   when the branch runs; `public_apply.draft_not_consumed_on_race` is the
+   cleanup's own failure branch; and the two draft rows both finish
+   `status='submitted'`, with the winner's `resume_s3_key` kept or cleared
+   according to `staged.release_draft_pointer`, decided per request. So on that
+   door the test is a property check and not a coverage proof, and this residue
+   is closed for the one-shot door only. A marker that fired on a failure path
+   would have been worse than none: it would report the exit covered on exactly
+   the runs where something else had gone wrong.
+
+   The original text of this residue follows, because the reasoning in it is
+   what the test was written against.
+
+   **The concurrency exit is state-correlated, and no test reaches it.**
+   Two concurrent submissions for the same address are arbitrated by a unique
+   index and the loser takes its own code path on both doors. `IntegrityError`
+   can only be raised while an enrolment, an applicant or a guest IDENTITY is
+   being CREATED (the third is new in round 10, when `_ensure_guest_user`
+   moved inside the draft door's guarded region, so an HR-created applicant
+   with a NULL `user_id` now reaches it),
+   which never happens for an address that already has one (`enrol_applicant`
+   no-ops on any live enrolment, whatever its status) — so reaching that path
+   at all is the answer **"this address has never applied here"**, state (d)
+   specifically, distinguished from "rejected and elapsed" and "rejected with
+   an override" rather than merely from the group of them.
+
+   **Which index arbitrates is not what the first version of this entry said**,
+   and the difference matters. It said `(requisition_id, applicant_id)`. For
+   state (d) that index cannot collide: two concurrent one-shot submissions for
+   an unknown address each mint their own `applicant_id`, so their enrolments
+   differ. The real arbiter is `uq_applicants_company_email`, which fires at
+   the `Applicant` flush before `enrol_applicant` is reached — and **that index
+   is created conditionally.** Its migration skips creation when a tenant
+   already holds duplicate applicants, deferring to a human merge. On such a
+   deployment this exit is UNREACHABLE and the race instead succeeds twice,
+   producing two applicants, two guest users, two consent entries and two
+   enrolments for one address. That is worse than the residue being accepted
+   here: `_identify`'s `ORDER BY created_at LIMIT 1` permanently hides one of
+   them from the gate, which is a cooldown BYPASS rather than a timing leak,
+   and erasure enumerates by `applicants WHERE user_id = :uid`, so the
+   duplicate hangs off a different guest user and its CV survives a completed
+   erasure. Neither consequence is a privacy residue of the kind this entry
+   accepts; both are defects that follow from a condition the entry must name.
+
+   The reply is the same `_received` object on both doors. **The draft door's
+   cleanup is conditional, which this entry previously stated as unconditional**:
+   it consumes its draft and deletes the object on this exit, but the second
+   transaction that does so has a failure branch which rolls back and logs
+   `public_apply.draft_not_consumed_on_race`. On that branch the row stays
+   `status='draft'` with its `resume_s3_key` intact, so `draft_store.load`
+   matches it and `GET /apply/draft` answers 200 where every other post-submit
+   read answers 404 — the round-3 channel, reopening on the one exit no test
+   reaches, under residue 1's own trigger list (a lock timeout, a deadlock, a
+   statement timeout, a dropped connection).
+
+   What is also NOT established is the timing: the rollback, the orphan release
+   and the draft door's second transaction run only on this branch. They sit
+   inside the reply pad, so they are absorbed unless they overrun it — which
+   makes this residue conditional on (2). The one-shot door's race exit
+   additionally stages no mail and does not wake the reconciler, so the
+   sub-state differs in work done and not only in time, and its log line
+   differs (`public.apply.race_lost`). The five-state matrix cannot see any of
+   it, because it never issues concurrent requests.
+
+**One invariant is also traded.** CLAUDE.md requires no PII without a consent
+ledger entry. The CV is now uploaded *before* the gate is consulted, because
+uploading only on the accepting branches made the work the endpoint does an
+answer about the address. On a refused submission no ledger row is ever
+written, so there is an object in storage with no consent record — and
+permanently if the delete that follows fails. For the one-shot door with an
+address we already hold, the erasure sweep reaches it. For an address with no
+record, and for the draft door, it does not.
+
+**The window is longer than earlier versions of this entry said**, and the
+recoverability claim was too strong. It used to read "for the length of the
+gate, the notice and the commit", and that the keys "are logged so they are
+recoverable by hand". Since round 11 scheduled the release to run after the
+response, the window is the gate, the notice, the commit, the WHOLE REPLY PAD
+(400 ms) and the response flush. And two paths lose the log line as well as the
+object: a raise anywhere between `background.add_task` and the return — FastAPI
+builds an error response without the endpoint's background tasks — and a worker
+killed in the graceful-shutdown window, because `CancelledError` is a
+`BaseException` and `_best_effort_delete`'s `except Exception` does not catch
+it. Neither is a demonstrated leak today (round 12 found no reachable raise
+inside `_reply`), and client disconnect is safe on this uvicorn, which still
+runs the task. But "recoverable by hand" is true only when the warning line is
+written, and on those two paths it is not.
+
+**Why not close them.** (1) needs every state to share one write set. The
+version of that idea this entry used to reject — store a row naming the
+address in every state — would mean PII about a non-applicant with no consent
+act and no erasure anchor, and masking a status code is not a lawful basis for
+keeping someone's address. That objection is sound against THAT design and was
+wrongly stated here as a reason the residue cannot be closed at all; see "Path
+to closure", which now names a design the objection does not reach. (2) and (3)
+are both "fail closed instead", which converts a privacy residue into an
+availability one: candidates refused during an incident, and during a Redis
+outage refused entirely. (4) was open for a different reason from the other
+three — not a trade but an untested path, accepted until the test existed
+rather than because anyone preferred it. **That test now exists** and (4) is
+closed for the one-shot door; see the residue for what the draft door's half
+does and does not claim. The claim "the test that would close it is cheap" was
+true of the assertion and wrong about the work: the first version passed
+without entering the path at all, and finding that out took a marker, a retry
+loop, and three rejected candidate signals on the other door.
+
+**What is NOT true.** A reader could reasonably assume any of these
+compensating controls exists. None does:
+
+* That the rate limits bound the exposure. They fail open; during a Redis
+  outage there is no cap at all, and the same outage disables the JWT
+  revocation epoch.
+* That the reply floor degrades gracefully. It fails OPEN — a branch that
+  overruns it answers immediately. Round 10 added the counter and the alert, so
+  this is now visible; it is still an overrun, and the alert fires after the
+  caller has already had their answer.
+* That the caps bound the upload. They do not reach it: the whole multipart
+  part is buffered to disk before any route dependency runs, so the 5 MB limit
+  caps what the handler reads and not what the service receives. They are also
+  per-IP, which an IPv6 /64 defeats.
+* That a transiently un-consented CV object is always reachable by erasure.
+  For an address with no applicant row, and for the draft door, it is not.
+* That the five-state matrix covers every exit. It does not reach the
+  concurrency exit on either door: the suite never issues concurrent requests,
+  so that path is reasoned about in comments and asserted nowhere.
+* That every control named in this entry is held by a test. Until round 10 the
+  lookup pad was not: `apply_lookup_floor_ms` appeared only in the config
+  default, two call sites and one line of this entry, and three separate ways
+  to remove it left the whole unit suite green. It is now held by
+  `test_the_lookup_pad_exists_and_bounds_the_identity_lookup` and
+  `test_the_lookup_pad_is_not_configured_off`. Read that as a warning about
+  this entry's other claims rather than as reassurance: a control described
+  here is not thereby guarded.
+* That the handlers' size is accepted anywhere. It is not — `submit_application`
+  is 10x and `submit_draft` 8x the 50-line guideline, acknowledged only in a
+  commit message, which this register's own standard says cannot grant an
+  acceptance. That is an open debt, not an accepted risk.
+
+**What is NOT accepted, and must not be read into this entry.** That the
+property is established on a healthy system is load-bearing and tested — the
+five-state matrix across both doors, the upload-count and delete-count tests,
+the storage-outage and read-only tests, the floor test, and the structural
+guards — which now hold both pads' existence and position, and the bound on
+the stored CV text, not only the count of reply-bearing exits. This entry
+accepts four failure modes and one traded invariant, not the design.
+
+**Path to closure.**
+
+(1) An `apply_attempts` row keyed on `(requisition_id, hmac(address))` with no
+plaintext address and a short TTL, written identically in all five states
+before anything branches. Every state then shares one write set, so the
+201/503 split closes and any write failure refuses every state alike — and the
+lawful-basis objection above does not reach it, because no row names anybody.
+This is the design that replaces "a scratch write to a table holding no
+address, plausible and not yet designed".
+
+Round 10 also assessed the larger alternative — accept unconditionally, return
+201, and let a background worker decide and mail — and both reviewers rejected
+it for this purpose, which is recorded here so it is not re-proposed as the
+remedy. It would mail on every anonymous submission to an unverified
+caller-supplied address, removing all three of the dedupe, silence and
+suppression guards that currently keep the mail path self-limiting, from the
+tenant's own authenticated sending domain and against a fail-open limiter. And
+it does not close (1): the request path must still write something the worker
+can pick up, so either that write is identical in every state — which is this
+same design — or the oracle moves from latency to a storage side effect, which
+is easier to read, not harder.
+
+(2) The counter and alert are landed (round 10). What remains is the pad
+itself failing open, which is a sizing and latency question, plus the standing
+hazard that a caller-sized term gets added below `tail_from` again — twice so
+far, now guarded by the CV-text bound test.
+
+(3) A product decision about which way to fail, plus two separate items the
+caps do not cover: a body-size limit at the edge or on uvicorn, and a bucket
+key coarser than a single IPv6 address.
+
+(4) A test that actually races two submissions against the same address, and
+that asserts WHICH constraint fired — because the answer differs by deployment,
+and on a tenant without `uq_applicants_company_email` the exit is unreachable
+and the duplicate-identity path above is what happens instead. Cheapest of the
+four, and it also settles whether the draft door's conditional cleanup leaves a
+readable row.
+
+---
+
+## AR-11 — The platform-owner bootstrap password is printed to stdout, where a deployment's log collector keeps it
+
+| | |
+|---|---|
+| **Source finding** | PH3-B4b round-11 security audit, 2026-10-03 — found while applying the migration chain to a throwaway database, not by looking for it |
+| **Status** | **ACCEPTED — open; only reached when `PLATFORM_OWNER_PASSWORD` is unset, and then it is a live cross-tenant read-and-erase credential, not merely an unrotated password** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-decides when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a deployment whose migration step runs where stdout is captured — CI, a container entrypoint, a PaaS build log, a log aggregator; (b) a log-retention or SOC2/ISO control review; (c) the first real deployment that does not set `PLATFORM_OWNER_PASSWORD`; (d) any report that the bootstrap account was used by someone who should not have it |
+
+**What is accepted.** `alembic/versions/20260625_0002_c3e5f7a9b1d3_platform_owner_hierarchy.py`
+seeds the `platform_owner` account. When `PLATFORM_OWNER_PASSWORD` is unset it
+generates `secrets.token_urlsafe(24)` and PRINTS it, with the account's email,
+in a banner on **stdout** — a live credential for the highest-privilege
+account in the product, in plaintext, in whatever captures that stream.
+CWE-532.
+
+The code is deliberate and says so: the comment explains that `print` is used
+rather than structlog precisely so the value is "never captured in structured
+log sinks that might ship to external collectors". That reasoning holds for an
+operator running `alembic upgrade head` in a terminal, which is the case it was
+written for. It does not hold for the way this product is actually deployed —
+a migration step in CI or a container entrypoint, where stdout is exactly what
+the platform collects and retains, typically far longer than "rotate
+immediately" assumes.
+
+**Why it is accepted rather than fixed in this branch.** It is unrelated to
+PH3-B4b, it predates it, and the fix is a product decision about bootstrap
+flow rather than a code tidy — see "Path to closure". Landing it inside a
+privacy branch that is already ten review rounds deep would mean changing how
+the highest-privilege account is provisioned without its own review.
+
+**What is NOT true.** A reader could assume any of these. None holds:
+
+* That the `print`-not-structlog choice keeps it out of log collectors. It
+  keeps it out of *structured* sinks. A PaaS, CI runner or container runtime
+  collects the stream itself, so the value is captured in exactly the
+  deployments where it matters most.
+* **That the printed password does not grant API access. IT DOES, across
+  three of the four services, before any password change.** This bullet is on
+  its third version and the first two were both wrong in the understating
+  direction, so take the specifics rather than the summary:
+
+  - The migration grants the account BOTH roles —
+    `WHERE u.email = :email AND r.name IN ('platform_owner', 'admin')`,
+    commented there as making it "a 'complete' super-super-admin".
+  - `require_password_changed` exists **only in `data_gateway`**. No reader of
+    `must_change_password` exists anywhere in `admin_ops`, `interview_core` or
+    `feedback_billing`.
+  - `admin_ops` gates `/admin/*` on `"admin" in roles` alone (`AdminDep` →
+    `verify_admin_role`), against the same issuer, audience and single shared
+    HS256 secret (see AR-2).
+  - `/auth/login` is ungated by design and consults the flag nowhere.
+
+  So with the flag never cleared — and therefore no `auth.bootstrap_password_gate`
+  line ever logged — the banner's password reaches platform-wide candidate and
+  interview data across every tenant (`/admin/overview`, the `/admin/analytics/*`
+  family, `/admin/interviews`, a single interview's transcript) plus
+  `GET /admin/interviews/export.csv`, a streaming bulk export. It also reaches
+  `POST /users/{user_id}/dpdp/delete`, operator-initiated erasure of ANY user:
+  soft-delete, consent withdrawal, immediate proctoring purge and a scheduled
+  30-day data purge.
+
+  Treat it as a live cross-tenant read credential and a destructive one, not as
+  a password waiting to be rotated.
+* That `data_gateway`'s gate is therefore the control. It is real — genuinely
+  server-side, genuinely composed into `PlatformOwnerDep` — and it fails OPEN
+  on a database error, which is exactly the kind of incident during which
+  someone is reading deploy logs. Even within `data_gateway`, `/auth/*` is
+  ungated so the flag can be cleared, so the holder can simply
+  `POST /auth/change-password` and own the account outright.
+* That the gate covers all of `data_gateway`. It took three rounds to get this
+  sentence right, and the way each version failed is the useful part.
+
+  Round 13's version said the printed password granted no API access at all.
+  Round 14 said the gate "covers one service of four", and found
+  **`GET /users/{user_id}/profile`** using bare `require_role(...)` with
+  `_GLOBAL_VIEW_ROLES` granting unscoped cross-tenant reads of personal data.
+  Round 15 then found four more — all of `/agent/*` plus
+  `POST /jobs/{job_id}/jd-document` — and diagnosed why round 14's sweep had
+  missed them: it searched for *"a route with a role gate and no password
+  gate"*, a predicate that excludes by construction the shape that survived it,
+  namely a route with NO role gate whose privilege decision is inside the
+  handler.
+
+  The cost was concrete. `admin_hr` provisions every `hr_manager` and
+  `super_admin` with `must_change_password = true`. Such an account is refused
+  `GET /hr/applicants`, and was ADMITTED to `POST /agent/panel/{applicant_id}`,
+  whose own comment calls it "the DENSEST candidate record in the platform".
+  Refused the lighter read, allowed the heavier one.
+
+  All five are FIXED rather than documented, on `require_password_changed`
+  (which leaves the in-handler role logic untouched). **And the claim is now a
+  test**: `test_bootstrap_password_gate_coverage.py` walks the live dependency
+  tree of all 415 routes and requires every authenticated route that does not
+  reach the gate to be in a named family with a stated reason — `/auth/*`,
+  `/users/me/*`, `/consent`, `/notifications`, self-serve `/jobs`, each
+  self-scoped by construction.
+
+  Three rounds of prose went stale here. The enumeration then went stale in its
+  own way within one round, which is worth recording rather than smoothing
+  over:
+
+  - It matched families by SUBSTRING, not prefix, so any path containing
+    `/jobs`, `/consent` or `/notifications` anywhere was excused. Both round-16
+    reviewers demonstrated it with `GET /hr/jobs/{company_id}/all-applicants` —
+    authenticated, no role gate, no password gate, i.e. precisely the shape
+    round 15 had just fixed — and renaming it to `/hr/roles/...` made the test
+    fail. The only difference was a literal string. It also defeated the
+    anti-rot test, since a family can be excusing nothing it was written for
+    and still appear to "match".
+  - The `/jobs` entry's stated reason was FALSE on the test's own definition.
+    `jobs.py`'s module docstring says `GET /jobs/{job_id}` "returns any active,
+    non-deleted job regardless of owner", and the query carries no owner or
+    company filter — so the subject comes from a path parameter, which is
+    exactly what "self-scoped by construction" excludes. It is now split, and
+    `/jobs/{job_id}` carries its own entry recording what it actually does:
+    any authenticated caller can read any active job by UUID, including another
+    user's practice job and its pasted JD text. Low sensitivity, a UUIDv4 the
+    only bound, accepted as that rather than claimed as scoping.
+  - Matching was then anchored on the path — and the fix put a BLANKET back,
+    because the `/` entry for the service banner made every path match.
+    Found by mutating in a route that should not be excused and noticing the
+    guard stayed green; neither the main test nor the anti-rot test could see
+    it. The root is exact-match only now.
+  - And the third bucket was unasserted. `_classify` defines "authenticated"
+    as "reaches `get_current_user`", so a route decoding the token ITSELF lands
+    in `anonymous` and nothing checked it — round 15's finding reshaped one
+    level out. The anonymous families are enumerated too, from the live app
+    rather than from memory: the first attempt at that list named seven
+    prefixes matching nothing and the anti-rot test caught all seven on its
+    first run.
+
+  So: an enumeration does not go stale, but it can be wrong on arrival in ways
+  prose cannot be — a matcher bug excuses everything at once. What makes it
+  recoverable is that each of those four was found by MUTATION rather than by
+  reading, and the mutations are now in the suite.
+* That `feedback_billing` and `interview_core` are covered by anything. They
+  are not. `feedback_billing`'s `GET /scorecards/{scorecard_id}` explicitly
+  grants `platform_owner` "unrestricted cross-company access" in its own
+  comment — any scorecard's scores, rationale, strengths, improvements and
+  summary, plus a 15-minute pre-signed PDF URL — and that service has no
+  password gate at all. `interview_core` authenticates any valid JWT and its
+  own comment says admin roles "fall through unchanged". Neither is fixed
+  here; both are named so the next person does not have to re-derive them.
+* That it only affects development. It affects any deployment that has not set
+  `PLATFORM_OWNER_PASSWORD`, and nothing refuses to start without it.
+* That the migration being old means it has been reviewed in this light. It
+  was found incidentally in round 11 while migrating a throwaway database, not
+  by any audit of the bootstrap path.
+
+**What IS true, and bounds this.** The banner prints only when
+`PLATFORM_OWNER_PASSWORD` is unset, so a deployment that sets it is entirely
+unaffected, and the plaintext is used only to compute the bcrypt hash — it is
+never stored in the database. One nuance worth knowing when setting it: the
+value is `.strip()`ped, so a whitespace-only variable counts as unset and the
+banner prints anyway.
+
+**Path to closure.** Note first that two things are wrong here, not one:
+the banner, and the fact that the bootstrap flag is enforced in one service of
+four. Closing the banner alone leaves an `admin`-role credential whose only
+gate lives in `data_gateway`, so `admin_ops` should gate `AdminDep` on
+`must_change_password` regardless of what happens to the printing — or the
+entry should say plainly that it does not.
+
+For the banner itself, three options in order of preference, all of them a
+product decision rather than a patch: (1) require `PLATFORM_OWNER_PASSWORD`
+and FAIL CLOSED when it is absent — best for a deployed product, and it makes
+the credential the operator's to handle; (2) print a one-time password-reset
+link rather than a password, so what lands in a log expires; (3) write the
+generated value to a `0600` file on the migration host, which keeps the
+convenience of a local `alembic upgrade head` but still leaves a long-lived
+credential on that host. Whichever is chosen, set `PLATFORM_OWNER_PASSWORD` on
+every existing deployment first, and rotate the account anywhere the banner has
+already printed.
+
+---
+
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -705,3 +1436,5 @@ substantiated complaint — that is the decision recorded here, not a preference
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
+| **AR-10** | The anonymous apply doors separate the states under any write failure; each timing pad fails open on overrun (now counted and alerted, still open); rate limits fail open when Redis is down and never reach the upload at all; a refused submission's CV exists un-consented; the concurrency exit is state-correlated, untested, and arbitrated by a conditionally-created index; and the two handlers' size is an open debt | PH3-B4b rounds 1-14 | `platform_owner` (+ `security-auditor`) | A timing/enumeration report, `public_apply_floor_exceeded_total` above noise, a Redis outage during apply traffic, or an enumeration-resistance requirement |
+| **AR-11** | The platform-owner bootstrap password is printed to stdout in plaintext when `PLATFORM_OWNER_PASSWORD` is unset. The account carries the `admin` role too, and `must_change_password` is enforced only in `data_gateway` — so until it is rotated the banner is a working cross-tenant credential for `admin_ops`' candidate data, transcripts, bulk CSV export and operator-initiated erasure of any user | PH3-B4b round-11 audit (incidental) | `platform_owner` (+ `security-auditor`) | A deployment whose migration step runs where stdout is collected, a log-retention or SOC2 review, or the first deployment that does not set the variable |

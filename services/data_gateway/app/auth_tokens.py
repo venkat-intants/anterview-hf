@@ -35,6 +35,12 @@ def secret_for(kind: str) -> str:
         return settings.password_reset_secret or _derive("password_reset")
     if kind == "email_verify":
         return settings.email_verify_secret or _derive("email_verify")
+    if kind == "reapply_confirm":
+        # PH3-B4b. Its own derived secret, not password_reset's: this token
+        # only applies a change the holder of the address already asked for,
+        # whereas password_reset promotes an account. Keying the HMAC by kind
+        # is what makes one unusable as the other even if a raw value leaks.
+        return settings.reapply_confirm_secret or _derive("reapply_confirm")
     raise ValueError(f"unknown auth-token kind: {kind!r}")
 
 
@@ -43,6 +49,8 @@ def ttl_hours_for(kind: str) -> int:
         return settings.password_reset_ttl_hours
     if kind == "email_verify":
         return settings.email_verify_ttl_hours
+    if kind == "reapply_confirm":
+        return settings.apply_activation_ttl_hours
     raise ValueError(f"unknown auth-token kind: {kind!r}")
 
 

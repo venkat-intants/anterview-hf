@@ -39,6 +39,12 @@ document. A CV that genuinely needs more than :data:`MAX_CHARS` of text does not
 exist, and refusing the upload would turn an attack control into a reason a real
 applicant cannot apply. The caller is told via :attr:`PdfText.truncated` so a
 surface that cares can say so.
+
+IT ALSO SANITISES, for the same "one path" reason the bound lives here. pypdf
+passes NUL and lone surrogates through verbatim, Postgres ``text`` cannot hold
+them, and on the anonymous apply doors a crafted CV used that to separate "this
+address has never applied here" from the other four states (PH3-B4b, AR-10). The
+page loop says the rest.
 """
 
 from __future__ import annotations
@@ -47,6 +53,7 @@ import io
 from dataclasses import dataclass, field
 
 from pypdf import PdfReader
+from shared.text import strip_unstorable
 
 #: Pages read. A CV is 1-3 and a job description 1-10; the corpus takes real
 #: documents, so this is sized for a long handbook rather than a resume. The
@@ -111,7 +118,32 @@ def extract(data: bytes, *, max_pages: int = MAX_PAGES, max_chars: int = MAX_CHA
         if read >= max_pages:
             truncated = True
             break
-        extracted = page.extract_text() or ""
+        # SANITISED HERE, PER PAGE, so every call site inherits it.
+        #
+        # pypdf returns whatever the PDF's encoding maps its codes to, NUL and
+        # lone surrogates included, and a PDF carrying one is pure ASCII to look
+        # at — an octal escape in a content stream, or a ToUnicode CMap entry, is
+        # enough. That text is then written to `text` columns that cannot hold
+        # it.
+        #
+        # On the anonymous apply doors that was a state oracle: `resume_text` is
+        # written only on the branch that creates an applicant, so a crafted CV
+        # answered 503 for "this address has never applied here" and 201 for the
+        # other four states — with no form field involved and nothing a request
+        # model could refuse (PH3-B4b, AR-10). On the authenticated callers the
+        # same PDF was an unhandled 500.
+        #
+        # It belongs at the extractor and not at the call sites for the reason
+        # this module exists: a list of guarded call sites is the thing that goes
+        # stale. `public_apply.py` also wraps its own call, which an AST guard in
+        # `test_group_e_public_apply.py` requires; the function is idempotent, so
+        # the two compose. Stripped rather than refused because nobody typed it.
+        #
+        # PER PAGE, BEFORE `offsets` IS APPENDED TO, not once over the join:
+        # `page_offsets` are char offsets into the text this function returns and
+        # `corpus` builds passage offsets on them, so a strip applied after the
+        # join would shift every offset past the first code point it removed.
+        extracted = strip_unstorable(page.extract_text() or "")
         remaining = max_chars - pos
         if remaining <= 0:
             truncated = True

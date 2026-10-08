@@ -226,6 +226,7 @@ Legend: ✅ required · ⬜ optional/feature-gated · — not used
 - [ ] `DATABASE_SSL=require` on all 5 (Neon).
 - [ ] `APP_ENV=production` on all 5 (data_gateway cookie gate will refuse to boot if `AUTH_COOKIE_SECURE` is not also true — that's intended).
 - [ ] `CORS_ALLOWED_ORIGINS` = exact `https://<app>.vercel.app` on all 4 APIs (no `*`, no trailing slash).
+- [ ] `S3_ENDPOINT_URL` + `S3_ACCESS_KEY_ID` on **admin_ops** — required for DPDP erasure, not only for uploads. Every erasure now lists objects under the subject's own applicant prefix (PH3-B4b: a staged reapplication's CV is named by one column and nothing else), and `s3_client.keys_under` refuses when storage is unconfigured rather than returning an empty answer — because an empty answer would let an erasure report `completed` while files remain. A deployment uploading through the `STORAGE_LOCAL_DIR` fallback therefore cannot complete an erasure. That fallback already refuses outright in `production`/`staging`, so this bites only a demo or development environment that uses it.
 - [ ] `RETENTION_DRY_RUN` — keep `true` for the demo unless you have run a dry-run cycle and confirmed delete counts. The DPDP retention cron (`services/data_gateway/app/retention.py`) purges completed sessions older than `RETENTION_DAYS`; live deletes only after dry-run validation.
 
 ### Auth / cross-origin

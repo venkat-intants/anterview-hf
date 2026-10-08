@@ -461,6 +461,9 @@ class Settings(BaseSettings):
     password_reset_secret: str = ""
     password_reset_ttl_hours: int = 1
     email_verify_secret: str = ""
+    #: PH3-B4b reapplication confirmation. Blank derives one from jwt_secret,
+    #: namespaced by kind, like the two above.
+    reapply_confirm_secret: str = ""
     # 7 days — verification window.
     email_verify_ttl_hours: int = 168
     # 7 days — how long an applicant has to activate the account their public
@@ -469,6 +472,73 @@ class Settings(BaseSettings):
     # whereas an applicant reads their email whenever they next look, and an
     # expiry here costs them their only route into their own application.
     apply_activation_ttl_hours: int = 168
+    # How long every reply from the two ANONYMOUS apply doors is held before it
+    # is sent, measured from the moment their shared work finishes.
+    #
+    # This is a privacy control, not a throttle. Those doors accept any address
+    # typed into a form, and what they DO still depends on what is stored about
+    # it: an address with a live application is answered after a couple of
+    # SELECTs, while one that is free to apply costs a dozen writes and two
+    # commits. The bytes are identical; the latency is not, and six review
+    # rounds have each found the difference one step further along. Holding
+    # every reply to a common deadline makes the branch that was taken
+    # unobservable from outside.
+    #
+    # Measured from AFTER the CV upload, deliberately. The upload is the one
+    # term the caller controls — they choose the file size — and it is common
+    # to every state, so it is noise rather than signal and does not need
+    # masking. What needs masking is the fixed-size tail below it, which is
+    # tens of milliseconds. Hence a small default: large enough to cover that
+    # tail comfortably, small enough that a candidate does not notice.
+    #
+    # Raise it if the p99 of the accepting branch ever approaches it.
+    #
+    # gt=0 ENFORCED, not merely documented. This said "setting it to 0 disables
+    # the control and reopens the channel" and nothing stopped anyone doing it:
+    # `APPLY_REPLY_FLOOR_MS=0` in a deployment's environment switched the pad
+    # off with every test still green, because the unit guard can only pin the
+    # DEFAULT. A validator is the one place that sees what a deployment
+    # actually set, so the claim is now true where it matters. Pydantic
+    # refuses to start the service rather than serving with the control off,
+    # which is the right way round for a privacy control: an apply endpoint
+    # that is down is visible, one that is silently answerable is not.
+    # ge/le, NOT gt=0 — round 12. `gt=0` is one character wide: the first
+    # thing a paged engineer tries after "it refuses to start at 0" is 1, and
+    # `APPLY_REPLY_FLOOR_MS=1` boots happily with the control effectively off,
+    # no test red and no alert, because a 1 ms pad is never overrun by
+    # anything. The other end matters too: 999999999 boots and makes every
+    # reply take 11.6 days, which is a total outage of the apply path
+    # configured in one env var and likewise unalerted.
+    #
+    # 100 ms floor: below the measured accepting-branch tail there is nothing
+    # to absorb. 5000 ms ceiling: above that the pad is the outage.
+    apply_reply_floor_ms: int = Field(default=400, ge=100, le=5_000)
+    # How long the IDENTITY LOOKUP is padded to, on both anonymous doors.
+    #
+    # A second, separate pad, and it has to be separate. The lookup is a LEFT
+    # JOIN that returns a row for four of the five states and nothing for the
+    # fifth, so its cost is state-dependent — and it must happen before the CV
+    # upload, because the object key embeds the applicant id it returns. One
+    # deadline cannot absorb both this and the branch below the gate: a single
+    # clock at the top gets spent by a large PDF, and a deadline taken after
+    # the upload has already let this difference through.
+    #
+    # So each state-dependent term gets its own pad, measured from a clock
+    # taken BEFORE that term. This one absorbs the lookup to a constant;
+    # `apply_reply_floor_ms` then absorbs the branch. Nothing in between is
+    # state-dependent — the parse and the upload are the caller's own bytes.
+    #
+    # Must exceed the p99 of the lookup, which is an indexed point read: 50 ms
+    # is roughly two orders of magnitude above it.
+    #
+    # gt=0 ENFORCED — same reasoning as `apply_reply_floor_ms` above, and this
+    # is the setting round 11 actually demonstrated: `APPLY_LOOKUP_FLOOR_MS=0`
+    # needed no code change at all and left 2,888 unit tests green.
+    # ge/le for the same reason as the reply floor above. 10 ms floor: the
+    # lookup is an indexed point read, and a pad below its own p99 absorbs
+    # nothing. 1000 ms ceiling: this pad is paid by every applicant on every
+    # submission and has no business being a second long.
+    apply_lookup_floor_ms: int = Field(default=50, ge=10, le=1_000)
     # When True, email verification is MANDATORY: self-registered accounts are not
     # auto-logged-in and cannot sign in until they confirm their email. Existing
     # accounts and admin-provisioned accounts (still on their bootstrap password)

@@ -180,3 +180,102 @@ GHSA-f4xh-w4cj-qxq8
 # moves livekit 1.1.8 → 1.1.18 and all five livekit-plugins-* in lockstep,
 # i.e. the whole real-time interview path. It needs a live-call test pass.
 GHSA-xf7x-x43h-rpqh
+
+# =============================================================================
+# Added 2026-10-06. Two advisories published overnight against pins this repo
+# already had; both reached CI as new failures with no code change. Each was
+# checked against the advisory text and this codebase before being written here,
+# and neither is a deferral of work that could be done instead — see the
+# upgrade notes.
+
+# --- python-jose 3.5.0 — NOT EXPLOITABLE, NO FIX EXISTS (all four services) --
+#
+# SUPERSEDED ON `main`, AND THIS ENTRY HAS A KNOWN END DATE. On 2026-10-06
+# `main` landed `acc2484 refactor(auth)!: replace python-jose with PyJWT,
+# removing two unfixable advisories` — all four services now pin PyJWT 2.15.1
+# and nothing imports `jose`. That is the right answer and better than this
+# entry: it removes a CRITICAL finding that had no patched release rather than
+# reasoning around it.
+#
+# The entry stays HERE only because this branch has not merged that yet, so
+# python-jose 3.5.0 is still pinned and still used in `shared/auth/jwt.py` —
+# deleting it now would fail the audit on a real, live dependency. DELETE IT IN
+# THE SAME CHANGE that merges `main`, along with the PINNED entry for it in
+# ops/ci/check_accepted_risk_claims.py, and re-point that checker's AST matcher
+# at PyJWT (it keys on a receiver named `jwt`, which PyJWT satisfies, so it will
+# keep working — but "keeps working" is not the same as "still checks the thing
+# the acceptance rested on").
+#
+# A REVIEWER SHOULD NOT BE ASKED TO ACCEPT THIS LONG-TERM. The decision in front
+# of a security-auditor is not "is python-jose tolerable forever" — it is "is it
+# tolerable for the days between now and this branch merging the migration that
+# already exists on main".
+# CVE-2026-85394 / GHSA-3qf3-8w2g-rqmx (CRITICAL): the algorithm-confusion
+# guard is bypassed by DER-encoded public keys. python-jose accepts a
+# DER-encoded public key that lacks PEM armor as HMAC key material, so an
+# attacker holding the service's PUBLIC key can forge an HS256 token that
+# verifies. An incomplete fix for CVE-2024-33663.
+#
+# The advisory's own precondition is "when algorithms are not explicitly
+# restricted", and that precondition is absent here. There is exactly ONE
+# `jwt.decode` in all non-test code — shared/auth/jwt.py:586 — and it is
+# called as:
+#
+#     jwt.decode(token, candidate_key, algorithms=[candidate_algorithm], ...)
+#
+# A SINGLE algorithm, and `candidate_key` and `candidate_algorithm` come from
+# the same tuple in the candidate list, so every key is only ever offered with
+# the algorithm it was registered for. The attack needs an asymmetric public
+# key to be accepted as an HMAC secret; no path pairs an RSA key with HS256.
+# The only other jose call is `jwk.construct(pem, algorithm="RS256")` at
+# shared/auth/jwt.py:249, also explicit.
+#
+# Unblock: nothing to upgrade to. OSV records `last_affected: 3.5.0` with no
+# fixed event — python-jose has no patched release. The real unblock is leaving
+# python-jose for PyJWT, which is a change to the auth stack of four services
+# and wants its own review. Until then this entry is the only available action.
+# RE-CHECK IF: a decode is added anywhere without `algorithms=`, or a candidate
+# tuple is ever built pairing a key with an algorithm it was not issued for.
+# That is what makes this safe, and it is one edit away from not being true.
+#
+# THE FIRST HALF OF THAT IS NOW ENFORCED, not left to a reader's diligence:
+# `ops/ci/check_accepted_risk_claims.py` walks the AST of every production file
+# and fails the `invariants` job on a JWT decode with no `algorithms=`. It also
+# fails if it finds NO decode at all, because "none found" and "all safe" look
+# identical from outside and only one is good news. Mutation-tested: adding an
+# unrestricted decode to dependencies.py turns it red and names the file and
+# line. The second half — the key/algorithm pairing — is still read by a human;
+# it is a property of how the candidate list is BUILT, not of a call site.
+CVE-2026-85394
+GHSA-3qf3-8w2g-rqmx
+
+# --- langgraph-sdk 0.1.74 — NOT EXPLOITABLE (interview_core) -----------------
+# CVE-2026-104873 / GHSA (HIGH): "custom auth silently ignores actions= on
+# resource decorators". A handler registered as
+# `@auth.on.threads(actions=["create"])` is registered for EVERY action on the
+# resource, and because the resource-wide handler is selected ahead of broader
+# fallbacks, the checks in those fallbacks never run — an authenticated user
+# can reach actions the application meant to deny.
+#
+# The advisory scopes itself: "Only Python deployments using `actions=` on the
+# affected resource-scoped decorators are affected." We use none of it.
+# `langgraph_sdk` is imported NOWHERE in services/ or shared/ — it is present
+# only as a transitive dependency of langgraph. There is no `@auth.on.*`
+# decorator in the repo and no langgraph.json, so there is no LangGraph
+# Platform deployment for the SDK's auth layer to serve.
+#
+# Unblock: the fix is 0.4.4 and it is NOT reachable by bumping this pin.
+# langgraph==0.2.76 requires `langgraph-sdk<0.2.0,>=0.1.42` (checked against
+# PyPI metadata for that exact version), so 0.4.4 cannot be installed without
+# the LangGraph 1.x migration the block above already describes. This is the
+# same upgrade block as PYSEC-2026-2194 / PYSEC-2026-2575, with a different
+# root cause, so it gets its own entry rather than inheriting their reasoning.
+#
+# ENFORCED by ops/ci/check_accepted_risk_claims.py in the `invariants` job: it
+# fails if `langgraph_sdk` is imported in production code, if any `@auth.on.*`
+# decorator appears, or if a langgraph.json shows up — the three facts this
+# entry rests on. It also fails if the langgraph or langgraph-sdk PIN moves off
+# the version the reasoning was checked against, because a bump may have fixed
+# this or may have moved it, and either way the entry needs re-reading rather
+# than inheriting. All three mutation-tested.
+CVE-2026-104873

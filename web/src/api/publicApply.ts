@@ -86,12 +86,20 @@ export interface Posting {
   source_detail: string | null;
 }
 
+/**
+ * The one reply every submission gets, whatever we already know.
+ *
+ * `already_applied` used to live here and is gone, as `awaiting_confirmation`
+ * went before it. Nothing may replace them. These endpoints are anonymous and
+ * take any address typed into the form, so a field whose value depends on what
+ * is stored about that address lets anyone with the public link confirm that a
+ * named person applied and was turned down. Whatever genuinely differs is sent
+ * to the address by email.
+ */
 export interface ApplicationResult {
   applicant_id: string;
   enrolment_id: string | null;
   full_name: string;
-  /** True when this email had already applied. Not an error — a reassurance. */
-  already_applied: boolean;
   message: string;
 }
 
@@ -268,6 +276,35 @@ export async function activateAccount(
 }
 
 
+export interface ReapplyConfirmResult {
+  /** How many staged reapplications the link applied. 0 when already done. */
+  applied: number;
+  message: string;
+}
+
+/**
+ * Confirm a second application after a rejection — PH3-B4b.
+ *
+ * The public apply form is anonymous and identifies a person by an address
+ * typed into it, so a reapplication is recorded and then waits: acting on it
+ * when it arrives would let anyone holding the link move a real candidate's
+ * status and replace their CV. Following this link, which was emailed to the
+ * address, is the proof. The token rides in the fragment and is sent in the
+ * body, never a query string.
+ */
+export async function confirmReapplication(
+  token: string,
+): Promise<ReapplyConfirmResult> {
+  const res = await fetch(`${API_BASE}/apply/reapply/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!res.ok) return readError(res);
+  return (await res.json()) as ReapplyConfirmResult;
+}
+
+
 // ---------------------------------------------------------------------------
 // Save & resume, and the confirmation step — PH3-B4c / PH3-B5
 //
@@ -285,6 +322,9 @@ export async function activateAccount(
 export interface ParsedDetails {
   full_name: string | null;
   email: string | null;
+  phone: string | null;
+  linkedin_url: string | null;
+  github_url: string | null;
 }
 
 export interface ApplicationDraft {

@@ -5,6 +5,7 @@ isolation are covered by live end-to-end verification.
 
 from __future__ import annotations
 
+import re
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
@@ -570,3 +571,60 @@ async def test_list_applicants_orm_path_escapes_the_job_pattern() -> None:
     sql = captured["sql"]
     assert "ESCAPE" in sql.upper(), f"ORM ILIKE lost its escape clause: {sql}"
     assert chr(92) + "%" in sql, f"job filter reached SQL unescaped: {sql}"
+
+
+# ===========================================================================
+# A field that is declared and SELECTed but never bound is a silent null
+# ===========================================================================
+def test_every_application_field_is_actually_passed_to_the_model() -> None:
+    """Declared + selected + never bound = a fix that does nothing, quietly.
+
+    `reapply_override_at` and `reapply_override_reason` were added to
+    `ApplicationOut`, added to `_APPLICATIONS_SQL`, and read by the HR drawer —
+    and the constructor did not pass them, so every response carried null. The
+    grant HR made vanished on refresh, an acceptance criterion was ticked on
+    the strength of it, and the web test passed because it supplied the field
+    from a mock.
+
+    Asserted for EVERY field rather than for those two, because the defect is
+    the shape and not the field: this constructor names each one by hand, so
+    the next column added to the model and the query is one edit away from the
+    same silence.
+    """
+    import inspect as _inspect
+
+    from app.routers.hr_applicants import ApplicationOut, list_applications
+
+    src = _inspect.getsource(list_applications)
+    body = src[src.index("ApplicationOut(") :]
+    # WORD-ANCHORED. A plain `f"{field}=" in body` is a substring test, and
+    # `status=` is a substring of `stored_status=` — so dropping `status=`
+    # from the constructor left this guard reporting nothing missing. It was
+    # mutation-checked against the two fields it was written around and then
+    # described as catching the whole class, which it did not.
+    missing = [
+        f
+        for f in ApplicationOut.model_fields
+        if not re.search(rf"(?<![\w]){re.escape(f)}\s*=", body)
+    ]
+    assert not missing, (
+        "declared on ApplicationOut but never passed to it, so it serialises as "
+        f"null on every row: {missing}"
+    )
+
+
+def test_the_application_query_selects_every_field_the_model_declares() -> None:
+    """The other half. Binding a column the query never selected is a KeyError
+    on the first real request — the failure the mock in the web suite hides."""
+    from app.routers.hr_applicants import _APPLICATIONS_SQL, ApplicationOut
+
+    sql = str(_APPLICATIONS_SQL)
+    # Word-anchored for the same reason as above: `source` matches inside
+    # `source_detail`, and `status` inside `stored_status`, so the substring
+    # form passed while the column it was asked about was absent.
+    for field in ApplicationOut.model_fields:
+        if field == "is_latest":  # computed from the row's position
+            continue
+        assert re.search(rf"(?<![\w]){re.escape(field)}(?![\w])", sql), (
+            f"{field} is bound from a column the query never selects"
+        )

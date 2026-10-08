@@ -1322,6 +1322,13 @@ class ApplicationOut(BaseModel):
     # HR's own inputs never set a free-text detail (app.application_source).
     source: str = "unknown"
     source_detail: str | None = None
+    # The exception a person granted, so the team can see it holds (PH3-B4,
+    # criterion 9). The drawer used to show "May reapply now" from local
+    # component state alone, which meant the grant vanished on refresh and
+    # nothing on any screen could confirm it had been made. Cleared when the
+    # reapplication is confirmed, so it also shows when it has been spent.
+    reapply_override_at: datetime | None = None
+    reapply_override_reason: str | None = None
 
 
 _APPLICATIONS_SQL = text(
@@ -1330,7 +1337,8 @@ SELECT p.enrolment_id, p.requisition_id, p.opening_title, p.status, p.stored_sta
        e.ats_overall, e.ats_breakdown, e.ats_strengths, e.ats_concerns,
        e.ats_recommendation, e.ats_summary,
        p.best_exam_percent, p.exam_passed, p.interview_score, p.scorecard_id, p.applied_at,
-       e.source, e.source_detail
+       e.source, e.source_detail,
+       e.reapply_override_at, e.reapply_override_reason
   FROM application_progress p
   JOIN enrolments e ON e.id = p.enrolment_id
  WHERE p.company_id = :c AND p.applicant_id = :a
@@ -1374,6 +1382,14 @@ async def list_applications(
             is_latest=i == len(rows) - 1,
             source=r["source"],
             source_detail=r["source_detail"],
+            # Passed, not just SELECTed. These were added to the model and to
+            # the query and then left out of this constructor, so they
+            # serialised as null on every response while the drawer read them
+            # and the web test supplied them from a mock — a fix that was
+            # entirely dead, passing its own tests, which is the failure mode
+            # this whole branch has been chasing.
+            reapply_override_at=r["reapply_override_at"],
+            reapply_override_reason=r["reapply_override_reason"],
         )
         for i, r in enumerate(rows)
     ]

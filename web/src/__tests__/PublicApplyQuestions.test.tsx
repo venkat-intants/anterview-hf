@@ -113,7 +113,6 @@ beforeEach(() => {
     applicant_id: 'ap-1',
     enrolment_id: 'en-1',
     full_name: 'Priya Sharma',
-    already_applied: false,
     message: 'Thanks.',
   });
 });

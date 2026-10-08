@@ -339,10 +339,78 @@ def test_budget_never_appears_on_a_candidate_facing_schema() -> None:
             assert "budget" not in field, f"{model.__name__}.{field}"
 
 
+def _string_literals(path: Path) -> list[str]:
+    """Every string literal and identifier in *path*, excluding docstrings.
+
+    The SQL, the column lists and the response-field names all live here; prose
+    does not. Round 10 of PH3-B4b is why this is a parsed walk and not a
+    substring scan over the file: the scan this replaces read the whole source
+    as text, so it failed the moment a COMMENT used the word "budget" — it
+    tripped on a comment about a 400 ms timing budget in `public_apply`, which
+    is not a hiring budget and is not selected by anything.
+
+    A guard that fires on prose is not stricter, it is differently wrong: a
+    raw-text scan is defeated by any split that breaks the word (`"bud"
+    "get_min"` concatenates to a real column name and reads as two innocent
+    fragments), and it trains people to reword comments to get the suite green.
+    The property this file cares about — no candidate-facing query or schema
+    carries the hiring budget — is a property of what the module sends and
+    returns.
+    """
+    import ast
+
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docstrings = set()
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if isinstance(
+            node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef
+        ) and body:
+            first = body[0]
+            if (
+                isinstance(first, ast.Expr)
+                and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)
+            ):
+                docstrings.add(id(first.value))
+    out = [
+        n.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Constant)
+        and isinstance(n.value, str)
+        and id(n) not in docstrings
+    ]
+
+    # IDENTIFIERS TOO, which the first version of this rewrite dropped. Round
+    # 11 showed the gap: adding `budget_expectation: int | None = None` to a
+    # request model in `public_apply` left all seven budget tests green, while
+    # the whole-file scan this replaced went red, and
+    # `test_budget_never_appears_on_a_candidate_facing_schema` only inspects
+    # `PostingOut` and `JobCard`. A field name is not a string literal, and a
+    # schema field is exactly how the budget would reach a candidate.
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Name):
+            out.append(n.id)
+        elif isinstance(n, ast.Attribute):
+            out.append(n.attr)
+        elif isinstance(n, ast.arg) or (isinstance(n, ast.keyword) and n.arg):
+            out.append(n.arg)
+        elif isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            out.append(n.name)
+    return out
+
+
 def test_the_public_queries_do_not_even_select_budget() -> None:
     for module in ("routers/careers.py", "routers/public_apply.py",
                    "routers/candidate_applications.py"):
-        assert "budget" not in (APP / module).read_text(encoding="utf-8"), module
+        offenders = [
+            lit for lit in _string_literals(APP / module) if "budget" in lit.lower()
+        ]
+        assert not offenders, (
+            f"{module} names the hiring budget in something it sends or "
+            f"returns — a query, a column list, a schema field or an attribute "
+            f"it reads: {offenders[:3]}"
+        )
 
 
 def test_budget_is_reported_on_the_hr_view() -> None:

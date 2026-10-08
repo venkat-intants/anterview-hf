@@ -65,9 +65,14 @@ only; the service **refuses to start** with `AI_FAKE_MODE` or
 | `RATE_LIMIT_LOGIN_PER_MINUTE=1000` | the suite signs in far more than 5 times a minute from one IP |
 | `AI_FAKE_MODE=true` | resume scoring, question generation and embeddings return deterministic stand-ins (`app/fake_ai.py`): no model spend, same answer every run. A CV containing `E2E-SCORE: 85` scores exactly 85 |
 | `TEST_HOOKS_ENABLED=true` and `TEST_HOOKS_TOKEN=<32+ chars>` | mounts `/test-hooks/reconcile` and `/test-hooks/reminders`, so a spec runs the scoring pass or the reminder sweep now instead of waiting up to 10 minutes. Every call needs `X-Test-Hooks-Token`; without it the paths answer 404 |
+| `CORS_ALLOWED_ORIGINS=http://localhost:5174,http://127.0.0.1:5174` | **the one that is easiest to miss.** `cors_allowed_origins` defaults to `http://localhost:5173` and this suite serves the app on **5174**, so without this the browser loads the app and every API call it makes is blocked. The symptom is nowhere near the cause: 33 of 34 specs time out at 120 s and retry, and the only spec that passes is the one needing no API ("a signed-out visitor is sent to sign in"). A laptop has it because `services/data_gateway/.env` sets it, and that file is git-ignored — this table omitted it until 2026-10-05, which cost three CI runs |
+| `SCHEDULED_PUBLISH_INTERVAL_SECONDS=60` | `scheduled_publish_interval_seconds` defaults to **300 s** and `scheduled-publishing.spec.ts` waits **180 s** for an opening to publish itself, so that spec is a coin flip on the default. It is the only background worker with no test hook — `/test-hooks` has `reconcile` and `reminders` only — which is why it waits on the real timer. 60 is the floor the setting allows. Proven by two runs of one commit: same code, one green, one with this spec failing both attempts |
+| `EMAIL_POLL_INTERVAL_SECONDS=2` | the mail worker sleeps `email_poll_interval_seconds` (**default 60**) between polls, while `waitForMail`'s default patience is **30 s** — so any spec that enqueues a mail and waits the default passes only when the worker's tick happens to land inside its window. `offer-preboarding` has two such waits and failed on them while the service log showed `email.enqueued` for the very mail it was waiting for: nothing was broken except the arithmetic. Two seconds removes the class rather than padding each timeout, and takes about a minute off that spec |
 
 ```powershell
 $env:RATE_LIMIT_LOGIN_PER_MINUTE = '1000'
+$env:EMAIL_POLL_INTERVAL_SECONDS = '2'
+$env:CORS_ALLOWED_ORIGINS = 'http://localhost:5174,http://127.0.0.1:5174'
 $env:AI_FAKE_MODE = 'true'
 $env:TEST_HOOKS_ENABLED = 'true'
 $env:TEST_HOOKS_TOKEN = '<a random string of 32+ characters>'
@@ -75,6 +80,72 @@ cd services/data_gateway; .\.venv\Scripts\python -m uvicorn app.main:app --port 
 # and for the suite, the same token:
 $env:E2E_TEST_HOOKS_TOKEN = '<the same string>'
 ```
+
+### If you add a setting to your local `.env`, check the CI job
+
+`services/data_gateway/.env` and `web/.env` are both **git-ignored**, and the
+browser job in `ci.yml` has to restate by hand everything in them that matters.
+That gap caused four consecutive CI-only failures, each found one run at a time:
+a cached Docker image, `E2E_PYTHON` as a bare name, the missing `web/.env`, then
+`CORS_ALLOWED_ORIGINS` defaulting to port 5173.
+
+The fifth was found by sweeping instead of guessing, and the sweep is cheap:
+
+```powershell
+# every name the local .env sets, against the names the CI job sets
+python - <<'PY'
+import pathlib, re, yaml
+root = pathlib.Path(".")
+local = {l.split("=",1)[0].strip()
+         for l in (root/"services/data_gateway/.env").read_text(encoding="utf-8").splitlines()
+         if l.strip() and not l.startswith("#") and "=" in l}
+ci = set(yaml.safe_load((root/".github/workflows/ci.yml").read_text(encoding="utf-8"))
+         ["jobs"]["browser"]["env"])
+for name in sorted(local - ci):
+    print(name)
+PY
+```
+
+Then, for each name it prints, read the default in
+`services/data_gateway/app/config.py` and ask whether that default is right for
+an e2e run — **not** whether the name looks important. The three that mattered
+most were `APP_BASE_URL`, `EXAM_LINK_BASE_URL` and `INTERVIEW_LINK_BASE_URL`,
+which look like deployment trivia and in fact decide whether the links the suite
+reads out of Mailpit point at the app under test. All three default to `:5173`.
+
+**That sweep has a blind spot, and it cost a run to find.** It compares the
+local `.env` against the CI job, so it only catches settings the laptop
+*overrides*. A setting absent from **both** — running on its default in each —
+never appears in the diff, and its default can still be wrong for a test run.
+`SCHEDULED_PUBLISH_INTERVAL_SECONDS` is exactly that: nothing sets it anywhere,
+its default is 300 s, and a spec waits 180 s.
+
+So the sweep is two questions, not one:
+
+1. What does the local `.env` set that CI does not? (the command above)
+2. **For every background worker, is its cadence shorter than the patience of
+   the spec that waits on it?** Compare the `*_interval_seconds` defaults in
+   `config.py` against the `timeout:` values in the specs. Today that is
+   `email_poll_interval_seconds` (60 s default, 30 s patience) and
+   `scheduled_publish_interval_seconds` (300 s default, 180 s patience) — both
+   now overridden above. `reconciliation_interval_seconds` and
+   `reminders_interval_seconds` are exempt because the suite drives them through
+   `/test-hooks` and never waits on their timers.
+
+A cadence longer than the wait does not fail cleanly. It passes whenever the
+tick lands early, which reads as flakiness and gets "fixed" by raising a retry
+count.
+
+Names whose defaults are deliberately left alone, so a future sweep does not
+re-litigate them: the `GEMINI_*`, `GROQ_*` and `LLM_PROVIDER` family (unused
+under `AI_FAKE_MODE`, and leaving them empty is what keeps CI from calling a
+paid API), `GOOGLE_OAUTH_*` (SSO is covered by mock-based tests, not here),
+`EXECUTION_PROVIDER` / `JDOODLE_*` / `PISTON_API_URL` (`coding-round` probes
+`localhost:2000` and skips, so the public Piston endpoint is never called),
+`SMTP_HOST` / `SMTP_PORT` / `EMAIL_PROVIDER` (the defaults already point at the
+Mailpit container), `AGENTS_ENABLED` / `WATCHERS_ENABLED` (default on, as
+locally), and `STORAGE_LOCAL_DIR` (declared in `config.py` and read nowhere —
+dead setting).
 
 ## Test data
 

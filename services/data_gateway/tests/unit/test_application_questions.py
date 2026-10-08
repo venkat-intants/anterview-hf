@@ -207,6 +207,47 @@ def test_a_multi_choice_keeps_every_valid_pick() -> None:
     assert coerce_answer(question, ["Python", "Rust"]) == ["Python", "Rust"]
 
 
+def test_a_multi_choice_answer_is_deduped_and_therefore_bounded() -> None:
+    """ROUND 11 of PH3-B4b: the eleventh timing channel on the apply doors.
+
+    Every entry here is a VALID option, so validation had nothing to object to
+    and `["Python"] * 5_000_000` was stored verbatim as a 50 MB jsonb value.
+    That write sits below `tail_from` on both anonymous apply doors and runs
+    only on the branches that accept an application — a refusal returns before
+    `store_answers`. So its cost separated "rejected and in cooldown" from
+    "never applied here" by a caller-chosen amount, measured at 1.75 s past a
+    400 ms pad, with byte-identical 201 replies. Third instance of that class
+    after the CV parse (round 8) and the extracted CV text (round 10).
+
+    Deduping is the bound: the entries are known options and
+    `normalise_questions` caps those at MAX_OPTIONS, so the stored list cannot
+    exceed twelve however long the submission was. Asserted here, at the
+    producer, because that is what makes it hold for BOTH doors and for any
+    future caller of `validate_answers` — a cap on one door's request model
+    would not.
+    """
+    from app.application_questions import MAX_OPTIONS
+
+    question = q(kind="multi_choice", options=["Python", "Go", "Rust"])
+
+    answer = coerce_answer(question, ["Python"] * 5_000_000)
+    assert answer == ["Python"], "duplicate picks are no longer collapsed"
+    assert len(answer) <= MAX_OPTIONS
+
+    # Order is the candidate's, not the option list's — HR reads this back.
+    assert coerce_answer(question, ["Rust", "Python", "Rust", "Go"]) == [
+        "Rust",
+        "Python",
+        "Go",
+    ]
+
+    # The bound holds for any submission, not just a repeated single value.
+    wide = q(kind="multi_choice", options=[f"opt{i}" for i in range(MAX_OPTIONS)])
+    assert len(coerce_answer(wide, [f"opt{i % MAX_OPTIONS}" for i in range(100_000)])) == (
+        MAX_OPTIONS
+    )
+
+
 def test_long_text_is_capped_rather_than_refused() -> None:
     from app.application_questions import MAX_ANSWER_CHARS
 

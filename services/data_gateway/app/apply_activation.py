@@ -441,3 +441,127 @@ async def _link_to_existing(
         ),
         {"now": now, "old": guest_user_id, "domain": GUEST_EMAIL_DOMAIN},
     )
+
+
+REAPPLY_TOKEN_KIND = "reapply_confirm"
+
+
+async def stage_reapply_confirmation(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    applicant_email: str,
+    applicant_name: str,
+    job_title: str,
+    company_id: uuid.UUID,
+    company_name: str | None,
+    now: datetime,
+    raw: str,
+) -> None:
+    """Email the link that turns a staged reapplication into a real one.
+
+    ``raw`` is minted by the caller, which has already bound its hash to the
+    one staged attempt this link may apply — see ``reapplication.stage``. A
+    token minted here instead would be a link that could act on whatever the
+    person had staged anywhere, which is the flaw this argument exists to
+    close.
+
+    Caller commits. Best-effort at the call site, like the activation email:
+    the second attempt is already recorded, and what a failure here costs is
+    the means to confirm it, not the attempt itself.
+
+    WHY THIS IS NOT ``stage_activation_email``
+    That one mints a token only for a user who has NOT claimed their account,
+    because its job is to hand somebody an account they do not yet have. A
+    candidate who applied, activated and was later rejected has claimed
+    theirs — so reusing it would send them no link at all and leave their
+    reapplication pending for ever. This one always mints, because what it
+    proves is different: not "you may have an account" but "you, at this
+    address, asked for this application to be looked at again".
+
+    Its own ``kind`` for the same reason. A ``password_reset`` token is a
+    credential that promotes an account; this one only applies a change the
+    holder of the address already asked for, and the two should not be
+    interchangeable if either is ever leaked.
+    """
+    await db.execute(
+        text(
+            "INSERT INTO auth_tokens (id, user_id, kind, token_hash, expires_at, created_at)"
+            " VALUES (:id, :uid, :kind, :th, :exp, :now)"
+        ),
+        {
+            "id": uuid.uuid4(),
+            "uid": user_id,
+            "kind": REAPPLY_TOKEN_KIND,
+            "th": hash_token(raw, REAPPLY_TOKEN_KIND),
+            "exp": now + timedelta(hours=settings.apply_activation_ttl_hours),
+            "now": now,
+        },
+    )
+    lang = await db.scalar(
+        text("SELECT preferred_language FROM users WHERE id = :uid"), {"uid": user_id}
+    )
+    await enqueue_email(
+        db,
+        to=applicant_email,
+        template="reapplication_confirm",
+        lang=(lang or "en"),
+        ctx={
+            "name": applicant_name,
+            "job_title": job_title,
+            "company": company_name,
+            # Fragment, not query: browsers do not send it to servers, so the
+            # token stays out of access logs and any cross-origin Referer.
+            "confirm_url": f"{settings.app_base_url.rstrip('/')}/reapply#{raw}",
+            "brand": company_name,
+        },
+        to_user_id=user_id,
+        company_id=company_id,
+        related_kind="reapplication_confirm",
+    )
+
+
+async def redeem_reapply_token(db: AsyncSession, raw_token: str) -> uuid.UUID:
+    """The user a usable reapplication token belongs to, and consume it.
+
+    One message for expired, consumed and never-existed — a link that has been
+    used must not be distinguishable from one that was never issued.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT user_id, consumed_at, expires_at FROM auth_tokens"
+                " WHERE token_hash = :th AND kind = :kind"
+            ),
+            {"th": hash_token(raw_token, REAPPLY_TOKEN_KIND), "kind": REAPPLY_TOKEN_KIND},
+        )
+    ).first()
+    now = datetime.now(tz=UTC)
+    if row is None or row.consumed_at is not None or row.expires_at <= now:
+        raise ActivationError(
+            "This link is invalid or has expired. Apply again to get a new one."
+        )
+    # The UPDATE is the real check, not the SELECT above it. Between the two,
+    # a concurrent request can consume the same token; `consumed_at IS NULL`
+    # means exactly one of them matches a row, and reading the rowcount is what
+    # turns that into an answer. Without it both callers are told they redeemed
+    # it — today the loser is contained downstream, because `confirm` clears
+    # `reapply_token_hash` inside the same transaction and the second
+    # `staged_for_token` finds nothing, but that is a property of a different
+    # function. A single-use credential should establish its own single use.
+    consumed = await db.execute(
+        text(
+            "UPDATE auth_tokens SET consumed_at = :now"
+            " WHERE token_hash = :th AND kind = :kind AND consumed_at IS NULL"
+        ),
+        {"now": now, "th": hash_token(raw_token, REAPPLY_TOKEN_KIND),
+         "kind": REAPPLY_TOKEN_KIND},
+    )
+    if (getattr(consumed, "rowcount", 0) or 0) != 1:
+        # Somebody else spent it in the last few milliseconds. The SAME message
+        # as expired-or-never-existed: which of those it was is not information
+        # the holder of a bad link needs.
+        raise ActivationError(
+            "This link is invalid or has expired. Apply again to get a new one."
+        )
+    return uuid.UUID(str(row.user_id))

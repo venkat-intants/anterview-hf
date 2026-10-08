@@ -40,6 +40,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
+from shared.text import strip_unstorable
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -106,9 +107,32 @@ def hash_token(raw: str) -> str:
 
 
 def _clean(value: Any, limit: int) -> str | None:
+    """Trim, collapse whitespace, drop what Postgres cannot store, treat "" as unset.
+
+    THE SECOND `_clean`, and round 13 hardened only the other one. That commit
+    wrote the comment explaining why `" ".join(value.split())` does not remove
+    a NUL — `str.split()` does not treat U+0000 as whitespace — and then left
+    the identical line here, which is what "fix it at the producer" fails to
+    mean when there are two producers.
+
+    It mattered: the only caller with an input no request model sees is
+    `attach_resume`'s `_clean(filename, 255)`, fed from `resume.filename` on
+    the anonymous `POST /apply/draft/resume-upload`. Starlette hands a
+    multipart filename through verbatim, so a filename carrying a NUL (U+0000) reached a `text`
+    column and raised. Worse than a 500: the CV is uploaded to object storage
+    BEFORE that UPDATE, so the transaction rolled back with the object already
+    written and no row pointing at it — an un-consented CV with no erasure
+    anchor, repeatable at the route's rate limit.
+
+    This docstring writes "a NUL (U+0000)" instead of the escape, for the
+    reason `shared.text` spells out: an escape written into source becomes
+    the character itself, and a NUL in a .py file is a SyntaxError on
+    import. Not hypothetical — the first version of this docstring did
+    exactly that and broke the module.
+    """
     if value is None:
         return None
-    cleaned = " ".join(str(value).split())[:limit]
+    cleaned = strip_unstorable(" ".join(str(value).split()))[:limit]
     return cleaned or None
 
 
@@ -281,7 +305,12 @@ async def save(
                               "exp": now + timedelta(days=DRAFT_TTL_DAYS)}
     if answers is not None:
         assignments.append("answers = CAST(:answers AS jsonb)")
-        params["answers"] = json.dumps(answers)
+        # `allow_nan=False`: the same backstop as `application_questions._json`.
+        # A draft's answers are PATCHed before they are validated, so a
+        # non-finite float can reach this dict without passing
+        # `coerce_answer` at all — and this write is the draft row, not the
+        # application, so it is not covered by that function's check.
+        params["answers"] = json.dumps(answers, allow_nan=False)
     assignments.extend(["updated_at = :n", "expires_at = :exp"])
     await db.execute(
         text(
@@ -303,6 +332,7 @@ async def attach_resume(
     s3_key: str,
     filename: str | None,
     parsed: dict[str, Any],
+    resume_text: str,
     now: datetime | None = None,
 ) -> None:
     """Record the uploaded CV and what the parser read out of it. Caller commits.
@@ -311,17 +341,28 @@ async def attach_resume(
     clears ``confirmed_at``: a confirmation is about one particular CV, and
     carrying it across a replacement would mean the candidate had confirmed
     something they never saw.
+
+    ``resume_text`` is the extracted text itself, kept because
+    ``submit_draft`` has to put it on the ``applicants`` row or the application
+    is never scored at all: ``reconciliation._UNSCORED_WORK_SQL`` requires
+    ``a.resume_text`` to be non-empty, so a draft-door applicant without it
+    matches nothing the reconciler looks for. It was extracted and discarded
+    here for the whole life of this door. The caller bounds it — see
+    ``public_apply._MAX_RESUME_TEXT_CHARS``, which exists because an unbounded
+    value is a timing channel on the sibling door, and these two doors drifting
+    apart is what five rounds of review kept finding.
     """
     now = now or datetime.now(tz=UTC)
     await db.execute(
         text(
             "UPDATE application_drafts"
             "   SET resume_s3_key = :k, resume_filename = :f,"
-            "       parsed = CAST(:p AS jsonb), confirmed_at = NULL, updated_at = :n"
+            "       parsed = CAST(:p AS jsonb), resume_text = :rt,"
+            "       confirmed_at = NULL, updated_at = :n"
             " WHERE id = :i AND status = 'draft'"
         ),
         {"k": s3_key, "f": _clean(filename, 255), "p": json.dumps(parsed),
-         "n": now, "i": draft_id},
+         "rt": resume_text, "n": now, "i": draft_id},
     )
 
 

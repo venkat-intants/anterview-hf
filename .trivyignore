@@ -97,11 +97,12 @@ GHSA-xf7x-x43h-rpqh
 # is real even when it is not a data risk. No gRPC/xDS is configured (grpc), and
 # `os.Root` is not used (39822).
 #
-# Unblock = a `caddy:2-alpine` rebuild on Go >=1.26.6; re-check each sprint. If
-# upstream stays behind for another sprint, the durable fix is to build Caddy
-# ourselves in a Go builder stage rather than to keep extending this list —
-# that is a Dockerfile change with its own review, deliberately not smuggled
-# into a remediation PR.
+# Unblock = a `caddy:2-alpine` rebuild on Go >=1.26.9 (raised from >=1.26.6 on
+# 2026-10-15, see the continuation below); re-check each sprint. If upstream
+# stays behind for another sprint, the durable fix is to build Caddy ourselves
+# in a Go builder stage rather than to keep extending this list — that is a
+# Dockerfile change with its own review, deliberately not smuggled into a
+# remediation PR.
 CVE-2026-56852
 GHSA-hrxh-6v49-42gf
 CVE-2026-27145
@@ -115,6 +116,50 @@ CVE-2026-56858
 CVE-2026-56859
 CVE-2026-56860
 CVE-2026-56862
+#
+# Caddy, continued — added 2026-10-15. THREE MORE ids in the same binary, from
+# the same root cause: `caddy:2-alpine` was last rebuilt 2026-10-06 and still
+# ships Go **v1.26.8**, while the fixes landed in Go 1.26.9 / 1.27.2 (both
+# released, both verified present on go.dev on 2026-10-15). Caddy 2.11.7 exists
+# and was pushed 2026-10-14, but only the WINDOWS and builder variants were
+# rebuilt — the alpine tags still carry the 10-06 binary. So, again, there is
+# nothing to bump on our side; the float has nowhere to float to.
+#
+# Reachability, checked against both Caddyfiles on 2026-10-15, not assumed:
+#
+#   * CVE-2026-78669 (HTTP/2 SETTINGS flood, x/net/http2 + stdlib). HF Space:
+#     `auto_https off`, HF terminates TLS, Caddy speaks plain HTTP/1.1 on :7860
+#     and neither Caddyfile sets `h2c` or `protocols` — so there is no HTTP/2
+#     listener, exactly the reasoning already recorded for CVE-2026-56853.
+#     NOT reachable there. Oracle VM: Caddy terminates TLS and ALPN negotiates
+#     h2 by default, so it IS reachable on that target.
+#
+#   * CVE-2026-78667 (DoS via crafted Range headers, net/http). THIS ONE IS
+#     REACHABLE ON THE LIVE TARGET and is not being waved through: space/
+#     Caddyfile:369 serves /app/webdist with `file_server`, and Range parsing
+#     is on that path. The Oracle VM Caddyfile has no `file_server` — it only
+#     reverse-proxies — so exposure there is limited to what net/http parses
+#     in the proxy path. Same honest caveat as CVE-2026-56860: a DoS on the
+#     edge is a real availability risk against the 99.5% NFR, not a false
+#     positive, and it is why this block keeps a re-review trigger.
+#
+#   * CVE-2026-97031 (crypto/tls, multiple ECH outer extension references).
+#     Needs a TLS server that processes Encrypted Client Hello. HF Space does
+#     not terminate TLS at Caddy at all; the Oracle VM does, but ECH is opt-in
+#     and neither Caddyfile configures it. NOT reachable on either target as
+#     configured — and that conclusion expires the moment a Caddyfile enables
+#     ECH.
+#
+# Accepted to unblock a merge, with the cost stated: for about a week — until
+# upstream rebuilds the alpine tag — the live Space carries a reachable
+# Range-header DoS at its edge. The alternative is building Caddy from source
+# in a Go 1.27 builder stage, which the entry above already identifies as the
+# durable fix and equally already rules out as something to smuggle into a
+# remediation change. If upstream has not rebuilt by the next sprint review,
+# that builder stage stops being optional.
+CVE-2026-78669
+CVE-2026-78667
+CVE-2026-97031
 #
 # Caddy, continued — added 2026-09-07. Two MORE ids in the same binary, from
 # the same cause: upstream still has not rebuilt `caddy:2-alpine`, so its

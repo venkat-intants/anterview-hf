@@ -883,11 +883,20 @@ on its own. That is the risk this entry names.
   first; every notice says each hire or reject is a person's.
 
 **What is not covered.** Applicants attached to an archived workflow version
-are not auto-shortlisted. A person who receives the confirmation email for
-an application someone else submitted in their name, and then claims the
-account anyway, has proven the address — their application can then be
-auto-shortlisted, though the confirmation email told them what was applied
-for. Applicants already waiting when a version is
+are not auto-shortlisted. Proving the address is per account, not per
+application: when a person claims their account — through the link for ANY of
+their applications — every waiting application filed under that address is
+offered to auto-shortlist, including one someone else submitted in their name.
+That person then receives an assessment for a role they did not apply to; each
+such application also sent them its own confirmation email, and nothing is
+sent to anyone but the proven address owner. Narrowing the offer to the
+application the activation link was issued for is a possible follow-up.
+A consent row given to a second company can stay on a tombstoned guest
+identity when accounts are linked at activation (`_link_to_existing`
+de-duplicates `application_data` per person, not per company); that
+application then fails the consent check and waits for HR — the safe
+direction — but erasure does not reach the stranded row. Tracked with the
+deferred DPDP erasure work. Applicants already waiting when a version is
 published are offered to it once, at publish, at most 50 per publish; the rest
 stay in HR's queue (the builder says how many) until a rescore offers them
 again. The consent notice is the same whatever the opening's setting, so a

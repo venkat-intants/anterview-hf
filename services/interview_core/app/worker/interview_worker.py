@@ -114,6 +114,7 @@ from shared.redis_factory import build_redis_client
 from app.avatars import resolve_avatar
 from app.config import settings
 from app.worker import close_path
+from app.worker.avatar_mode import effective_avatar_provider, normalise_avatar_mode
 
 # IC-4: four sibling modules carved out of this file (constants, prompt,
 # consent, session_store). Imported back here — rather than left for callers to
@@ -141,7 +142,6 @@ from app.worker.consent import (
     _run_consent_watchdog,
     resolve_consent_user_id,
 )
-from app.worker.avatar_mode import effective_avatar_provider, normalise_avatar_mode
 from app.worker.constants import (
     MAX_CANDIDATE_ANSWERS,
     MIN_ANSWERS_TO_SCORE,

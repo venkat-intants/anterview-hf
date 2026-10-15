@@ -586,7 +586,25 @@ async def scheduled_jobs(current_user: PlatformOwnerDep) -> dict[str, Any]:
             gap is not None
             and (finished is None or now - datetime.fromisoformat(str(finished)) > gap)
         )
-    return {"jobs": jobs, "checked_at": now.isoformat()}
+    return {
+        "jobs": jobs,
+        "checked_at": now.isoformat(),
+        # Operational off-switches, so an operator can SEE one left off. Platform
+        # owner only (this route), never on an unauthenticated health endpoint.
+        "switches": [
+            {
+                "name": "scheduler_catchup_enabled",
+                "enabled": bool(settings.scheduler_catchup_enabled),
+                "normal": True,
+                "needs_attention": not settings.scheduler_catchup_enabled,
+                "effect": (
+                    "Off: a scheduler window missed while the service was asleep "
+                    "(retention purge, nightly watchers, identity-index backstop) "
+                    "is not replayed."
+                ),
+            }
+        ],
+    }
 
 
 # ===========================================================================

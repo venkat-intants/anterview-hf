@@ -6,20 +6,16 @@
 //   Inline create form from the previous version retained inside the new layout.
 
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listExams, createExam, type ExamSummary } from '@/api/exams';
 import { toast } from '@/lib/toast';
+import { appPath } from '@/lib/safeUrl';
 import { cn } from '@/lib/utils';
 import { Reveal } from '@/design/components/Reveal';
-import {
-  GlassCard,
-  Pill,
-  StatusTag,
-  Field,
-  ToggleSwitch,
-} from '@/design/components/primitives';
-import { Plus, Pencil, BarChart3, Sparkles } from '@/design/components/icons';
+import { PageHeader, EmptyState, Toolbar, Page } from '@/design/components/page';
+import { GlassCard, Pill, StatusTag, Field, ToggleSwitch } from '@/design/components/primitives';
+import { ArrowLeft, Plus, Pencil, BarChart3, Sparkles, Search } from '@/design/components/icons';
 
 // ── Status → design tone mapping ─────────────────────────────────────────────
 type ToneKey = 'forest' | 'neutral' | 'amber';
@@ -103,6 +99,10 @@ function ExamCard({ e }: { e: ExamSummary }) {
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function Exams() {
   const qc = useQueryClient();
+  // Where the workflow builder sent the user from, when a round needed an
+  // exam. A query string is user-controlled, so only a same-app path is used.
+  const [searchParams] = useSearchParams();
+  const returnTo = appPath(searchParams.get('returnTo'));
   const navigate = useNavigate();
 
   // Create-form state
@@ -113,6 +113,9 @@ export default function Exams() {
   const [autoAdvance, setAutoAdvance] = useState(false);
   const [kind, setKind] = useState<'mcq' | 'coding'>('mcq');
   const [showForm, setShowForm] = useState(false);
+  // List controls — they only narrow what is already loaded.
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
   const { data: exams, isLoading } = useQuery({
     queryKey: ['hr', 'exams'],
@@ -141,8 +144,7 @@ export default function Exams() {
       void qc.invalidateQueries({ queryKey: ['hr', 'exams'] });
       void navigate(`/hr/exams/${e.id}`);
     },
-    onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : 'Create failed'),
+    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : 'Create failed'),
   });
 
   function onSubmit(ev: React.FormEvent) {
@@ -154,24 +156,73 @@ export default function Exams() {
     createMut.mutate();
   }
 
-  const list = exams ?? [];
+  const all = exams ?? [];
+  const needle = search.trim().toLowerCase();
+  const list = all.filter(
+    (e) =>
+      (!needle || e.title.toLowerCase().includes(needle)) &&
+      (!statusFilter || e.status === statusFilter),
+  );
+  const filtering = needle !== '' || statusFilter !== '';
 
   return (
-    <div className="mx-auto max-w-[1120px] px-6 py-8 lg:px-8">
-      {/* ── Header ── */}
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-[28px] font-semibold tracking-[-1px]">Exams</h1>
-          <p className="mt-1 text-[14px] text-muted-foreground">
-            Build and publish AI interview exams.
-          </p>
-        </div>
-      </div>
+    <Page width="default">
+      {returnTo ? (
+        <Link
+          to={returnTo}
+          data-testid="exams-return"
+          className="inline-flex min-h-10 items-center gap-1.5 self-start rounded text-[13px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        >
+          <ArrowLeft size={16} aria-hidden="true" />
+          Back to the workflow
+        </Link>
+      ) : null}
+      <PageHeader
+        title="Exams"
+        description="Build an exam, add its questions, then publish it to start receiving attempts."
+      />
+
+      {all.length > 0 ? (
+        <Toolbar
+          trailing={
+            <span className="text-[13px] tabular-nums text-muted-foreground" role="status">
+              {list.length} of {all.length} exam{all.length === 1 ? '' : 's'}
+            </span>
+          }
+        >
+          <div className="relative min-w-[200px] flex-1 sm:max-w-[320px]">
+            <Search
+              size={15}
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
+            <input
+              type="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search exams"
+              aria-label="Search exams"
+              className="min-h-[40px] w-full rounded-[10px] border border-border bg-secondary pl-9 pr-3 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            />
+          </div>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            aria-label="Filter by status"
+            className="min-h-[40px] rounded-[10px] border border-border bg-secondary px-3 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          >
+            <option value="">Any status</option>
+            <option value="draft">Only drafts</option>
+            <option value="published">Only live</option>
+            <option value="closed">Only closed</option>
+          </select>
+        </Toolbar>
+      ) : null}
 
       {/* ── Inline create form ── */}
       {showForm && (
         <Reveal delay={0.04}>
-          <GlassCard feature className="mt-6 p-5">
+          <GlassCard className="p-5">
             <h3 className="mb-4 text-[16px] font-semibold">New exam</h3>
             <form onSubmit={onSubmit} className="space-y-4">
               {/* Exam type */}
@@ -182,9 +233,9 @@ export default function Exams() {
                     type="button"
                     onClick={() => setKind(k)}
                     className={
-                      'flex-1 rounded-[10px] border px-3 py-2 text-[13px] font-medium transition-colors ' +
+                      'min-h-[40px] flex-1 rounded-full border px-4 py-2 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ' +
                       (kind === k
-                        ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
+                        ? 'border-foreground bg-foreground text-background'
                         : 'border-border text-muted-foreground hover:text-foreground')
                     }
                     aria-pressed={kind === k}
@@ -265,9 +316,7 @@ export default function Exams() {
 
       {/* ── Exam grid ── */}
       <div
-        className={cn(
-          'mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3',
-        )}
+        className={cn('grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3')}
         aria-busy={isLoading ? 'true' : undefined}
         aria-label={isLoading ? 'Loading exams' : undefined}
       >
@@ -277,16 +326,16 @@ export default function Exams() {
           onClick={() => setShowForm(true)}
           className={cn(
             'flex min-h-[212px] flex-col items-center justify-center gap-2.5',
-            'rounded-[24px] border-[1.5px] border-dashed border-[rgba(var(--accent-rgb),0.4)]',
-            'bg-[rgba(var(--accent-rgb),0.06)] text-[var(--ui-info)]',
-            'transition-colors hover:bg-[rgba(var(--accent-rgb),0.1)]',
+            'rounded-card border-[1.5px] border-dashed border-[var(--ui-line-strong)]',
+            'bg-card text-foreground',
+            'transition-colors hover:bg-[var(--ui-inset-soft)]',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           )}
           aria-label="Create new exam"
         >
           <Plus size={28} aria-hidden="true" />
           <span className="text-[14px] font-semibold">
-            {list.length === 0 ? 'Create your first exam' : 'Create new exam'}
+            {all.length === 0 ? 'Create your first exam' : 'Create new exam'}
           </span>
         </button>
 
@@ -295,28 +344,27 @@ export default function Exams() {
           [0, 1, 2].map((i) => (
             <div
               key={i}
-              className="h-[212px] w-full animate-pulse rounded-[24px] bg-[var(--ui-inset)]"
+              className="h-[212px] w-full animate-pulse rounded-card bg-[var(--ui-inset)]"
             />
           ))}
 
         {/* Empty hint when no exams */}
-        {!isLoading && list.length === 0 && (
-          <div
-            className={cn(
-              'flex flex-col items-center justify-center gap-3 rounded-[24px]',
-              'border border-dashed border-border bg-[var(--ui-inset-soft)] p-8 text-center',
-              'sm:col-span-1 lg:col-span-2',
-            )}
-          >
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--ui-inset)] text-muted-foreground">
-              <Sparkles size={24} aria-hidden="true" />
-            </span>
-            <p className="text-[13px] text-muted-foreground">
-              No exams yet. Create one, add questions, then publish to start receiving
-              attempts.
-            </p>
-          </div>
+        {!isLoading && all.length === 0 && (
+          <EmptyState
+            icon={Sparkles}
+            title="No exams yet"
+            description="Create one, add questions, then publish to start receiving attempts."
+            className="sm:col-span-1 lg:col-span-2"
+          />
         )}
+
+        {!isLoading && all.length > 0 && list.length === 0 && filtering ? (
+          <EmptyState
+            title="No exams match"
+            description="Clear the search or the status filter to see every exam."
+            className="sm:col-span-1 lg:col-span-2"
+          />
+        ) : null}
 
         {/* Exam cards */}
         {!isLoading &&
@@ -326,6 +374,6 @@ export default function Exams() {
             </Reveal>
           ))}
       </div>
-    </div>
+    </Page>
   );
 }

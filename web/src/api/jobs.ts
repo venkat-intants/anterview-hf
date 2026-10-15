@@ -4,6 +4,7 @@
 import type { Job, JobsListResponse } from '../types/interview';
 import { mockJobsResponse, simulateDelay } from './mock';
 import { apiGet, apiPost } from './client';
+import { pathId } from './pathId';
 
 export interface CreateCustomJobRequest {
   title: string;
@@ -49,7 +50,7 @@ export async function getJob(
     if (!job) throw new Error('Job not found');
     return job;
   }
-  return apiGet<Job>(`/jobs/${id}`);
+  return apiGet<Job>(`/jobs/${pathId(id)}`);
 }
 
 /**

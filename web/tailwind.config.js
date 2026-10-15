@@ -2,7 +2,8 @@ import tailwindcssAnimate from 'tailwindcss-animate';
 
 /** @type {import('tailwindcss').Config} */
 export default {
-  // shadcn/ui requires darkMode: 'class'; the app is forced dark (html.dark).
+  // shadcn/ui requires darkMode: 'class'. lib/useThemeMode.ts keeps the class
+  // in step with html[data-mode].
   darkMode: ['class'],
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
@@ -15,9 +16,9 @@ export default {
     },
     extend: {
       colors: {
-        // Existing Intants indigo brand scale — kept so any `primary-600`-style
-        // references still resolve. `primary` (no number) is the shadcn shim and
-        // now maps to WHITE (the Superwhisper action color) via --primary.
+        // The numbered indigo scale is kept so `primary-600`-style references
+        // still resolve. `primary` (no number) is the action colour from
+        // --primary: the brand blue, lifted (with ink text) in dark mode.
         primary: {
           50: '#eef2ff',
           100: '#e0e7ff',
@@ -34,8 +35,7 @@ export default {
           foreground: 'hsl(var(--primary-foreground))',
         },
 
-        // shadcn/ui semantic tokens (remapped to the dark Superwhisper palette
-        // in index.css)
+        // shadcn/ui semantic tokens — values live in index.css
         background: 'hsl(var(--background))',
         foreground: 'hsl(var(--foreground))',
         card: {
@@ -63,17 +63,26 @@ export default {
         },
         destructive: {
           DEFAULT: 'hsl(var(--destructive))',
+          // The button fill. See --destructive-solid in index.css for why it
+          // is not simply DEFAULT.
+          solid: 'hsl(var(--destructive-solid))',
           foreground: 'hsl(var(--destructive-foreground))',
         },
         border: 'hsl(var(--border))',
         input: 'hsl(var(--input))',
         ring: 'hsl(var(--ring))',
 
-        // ── Superwhisper palette ────────────────────────────────────────────
-        // Brand accents — chromatic colour is rationed; electric is THE signal,
-        // lavender is the aurora gradient partner. Both are wired to the
-        // themeable accent CSS vars (see index.css + the header theme toggle),
-        // so `bg-electric-signal/30`, `text-lavender`, etc. recolour per theme.
+        // The highlight tint — a fill with its own ink, never a text colour.
+        // Valued per mode, so never assume it is light.
+        highlight: {
+          DEFAULT: 'var(--ui-highlight)',
+          foreground: 'var(--ui-highlight-ink)',
+        },
+
+        // ── Signal accent aliases ───────────────────────────────────────────
+        // `electric*` is the signal and `lavender*` its gradient partner. Both
+        // read the accent CSS vars (index.css + the header accent picker), so
+        // `bg-electric-signal/30`, `text-lavender`, etc. recolour per theme.
         'electric-signal': 'rgb(var(--accent-rgb-sp) / <alpha-value>)',
         electric: 'rgb(var(--accent-rgb-sp) / <alpha-value>)',
         'lavender-mist': 'rgb(var(--accent-2-rgb-sp) / <alpha-value>)',
@@ -106,27 +115,6 @@ export default {
         amber: '#ffb764',
         pink: '#dd55e7',
 
-        // ── Cluely light-theme palette (scoped to the marketing landing page) ──
-        // A namespaced set so it never collides with the dark app tokens above.
-        // Light page, single Signal-Blue accent, achromatic everywhere else.
-        cluely: {
-          signal: '#3c83f6', // primary action blue
-          'deep-dusk': '#022c70', // gradient terminus / button shadow depth
-          azure: '#0544a5', // supporting blue accent
-          'hover-glow': '#81b6ff', // button inset highlight
-          ink: '#000000',
-          carbon: '#18181b', // primary text
-          slate: '#2e3038', // nav / secondary headings
-          steel: '#5e616e', // muted body text
-          fog: '#777a88', // captions / tertiary
-          mist: '#afb3c4', // icon strokes / placeholders
-          vapor: '#edeef2', // alt card surface
-          frost: '#f3f8ff', // tinted card / hero-adjacent band
-          chalk: '#ffffff', // page canvas
-          bone: '#e4e4e7', // hairline borders (the dominant line color)
-          ash: '#d7d7d7', // secondary dividers
-          cyan: '#7df0f8', // decorative cool highlight
-        },
       },
 
       // Fractional spacing steps the anterview-ui landing design uses
@@ -146,24 +134,17 @@ export default {
         'aurora-wash':
           'linear-gradient(90deg, rgba(25,153,232,0.15) 2.75%, rgba(164,91,242,0.15) 99.26%)',
         'signal-blue': 'linear-gradient(#0fb7fa, #0072fb)',
-        // Cluely landing — blue dawn sky descending into mountain-indigo.
-        // (No `cluely-signal` image here — it would collide with the
-        // `cluely.signal` color's `bg-cluely-signal` utility. CTA stays flat.)
-        'cluely-hero':
-          'linear-gradient(180deg, #9ec6f7 0%, #6ea4f1 20%, #3f78e8 42%, #245fd8 60%, #143fb4 78%, #0a256f 100%)',
       },
 
       fontFamily: {
-        sans: ['"SF Pro Text"', '-apple-system', 'BlinkMacSystemFont', 'Inter', 'system-ui', 'Segoe UI', 'Roboto', 'sans-serif'],
-        // anterview-ui landing uses font-inter explicitly; mono now prefers
-        // JetBrains Mono (loaded via landing/styles/anterview.css) for the
-        // landing's "REC · 1.8s latency" / step-number / scorecard mono text.
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'system-ui', 'Segoe UI', 'Roboto', 'sans-serif'],
+        // Headings. h1–h3 get this by default (index.css); use `font-display`
+        // for a display-weight line that is not a heading element.
+        display: ['"Plus Jakarta Sans"', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        // mono prefers JetBrains Mono (loaded by design/styles/anthire.css).
         inter: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
         flow: ['Inter Tight', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        // Cluely landing — Geist (all UI) + EB Garamond (the one serif display).
-        geist: ['Geist', 'Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
-        'eb-garamond': ['"EB Garamond"', 'Cormorant Garamond', 'Georgia', 'serif'],
       },
 
       // Inter type scale with the signature aggressive negative tracking.
@@ -192,8 +173,8 @@ export default {
         lg: 'var(--radius)',
         md: 'calc(var(--radius) - 2px)',
         sm: 'calc(var(--radius) - 4px)',
-        // anterview-ui landing radii
-        card: '24px',
+        // The app's card radius. Controls use --radius (12px); buttons are pills.
+        card: '16px',
         pill: '9999px',
         'sm-card': '12px',
       },
@@ -205,23 +186,16 @@ export default {
         'inset-hairline-strong': 'inset 0 0 0 1px rgb(255 255 255 / 0.22)',
         'aurora-card': '0 1px 4px 0 rgb(0 0 0 / 0.25), 0 4px 59px 0 rgb(0 0 0 / 0.10)',
 
-        // ── Apple elevation = value-only (NO shadows on cards) ────────────────
-        // Resting cards are shadowless (white on Fog). Only a whisper appears on
-        // hover for interactive feedback, and overlays keep their own shadow.
-        card: '0 0 #0000',
-        'card-hover': '0 8px 24px -14px rgb(29 29 31 / 0.16)',
-        elevated: '0 0 #0000',
+        // ── App elevation ────────────────────────────────────────────────────
+        // Two steps, both per-mode tokens: a resting card, and a raised panel
+        // (dialogs, popovers, a hovered interactive card).
+        card: 'var(--ui-shadow-soft)',
+        'card-hover': 'var(--ui-shadow-card)',
+        elevated: 'var(--ui-shadow-card)',
+        // A hovered interactive card: lifts a step above `card` without going
+        // as far as a dialog. Per-mode token in index.css.
+        lift: 'var(--shadow-lift)',
 
-        // ── Cluely landing elevation ──────────────────────────────────────────
-        // Glassy illuminated CTA: ring + inset depth + inset highlight (no drop).
-        'cluely-cta':
-          '0 0 0 0.5px #0544a9, inset 0 -1px 0 0 #022c70, inset 0 0.5px 0 0 #81b6ff',
-        // Floating product mockup: hairline ring + top highlight + soft ambient.
-        'cluely-mockup':
-          '0 0 0 1px rgba(207,226,255,0.5), inset 0 -0.5px 0 0 rgba(255,255,255,0.8), 0 40px 80px -24px rgba(8,29,93,0.45), 0 12px 32px -16px rgba(8,29,93,0.30)',
-        // Highlighted card glow (lavender-blue).
-        'cluely-glow':
-          '20px 20px 24px 0 rgba(148,172,243,0.4), inset -3px -3px 4px 0 rgba(191,229,251,0.4), inset 4px 4px 4px 0 rgba(19,26,228,0.1)',
 
         // ── Futuristic glow elevation (Wave 1 redesign) ──────────────────────
         // Ring-tinted glows for primary actions and "live"/focus surfaces.
@@ -291,8 +265,6 @@ export default {
         'silhouette-float': 'silhouette-float 13s ease-in-out infinite',
         'laptop-float': 'laptop-float 16s ease-in-out infinite',
         'voice-bar': 'voice-bar 1.4s ease-in-out infinite',
-        // Cluely landing — slow buoyant float for the floating product mockup.
-        'cluely-float': 'cluely-float 9s ease-in-out infinite',
         // ── Futuristic motion system (Wave 1 redesign) ───────────────────────
         'fade-up': 'fade-up 0.6s cubic-bezier(0.22, 1, 0.36, 1) both',
         'fade-in': 'fade-in 0.5s ease both',

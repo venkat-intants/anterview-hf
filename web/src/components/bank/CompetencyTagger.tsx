@@ -66,14 +66,17 @@ export function CompetencyTagger({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor="competency-tagger-input" className="text-[12px] font-medium text-[var(--ui-soft)]">
+      <label
+        htmlFor="competency-tagger-input"
+        className="text-[12px] font-medium text-[var(--ui-soft)]"
+      >
         Competencies ({value.length}/{MAX_COMPETENCIES})
       </label>
       <div className="flex flex-wrap gap-1.5">
         {value.map((c) => (
           <span
             key={c.id}
-            className="inline-flex items-center gap-1 rounded-pill bg-[rgba(var(--accent-rgb),0.14)] px-2.5 py-1 text-[11.5px] font-medium text-[var(--ui-info)]"
+            className="inline-flex items-center gap-1 rounded-pill bg-[rgba(var(--accent-rgb),0.14)] px-2.5 py-1 text-[12px] font-medium text-[var(--ui-info)]"
           >
             {c.name}
             {!disabled ? (
@@ -103,7 +106,7 @@ export function CompetencyTagger({
                 }
               }}
               placeholder="Type to search or add a competency…"
-              className="w-full rounded-[10px] border border-border bg-secondary px-3 py-1.5 text-[12.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+              className="w-full rounded-[10px] border border-border bg-secondary px-3 py-1.5 text-[12.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
             <button
               type="button"
@@ -118,14 +121,14 @@ export function CompetencyTagger({
             <ul
               role="listbox"
               aria-label="Competency suggestions"
-              className="absolute z-10 mt-1 max-h-40 w-full overflow-y-auto rounded-[10px] border border-border bg-card shadow-lg"
+              className="absolute z-10 mt-1.5 max-h-52 w-full overflow-y-auto rounded-[12px] border border-[var(--ui-line-strong)] bg-popover p-1 shadow-elevated"
             >
               {suggestions.slice(0, 8).map((s) => (
                 <li key={s.id}>
                   <button
                     type="button"
                     onClick={() => addCompetency(s)}
-                    className="block w-full px-3 py-1.5 text-left text-[12.5px] text-foreground hover:bg-[var(--ui-inset)]"
+                    className="flex min-h-9 w-full items-center rounded-[8px] px-2.5 py-1.5 text-left text-[14px] text-popover-foreground outline-none transition-colors hover:bg-[var(--ui-inset-strong)] focus-visible:bg-[var(--ui-inset-strong)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   >
                     {s.name}
                   </button>
@@ -134,7 +137,7 @@ export function CompetencyTagger({
             </ul>
           ) : null}
           {hint ? (
-            <p role="status" className="mt-1 text-[11.5px] text-[var(--ui-danger)]">
+            <p role="status" className="mt-1 text-[12px] text-[var(--ui-danger)]">
               {hint}
             </p>
           ) : null}

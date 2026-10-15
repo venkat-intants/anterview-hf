@@ -13,21 +13,31 @@
 // enforced server-side, surfaced here as a 403 if it is ever reached anyway.
 
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  AlertTriangle,
-  ArrowLeft,
-  CheckCircle2,
-  ChevronDown,
-  ClipboardCheck,
-  Loader2,
-  XCircle,
-} from '@/design/components/icons';
-import { GlassCard, StatusTag } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
+import { AlertTriangle, CheckCircle2, ChevronDown, XCircle } from '@/design/components/icons';
+import { StatusTag } from '@/design/components/primitives';
+import { Breadcrumbs, DataList, Page, PageHeader } from '@/design/components/page';
+import { Section, Well } from '@/design/components/rows';
+import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
+import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 import { cn } from '@/lib/utils';
+import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
+import type { RoundKind } from '@/api/workflows';
 import { toast } from '@/lib/toast';
+import {
+  DecisionPanel,
+  NothingToDecide,
+  ReviewDetailError,
+  ReviewDetailLayout,
+  ReviewDetailLoading,
+  ReviewQueueItem,
+  ReviewQueueState,
+  ReviewTrack,
+  WhatChanges,
+  type DecisionMode,
+} from '@/components/superadmin/ReviewParts';
+import { waitingText } from '@/components/superadmin/waitingText';
 import {
   approveWorkflowReview,
   getWorkflowReviewDetail,
@@ -45,14 +55,6 @@ function errText(e: unknown, fallback: string): string {
 
 const CHANGES_NOTE_MIN = 10;
 
-function waiting(iso: string | null): string {
-  if (!iso) return '';
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
-  if (Number.isNaN(days)) return '';
-  if (days <= 0) return 'Submitted today';
-  return days === 1 ? 'Waiting 1 day' : `Waiting ${days} days`;
-}
-
 /* ── The queue ──────────────────────────────────────────────────────────── */
 
 function ReviewQueue(): JSX.Element {
@@ -60,74 +62,36 @@ function ReviewQueue(): JSX.Element {
     queryKey: ['admin', 'workflow-reviews'],
     queryFn: listPendingWorkflowReviews,
   });
+  const rows = queue.data ?? [];
 
   return (
-    <div className="mx-auto w-full max-w-[860px] px-4 py-8">
-      <Reveal>
-        <h1 className="text-[22px] font-semibold text-foreground">Workflow reviews</h1>
-        <p className="mt-1 text-[13px] text-muted-foreground">
-          Hiring workflows your HR managers have submitted for approval before they can go live.
-          Oldest request first.
-        </p>
-      </Reveal>
-
-      {queue.isLoading ? (
-        <p className="mt-6 flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          Loading…
-        </p>
-      ) : queue.isError ? (
-        <p className="mt-6 text-[13px] text-[var(--ui-danger)]">
-          Could not load the workflow review queue.
-        </p>
-      ) : (queue.data ?? []).length === 0 ? (
-        <GlassCard className="mt-6 p-6 text-center">
-          <p className="text-[13.5px] text-foreground">Nothing is waiting on you.</p>
-          <p className="mt-1 text-[12.5px] text-muted-foreground">
-            A workflow your HR managers submit for review appears here.
-          </p>
-        </GlassCard>
-      ) : (
-        <div className="mt-6 flex flex-col gap-3">
-          {(queue.data ?? []).map((row) => (
-            <GlassCard key={row.workflow_id} className="p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <Link
-                    to={`/superadmin/workflow-reviews/${row.workflow_id}`}
-                    className="text-[15px] font-semibold text-foreground hover:underline"
-                  >
-                    {row.opening_title} · v{row.version}
-                  </Link>
-                  <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-                    {row.rounds} round{row.rounds === 1 ? '' : 's'}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-[12px] text-muted-foreground">{waiting(row.submitted_at)}</p>
-                  {row.submitted_by_name ? (
-                    <p className="text-[11.5px] text-[var(--ui-faint)]">
-                      by {row.submitted_by_name}
-                    </p>
-                  ) : null}
-                </div>
-              </div>
-              {row.note ? (
-                <p className="mt-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[12.5px] text-[var(--ui-soft)]">
-                  {row.note}
-                </p>
-              ) : null}
-              <Link
-                to={`/superadmin/workflow-reviews/${row.workflow_id}`}
-                className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] text-[var(--accent)] hover:underline"
-              >
-                Review this version
-              </Link>
-            </GlassCard>
-          ))}
-        </div>
-      )}
-    </div>
+    <Page width="form">
+      <PageHeader
+        title="Workflow reviews"
+        description="Hiring workflows your HR managers have submitted for approval before they can go live. Oldest request first."
+      />
+      <ReviewQueueState
+        loading={queue.isLoading}
+        error={queue.isError}
+        errorText="Could not load the workflow review queue."
+        onRetry={() => void queue.refetch()}
+        count={rows.length}
+        emptyDescription="A workflow your HR managers submit for review appears here."
+      >
+        {rows.map((row) => (
+          <ReviewQueueItem
+            key={row.workflow_id}
+            to={`/superadmin/workflow-reviews/${row.workflow_id}`}
+            title={`${row.opening_title} · v${row.version}`}
+            summary={`${row.rounds} round${row.rounds === 1 ? '' : 's'}`}
+            submittedBy={row.submitted_by_name}
+            waiting={waitingText(row.submitted_at)}
+            note={row.note}
+            cta="Review this version"
+          />
+        ))}
+      </ReviewQueueState>
+    </Page>
   );
 }
 
@@ -151,16 +115,13 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
   return (
     <div className="flex flex-col gap-3">
       {simulation.stale ? (
-        <p
-          role="status"
-          className="flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-warn)]/30 bg-[var(--ui-warn)]/[0.06] px-3 py-2 text-[12px] text-[var(--ui-soft)]"
-        >
+        <Well role="status" className="flex items-center gap-1.5 py-2 text-[12px] text-[var(--ui-soft)]">
           <AlertTriangle
             className="h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]"
             aria-hidden="true"
           />
           Stale — the workflow changed since this run.
-        </p>
+        </Well>
       ) : null}
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
         <StatusTag
@@ -186,9 +147,9 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
         </span>
         {simulation.run_by_name ? <span>by {simulation.run_by_name}</span> : null}
       </div>
-      <ul className="flex flex-col gap-2">
+      <ul className="divide-y divide-border">
         {simulation.rounds.map((r) => (
-          <li key={r.round_id} className="rounded-[10px] border border-border p-3">
+          <li key={r.round_id} className="py-2.5 first:pt-0 last:pb-0">
             <div className="flex items-center gap-2 text-[12.5px]">
               <span className="font-medium text-foreground">
                 {r.position + 1}. {r.title}
@@ -205,7 +166,7 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
                       f.severity === 'error' ? 'text-[var(--ui-danger)]' : 'text-[var(--ui-warn)]',
                     )}
                   >
-                    <span className="mr-1 text-[10px] font-semibold uppercase">{f.severity}</span>
+                    <span className="mr-1 text-[12px] font-semibold uppercase">{f.severity}</span>
                     {f.message}
                   </li>
                 ))}
@@ -229,12 +190,9 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
           {simulation.scenarios.length === 1 ? '' : 's'}
         </button>
         {scenariosOpen ? (
-          <ol className="mt-2 flex flex-col gap-1.5">
+          <ol className="mt-2 divide-y divide-border">
             {simulation.scenarios.map((s) => (
-              <li
-                key={s.id}
-                className="rounded-[10px] border border-border p-2.5 text-[12px] text-[var(--ui-soft)]"
-              >
+              <li key={s.id} className="py-2 text-[12px] text-[var(--ui-soft)]">
                 <span className="font-medium text-foreground">{s.id}</span> — {s.description} —{' '}
                 {s.end === 'decision'
                   ? 'reaches a decision'
@@ -265,7 +223,8 @@ const ACTION_WORDS: Record<ReviewAction, string> = {
 function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
   const qc = useQueryClient();
   const [note, setNote] = useState('');
-  const [mode, setMode] = useState<'approve' | 'changes' | null>(null);
+  const [mode, setMode] = useState<DecisionMode>(null);
+  const historyKey = useScopedPersistKey('workflow-review-history');
 
   const detail = useQuery({
     queryKey: ['admin', 'workflow-reviews', workflowId],
@@ -299,298 +258,285 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
     onError: (e) => toast.error(errText(e, 'Could not send this back')),
   });
 
+  const crumbs = (
+    <Breadcrumbs
+      items={[
+        { label: 'Workflow reviews', to: '/superadmin/workflow-reviews' },
+        { label: detail.data ? `Review v${detail.data.version}` : 'Review version' },
+      ]}
+    />
+  );
+
   if (detail.isLoading) {
     return (
-      <div className="mx-auto w-full max-w-[900px] px-4 py-16">
-        <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading…
-        </p>
-      </div>
+      <Page width="default">
+        {crumbs}
+        <ReviewDetailLoading />
+      </Page>
     );
   }
   if (detail.isError || !detail.data) {
     return (
-      <div className="mx-auto w-full max-w-[900px] px-4 py-16">
-        <p className="text-[13px] text-[var(--ui-danger)]">Could not load this workflow version.</p>
-      </div>
+      <Page width="default">
+        {crumbs}
+        <ReviewDetailError
+          text="Could not load this workflow version."
+          backTo="/superadmin/workflow-reviews"
+          backLabel="Back to workflow reviews"
+        />
+      </Page>
     );
   }
 
   const wf: WorkflowReviewDetail = detail.data;
   const canDecide = wf.review.review_status === 'in_review';
-  const changesReady = note.trim().length >= CHANGES_NOTE_MIN;
+  const newestEntry = wf.review.history.reduce<(typeof wf.review.history)[number] | null>(
+    (n, h) => (n === null || h.at > n.at ? h : n),
+    null,
+  );
 
   return (
-    <div className="mx-auto w-full max-w-[900px] px-4 py-8">
-      <Reveal>
-        <Link
-          to="/superadmin/workflow-reviews"
-          className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-          Workflow reviews
-        </Link>
-        <h1 className="text-[24px] font-semibold tracking-[-0.6px] text-foreground">
-          {wf.opening_title} · v{wf.version}
-        </h1>
-        <p className="mt-1.5 text-[13px] text-muted-foreground">
-          {wf.rounds.length} round{wf.rounds.length === 1 ? '' : 's'} &middot; submitted by{' '}
-          {wf.review.submitted_by_name ?? 'someone no longer with the company'}
-          {wf.review.note ? ` — “${wf.review.note}”` : ''}
-        </p>
-      </Reveal>
+    <ReviewDetailLayout
+      width="default"
+      breadcrumbs={crumbs}
+      title={`${wf.opening_title} · v${wf.version}`}
+      description={`${wf.rounds.length} round${wf.rounds.length === 1 ? '' : 's'} to review before this version can go live.`}
+      whatChanges={
+        canDecide ? (
+          <WhatChanges>
+            approving lets HR publish this version, and every candidate in this opening is routed
+            by the rounds below; sending it back returns it to HR as a draft to edit.
+          </WhatChanges>
+        ) : undefined
+      }
+      track={
+        <ReviewTrack
+          label="Workflow review progress"
+          submittedLabel={`Version ${wf.version} submitted`}
+          submittedBy={wf.review.submitted_by_name ?? 'someone no longer with the company'}
+          submittedAt={wf.review.submitted_at}
+          waiting={waitingText(wf.review.submitted_at)}
+          pending={canDecide}
+          afterLabel="HR publishes it"
+        />
+      }
+      evidence={
+        <>
+          <Section title="Submission">
+            <DataList
+              items={[
+                { label: 'Opening', value: wf.opening_title },
+                { label: 'Version', value: `v${wf.version}` },
+                { label: 'Note from HR', value: wf.review.note ?? undefined },
+              ]}
+            />
+          </Section>
 
-      <div className="mt-6 grid gap-5">
-        <GlassCard className="p-5">
-          <h2 className="mb-3 text-[14px] font-semibold text-foreground">Rounds &amp; routing</h2>
-          <ol className="flex flex-col gap-3">
-            {wf.rounds.map((r) => (
-              <li key={r.round_id} className="rounded-[12px] border border-border p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[13.5px] font-medium text-foreground">
-                    {r.position + 1}. {r.title}
-                  </span>
-                  <StatusTag tone="neutral">{r.kind}</StatusTag>
-                  {r.pass_threshold !== null ? (
-                    <span className="text-[12px] text-muted-foreground">
-                      advance at {r.pass_threshold}%
+          <Section
+            title="Rounds & routing"
+            description="Each round, who advances, and where everyone else goes."
+          >
+            <ol className="divide-y divide-border">
+              {wf.rounds.map((r) => (
+                <li key={r.round_id} className="py-3 first:pt-0 last:pb-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-[13.5px] font-medium text-foreground">
+                      {r.position + 1}. {r.title}
                     </span>
-                  ) : null}
-                </div>
-                {r.criteria.length > 0 ? (
-                  <p className="mt-1.5 text-[12px] text-[var(--ui-soft)]">
-                    Assesses: {r.criteria.map((c) => c.name).join(', ')}
-                  </p>
-                ) : null}
-                {/* PH4-D4 — what goes live is what the approver approves, the
-                    same reason exam content is frozen for review. */}
-                {r.task ? (
-                  <div className="mt-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-2.5">
-                    <p className="whitespace-pre-wrap text-[12px] text-[var(--ui-soft)]">
-                      {r.task.brief}
-                    </p>
-                    {r.task.items.length > 0 ? (
-                      <ul className="mt-1.5 flex flex-col gap-1">
-                        {r.task.items.map((it) => (
-                          <li key={it.key} className="text-[11.5px] text-muted-foreground">
-                            {it.prompt}{' '}
-                            <span className="text-[var(--ui-faint)]">
-                              ({it.response_type}
-                              {it.required ? ', required' : ''})
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {r.task.kind === 'portfolio' ? (
-                      <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-                        {r.task.min_artifacts}–{r.task.max_artifacts} artifacts &middot;{' '}
-                        {r.task.allow_files && r.task.allow_links
-                          ? 'files or links'
-                          : r.task.allow_files
-                            ? 'files only'
-                            : 'links only'}
-                      </p>
+                    <StatusTag tone="neutral">{kindLabel(r.kind)}</StatusTag>
+                    {r.pass_threshold !== null ? (
+                      <span className="text-[12px] text-muted-foreground">
+                        advance at {r.pass_threshold}%
+                      </span>
                     ) : null}
                   </div>
-                ) : null}
-                <div className="mt-1.5 flex flex-col gap-0.5 text-[12px] text-muted-foreground">
-                  <span>
-                    If they pass &rarr;{' '}
-                    <span className="text-foreground">{r.on_pass ?? 'Final decision'}</span>
-                  </span>
-                  <span>
-                    If below the threshold &rarr;{' '}
-                    <span className="text-foreground">{r.on_fail ?? 'Hold for a person'}</span>
-                  </span>
-                  {r.on_fast_track ? (
+                  {r.criteria.length > 0 ? (
+                    <p className="mt-1.5 text-[12px] text-[var(--ui-soft)]">
+                      Assesses: {r.criteria.map((c) => c.name).join(', ')}
+                    </p>
+                  ) : null}
+                  {/* PH4-D4 — what goes live is what the approver approves, the
+                      same reason exam content is frozen for review. */}
+                  {r.task ? (
+                    <Well className="mt-2 p-2.5">
+                      <p className="whitespace-pre-wrap text-[12px] text-[var(--ui-soft)]">
+                        {r.task.brief}
+                      </p>
+                      {r.task.items.length > 0 ? (
+                        <ul className="mt-1.5 flex flex-col gap-1">
+                          {r.task.items.map((it) => (
+                            <li key={it.key} className="text-[12px] text-muted-foreground">
+                              {it.prompt}{' '}
+                              <span className="text-[var(--ui-faint)]">
+                                ({it.response_type}
+                                {it.required ? ', required' : ''})
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {r.task.kind === 'portfolio' ? (
+                        <p className="mt-1.5 text-[12px] text-muted-foreground">
+                          {r.task.min_artifacts}–{r.task.max_artifacts} artifacts &middot;{' '}
+                          {r.task.allow_files && r.task.allow_links
+                            ? 'files or links'
+                            : r.task.allow_files
+                              ? 'files only'
+                              : 'links only'}
+                        </p>
+                      ) : null}
+                    </Well>
+                  ) : null}
+                  <div className="mt-1.5 flex flex-col gap-0.5 text-[12px] text-muted-foreground">
                     <span>
-                      Fast-track at {r.fast_track_min_percent}% &rarr;{' '}
-                      <span className="text-foreground">{r.on_fast_track}</span>
+                      If they pass &rarr;{' '}
+                      <span className="text-foreground">{r.on_pass ?? 'Final decision'}</span>
                     </span>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ol>
-        </GlassCard>
-
-        <GlassCard className="p-5">
-          <h2 className="mb-3 text-[14px] font-semibold text-foreground">Validation</h2>
-          {wf.validation.errors.length === 0 && wf.validation.warnings.length === 0 ? (
-            <p className="flex items-center gap-1.5 text-[12.5px] text-[var(--ui-ok)]">
-              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-              Nothing to fix.
-            </p>
-          ) : (
-            <ul className="flex flex-col gap-1.5">
-              {wf.validation.errors.map((e) => (
-                <li
-                  key={e}
-                  className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-danger)]"
-                >
-                  <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  {e}
-                </li>
-              ))}
-              {wf.validation.warnings.map((w) => (
-                <li
-                  key={w}
-                  className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-warn)]"
-                >
-                  <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  {w}
-                </li>
-              ))}
-            </ul>
-          )}
-        </GlassCard>
-
-        <GlassCard className="p-5">
-          <h2 className="mb-3 text-[14px] font-semibold text-foreground">Dry run</h2>
-          <SimulationReadout simulation={wf.simulation} />
-        </GlassCard>
-
-        <GlassCard className="p-5">
-          <h2 className="mb-3 text-[14px] font-semibold text-foreground">
-            Stage owners &amp; SLAs
-          </h2>
-          {wf.stages.length === 0 ? (
-            <p className="text-[12.5px] text-muted-foreground">No stages recorded.</p>
-          ) : (
-            <ul className="flex flex-col gap-1.5">
-              {wf.stages.map((s) => (
-                <li
-                  key={s.round_id ?? '__decision__'}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-border px-3 py-2 text-[12.5px]"
-                >
-                  <span className="text-foreground">{s.stage}</span>
-                  <span className="text-muted-foreground">
-                    {s.owner_name ?? 'Unassigned'}
-                    {s.sla_hours ? ` · ${s.sla_hours}h SLA` : ''}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </GlassCard>
-
-        <GlassCard className="p-5">
-          <h2 className="mb-3 flex items-center gap-2 text-[14px] font-semibold text-foreground">
-            <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
-            History
-          </h2>
-          {wf.review.history.length === 0 ? (
-            <p className="text-[12.5px] text-muted-foreground">No activity recorded yet.</p>
-          ) : (
-            <ol className="flex flex-col gap-1.5 border-l border-border pl-3">
-              {wf.review.history.map((h, i) => (
-                <li key={i} className="text-[12.5px] text-[var(--ui-soft)]">
-                  {ACTION_WORDS[h.action]}
-                  {h.actor_name ? ` — ${h.actor_name}` : ''}
-                  <span className="ml-1.5 text-[11px] text-[var(--ui-faint)]">
-                    {new Date(h.at).toLocaleString()}
-                  </span>
-                  {h.note ? (
-                    <span className="block text-[11.5px] text-muted-foreground">{h.note}</span>
-                  ) : null}
+                    <span>
+                      If below the threshold &rarr;{' '}
+                      <span className="text-foreground">{r.on_fail ?? 'Hold for a person'}</span>
+                    </span>
+                    {r.on_fast_track ? (
+                      <span>
+                        Fast-track at {r.fast_track_min_percent}% &rarr;{' '}
+                        <span className="text-foreground">{r.on_fast_track}</span>
+                      </span>
+                    ) : null}
+                  </div>
                 </li>
               ))}
             </ol>
-          )}
-        </GlassCard>
+          </Section>
 
-        {canDecide ? (
-          <GlassCard className="p-5">
-            <h2 className="mb-3 text-[14px] font-semibold text-foreground">Your decision</h2>
-            {mode === null ? (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMode('approve')}
-                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-ok)]/35 px-4 py-2 text-[13px] font-medium text-[var(--ui-ok)] hover:bg-[var(--ui-ok)]/10"
-                >
-                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                  Approve
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('changes')}
-                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-muted-foreground hover:border-[var(--ui-warn)]/40 hover:text-[var(--ui-warn)]"
-                >
-                  <XCircle className="h-4 w-4" aria-hidden="true" />
-                  Request changes
-                </button>
-              </div>
+          <Section title="Validation">
+            {wf.validation.errors.length === 0 && wf.validation.warnings.length === 0 ? (
+              <p className="flex items-center gap-1.5 text-[12.5px] text-[var(--ui-ok)]">
+                <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                Nothing to fix.
+              </p>
             ) : (
-              <div className="flex flex-col gap-2">
-                <label
-                  htmlFor="review-decision-note"
-                  className="text-[12px] font-medium text-[var(--ui-soft)]"
-                >
-                  {mode === 'approve' ? 'Note (optional)' : 'What needs to change (required)'}
-                </label>
-                <input
-                  id="review-decision-note"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder={
-                    mode === 'changes' ? `At least ${CHANGES_NOTE_MIN} characters` : undefined
-                  }
-                  className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
-                />
-                {mode === 'changes' && !changesReady ? (
-                  <p className="text-[11.5px] text-[var(--ui-warn)]">
-                    Write at least {CHANGES_NOTE_MIN} characters.
-                  </p>
-                ) : null}
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => (mode === 'approve' ? approveMut.mutate() : changesMut.mutate())}
-                    disabled={
-                      (mode === 'approve' ? approveMut.isPending : changesMut.isPending) ||
-                      (mode === 'changes' && !changesReady)
-                    }
-                    className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+              <ul className="flex flex-col gap-1.5">
+                {wf.validation.errors.map((e) => (
+                  <li
+                    key={e}
+                    className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-danger)]"
                   >
-                    {mode === 'approve'
-                      ? approveMut.isPending
-                        ? 'Approving…'
-                        : 'Confirm approval'
-                      : changesMut.isPending
-                        ? 'Sending…'
-                        : 'Send back'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMode(null);
-                      setNote('');
-                    }}
-                    className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground"
+                    <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    {e}
+                  </li>
+                ))}
+                {wf.validation.warnings.map((w) => (
+                  <li
+                    key={w}
+                    className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-warn)]"
                   >
-                    Cancel
-                  </button>
-                </div>
-              </div>
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    {w}
+                  </li>
+                ))}
+              </ul>
             )}
-          </GlassCard>
+          </Section>
+
+          <Section title="Dry run" description="The result HR saw when they submitted this version.">
+            <SimulationReadout simulation={wf.simulation} />
+          </Section>
+
+          <Section title="Stage owners & SLAs">
+            {wf.stages.length === 0 ? (
+              <p className="text-[12.5px] text-muted-foreground">No stages recorded.</p>
+            ) : (
+              <ul className="divide-y divide-border">
+                {wf.stages.map((s) => (
+                  <li
+                    key={s.round_id ?? '__decision__'}
+                    className="flex flex-wrap items-center justify-between gap-2 py-2 text-[12.5px] first:pt-0 last:pb-0"
+                  >
+                    <span className="text-foreground">{s.stage}</span>
+                    <span className="text-muted-foreground">
+                      {s.owner_name ?? 'Unassigned'}
+                      {s.sla_hours ? ` · ${s.sla_hours}h SLA` : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          <Collapsible
+            variant="card"
+            title="History"
+            count={wf.review.history.length}
+            noun="entry"
+            nounPlural="entries"
+            latest={
+              newestEntry
+                ? `${ACTION_WORDS[newestEntry.action]}${newestEntry.actor_name ? ` by ${newestEntry.actor_name}` : ''}, ${new Date(newestEntry.at).toLocaleDateString()}`
+                : undefined
+            }
+            persistKey={historyKey}
+            data-testid="workflow-review-history"
+          >
+            {wf.review.history.length === 0 ? (
+              <p className="text-[12.5px] text-muted-foreground">No activity recorded yet.</p>
+            ) : (
+              <ProgressiveList
+                as="ol"
+                items={wf.review.history}
+                initial={5}
+                noun="entries"
+                getKey={(h, i) => `${h.at}-${i}`}
+                className="flex flex-col gap-1.5 border-l border-border pl-3"
+                renderItem={(h) => (
+                  <li className="text-[12.5px] text-[var(--ui-soft)]">
+                    {ACTION_WORDS[h.action]}
+                    {h.actor_name ? ` — ${h.actor_name}` : ''}
+                    <span className="ml-1.5 text-[12px] text-[var(--ui-faint)]">
+                      {new Date(h.at).toLocaleString()}
+                    </span>
+                    {h.note ? (
+                      <span className="block text-[12px] text-muted-foreground">{h.note}</span>
+                    ) : null}
+                  </li>
+                )}
+              />
+            )}
+          </Collapsible>
+        </>
+      }
+      decision={
+        canDecide ? (
+          <DecisionPanel
+            sticky
+            mode={mode}
+            onMode={setMode}
+            note={note}
+            onNote={setNote}
+            noteId="review-decision-note"
+            rejectNoteMin={CHANGES_NOTE_MIN}
+            rejectLabel="Request changes"
+            approvePending={approveMut.isPending}
+            rejectPending={changesMut.isPending}
+            onApprove={() => approveMut.mutate()}
+            onReject={() => changesMut.mutate()}
+          />
         ) : (
-          <GlassCard className="p-5">
-            <p className="text-[12.5px] text-muted-foreground">
-              This version is {wf.review.review_status.replace('_', ' ')} — nothing for you to
-              decide right now.
-            </p>
-          </GlassCard>
-        )}
-      </div>
-    </div>
+          <NothingToDecide>
+            This version is {wf.review.review_status.replace('_', ' ')} — nothing for you to decide
+            right now.
+          </NothingToDecide>
+        )
+      }
+    />
   );
 }
 
 /* ── Page ───────────────────────────────────────────────────────────────── */
+
+/** A kind the server sends as a bare identifier, in words an approver reads. */
+function kindLabel(kind: string): string {
+  return ROUND_KIND_META[kind as RoundKind]?.label ?? kind.replace(/_/g, ' ');
+}
 
 export default function WorkflowReviews(): JSX.Element {
   const { workflowId } = useParams();

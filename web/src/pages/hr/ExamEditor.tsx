@@ -2,7 +2,7 @@
 // Each exam has ordered Rounds; each Round has Sections (mcq|coding).
 // HR can add/rename/reorder/delete rounds; set pass_threshold, time_limit,
 // advances_to_interview; publish/unpublish per round; add/rename/delete sections;
-// author questions per section (MCQ inline, coding via CodingAuthoring).
+// author questions per section (MCQ inline, coding via CodingAuthoringSection).
 // Per-round: an Assign/schedule panel that posts to the assignment endpoint
 // with round_id + optional scheduled_at.
 // Legacy single-round/single-section exams render gracefully from GET /structure.
@@ -10,9 +10,8 @@
 import BankProvenanceChip from '@/components/bank/BankProvenanceChip';
 import { Suspense, lazy, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useIsMutating, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowLeft,
   Plus,
   Trash2,
   Check,
@@ -23,7 +22,6 @@ import {
   BarChart3,
   Loader2,
   ListChecks,
-  ClipboardList,
   Clock,
   Sparkles,
   Upload,
@@ -79,25 +77,25 @@ import { applicationKey } from '@/lib/applicationKey';
 import { roundLockReason } from '@/lib/examLocks';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import {
-  GlassCard,
-  Pill,
-  StatusTag,
-} from '@/design/components/primitives';
+import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
+import { EmptyState, Page } from '@/design/components/page';
+import { EditorHeader, DocStatusPill } from '@/components/hr/EditorHeader';
 import { LockBanner } from '@/components/bank/LockBanner';
 import { BankQuestionPicker } from '@/components/bank/BankQuestionPicker';
 import { SaveToBankButton } from '@/components/bank/SaveToBankButton';
+import { GenerationError } from '@/components/bank/GenerationError';
+import { toGenerationFailure } from '@/lib/generationError';
 
-// Lazy-load CodingAuthoring to avoid importing the code-editor eagerly
+// Lazy-load CodingAuthoringSection to avoid importing the code-editor eagerly
 const CodingAuthoringSection = lazy(() => import('./CodingAuthoringSection'));
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
 const inputCls =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 ' +
+  'w-full rounded-[12px] border border-border bg-secondary px-3 py-2 ' +
   'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none ' +
-  'focus:border-[var(--accent)] transition-colors';
+  'focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] transition-colors';
 
 // ── Status helpers ────────────────────────────────────────────────────────────
 
@@ -117,7 +115,7 @@ interface McqSectionProps {
   locked: boolean;
 }
 
-function McqSection({ examId, sectionId, locked }: McqSectionProps) {
+export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
   const qc = useQueryClient();
   const qKey = ['hr', 'exam', examId, 'section', sectionId, 'questions'];
 
@@ -195,7 +193,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
       setAiPreview(res.questions);
       if (res.questions.length === 0) toast.error('No questions generated — try again.');
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Generation failed'),
+    // No toast: the failure is shown inline, with the server's own sentence.
   });
 
   const addGeneratedMut = useMutation({
@@ -259,9 +257,14 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
         <Stagger className="flex flex-col gap-2">
           {questions.map((q, i) => (
             <StaggerItem key={q.id}>
-              <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3.5">
+              <div
+                className={cn(
+                  'rounded-[14px] border border-border p-3.5',
+                  locked ? 'bg-card' : 'bg-[var(--ui-inset-soft)]',
+                )}
+              >
                 <div className="flex items-start gap-3">
-                  <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[11px] text-[var(--ui-soft)]">
+                  <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[12px] text-[var(--ui-soft)]">
                     {i + 1}
                   </span>
                   <div className="flex-1 min-w-0">
@@ -275,6 +278,21 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                         version={q.source_bank_version}
                       />
                     </div>
+                    {/* Outline row facts: type, marks, and whether the row can
+                        still change. Locked is a word and an icon, not just a
+                        muted look. */}
+                    <p className="mt-1 flex flex-wrap items-center gap-x-2 text-[12px] text-muted-foreground">
+                      <span>MCQ</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="tabular-nums">
+                        {q.points} mark{q.points === 1 ? '' : 's'}
+                      </span>
+                      {locked ? (
+                        <span className="inline-flex items-center gap-1 font-medium text-foreground">
+                          <Lock size={11} aria-hidden="true" /> Locked
+                        </span>
+                      ) : null}
+                    </p>
                     <ul className="mt-2 space-y-0.5 pl-0">
                       {q.options.map((opt, oi) => (
                         <li
@@ -311,7 +329,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                     <button
                       type="button"
                       aria-label="Delete question"
-                      className="shrink-0 flex h-7 w-7 items-center justify-center rounded-[8px] border border-border text-muted-foreground hover:border-[rgba(230,113,79,0.4)] hover:text-[var(--ui-danger)] transition-colors"
+                      className="ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-[8px] text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:bg-[var(--ui-danger-wash)] focus-visible:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                       onClick={() => delMut.mutate(q.id)}
                     >
                       <Trash2 size={13} aria-hidden="true" />
@@ -346,12 +364,12 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
 
       {/* Composer — three ways to add questions; hidden when locked */}
       {!locked && (
-        <div className="rounded-[14px] border border-dashed border-border bg-[rgba(28,29,31,0.3)] p-3.5">
+        <div className="rounded-[14px] border border-dashed border-border bg-[var(--ui-inset-soft)] p-3.5">
           {/* Tab bar */}
           <div
             role="tablist"
             aria-label="How to add questions"
-            className="mb-3 flex gap-1 rounded-[10px] border border-border bg-[rgba(20,21,23,0.6)] p-1"
+            className="mb-3 flex gap-1 rounded-[10px] border border-border bg-[var(--ui-inset)] p-1"
           >
             {[
               { key: 'manual', label: 'Manual', icon: Pencil },
@@ -486,7 +504,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                   aria-label="AI topic"
                 />
                 <div className="flex flex-wrap items-end gap-2">
-                  <label className="flex flex-col gap-1 text-[11.5px] text-muted-foreground">
+                  <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
                     Questions
                     <input
                       type="number"
@@ -497,12 +515,12 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                       className="w-16 rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:outline-none focus:border-[var(--accent)]"
                     />
                   </label>
-                  <label className="flex flex-col gap-1 text-[11.5px] text-muted-foreground">
+                  <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
                     Difficulty
                     <select
                       value={aiDifficulty}
                       onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
-                      className="rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:outline-none focus:border-[var(--accent)]"
+                      className="h-9 rounded-[10px] border border-border bg-secondary ps-2.5 text-[12px] text-foreground focus:outline-none focus:border-[var(--accent)]"
                     >
                       <option value="easy">Easy</option>
                       <option value="medium">Medium</option>
@@ -510,12 +528,12 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                       <option value="mixed">Mixed</option>
                     </select>
                   </label>
-                  <label className="flex flex-col gap-1 text-[11.5px] text-muted-foreground">
+                  <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
                     Language
                     <select
                       value={aiLanguage}
                       onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
-                      className="rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:outline-none focus:border-[var(--accent)]"
+                      className="h-9 rounded-[10px] border border-border bg-secondary ps-2.5 text-[12px] text-foreground focus:outline-none focus:border-[var(--accent)]"
                     >
                       <option value="en">English</option>
                       <option value="hi">हिन्दी</option>
@@ -539,6 +557,14 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                 </div>
               </form>
 
+              {generateMut.isError ? (
+                <GenerationError
+                  failure={toGenerationFailure(generateMut.error, 'Generation failed.')}
+                  onRetry={() => generateMut.mutate()}
+                  retryDisabled={generateMut.isPending || !aiTopic.trim()}
+                />
+              ) : null}
+
               {aiPreview.length > 0 && (
                 <div className="space-y-2 rounded-[12px] border border-[rgba(var(--accent-rgb),0.25)] bg-[rgba(var(--accent-rgb),0.05)] p-3">
                   <div className="flex items-center justify-between gap-2">
@@ -557,7 +583,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                     {aiPreview.map((q, qi) => (
                       <li
                         key={qi}
-                        className="rounded-[9px] border border-border bg-[rgba(28,29,31,0.5)] p-2.5"
+                        className="rounded-[9px] border border-border bg-[var(--ui-inset-soft)] p-2.5"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <p className="text-[12px] font-medium text-foreground">
@@ -577,7 +603,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                             <li
                               key={oi}
                               className={cn(
-                                'flex items-center gap-1 text-[11.5px]',
+                                'flex items-center gap-1 text-[12px]',
                                 oi === q.correct_index
                                   ? 'font-medium text-[var(--ui-ok)]'
                                   : 'text-muted-foreground',
@@ -626,7 +652,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                 <button
                   type="button"
                   onClick={() => void handleDownloadTemplate()}
-                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] text-[var(--ui-soft)] hover:text-foreground hover:border-white/[0.25] transition-colors"
+                  className="inline-flex items-center gap-1.5 rounded-[8px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] text-[var(--ui-soft)] hover:text-foreground hover:border-foreground/40 transition-colors"
                 >
                   <Download size={13} aria-hidden="true" /> Template
                 </button>
@@ -661,18 +687,19 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
                 </Pill>
               </div>
               {importResult && (
-                <div className="rounded-[12px] border border-border bg-[rgba(28,29,31,0.5)] p-2.5 space-y-1.5">
+                <div className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-2.5 space-y-1.5">
                   <p className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--ui-ok)]">
                     <FileText size={13} aria-hidden="true" />
                     {importResult.added} question{importResult.added !== 1 ? 's' : ''} imported
                   </p>
                   {importResult.errors.length > 0 && (
                     <div>
-                      <p className="flex items-center gap-1 text-[11.5px] text-[var(--ui-warn)]">
+                      <p className="flex items-center gap-1 text-[12px] text-[var(--ui-warn)]">
                         <AlertTriangle size={12} aria-hidden="true" />
-                        {importResult.errors.length} row{importResult.errors.length !== 1 ? 's' : ''} skipped
+                        {importResult.errors.length} row
+                        {importResult.errors.length !== 1 ? 's' : ''} skipped
                       </p>
-                      <ul className="mt-1 max-h-24 space-y-0.5 overflow-y-auto pl-4 text-[11px] text-muted-foreground">
+                      <ul className="mt-1 max-h-24 space-y-0.5 overflow-y-auto pl-4 text-[12px] text-muted-foreground">
                         {importResult.errors.map((er, ei) => (
                           <li key={ei} className="list-disc">
                             Row {er.row}: {er.message}
@@ -689,7 +716,7 @@ function McqSection({ examId, sectionId, locked }: McqSectionProps) {
       )}
 
       {locked && (
-        <div className="flex items-center gap-2 rounded-[12px] border border-border bg-[rgba(28,29,31,0.3)] px-3 py-2 text-[12px] text-muted-foreground">
+        <div className="flex items-center gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[12px] text-muted-foreground">
           <Lock size={13} aria-hidden="true" /> Questions are locked — see the banner above.
         </div>
       )}
@@ -714,8 +741,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
   const qc = useQueryClient();
 
   const renameMut = useMutation({
-    mutationFn: (title: string) =>
-      updateSection(examId, section.round_id, section.id, { title }),
+    mutationFn: (title: string) => updateSection(examId, section.round_id, section.id, { title }),
     onSuccess: () => {
       setEditing(false);
       void qc.invalidateQueries({ queryKey: ['hr', 'exam', examId, 'structure'] });
@@ -726,7 +752,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
   const kindLabel = section.kind === 'coding' ? 'Coding' : 'MCQ';
 
   return (
-    <div className="rounded-[16px] border border-border bg-[rgba(20,21,23,0.5)]">
+    <div className="rounded-[16px] border border-border bg-[var(--ui-inset)]">
       {/* Section header */}
       <div className="flex items-center gap-2 px-4 py-2.5">
         <button
@@ -770,12 +796,19 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
               className="px-2 py-1 text-[12px]"
               disabled={renameMut.isPending}
             >
-              {renameMut.isPending ? <Loader2 size={12} className="animate-spin" aria-hidden="true" /> : 'Save'}
+              {renameMut.isPending ? (
+                <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+              ) : (
+                'Save'
+              )}
             </Pill>
             <button
               type="button"
               className="text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => { setEditing(false); setTitleDraft(section.title); }}
+              onClick={() => {
+                setEditing(false);
+                setTitleDraft(section.title);
+              }}
             >
               <X size={14} aria-hidden="true" />
             </button>
@@ -783,9 +816,11 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
         ) : (
           <>
             <span className="flex-1 text-[13px] font-medium text-foreground">{section.title}</span>
-            <StatusTag tone="neutral" className="text-[10.5px]">{kindLabel}</StatusTag>
+            <StatusTag tone="neutral" className="text-[12px]">
+              {kindLabel}
+            </StatusTag>
             {section.time_limit_seconds && (
-              <span className="flex items-center gap-1 text-[11.5px] text-[var(--ui-faint)]">
+              <span className="flex items-center gap-1 text-[12px] text-[var(--ui-faint)]">
                 <Clock size={11} aria-hidden="true" />
                 {Math.round(section.time_limit_seconds / 60)} min
               </span>
@@ -822,15 +857,12 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
             <Suspense
               fallback={
                 <div className="flex h-16 items-center justify-center text-[13px] text-muted-foreground">
-                  <Loader2 size={16} className="animate-spin mr-2" aria-hidden="true" /> Loading editor…
+                  <Loader2 size={16} className="animate-spin mr-2" aria-hidden="true" /> Loading
+                  editor…
                 </div>
               }
             >
-              <CodingAuthoringSection
-                examId={examId}
-                sectionId={section.id}
-                locked={locked}
-              />
+              <CodingAuthoringSection examId={examId} sectionId={section.id} locked={locked} />
             </Suspense>
           ) : (
             <McqSection examId={examId} sectionId={section.id} locked={locked} />
@@ -937,7 +969,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
     <div className="mt-3 space-y-3">
       {/* Applicant list */}
       <div
-        className="max-h-36 space-y-0.5 overflow-y-auto rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-2"
+        className="max-h-36 space-y-0.5 overflow-y-auto rounded-[14px] border border-border bg-[var(--ui-inset-soft)] p-2"
         aria-label="Select applicants to assign"
       >
         {applicants.length === 0 ? (
@@ -969,7 +1001,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
 
       {/* Schedule (optional) */}
       <label className="block text-sm">
-        <span className="mb-1 block text-[11.5px] font-medium uppercase tracking-[0.5px] text-[var(--ui-faint)]">
+        <span className="mb-1 block text-[12px] font-medium uppercase tracking-[0.5px] text-[var(--ui-faint)]">
           Schedule (optional)
         </span>
         <input
@@ -1001,7 +1033,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
         <div
           role="region"
           aria-label="Generated magic links"
-          className="space-y-1.5 rounded-[14px] border border-[rgba(39,201,63,0.3)] bg-[rgba(39,201,63,0.08)] p-3"
+          className="space-y-1.5 rounded-[14px] border border-[var(--ui-ok)] bg-[var(--ui-ok-wash)] p-3"
         >
           <p className="text-[12px] font-semibold text-[var(--ui-ok)]">
             Share these links — shown once only:
@@ -1020,7 +1052,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
               <button
                 type="button"
                 aria-label={`Copy link for ${m.applicant_name}`}
-                className="shrink-0 flex h-6 w-6 items-center justify-center rounded-[7px] text-[var(--ui-ok)] hover:bg-[rgba(39,201,63,0.15)] transition-colors"
+                className="shrink-0 flex h-6 w-6 items-center justify-center rounded-[7px] text-[var(--ui-ok)] hover:bg-[var(--ui-ok-wash)] transition-colors"
                 onClick={() => void copyLink(m.magic_link)}
               >
                 <Copy size={13} aria-hidden="true" />
@@ -1033,17 +1065,17 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
       {/* Existing assignments for this round */}
       {roundAssignments.length > 0 && (
         <div className="space-y-1">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
+          <p className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
             Assigned
           </p>
           {roundAssignments.map((a) => (
             <div
               key={a.assignment_id}
-              className="flex items-center gap-2 rounded-[11px] border border-border bg-[rgba(28,29,31,0.4)] px-3 py-1.5 text-[12.5px] text-foreground"
+              className="flex items-center gap-2 rounded-[11px] border border-border bg-[var(--ui-inset-soft)] px-3 py-1.5 text-[12.5px] text-foreground"
             >
               <span className="min-w-0 flex-1 truncate">{a.applicant_name}</span>
               {a.scheduled_at && (
-                <span className="flex items-center gap-1 text-[11px] text-[var(--ui-faint)]">
+                <span className="flex items-center gap-1 text-[12px] text-[var(--ui-faint)]">
                   <Clock size={10} aria-hidden="true" />
                   {new Date(a.scheduled_at).toLocaleDateString('en-IN', {
                     day: 'numeric',
@@ -1053,7 +1085,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
                   })}
                 </span>
               )}
-              <StatusTag tone="neutral" className="text-[10.5px]">
+              <StatusTag tone="neutral" className="text-[12px]">
                 {a.status}
               </StatusTag>
               {a.status === 'invited' && (
@@ -1111,21 +1143,25 @@ function RoundPanel({
 
   const renameMut = useMutation({
     mutationFn: (title: string) => updateRound(examId, round.id, { title }),
-    onSuccess: () => { setEditingTitle(false); invalidateStructure(); },
+    onSuccess: () => {
+      setEditingTitle(false);
+      invalidateStructure();
+    },
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Rename failed'),
   });
 
   const publishMut = useMutation({
-    mutationFn: (status: 'draft' | 'published') =>
-      updateRound(examId, round.id, { status }),
+    mutationFn: (status: 'draft' | 'published') => updateRound(examId, round.id, { status }),
     onSuccess: invalidateStructure,
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Update failed'),
   });
 
   const thresholdMut = useMutation({
-    mutationFn: (pass_threshold: number) =>
-      updateRound(examId, round.id, { pass_threshold }),
-    onSuccess: () => { toast.success('Saved'); invalidateStructure(); },
+    mutationFn: (pass_threshold: number) => updateRound(examId, round.id, { pass_threshold }),
+    onSuccess: () => {
+      toast.success('Saved');
+      invalidateStructure();
+    },
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Save failed'),
   });
 
@@ -1155,9 +1191,7 @@ function RoundPanel({
       createSection(examId, round.id, {
         title: sectionTitle.trim() || (sectionKind === 'coding' ? 'Coding Section' : 'MCQ Section'),
         kind: sectionKind,
-        time_limit_seconds: sectionTimeMin.trim()
-          ? Math.max(1, Number(sectionTimeMin)) * 60
-          : null,
+        time_limit_seconds: sectionTimeMin.trim() ? Math.max(1, Number(sectionTimeMin)) * 60 : null,
       }),
     onSuccess: () => {
       setSectionTitle('');
@@ -1183,7 +1217,8 @@ function RoundPanel({
       toast.success(`Duplicated as "${created.title}"`);
       invalidateStructure();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Could not duplicate this round'),
+    onError: (e: unknown) =>
+      toast.error(e instanceof Error ? e.message : 'Could not duplicate this round'),
   });
 
   const isPublished = round.status === 'published';
@@ -1202,7 +1237,7 @@ function RoundPanel({
             type="button"
             aria-label={`Move round ${round.title} up`}
             disabled={round.position <= 1}
-            className="flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
+            className="flex h-6 w-8 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-30"
             onClick={() => onMoveUp(round.id)}
           >
             <GripVertical size={14} aria-hidden="true" />
@@ -1211,7 +1246,7 @@ function RoundPanel({
             type="button"
             aria-label={`Move round ${round.title} down`}
             disabled={round.position >= totalRounds}
-            className="flex h-5 w-5 items-center justify-center text-muted-foreground hover:text-foreground disabled:opacity-30 transition-colors"
+            className="flex h-6 w-8 items-center justify-center rounded-[6px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-30"
             onClick={() => onMoveDown(round.id)}
           >
             <GripVertical size={14} className="rotate-180" aria-hidden="true" />
@@ -1232,7 +1267,10 @@ function RoundPanel({
           )}
         </button>
 
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.14)] font-mono text-[12px] font-semibold text-[var(--ui-info)]">
+        <span
+          title={`Round ${round.round_number}`}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[var(--ui-line-strong)] bg-[var(--ui-inset)] font-mono text-[12px] font-semibold text-foreground"
+        >
           {round.round_number}
         </span>
 
@@ -1266,7 +1304,10 @@ function RoundPanel({
             <button
               type="button"
               className="text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => { setEditingTitle(false); setTitleDraft(round.title); }}
+              onClick={() => {
+                setEditingTitle(false);
+                setTitleDraft(round.title);
+              }}
             >
               <X size={15} aria-hidden="true" />
             </button>
@@ -1284,7 +1325,7 @@ function RoundPanel({
               <Pencil size={14} aria-hidden="true" />
             </button>
             <Pill
-              variant={isPublished ? 'ghost' : 'primary'}
+              variant="outline"
               className="px-3 py-1.5 text-[12px]"
               disabled={publishMut.isPending}
               aria-busy={publishMut.isPending}
@@ -1299,7 +1340,7 @@ function RoundPanel({
               type="button"
               aria-label={`Delete round ${round.title}`}
               disabled={deleting || totalRounds <= 1}
-              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-muted-foreground hover:text-[var(--ui-danger)] disabled:opacity-30 transition-colors"
+              className="ml-3 flex h-9 w-9 items-center justify-center rounded-[8px] text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:bg-[var(--ui-danger-wash)] focus-visible:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-30"
               onClick={() => onDelete(round.id)}
             >
               <Trash2 size={14} aria-hidden="true" />
@@ -1377,11 +1418,11 @@ function RoundPanel({
               />
               <span>
                 <span className="font-medium text-foreground">Require camera proctoring</span>
-                <span className="mt-0.5 block text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
-                  Candidates are asked for camera access before the round starts and cannot
-                  begin without it. Detection runs entirely in their browser — no video or
-                  image is recorded or sent anywhere, only timestamped events. Leave off and
-                  the round still records fullscreen, tab-switch and clipboard activity.
+                <span className="mt-0.5 block text-[12px] leading-relaxed text-[var(--ui-faint)]">
+                  Candidates are asked for camera access before the round starts and cannot begin
+                  without it. Detection runs entirely in their browser — no video or
+                  image is recorded or sent anywhere, only timestamped events. Leave off and the
+                  round still records fullscreen, tab-switch and clipboard activity.
                 </span>
               </span>
             </label>
@@ -1408,7 +1449,7 @@ function RoundPanel({
             {/* Add-section form */}
             {addingSection && !lockReason && (
               <form
-                className="mb-3 flex flex-wrap items-end gap-2 rounded-[14px] border border-dashed border-border bg-[rgba(28,29,31,0.3)] p-3"
+                className="mb-3 flex flex-wrap items-end gap-2 rounded-[14px] border border-dashed border-border bg-[var(--ui-inset-soft)] p-3"
                 onSubmit={(e) => {
                   e.preventDefault();
                   addSectionMut.mutate();
@@ -1506,11 +1547,7 @@ function RoundPanel({
               {showAssign ? 'Hide' : 'Show'} Assign &amp; share
             </button>
             {showAssign && (
-              <RoundAssignPanel
-                examId={examId}
-                roundId={round.id}
-                isPublished={isPublished}
-              />
+              <RoundAssignPanel examId={examId} roundId={round.id} isPublished={isPublished} />
             )}
           </div>
         </div>
@@ -1536,6 +1573,8 @@ export default function ExamEditor() {
   });
 
   const isLoading = examLoading || structureLoading;
+  // Every edit on this screen saves on its own; the header reports whether any is in flight.
+  const saving = useIsMutating();
 
   // Add round state
   const [addingRound, setAddingRound] = useState(false);
@@ -1555,9 +1594,7 @@ export default function ExamEditor() {
       createRound(examId, {
         title: roundTitle.trim() || `Round ${(structure?.rounds.length ?? 0) + 1}`,
         pass_threshold: Number(roundThreshold) || 60,
-        time_limit_seconds: roundTimeMin.trim()
-          ? Math.max(1, Number(roundTimeMin)) * 60
-          : null,
+        time_limit_seconds: roundTimeMin.trim() ? Math.max(1, Number(roundTimeMin)) * 60 : null,
         advances_to_interview: roundAdvances,
       }),
     onSuccess: () => {
@@ -1601,190 +1638,216 @@ export default function ExamEditor() {
   // ── Loading ──────────────────────────────────────────────────────────────────
   if (isLoading || !exam || !structure) {
     return (
-      <div className="mx-auto max-w-[960px] px-6 py-8 lg:px-8 space-y-4">
+      <Page width="default">
         <div className="h-5 w-28 rounded-xl bg-[var(--ui-inset-strong)] animate-pulse" />
         <div className="h-10 w-64 rounded-xl bg-[var(--ui-inset-strong)] animate-pulse" />
-        <div className="h-40 w-full rounded-[24px] bg-[var(--ui-inset)] animate-pulse" />
-        <div className="h-48 w-full rounded-[24px] bg-[var(--ui-inset)] animate-pulse" />
-      </div>
+        <div className="h-40 w-full rounded-card bg-[var(--ui-inset)] animate-pulse" />
+        <div className="h-48 w-full rounded-card bg-[var(--ui-inset)] animate-pulse" />
+      </Page>
     );
   }
 
   const rounds = [...structure.rounds].sort((a, b) => a.position - b.position);
 
   return (
-    <div className="mx-auto max-w-[960px] px-6 py-8 lg:px-8">
-      {/* Breadcrumb */}
-      <Reveal>
-        <Link
-          to="/hr/exams"
-          className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft size={15} aria-hidden="true" /> Back to exams
-        </Link>
-
-        {/* Header */}
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
-              <ClipboardList size={20} aria-hidden="true" />
+    <Page width="default">
+      {/* Sticky document header: title, status and the screen's one action
+          stay in view while a long exam is being authored. */}
+      <EditorHeader
+        breadcrumbs={[{ label: 'Exams', to: '/hr/exams' }, { label: exam.title }]}
+        title={exam.title}
+        status={
+          <DocStatusPill
+            status={
+              exam.status === 'closed' ? 'locked' : exam.status === 'published' ? 'live' : 'draft'
+            }
+          >
+            {exam.status === 'closed' ? 'Closed' : roundStatusTone(exam.status).label}
+          </DocStatusPill>
+        }
+        meta={
+          <>
+            <span>
+              {rounds.length} round{rounds.length !== 1 ? 's' : ''}
             </span>
-            <div>
-              <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
-                {exam.title}
-              </h1>
-            </div>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <Link to={`/hr/exams/${examId}/results`}>
-              <Pill variant="ghost" className="px-4 py-2.5 gap-2">
-                <BarChart3 size={15} aria-hidden="true" /> Results
-              </Pill>
-            </Link>
-          </div>
-        </div>
-
-        {/* Meta */}
-        <div className="mt-4 flex items-center flex-wrap gap-4 text-[13px] text-muted-foreground">
-          <span>{rounds.length} round{rounds.length !== 1 ? 's' : ''}</span>
-          {exam.auto_advance_on_pass && (
-            <span className="flex items-center gap-1 text-[var(--ui-info)]">
-              Auto-advance on pass
-            </span>
-          )}
-        </div>
-      </Reveal>
-
-      {/* Rounds */}
-      <div className="mt-6 space-y-4">
-        {rounds.length === 0 ? (
-          <Reveal delay={0.04}>
-            <div className="flex flex-col items-center gap-3 rounded-[24px] border border-dashed border-border bg-[rgba(15,15,16,0.6)] py-12 text-center">
-              <span className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--ui-inset)] text-muted-foreground">
-                <Sparkles size={22} aria-hidden="true" />
-              </span>
-              <p className="text-[14px] text-muted-foreground">
-                No rounds yet — add the first round below.
-              </p>
-            </div>
-          </Reveal>
-        ) : (
-          <Stagger>
-            {rounds.map((round) => (
-              <StaggerItem key={round.id}>
-                <RoundPanel
-                  examId={examId}
-                  round={round}
-                  totalRounds={rounds.length}
-                  onDelete={(rid) => deleteRoundMut.mutate(rid)}
-                  deleting={deleteRoundMut.isPending}
-                  onMoveUp={handleMoveUp}
-                  onMoveDown={handleMoveDown}
-                />
-              </StaggerItem>
-            ))}
-          </Stagger>
-        )}
-
-        {/* Add round */}
-        {addingRound ? (
-          <Reveal delay={0.02}>
-            <GlassCard feature className="p-5">
-              <h3 className="mb-4 text-[15px] font-semibold">New round</h3>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  addRoundMut.mutate();
-                }}
-                className="space-y-3"
-                aria-label="New round form"
-              >
-                <input
-                  className={inputCls}
-                  placeholder="Round title (e.g. Technical Screening)"
-                  value={roundTitle}
-                  onChange={(e) => setRoundTitle(e.target.value)}
-                  aria-label="Round title"
-                />
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
-                    <span className="uppercase tracking-[0.5px]">Pass threshold %</span>
-                    <input
-                      type="number"
-                      min={0}
-                      max={100}
-                      value={roundThreshold}
-                      onChange={(e) => setRoundThreshold(e.target.value)}
-                      className={cn(inputCls, 'text-[13px]')}
-                      aria-label="Pass threshold"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
-                    <span className="uppercase tracking-[0.5px]">Time limit (min)</span>
-                    <input
-                      type="number"
-                      min={1}
-                      placeholder="none"
-                      value={roundTimeMin}
-                      onChange={(e) => setRoundTimeMin(e.target.value)}
-                      className={cn(inputCls, 'text-[13px]')}
-                      aria-label="Time limit in minutes"
-                    />
-                  </label>
-                  <div className="flex items-end pb-1">
-                    <label className="flex items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
-                      <input
-                        type="checkbox"
-                        checked={roundAdvances}
-                        onChange={(e) => setRoundAdvances(e.target.checked)}
-                        className="h-4 w-4 accent-[var(--accent)]"
-                      />
-                      Advances to interview
-                    </label>
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <Pill
-                    type="submit"
-                    disabled={addRoundMut.isPending}
-                    aria-busy={addRoundMut.isPending}
-                    className="gap-1.5"
-                  >
-                    {addRoundMut.isPending ? (
-                      <Loader2 size={15} className="animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Plus size={15} aria-hidden="true" />
-                    )}
-                    {addRoundMut.isPending ? 'Adding…' : 'Add round'}
-                  </Pill>
-                  <Pill
-                    type="button"
-                    variant="ghost"
-                    onClick={() => setAddingRound(false)}
-                    disabled={addRoundMut.isPending}
-                  >
-                    Cancel
-                  </Pill>
-                </div>
-              </form>
-            </GlassCard>
-          </Reveal>
-        ) : (
+            {exam.auto_advance_on_pass && <span>Auto-advance on pass</span>}
+          </>
+        }
+        saveState={saving > 0 ? 'saving' : 'saved'}
+        secondary={
+          <Link
+            to={`/hr/exams/${examId}/results`}
+            className="inline-flex min-h-[40px] items-center gap-2 rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-foreground transition-colors hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          >
+            <BarChart3 size={15} aria-hidden="true" /> Results
+          </Link>
+        }
+        primary={
           <button
             type="button"
-            onClick={() => setAddingRound(true)}
-            className={cn(
-              'flex w-full items-center justify-center gap-2 rounded-[20px]',
-              'border-[1.5px] border-dashed border-[rgba(var(--accent-rgb),0.35)]',
-              'bg-[rgba(var(--accent-rgb),0.04)] py-4 text-[13.5px] font-medium text-[var(--ui-info)]',
-              'transition-colors hover:bg-[rgba(var(--accent-rgb),0.08)]',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-            )}
+            onClick={() => {
+              setAddingRound(true);
+              window.setTimeout(
+                () =>
+                  document.getElementById('new-round-form')?.scrollIntoView?.({ block: 'nearest' }),
+                0,
+              );
+            }}
+            disabled={addingRound}
+            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-40"
           >
-            <Plus size={17} aria-hidden="true" /> Add round
+            <Plus size={15} aria-hidden="true" /> Add round
           </button>
-        )}
+        }
+      />
+
+      <div className="grid items-start gap-6 lg:grid-cols-[200px_minmax(0,1fr)]">
+        {/* Outline: the exam's rounds as in-page anchors, so a long exam can
+            be jumped through. */}
+        <nav aria-label="Exam outline" className="hidden lg:sticky lg:top-[200px] lg:block">
+          <p className="mb-2 text-[12.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+            Outline
+          </p>
+          <ol className="flex flex-col gap-0.5">
+            {rounds.map((r) => (
+              <li key={r.id}>
+                <a
+                  href={`#round-${r.id}`}
+                  className="flex min-h-[36px] items-start gap-2 rounded-[8px] px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-[var(--ui-inset-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                >
+                  <span className="font-mono tabular-nums">{r.round_number}.</span>
+                  <span className="min-w-0 flex-1 break-words">
+                    {r.title}
+                    <span className="block text-[12px]">
+                      {r.status === 'published' ? 'Published · locked' : 'Draft'}
+                    </span>
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ol>
+        </nav>
+
+        <div className="min-w-0">
+          {/* Rounds */}
+          <div className="space-y-4">
+            {rounds.length === 0 ? (
+              <Reveal delay={0.04}>
+                <EmptyState
+                  icon={Sparkles}
+                  title="No rounds yet"
+                  description="No rounds yet — add the first round below."
+                />
+              </Reveal>
+            ) : (
+              <Stagger>
+                {rounds.map((round) => (
+                  <StaggerItem key={round.id}>
+                    <div id={`round-${round.id}`} className="scroll-mt-52">
+                      <RoundPanel
+                        examId={examId}
+                        round={round}
+                        totalRounds={rounds.length}
+                        onDelete={(rid) => deleteRoundMut.mutate(rid)}
+                        deleting={deleteRoundMut.isPending}
+                        onMoveUp={handleMoveUp}
+                        onMoveDown={handleMoveDown}
+                      />
+                    </div>
+                  </StaggerItem>
+                ))}
+              </Stagger>
+            )}
+
+            {/* Add round */}
+            {addingRound ? (
+              <Reveal delay={0.02}>
+                <div id="new-round-form" className="scroll-mt-52">
+                  <GlassCard className="p-5" role="group" aria-label="New round">
+                    <h3 className="mb-4 text-[15px] font-semibold">New round</h3>
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        addRoundMut.mutate();
+                      }}
+                      className="space-y-3"
+                      aria-label="New round form"
+                    >
+                      <input
+                        className={inputCls}
+                        placeholder="Round title (e.g. Technical Screening)"
+                        value={roundTitle}
+                        onChange={(e) => setRoundTitle(e.target.value)}
+                        aria-label="Round title"
+                      />
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
+                          <span className="uppercase tracking-[0.5px]">Pass threshold %</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={roundThreshold}
+                            onChange={(e) => setRoundThreshold(e.target.value)}
+                            className={cn(inputCls, 'text-[13px]')}
+                            aria-label="Pass threshold"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
+                          <span className="uppercase tracking-[0.5px]">Time limit (min)</span>
+                          <input
+                            type="number"
+                            min={1}
+                            placeholder="none"
+                            value={roundTimeMin}
+                            onChange={(e) => setRoundTimeMin(e.target.value)}
+                            className={cn(inputCls, 'text-[13px]')}
+                            aria-label="Time limit in minutes"
+                          />
+                        </label>
+                        <div className="flex items-end pb-1">
+                          <label className="flex items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
+                            <input
+                              type="checkbox"
+                              checked={roundAdvances}
+                              onChange={(e) => setRoundAdvances(e.target.checked)}
+                              className="h-4 w-4 accent-[var(--accent)]"
+                            />
+                            Advances to interview
+                          </label>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Pill
+                          type="submit"
+                          disabled={addRoundMut.isPending}
+                          aria-busy={addRoundMut.isPending}
+                          className="gap-1.5"
+                        >
+                          {addRoundMut.isPending ? (
+                            <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                          ) : (
+                            <Plus size={15} aria-hidden="true" />
+                          )}
+                          {addRoundMut.isPending ? 'Adding…' : 'Add round'}
+                        </Pill>
+                        <Pill
+                          type="button"
+                          variant="ghost"
+                          onClick={() => setAddingRound(false)}
+                          disabled={addRoundMut.isPending}
+                        >
+                          Cancel
+                        </Pill>
+                      </div>
+                    </form>
+                  </GlassCard>
+                </div>
+              </Reveal>
+            ) : null}
+          </div>
+        </div>
       </div>
-    </div>
+    </Page>
   );
 }

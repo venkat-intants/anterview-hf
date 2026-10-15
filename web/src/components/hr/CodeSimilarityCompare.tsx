@@ -65,8 +65,8 @@ function ExcerptPane({
   unavailable?: boolean;
 }) {
   return (
-    <div className="min-w-0 overflow-hidden rounded-[10px] border border-border bg-[#0b0c0e]">
-      <div className="border-b border-[var(--ui-line-strong)] px-2.5 py-1.5 text-[11px] uppercase tracking-[0.4px] text-[var(--ui-faint)]">
+    <div className="min-w-0 overflow-hidden rounded-[10px] border border-border bg-[var(--ui-inset-soft)]">
+      <div className="border-b border-[var(--ui-line-strong)] px-2.5 py-1.5 text-[12px] uppercase tracking-[0.4px] text-[var(--ui-faint)]">
         {title}
         {language ? ` · ${language}` : ''}
       </div>
@@ -76,10 +76,9 @@ function ExcerptPane({
           one. Said inside the pane, where the missing code would have been. */}
       {unavailable && blocks.length === 0 ? (
         <p className="px-2.5 py-6 text-[12px] leading-relaxed text-[var(--ui-faint)]">
-          This submission cannot be lined up against the other one — the two were
-          fingerprinted by different versions of the comparison, so there is nothing to
-          highlight. Re-run the analysis for this attempt to compare them. The counts
-          above still stand.
+          This submission cannot be lined up against the other one — the two were fingerprinted by
+          different versions of the comparison, so there is nothing to highlight. Re-run the
+          analysis for this attempt to compare them. The counts above still stand.
         </p>
       ) : null}
       <pre className="max-h-[380px] overflow-auto p-0 text-[12px] leading-[1.55]">
@@ -103,7 +102,7 @@ function ExcerptPane({
                   key={ln}
                   className={cn(
                     'whitespace-pre px-2.5',
-                    highlighted ? 'bg-[var(--ui-warn)]/20 text-[#f5e6c8]' : 'text-[#d8dadd]',
+                    highlighted ? 'bg-[var(--ui-warn-wash)] text-foreground' : 'text-foreground',
                   )}
                 >
                   <span className="mr-2 inline-block w-7 shrink-0 select-none text-right text-[var(--ui-faint)]">
@@ -208,7 +207,11 @@ export default function CodeSimilarityCompare({
   // misconduct finding gets recorded.
   const thisIsLow = signal.attempt_low_id === attemptId;
   const thisExcerpt = compare.data ? (thisIsLow ? compare.data.low : compare.data.high) : undefined;
-  const otherExcerpt = compare.data ? (thisIsLow ? compare.data.high : compare.data.low) : undefined;
+  const otherExcerpt = compare.data
+    ? thisIsLow
+      ? compare.data.high
+      : compare.data.low
+    : undefined;
   const thisRanges = thisIsLow ? lowRanges : highRanges;
   const otherRanges = thisIsLow ? highRanges : lowRanges;
   const thisContainment = thisIsLow ? signal.containment_low : signal.containment_high;
@@ -219,7 +222,7 @@ export default function CodeSimilarityCompare({
       role="dialog"
       aria-modal="true"
       aria-labelledby="code-compare-heading"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
       onKeyDown={(e) => {
         if (e.key === 'Escape') onClose();
       }}
@@ -233,7 +236,7 @@ export default function CodeSimilarityCompare({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="rounded-[8px] p-1 text-muted-foreground hover:text-foreground"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -273,7 +276,11 @@ export default function CodeSimilarityCompare({
                   highlightRanges={thisRanges}
                 />
                 <ExcerptPane
-                  title={signal.reference_kind === 'reference_solution' ? 'Reference solution' : 'Other submission'}
+                  title={
+                    signal.reference_kind === 'reference_solution'
+                      ? 'Reference solution'
+                      : 'Other submission'
+                  }
                   language={otherExcerpt.language}
                   blocks={otherExcerpt.blocks}
                   highlightRanges={otherRanges}
@@ -281,7 +288,7 @@ export default function CodeSimilarityCompare({
                 />
               </div>
               {matchedRegions.length === 0 && !otherExcerpt.regions_unavailable ? (
-                <p className="mt-2 text-[11.5px] text-[var(--ui-faint)]">
+                <p className="mt-2 text-[12px] text-[var(--ui-faint)]">
                   {signal.reference_kind === 'reference_solution'
                     ? 'Matched line ranges are not available for a reference-solution comparison — see the raw counts above.'
                     : 'No matched line ranges could be located for this pair.'}
@@ -290,11 +297,17 @@ export default function CodeSimilarityCompare({
             </>
           ) : null}
 
-          <form onSubmit={submit} className="mt-5 flex flex-col gap-2.5 rounded-[12px] border border-border p-3.5">
+          <form
+            onSubmit={submit}
+            className="mt-5 flex flex-col gap-2.5 rounded-[12px] border border-border p-3.5"
+          >
             <h3 className="text-[12.5px] font-medium text-foreground">Record a finding</h3>
             <fieldset className="flex flex-wrap gap-3" aria-label="Outcome">
               {OUTCOMES.map((o) => (
-                <label key={o.value} className="flex items-center gap-1.5 text-[12.5px] text-foreground">
+                <label
+                  key={o.value}
+                  className="flex items-center gap-1.5 text-[12.5px] text-foreground"
+                >
                   <input
                     type="radio"
                     name="finding-outcome"
@@ -316,9 +329,9 @@ export default function CodeSimilarityCompare({
                 rows={3}
                 aria-required="true"
                 placeholder="What you reviewed and why you reached this outcome"
-                className="mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+                className="mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               />
-              <span className="mt-0.5 block text-[11px] text-[var(--ui-faint)]">
+              <span className="mt-0.5 block text-[12px] text-[var(--ui-faint)]">
                 {rationale.trim().length}/{FINDING_RATIONALE_MIN} minimum characters
               </span>
             </label>
@@ -327,14 +340,14 @@ export default function CodeSimilarityCompare({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground"
+                className="min-h-[40px] rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={recordMut.isPending}
-                className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
               >
                 {recordMut.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />

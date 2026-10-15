@@ -105,6 +105,14 @@ class WorkflowError(Exception):
     """Refused for a reason the caller should show the user verbatim."""
 
 
+class RoundNotFoundError(WorkflowError):
+    """The round does not exist FOR THIS CALLER (unknown, deleted or another tenant's).
+
+    A subclass so existing ``except WorkflowError`` handlers keep working, while a
+    router that wants the 404 an unknown round deserves can catch it first.
+    """
+
+
 #: Review states in which a version's content is frozen for its reviewer.
 REVIEW_LOCKED: frozenset[str] = frozenset({"in_review", "approved"})
 
@@ -391,18 +399,29 @@ SELECT er.id, er.exam_id, er.status,
          WHERE s.round_id = er.id AND c.deleted_at IS NULL) AS questions
   FROM exam_rounds er
  WHERE er.id = ANY(:ids) AND er.deleted_at IS NULL
+   AND (CAST(:company_id AS uuid) IS NULL OR er.company_id = CAST(:company_id AS uuid))
 """
 
 
 async def exam_round_readiness(
-    db: AsyncSession, exam_round_ids: list[Any]
+    db: AsyncSession,
+    exam_round_ids: list[Any],
+    company_id: uuid.UUID | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Status and live question count of each exam round, keyed by id."""
+    """Status and live question count of each exam round, keyed by id.
+
+    With ``company_id``, an exam round that belongs to another company is reported
+    as absent ("no longer exists") rather than describing someone else's exam. The
+    runner calls this without it: the write path (add_round/update_round) already
+    refuses a foreign exam round, so what it re-checks is publish-state drift.
+    """
     ids = [uuid.UUID(str(i)) for i in exam_round_ids if i]
     if not ids:
         return {}
     rows = (
-        await db.execute(text(_EXAM_ROUND_READINESS_SQL), {"ids": ids})
+        await db.execute(
+            text(_EXAM_ROUND_READINESS_SQL), {"ids": ids, "company_id": company_id}
+        )
     ).mappings().all()
     return {
         str(r["id"]): {
@@ -514,8 +533,16 @@ async def load_rounds(db: AsyncSession, workflow_id: uuid.UUID) -> list[dict[str
 
 
 async def load_criteria(
-    db: AsyncSession, round_ids: list[uuid.UUID]
+    db: AsyncSession,
+    round_ids: list[uuid.UUID],
+    company_id: uuid.UUID | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
+    """Frozen criteria per round id.
+
+    ``company_id`` scopes the read to one tenant's rows: a caller that took the
+    round ids from user input (rather than from a workflow it already proved it
+    owns) passes it so a foreign round id yields nothing.
+    """
     if not round_ids:
         return {}
     rows = (
@@ -524,9 +551,11 @@ async def load_criteria(
                 "SELECT round_id, competency_id, competency_name, competency_kind,"
                 "       weight, anchors, probes"
                 "  FROM round_criteria WHERE round_id = ANY(:ids)"
+                "   AND (CAST(:company_id AS uuid) IS NULL"
+                "        OR company_id = CAST(:company_id AS uuid))"
                 " ORDER BY weight DESC"
             ),
-            {"ids": round_ids},
+            {"ids": round_ids, "company_id": company_id},
         )
     ).mappings().all()
     out: dict[str, list[dict[str, Any]]] = {}
@@ -720,6 +749,7 @@ async def add_round(
     if kind not in ROUND_KINDS:
         raise WorkflowError(f"Unknown round type {kind!r}.")
     await _assert_draft(db, workflow_id)
+    await _assert_exam_round_owned(db, company_id, exam_round_id)
 
     existing = await load_rounds(db, workflow_id)
     if len(existing) >= MAX_ROUNDS:
@@ -751,9 +781,32 @@ async def add_round(
     if criteria:
         await set_round_criteria(
             db, company_id=company_id, round_id=round_id, criteria=criteria,
-            _skip_draft_check=True,
+            workflow_id=workflow_id, _skip_draft_check=True,
         )
     return round_id
+
+
+async def _assert_exam_round_owned(
+    db: AsyncSession, company_id: uuid.UUID, exam_round_id: uuid.UUID | str | None
+) -> None:
+    """Refuse an exam round that is not this company's (L1).
+
+    ``workflow_rounds.exam_round_id`` was stored unchecked, so a company could
+    attach another tenant's exam round (an id obtained elsewhere) and have its
+    candidates take that company's questions -- and read its readiness. None is
+    fine: it detaches.
+    """
+    if exam_round_id is None:
+        return
+    ok = await db.scalar(
+        text(
+            "SELECT 1 FROM exam_rounds"
+            " WHERE id = :e AND company_id = :c AND deleted_at IS NULL"
+        ),
+        {"e": exam_round_id, "c": company_id},
+    )
+    if not ok:
+        raise WorkflowError("That exam round was not found.")
 
 
 async def update_round(
@@ -782,6 +835,16 @@ async def update_round(
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return []
+    if updates.get("exam_round_id") is not None:
+        # The workflow's own company, not a caller-supplied one: every router
+        # proves ownership of the workflow before reaching here, so this is the
+        # tenant the exam round has to belong to.
+        owner = await db.scalar(
+            text("SELECT company_id FROM workflows WHERE id = :w"), {"w": workflow_id}
+        )
+        if owner is None:
+            raise WorkflowError("Workflow not found.")
+        await _assert_exam_round_owned(db, owner, updates["exam_round_id"])
     for key in ("on_fail_next_round_id", "on_fast_track_next_round_id"):
         target = updates.get(key)
         if target is None:
@@ -1035,6 +1098,7 @@ async def set_round_criteria(
     company_id: uuid.UUID,
     round_id: uuid.UUID,
     criteria: list[dict[str, Any]],
+    workflow_id: uuid.UUID | None = None,
     _skip_draft_check: bool = False,
 ) -> int:
     """Freeze the selected competencies onto a round. Caller commits.
@@ -1050,14 +1114,28 @@ async def set_round_criteria(
     against. See ``shared.intelligence.frozen``.
     """
     if not _skip_draft_check:
+        # Resolved by round AND tenant (AND workflow when the caller names one). By
+        # round_id alone, any HR manager could pass another company's round id
+        # under their own workflow: the draft check read THEIR victim's workflow,
+        # the DELETE below wiped the victim's rubric, and the INSERT wrote rows
+        # into it. A round that is not this company's is "not found", exactly like
+        # one that does not exist.
         wf = await db.scalar(
-            text("SELECT workflow_id FROM workflow_rounds WHERE id = :r"), {"r": round_id}
+            text(
+                "SELECT workflow_id FROM workflow_rounds"
+                " WHERE id = :r AND company_id = :c AND deleted_at IS NULL"
+                "   AND (CAST(:w AS uuid) IS NULL OR workflow_id = CAST(:w AS uuid))"
+            ),
+            {"r": round_id, "c": company_id, "w": workflow_id},
         )
         if wf is None:
-            raise WorkflowError("Round not found.")
+            raise RoundNotFoundError("Round not found.")
         await _assert_draft(db, wf)
 
-    await db.execute(text("DELETE FROM round_criteria WHERE round_id = :r"), {"r": round_id})
+    await db.execute(
+        text("DELETE FROM round_criteria WHERE round_id = :r AND company_id = :c"),
+        {"r": round_id, "c": company_id},
+    )
     now = datetime.now(tz=UTC)
     for c in criteria:
         weight = float(c.get("weight", 0))
@@ -1092,8 +1170,13 @@ async def validate(
     """Everything wrong with a draft, plus the coverage report."""
     rounds = await load_rounds(db, workflow_id)
     errors = validate_chain(rounds)
+    owner_company = await db.scalar(
+        text("SELECT company_id FROM workflows WHERE id = :w"), {"w": workflow_id}
+    )
     readiness = await exam_round_readiness(
-        db, [r["exam_round_id"] for r in rounds if r["kind"] in EXAM_BACKED_KINDS]
+        db,
+        [r["exam_round_id"] for r in rounds if r["kind"] in EXAM_BACKED_KINDS],
+        company_id=owner_company,
     )
     errors.extend(exam_round_errors(rounds, readiness))
     report = ValidationReport(errors=errors)

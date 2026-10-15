@@ -5,7 +5,7 @@
 //
 // English-only by design (CLAUDE.md — staff consoles are not translated).
 
-import { Reveal } from '@/design/components/Reveal';
+import { PageHeader, Breadcrumbs, Page } from '@/design/components/page';
 import { QuestionReviewQueue } from '@/components/bank/QuestionReviewQueue';
 import {
   approveBankQuestion,
@@ -15,14 +15,16 @@ import {
 
 export default function QuestionReviews(): JSX.Element {
   return (
-    <div className="mx-auto w-full max-w-[860px] px-4 py-8">
-      <Reveal>
-        <h1 className="text-[22px] font-semibold text-foreground">Question reviews</h1>
-        <p className="mt-1 text-[13px] text-muted-foreground">
-          Bank questions submitted for review — approved by anyone other than whoever wrote or
-          submitted them. Oldest submission first.
-        </p>
-      </Reveal>
+    <Page width="form">
+      <PageHeader
+        breadcrumbs={
+          <Breadcrumbs
+            items={[{ label: 'Question banks', to: '/hr/question-banks' }, { label: 'Reviews' }]}
+          />
+        }
+        title="Question reviews"
+        description="Bank questions submitted for review — approved by anyone other than whoever wrote or submitted them. Oldest submission first."
+      />
 
       <QuestionReviewQueue
         queryKey={['hr', 'bank-review-queue']}
@@ -31,6 +33,6 @@ export default function QuestionReviews(): JSX.Element {
         requestChanges={requestBankQuestionChanges}
         emptyHint="A question your colleagues submit appears here."
       />
-    </div>
+    </Page>
   );
 }

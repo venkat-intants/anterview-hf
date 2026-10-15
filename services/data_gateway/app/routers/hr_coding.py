@@ -25,9 +25,14 @@ from app import exam_locks
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
-from app.exam_ai_client import ExamGenerationError, generate_coding_questions_remote
+from app.exam_ai_client import (
+    ExamGenerationError,
+    client_message,
+    generate_coding_questions_remote,
+)
 from app.execution import SUPPORTED_LANGUAGES
 from app.models import CodingQuestion, Exam
+from app.rate_limit import enforce_company_budget
 from app.routers.hr_exams import _default_section, _get_owned_exam
 from app.utils.ownership import get_owned
 from app.workflows import round_rubric_for_generation, rubric_for_exam
@@ -363,16 +368,38 @@ async def delete_coding_question(
 # AI generate (preview-only — mirrors POST /exams/{id}/questions/generate)
 # ---------------------------------------------------------------------------
 @router.post(
-    "/exams/{exam_id}/coding-questions/generate", response_model=GenerateCodingQuestionsOut
+    "/exams/{exam_id}/coding-questions/generate",
+    response_model=GenerateCodingQuestionsOut,
 )
 async def generate_coding_questions(
     exam_id: uuid.UUID, body: GenerateCodingQuestionsIn, ctx: HrCtxDep, db: DbSessionDep
 ) -> GenerateCodingQuestionsOut:
     """Draft coding problems with Gemini (via feedback_billing). Returned for
     PREVIEW — not saved. HR reviews/edits them, then persists the wanted ones
-    via the normal add endpoints."""
+    via the normal add endpoints.
+
+    Same order as the MCQ generator: reads first (ownership, rubric), then the
+    company's per-minute AI budget is charged (shared counter with the MCQ
+    generator; fails closed, 503), then the pooled connection is returned
+    (``rollback``) BEFORE the model call (up to ~180 s). The session is not
+    used again afterwards.
+    """
     hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
+    round_rubric = (
+        await round_rubric_for_generation(
+            db, company_id=company_id, workflow_round_id=body.workflow_round_id
+        )
+        if body.workflow_round_id
+        # Not named: use the round this exam belongs to, when exactly
+        # one does. The authoring screen does not know it; the data does.
+        else await rubric_for_exam(db, company_id=company_id, exam_id=exam_id)
+    )
+    await enforce_company_budget(
+        company_id, bucket="exam_generate", limit=settings.exam_generate_per_minute,
+        fail_closed=True,
+    )
+    await db.rollback()
 
     try:
         raw = await generate_coding_questions_remote(
@@ -384,19 +411,11 @@ async def generate_coding_questions(
             acting_user_id=str(hr_uid),
             job_title=body.job_title,
             experience_level=body.experience_level,
-            round_rubric=(
-                await round_rubric_for_generation(
-                    db, company_id=company_id, workflow_round_id=body.workflow_round_id
-                )
-                if body.workflow_round_id
-                # Not named: use the round this exam belongs to, when exactly
-                # one does. The authoring screen does not know it; the data does.
-                else await rubric_for_exam(db, company_id=company_id, exam_id=exam_id)
-            ),
+            round_rubric=round_rubric,
         )
     except ExamGenerationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI generation failed: {exc}"
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=client_message(exc)
         ) from exc
 
     out: list[GeneratedCodingQuestionOut] = []

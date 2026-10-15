@@ -7,6 +7,7 @@
 
 import { apiGet, apiPost, apiPut, apiPatch, apiDelete } from './client';
 import type { DecisionOutcome, DecisionReason } from './scorecards';
+import { pathId, pathSegment } from './pathId';
 
 export interface Company {
   id: string;
@@ -65,30 +66,30 @@ export function createCompany(name: string, slug?: string): Promise<Company> {
 
 /** Soft-delete a company and all its member users (super admin + HR managers). */
 export function deleteCompany(companyId: string): Promise<void> {
-  return apiDelete<void>(`/admin/companies/${companyId}`);
+  return apiDelete<void>(`/admin/companies/${pathId(companyId)}`);
 }
 
 // ── Platform owner — the one super admin per company ────────────────────────
 
 export function getCompanyAdmin(companyId: string): Promise<CompanyAdmin> {
-  return apiGet<CompanyAdmin>(`/admin/companies/${companyId}/admin`);
+  return apiGet<CompanyAdmin>(`/admin/companies/${pathId(companyId)}/admin`);
 }
 
 export function createCompanyAdmin(
   companyId: string,
   body: { email: string; full_name: string; password?: string },
 ): Promise<CompanyAdmin> {
-  return apiPost<CompanyAdmin>(`/admin/companies/${companyId}/admin`, body);
+  return apiPost<CompanyAdmin>(`/admin/companies/${pathId(companyId)}/admin`, body);
 }
 
 /** Remove a company's super admin (a fresh one can then be created). */
 export function deleteCompanyAdmin(companyId: string): Promise<void> {
-  return apiDelete<void>(`/admin/companies/${companyId}/admin`);
+  return apiDelete<void>(`/admin/companies/${pathId(companyId)}/admin`);
 }
 
 /** Platform-owner read-only view of a company's HR managers. */
 export function listCompanyHrManagers(companyId: string): Promise<HrManager[]> {
-  return apiGet<HrManager[]>(`/admin/companies/${companyId}/hr-managers`);
+  return apiGet<HrManager[]>(`/admin/companies/${pathId(companyId)}/hr-managers`);
 }
 
 // ── Company super admin — HR managers in the caller's own company ───────────
@@ -105,7 +106,7 @@ export function createMyHrManager(
 
 /** Soft-delete an HR manager in the caller's own company. */
 export function deleteMyHrManager(userId: string): Promise<void> {
-  return apiDelete<void>(`/admin/hr-managers/${userId}`);
+  return apiDelete<void>(`/admin/hr-managers/${pathId(userId)}`);
 }
 
 // ── Company super admin — interviewers in the caller's own company (D4-1) ───
@@ -126,7 +127,7 @@ export function createMyInterviewer(
 
 /** Also withdraws this interviewer's unsubmitted scorecard assignments. */
 export function deleteMyInterviewer(userId: string): Promise<void> {
-  return apiDelete<void>(`/admin/interviewers/${userId}`);
+  return apiDelete<void>(`/admin/interviewers/${pathId(userId)}`);
 }
 
 // ── Decision-reason taxonomy (O4) — the company's own hire/reject reasons ──
@@ -155,7 +156,7 @@ export function updateDecisionReason(
   code: string,
   fields: Partial<{ active: boolean; label: string }>,
 ): Promise<CompanyDecisionReason> {
-  return apiPatch<CompanyDecisionReason>(`/admin/decision-reasons/${encodeURIComponent(code)}`, fields);
+  return apiPatch<CompanyDecisionReason>(`/admin/decision-reasons/${pathSegment(code)}`, fields);
 }
 
 // ── DPDP audit log (platform owner) ─────────────────────────────────────────
@@ -186,7 +187,7 @@ export function listFeatureFlags(): Promise<FeatureFlag[]> {
 }
 
 export function setFeatureFlag(key: string, enabled: boolean): Promise<FeatureFlag> {
-  return apiPut<FeatureFlag>(`/admin/feature-flags/${key}`, { enabled });
+  return apiPut<FeatureFlag>(`/admin/feature-flags/${pathSegment(key)}`, { enabled });
 }
 
 // ── HR hiring analytics (funnel + averages) — powers the HR console stats ─────

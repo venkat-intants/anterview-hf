@@ -6,6 +6,7 @@
 
 import { useState } from 'react';
 import { SegTabs } from '@/design/components/primitives';
+import { PageHeader, Page } from '@/design/components/page';
 import WorkloadTab from '@/components/panel/WorkloadTab';
 import AvailabilityTab from '@/components/panel/AvailabilityTab';
 import CalibrationTab from '@/components/panel/CalibrationTab';
@@ -22,24 +23,21 @@ export default function InterviewPanel(): JSX.Element {
   const [tab, setTab] = useState<TabKey>('workload');
 
   return (
-    <div className="mx-auto max-w-[1120px] px-6 py-8 lg:px-8">
-      <header>
-        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Interview panel</h1>
-        <p className="mt-1 text-[14px] text-muted-foreground">
-          Who is carrying the interview load, when interviewers are free, and how consistently
-          the panel scores.
-        </p>
-      </header>
+    <Page width="default">
+      <PageHeader
+        title="Interview panel"
+        description="Who is carrying the interview load, when interviewers are free, and how consistently the panel scores."
+      />
 
-      <div className="mt-5">
+      <div className="max-w-full overflow-x-auto">
         <SegTabs tabs={[...TABS]} active={tab} onChange={(k) => setTab(k as TabKey)} />
       </div>
 
-      <div className="mt-5">
+      <div>
         {tab === 'workload' ? <WorkloadTab /> : null}
         {tab === 'availability' ? <AvailabilityTab /> : null}
         {tab === 'calibration' ? <CalibrationTab /> : null}
       </div>
-    </div>
+    </Page>
   );
 }

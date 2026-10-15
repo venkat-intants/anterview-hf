@@ -43,12 +43,14 @@ from app.decision_reasons import ReasonError
 from app.decision_reasons import resolve as resolve_reason
 from app.dependencies import HrCtxDep, get_hr_company
 from app.embedding_client import (
+    EXPLANATION_UNAVAILABLE,
     EmbeddingError,
     embed_one_remote,
     embed_texts_remote,
     to_pgvector_literal,
     why_match_remote,
 )
+from app.embedding_client import client_message as embedding_client_message
 from app.final_decision import (
     DECISIONS,
     MIN_REASON_CHARS,
@@ -69,6 +71,7 @@ from app.requisitions import (
 )
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
 from app.scoring_client import ResumeScoreError, score_resume_remote
+from app.scoring_client import client_message as score_client_message
 from app.utils.ownership import get_owned
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 from app.utils.sql_like import LIKE_ESCAPE, like_literal
@@ -1640,6 +1643,29 @@ async def update_applicant_status(
         except StatusRefusedError as exc:
             await db.rollback()
             raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    elif body.status != prev_status:
+        # A person with no application at all (a row that predates openings) has
+        # no enrolment, so no ledger entry: this change used to be recorded as
+        # nothing but an ``updated_at`` — no actor, no previous status. The
+        # audit row is the only place the move can name who made it.
+        db.add(
+            AuditLog(
+                actor_id=_hr_uid,
+                actor_type="user",
+                action=f"applicant.status.{body.status}",
+                resource_type="applicant",
+                resource_id=applicant_id,
+                details={
+                    "company_id": str(company_id),
+                    "enrolment_id": None,
+                    "previous_status": prev_status,
+                    "status": body.status,
+                },
+                ip_address=extract_client_ip(request),
+                user_agent=extract_user_agent(request),
+                event_ts=datetime.now(tz=UTC),
+            )
+        )
     await db.commit()
     return _to_out(a)
 
@@ -1748,7 +1774,7 @@ async def rescore_applicant(
             acting_user_id=str(hr_uid),
         )
     except ResumeScoreError as exc:
-        raise HTTPException(status_code=502, detail=f"Resume scoring failed: {exc}") from exc
+        raise HTTPException(status_code=502, detail=score_client_message(exc)) from exc
     latest = True
     if enr is not None:
         latest = await apply_ats_to_enrolment(
@@ -1784,6 +1810,7 @@ async def why_match_applicant(
         )
     except EmbeddingError as exc:
         raise HTTPException(
-            status_code=502, detail=f"Could not generate explanation: {exc}"
+            status_code=502,
+            detail=embedding_client_message(exc, fixed=EXPLANATION_UNAVAILABLE),
         ) from exc
     return WhyMatchOut(reason=reason)

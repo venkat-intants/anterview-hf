@@ -446,7 +446,10 @@ describe('WorkflowBuilder — coverage', () => {
     renderBuilder();
     await screen.findByText('Fundamentals');
 
-    expect(await screen.findByText('1 thing to fix before this can go live.')).toBeTruthy();
+    // The blocker banner under the track owns the validation errors; the
+    // Coverage panel must not repeat them (it keeps only coverage facts).
+    expect(await screen.findByTestId('submit-blockers')).toBeTruthy();
+    expect(screen.queryByText('1 thing to fix before this can go live.')).toBeNull();
     const covered = screen.getByText('Communication').closest('li') as HTMLElement;
     expect(within(covered).getByText('not assessed')).toBeTruthy();
   });
@@ -462,7 +465,9 @@ describe('WorkflowBuilder — publishing', () => {
     await screen.findByText('Fundamentals');
 
     expect(screen.queryByText('Publish')).toBeNull();
-    expect(await screen.findByText('Submit for review')).toBeTruthy();
+    // Review is no longer an inspector tab: it is the track plus a sheet.
+    expect(screen.queryByRole('tab', { name: 'Review' })).toBeNull();
+    expect(screen.getByTestId('workflow-state')).toBeTruthy();
   });
 
   it('asks before publishing, because publishing emails real people', async () => {
@@ -693,5 +698,237 @@ describe('WorkflowBuilder — starting from nothing', () => {
     );
     // One transaction: the rounds, their competencies and settings together.
     expect(addRound).not.toHaveBeenCalled();
+  });
+});
+
+// ── UX round 3: the state-driven primary, the track, the blockers ───────────
+
+const REPORT_READY_FOR_STATES: ValidationReport = { ...REPORT_BLOCKED, publishable: true, errors: [] };
+
+function reviewState(over: Record<string, unknown>) {
+  return {
+    review_status: 'draft',
+    submitted_at: null,
+    submitted_by_name: null,
+    reviewed_at: null,
+    reviewed_by_name: null,
+    note: null,
+    history: [],
+    ...over,
+  };
+}
+
+const SIM_FRESH = {
+  simulation_id: 's1',
+  workflow_id: 'wf-draft',
+  version: 2,
+  fingerprint: 'f',
+  created_at: '2026-10-01T00:00:00.000Z',
+  stale: false,
+  run_by_name: 'Asha',
+  status: 'passed',
+  errors: 0,
+  warnings: 0,
+  rounds: [],
+  workflow_findings: [],
+  scenarios: [],
+};
+
+function primaries(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-primary="true"]'));
+}
+
+describe('WorkflowBuilder — one primary action, always the next step', () => {
+  it('draft with no dry run: Run dry run', async () => {
+    validateWorkflow.mockResolvedValue(REPORT_READY_FOR_STATES);
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await waitFor(() => expect(primaries()).toHaveLength(1));
+    expect(primaries()[0]).toHaveTextContent('Run dry run');
+  });
+
+  it('draft with a fresh dry run: Submit for review', async () => {
+    validateWorkflow.mockResolvedValue(REPORT_READY_FOR_STATES);
+    getSimulation.mockResolvedValue(SIM_FRESH);
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await waitFor(() => expect(primaries()[0]).toHaveTextContent('Submit for review'));
+    expect(primaries()).toHaveLength(1);
+  });
+
+  it('a stale dry run does not count: Run dry run again', async () => {
+    validateWorkflow.mockResolvedValue(REPORT_READY_FOR_STATES);
+    getSimulation.mockResolvedValue({ ...SIM_FRESH, stale: true });
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await waitFor(() => expect(primaries()).toHaveLength(1));
+    expect(primaries()[0]).toHaveTextContent('Run dry run');
+  });
+
+  it('an edit makes the dry run stale, so the primary goes back to Run dry run', async () => {
+    // Without invalidating the simulation after a round edit, the header kept
+    // reading "Submit for review" off a dry run the edit had just outdated.
+    const user = userEvent.setup();
+    validateWorkflow.mockResolvedValue(REPORT_READY_FOR_STATES);
+    getSimulation.mockResolvedValue(SIM_FRESH);
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await waitFor(() => expect(primaries()[0]).toHaveTextContent('Submit for review'));
+
+    // The server now reports the stored run as stale.
+    getSimulation.mockResolvedValue({ ...SIM_FRESH, stale: true });
+    await user.click(screen.getByLabelText('Move Conversation earlier'));
+
+    await waitFor(() => expect(primaries()[0]).toHaveTextContent('Run dry run'));
+    expect(primaries()).toHaveLength(1);
+  });
+
+  it('changes requested: Submit for review again, with the reviewer note on the track', async () => {
+    validateWorkflow.mockResolvedValue(REPORT_READY_FOR_STATES);
+    getSimulation.mockResolvedValue(SIM_FRESH);
+    getWorkflow.mockResolvedValue({ ...DRAFT, review_status: 'changes_requested' });
+    getReview.mockResolvedValue(
+      reviewState({
+        review_status: 'changes_requested',
+        reviewed_by_name: 'Meena',
+        reviewed_at: '2026-10-02T00:00:00.000Z',
+        note: 'Add a coding round',
+      }),
+    );
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await waitFor(() => expect(primaries()[0]).toHaveTextContent('Submit for review'));
+    expect(primaries()).toHaveLength(1);
+    const track = screen.getByTestId('workflow-state');
+    await waitFor(() => expect(track).toHaveTextContent('Add a coding round'));
+    expect(track).toHaveTextContent('Sent back');
+  });
+
+  it('in review: no primary, and the track says who it is waiting on', async () => {
+    validateWorkflow.mockResolvedValue(REPORT_READY_FOR_STATES);
+    getWorkflow.mockResolvedValue({ ...DRAFT, review_status: 'in_review', editable: false });
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    expect(primaries()).toHaveLength(0);
+    expect(screen.getByTestId('workflow-state')).toHaveTextContent('Waiting on a company super admin');
+  });
+
+  it('approved: Publish', async () => {
+    validateWorkflow.mockResolvedValue(REPORT_READY_FOR_STATES);
+    getWorkflow.mockResolvedValue({ ...DRAFT, review_status: 'approved', editable: false });
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    expect(primaries()).toHaveLength(1);
+    expect(primaries()[0]).toHaveTextContent('Publish');
+    expect(primaries()[0]).toHaveAttribute('data-testid', 'publish-workflow');
+  });
+
+  it('live: Edit as new version', async () => {
+    listWorkflows.mockResolvedValue(VERSIONS_LIVE);
+    getWorkflow.mockResolvedValue(PUBLISHED);
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    expect(primaries()).toHaveLength(1);
+    expect(primaries()[0]).toHaveTextContent('Edit as new version');
+    expect(primaries()[0]).toHaveAttribute('data-testid', 'edit-as-new-version');
+  });
+
+  it('live while a draft already exists: no Edit as new version, which the server would refuse', async () => {
+    listWorkflows.mockResolvedValue([...VERSIONS_DRAFT, ...VERSIONS_LIVE]);
+    getWorkflow.mockImplementation((id: string) =>
+      Promise.resolve(id === 'wf-live' ? PUBLISHED : DRAFT),
+    );
+    const user = userEvent.setup();
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    // Switch to the live version (the draft is the default).
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Workflow version' }), 'wf-live');
+    await waitFor(() => expect(screen.getByTestId('workflow-state')).toHaveTextContent('Published'));
+    expect(screen.queryByTestId('edit-as-new-version')).not.toBeInTheDocument();
+    expect(primaries()).toHaveLength(0);
+  });
+
+  it('archived: no primary, and the track says Archived rather than implying it is live', async () => {
+    const ARCHIVED = { ...VERSIONS_LIVE[0], id: 'wf-old', version: 1, status: 'archived' as const };
+    listWorkflows.mockResolvedValue([{ ...VERSIONS_LIVE[0], id: 'wf-live', version: 2 }, ARCHIVED]);
+    getWorkflow.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === 'wf-old' ? { ...PUBLISHED, id: 'wf-old', status: 'archived' as const } : PUBLISHED,
+      ),
+    );
+    const user = userEvent.setup();
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Workflow version' }), 'wf-old');
+    await waitFor(() =>
+      expect(screen.getByTestId('workflow-state')).toHaveTextContent('Archived, no longer live'),
+    );
+    expect(screen.queryByTestId('edit-as-new-version')).not.toBeInTheDocument();
+    expect(primaries()).toHaveLength(0);
+  });
+
+  it('an empty draft offers no primary', async () => {
+    getWorkflow.mockResolvedValue({ ...DRAFT, rounds: [] });
+    renderBuilder();
+    await waitFor(() => expect(screen.getByTestId('workflow-state')).toBeTruthy());
+    expect(primaries()).toHaveLength(0);
+  });
+});
+
+describe('WorkflowBuilder — blockers beside the action', () => {
+  it('lists the server errors, each linking to its round', async () => {
+    const user = userEvent.setup();
+    getSimulation.mockResolvedValue(SIM_FRESH);
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+
+    const blockers = await screen.findByTestId('submit-blockers');
+    expect(blockers).toHaveTextContent('Fundamentals: a mcq round needs questions before publishing.');
+
+    await user.click(within(blockers).getByRole('button', { name: 'Go to Fundamentals' }));
+    // The round's inspector opens, with its "needs an exam" state and a way out.
+    expect(await screen.findByTestId('needs-exam')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Go to Exams/ })).toHaveAttribute(
+      'href',
+      '/hr/exams?returnTo=' + encodeURIComponent('/hr/requisitions/req-1/workflow'),
+    );
+  });
+
+  it('opens the submit step with Submit disabled while blockers stand', async () => {
+    const user = userEvent.setup();
+    getSimulation.mockResolvedValue(SIM_FRESH);
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+
+    await user.click(await screen.findByRole('button', { name: 'Submit for review' }));
+    const review = await screen.findByTestId('review-panel');
+    const submit = within(review).getByRole('button', { name: 'Submit for review' });
+    expect(submit).toBeDisabled();
+    expect(review).toHaveTextContent('Fix 1 issue before submitting.');
+    expect(submitForReview).not.toHaveBeenCalled();
+  });
+
+  it('shows no blockers once the version is ready', async () => {
+    validateWorkflow.mockResolvedValue(REPORT_READY_FOR_STATES);
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await waitFor(() => expect(validateWorkflow).toHaveBeenCalled());
+    expect(screen.queryByTestId('submit-blockers')).toBeNull();
+  });
+});
+
+describe('WorkflowBuilder — the opening setup panels have moved', () => {
+  it('renders none of the four panels, and points at the opening Setup tab', async () => {
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+
+    // Posting, JD versions, application questions, budget & approval.
+    expect(screen.queryByText(/Job posting/i)).toBeNull();
+    expect(screen.queryByText(/Application questions/i)).toBeNull();
+    expect(screen.queryByText(/Submit for approval/i)).toBeNull();
+    expect(screen.queryByText(/Job description versions/i)).toBeNull();
+
+    const link = screen.getByRole('link', { name: 'Setup tab' });
+    expect(link).toHaveAttribute('href', '/hr/requisitions/req-1?tab=setup');
   });
 });

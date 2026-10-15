@@ -196,6 +196,8 @@ describe('WorkflowReviews — one version in full', () => {
   it('shows the submission history', async () => {
     renderPage();
     await screen.findByText('Fundamentals');
+    // History is a closed disclosure until opened (structural change).
+    await userEvent.click(screen.getByRole('button', { name: /History/ }));
     expect(screen.getByText(/Submitted for review — Rekha HR/)).toBeTruthy();
   });
 
@@ -270,5 +272,26 @@ describe('WorkflowReviews — one version in full', () => {
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Request changes' })).toBeNull();
     expect(screen.getByText(/nothing for you to.*decide/)).toBeTruthy();
+  });
+});
+
+describe('WorkflowReviews — where this version is', () => {
+  beforeEach(() => {
+    paramWorkflowId = 'wf-1';
+  });
+
+  it('shows who submitted it and that the decision is the approver’s', async () => {
+    renderPage();
+    const track = await screen.findByTestId('review-track');
+    expect(track).toHaveTextContent('Submitted by Rekha HR');
+    const current = Array.from(track.querySelectorAll('li[aria-current="step"]'));
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent('Your decision');
+  });
+
+  it('pins the decision to the bottom of the screen', async () => {
+    renderPage();
+    await screen.findByText('Fundamentals');
+    expect(screen.getByTestId('decision-panel').className).toMatch(/\bsticky\b/);
   });
 });

@@ -63,7 +63,7 @@ test.describe('an assessment started from the candidate’s dashboard', () => {
     const cta = candidatePage.getByTestId('exam-cta');
     await expect(cta.getByText('Your assessment is ready')).toBeVisible();
     await expect(
-      candidatePage.getByText('Your assessment is ready. Start it from here.'),
+      cta.getByRole('button', { name: 'Start assessment' }),
       'the next step points at the button, not at an email they may not have',
     ).toBeVisible();
     await expect(candidatePage.getByText(/Watch your email/)).toHaveCount(0);
@@ -81,7 +81,7 @@ test.describe('an assessment started from the candidate’s dashboard', () => {
       })
       .toBe('');
     expect(await answerTheExam(candidatePage, { answerCorrectly: true })).toContain(
-      'You passed',
+      'Assessment submitted',
     );
 
     // ── It counts, exactly as if it had come from the email ─────────────────

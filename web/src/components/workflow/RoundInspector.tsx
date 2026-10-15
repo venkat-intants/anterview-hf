@@ -18,11 +18,15 @@
 // is why the panel shows relative emphasis rather than pretending the numbers
 // must add to 100 here.
 
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ChevronDown, ExternalLink, Info, Loader2 } from '@/design/components/icons';
 import { StatusTag } from '@/design/components/primitives';
+import { Well } from '@/design/components/rows';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { listExams, getStructure } from '@/api/exams';
@@ -41,6 +45,18 @@ import RoundRouting from './RoundRouting';
 import StageSettings from './StageSettings';
 import TaskEditor from './TaskEditor';
 
+// The panel sits beside the canvas, so — like the candidate drawer — each group
+// is a titled block divided from the last by a hairline. Native <select> and
+// <textarea> share the Input's look; the shadcn Select is a popover and would
+// change how these are driven.
+const SECTION = 'flex flex-col gap-3 border-t border-border pt-5';
+const SECTION_TITLE = 'text-[15px] font-bold text-foreground';
+const LABEL = 'text-[13px] font-semibold text-foreground';
+const SELECT =
+  'h-11 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
+const TEXTAREA =
+  'w-full resize-y rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
+
 interface Props {
   round: Round;
   /** Every round of this workflow, in order — routing targets and the pass label. */
@@ -51,6 +67,11 @@ interface Props {
   saving: boolean;
   /** Validation messages that name this round (they start with its title). */
   roundErrors?: string[];
+  /**
+   * Where Exams should send the user back to (the workflow page). Carried on
+   * the link to Exams so a round that needs an exam is never a dead end.
+   */
+  returnTo?: string;
   onPatch: (fields: RoundPatch) => void;
   onCriteria: (criteria: CriterionInput[]) => void;
 }
@@ -93,37 +114,37 @@ function ExamPicker({
   return (
     <div className="flex flex-col gap-2.5">
       {value ? (
-        <div className="flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-ok-wash)] px-3 py-2 text-[12.5px] text-foreground">
-          <span className="truncate">Questions attached{chosen ? `: ${chosen.title}` : ''}</span>
+        <div className="flex items-center gap-2 rounded-[12px] border border-border bg-[var(--ui-ok-wash)] py-1 pl-3.5 pr-1.5 text-[13.5px] text-foreground">
+          <span className="min-w-0 break-words">
+            Questions attached{chosen ? `: ${chosen.title}` : ''}
+          </span>
           {editable ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => onChange(null)}
-              className="ml-auto shrink-0 text-[12px] text-muted-foreground hover:text-foreground"
+              className="ml-auto shrink-0"
             >
               Change
-            </button>
+            </Button>
           ) : null}
         </div>
       ) : (
         <>
-          <div className="flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <div className="flex items-start gap-1.5 text-[13px] text-[var(--ui-warn)]">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             This round has no questions yet. It cannot be published until it does.
           </div>
           {editable ? (
             <>
-              <label
-                className="text-[12px] font-medium text-[var(--ui-soft)]"
-                htmlFor="exam-select"
-              >
+              <label className={LABEL} htmlFor="exam-select">
                 Take questions from
               </label>
               <select
                 id="exam-select"
                 value={examId}
                 onChange={(e) => setExamId(e.target.value)}
-                className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                className={SELECT}
               >
                 <option value="">Choose an exam…</option>
                 {(exams.data ?? []).map((e) => (
@@ -132,19 +153,59 @@ function ExamPicker({
                   </option>
                 ))}
               </select>
+              {exams.isLoading ? (
+                <div aria-busy="true">
+                  <span className="sr-only">Loading exams…</span>
+                  <Skeleton className="h-4 w-40" />
+                </div>
+              ) : exams.isError ? (
+                <div role="alert" className="flex flex-wrap items-center gap-3">
+                  <p className="text-[13px] text-[var(--ui-danger)]">
+                    Could not load your published exams.
+                  </p>
+                  <Button type="button" variant="outline" onClick={() => void exams.refetch()}>
+                    Try again
+                  </Button>
+                </div>
+              ) : (exams.data ?? []).length === 0 ? (
+                <p className="text-[13px] text-muted-foreground">
+                  No published exams yet.{' '}
+                  <Link
+                    to="/hr/exams"
+                    className="inline-flex items-center gap-1 text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  >
+                    Open your exams
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                  </Link>
+                </p>
+              ) : null}
 
               {examId ? (
                 structure.isLoading ? (
-                  <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    Loading rounds…
-                  </span>
+                  <div className="flex flex-col gap-1.5" aria-busy="true">
+                    <span className="sr-only">Loading rounds…</span>
+                    <Skeleton className="h-11 rounded-[12px]" />
+                    <Skeleton className="h-11 rounded-[12px]" />
+                  </div>
+                ) : structure.isError ? (
+                  <div role="alert" className="flex flex-wrap items-center gap-3">
+                    <p className="text-[13px] text-[var(--ui-danger)]">
+                      Could not load that exam&apos;s rounds.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void structure.refetch()}
+                    >
+                      Try again
+                    </Button>
+                  </div>
                 ) : (structure.data?.rounds ?? []).length === 0 ? (
-                  <span className="text-[12px] text-muted-foreground">
+                  <span className="text-[13px] text-muted-foreground">
                     That exam has no rounds yet.{' '}
                     <Link
                       to={`/hr/exams/${examId}`}
-                      className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline"
+                      className="inline-flex items-center gap-1 text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                     >
                       Open the exam editor
                       <ExternalLink className="h-3 w-3" aria-hidden="true" />
@@ -170,10 +231,10 @@ function ExamPicker({
                             onClick={() => onChange(r.id)}
                             disabled={unusable !== null}
                             title={unusable ?? undefined}
-                            className="flex items-center justify-between gap-2 rounded-[10px] border border-border px-3 py-2 text-left text-[12.5px] text-foreground hover:border-electric/50 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border"
+                            className="flex min-h-11 flex-wrap items-center justify-between gap-x-2 gap-y-0.5 rounded-[12px] border border-border px-3.5 py-2 text-left text-[13.5px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-border"
                           >
-                            <span className="truncate">{r.title}</span>
-                            <span className="ml-auto flex shrink-0 items-center gap-2 text-[11px]">
+                            <span className="min-w-0 break-words">{r.title}</span>
+                            <span className="ml-auto flex shrink-0 items-center gap-2 text-[12.5px]">
                               <span
                                 className={
                                   r.status === 'published'
@@ -187,7 +248,7 @@ function ExamPicker({
                                 className={
                                   questions === 0
                                     ? 'text-[var(--ui-warn)]'
-                                    : 'text-[var(--ui-faint)]'
+                                    : 'text-muted-foreground'
                                 }
                               >
                                 {questions} question{questions === 1 ? '' : 's'}
@@ -195,11 +256,11 @@ function ExamPicker({
                             </span>
                           </button>
                           {unusable ? (
-                            <span className="pl-1 text-[11.5px] text-muted-foreground">
+                            <span className="pl-1 text-[13px] text-muted-foreground">
                               {unusable}{' '}
                               <Link
                                 to={`/hr/exams/${examId}`}
-                                className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline"
+                                className="inline-flex items-center gap-1 text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                               >
                                 Open the exam editor
                                 <ExternalLink className="h-3 w-3" aria-hidden="true" />
@@ -278,10 +339,12 @@ function CriteriaPicker({
 
   if (!roleModel) {
     return (
-      <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-        Loading the role model…
-      </span>
+      <div className="flex flex-col gap-1.5" aria-busy="true">
+        <span className="sr-only">Loading the role model…</span>
+        <Skeleton className="h-11 rounded-[12px]" />
+        <Skeleton className="h-11 rounded-[12px]" />
+        <Skeleton className="h-11 rounded-[12px]" />
+      </div>
     );
   }
 
@@ -289,20 +352,20 @@ function CriteriaPicker({
 
   return (
     <div className="flex flex-col gap-2">
-      <p className="flex items-start gap-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
-        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <p className="flex items-start gap-1.5 text-[13px] leading-relaxed text-muted-foreground">
+        <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
         {round.kind === 'ai_interview'
           ? 'The interview probes these and nothing else. Picking one copies its rating scale onto this round, so the same standard applies to everyone who sits it — even if the role model changes later.'
           : 'What this round contributes to the candidate profile. Used for coverage, so you can see what nothing in your process measures.'}
       </p>
 
       {atCap ? (
-        <span className="text-[11.5px] text-[var(--ui-warn)]">
+        <span className="text-[13px] text-[var(--ui-warn)]">
           A round assesses at most {MAX_CRITERIA_PER_ROUND} competencies — deselect one to swap.
         </span>
       ) : null}
 
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1.5">
         {roleModel.competencies.map((comp) => {
           const chosen = selected.get(comp.id);
           const open = expanded === comp.id;
@@ -310,27 +373,30 @@ function CriteriaPicker({
             <div
               key={comp.id}
               className={cn(
-                'rounded-[10px] border px-2.5 py-2',
-                chosen ? 'border-electric/45 bg-electric/[0.06]' : 'border-border',
+                'rounded-[12px] border px-3 py-0.5',
+                chosen
+                  ? 'border-[rgba(var(--accent-rgb),0.45)] bg-[var(--ui-info-wash)]'
+                  : 'border-border',
               )}
             >
-              <div className="flex items-center gap-2.5">
-                <input
-                  type="checkbox"
-                  id={`crit-${round.id}-${comp.id}`}
-                  checked={Boolean(chosen)}
-                  disabled={!editable || (!chosen && atCap)}
-                  onChange={() => toggle(comp.id)}
-                  className="h-4 w-4 shrink-0 accent-[var(--accent)]"
-                />
+              <div className="flex items-center gap-1.5">
+                {/* The whole row is the label, so the hit area is the row. */}
                 <label
                   htmlFor={`crit-${round.id}-${comp.id}`}
-                  className="min-w-0 flex-1 cursor-pointer truncate text-[13px] text-foreground"
+                  className="flex min-h-10 min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-[14px] text-foreground"
                 >
-                  {comp.name}
+                  <input
+                    type="checkbox"
+                    id={`crit-${round.id}-${comp.id}`}
+                    checked={Boolean(chosen)}
+                    disabled={!editable || (!chosen && atCap)}
+                    onChange={() => toggle(comp.id)}
+                    className="h-4 w-4 shrink-0 accent-[var(--accent)]"
+                  />
+                  <span className="min-w-0 break-words">{comp.name}</span>
                 </label>
                 {chosen ? (
-                  <span className="shrink-0 text-[11px] tabular-nums text-[var(--ui-soft)]">
+                  <span className="shrink-0 text-[13px] tabular-nums text-[var(--ui-soft)]">
                     {Math.round((chosen.weight / total) * 100)}%
                   </span>
                 ) : null}
@@ -339,20 +405,20 @@ function CriteriaPicker({
                   onClick={() => setExpanded(open ? null : comp.id)}
                   aria-label={`${open ? 'Hide' : 'Show'} rating scale for ${comp.name}`}
                   aria-expanded={open}
-                  className="shrink-0 rounded p-1 text-[var(--ui-faint)] hover:text-foreground"
+                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 >
                   <ChevronDown
-                    className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')}
+                    className={cn('h-4 w-4 transition-transform', open && 'rotate-180')}
                     aria-hidden="true"
                   />
                 </button>
               </div>
 
               {chosen && editable ? (
-                <div className="mt-2 flex items-center gap-2 pl-[26px]">
+                <div className="flex items-center gap-2 pb-1 pl-[26px]">
                   <label
                     htmlFor={`w-${round.id}-${comp.id}`}
-                    className="text-[11px] text-[var(--ui-faint)]"
+                    className="text-[13px] text-muted-foreground"
                   >
                     Emphasis
                   </label>
@@ -364,17 +430,17 @@ function CriteriaPicker({
                     step={5}
                     value={Math.round(chosen.weight * 100)}
                     onChange={(e) => setWeight(comp.id, Number(e.target.value) / 100)}
-                    className="h-1 flex-1 accent-[var(--accent)]"
+                    className="h-10 min-w-0 flex-1 accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   />
                 </div>
               ) : null}
 
               {open ? (
-                <dl className="mt-2 flex flex-col gap-1 border-t border-border pt-2 pl-[26px] text-[11.5px]">
+                <dl className="mb-2 mt-1 flex flex-col gap-1 border-t border-border pt-2 pl-[26px] text-[13px]">
                   {(['low', 'mid', 'high'] as const).map((band) => (
                     <div key={band} className="flex gap-2">
-                      <dt className="w-10 shrink-0 capitalize text-[var(--ui-faint)]">{band}</dt>
-                      <dd className="text-[var(--ui-soft)]">{comp.anchors[band]}</dd>
+                      <dt className="w-10 shrink-0 capitalize text-muted-foreground">{band}</dt>
+                      <dd className="min-w-0 text-[var(--ui-soft)]">{comp.anchors[band]}</dd>
                     </div>
                   ))}
                 </dl>
@@ -407,16 +473,20 @@ function LinesEditor({
   editable: boolean;
   onChange: (next: string[]) => void;
 }) {
+  const id = useId();
   return (
     <div>
-      <label className="text-[11px] font-medium text-[var(--ui-faint)]">{label}</label>
+      <label htmlFor={id} className="mb-1.5 block text-[13px] font-medium text-[var(--ui-soft)]">
+        {label}
+      </label>
       <textarea
+        id={id}
         value={value.join('\n')}
         disabled={!editable}
         onChange={(e) => onChange(e.target.value.split('\n'))}
         rows={3}
         placeholder="One per line"
-        className="mt-1 w-full resize-y rounded-[8px] border border-border bg-secondary px-2.5 py-1.5 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+        className={TEXTAREA}
       />
     </div>
   );
@@ -486,14 +556,22 @@ function KitEditor({
 
   if (kit.isLoading) {
     return (
-      <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-        Loading the interview kit…
-      </span>
+      <div className="flex flex-col gap-2" aria-busy="true">
+        <span className="sr-only">Loading the interview kit…</span>
+        <Skeleton className="h-16 rounded-[12px]" />
+        <Skeleton className="h-16 rounded-[12px]" />
+      </div>
     );
   }
   if (kit.isError) {
-    return <p className="text-[12px] text-[var(--ui-danger)]">Could not load the interview kit.</p>;
+    return (
+      <div role="alert" className="flex flex-wrap items-center gap-3">
+        <p className="text-[13px] text-[var(--ui-danger)]">Could not load the interview kit.</p>
+        <Button type="button" variant="outline" onClick={() => void kit.refetch()}>
+          Try again
+        </Button>
+      </div>
+    );
   }
 
   const frozenFor = (id: string): string[] =>
@@ -502,7 +580,7 @@ function KitEditor({
   return (
     <div className="flex flex-col gap-3">
       <div>
-        <label htmlFor="kit-instructions" className="text-[12px] font-medium text-[var(--ui-soft)]">
+        <label htmlFor="kit-instructions" className={LABEL}>
           Instructions for interviewers
         </label>
         <textarea
@@ -511,11 +589,11 @@ function KitEditor({
           disabled={!editable}
           onChange={(e) => setInstructions(e.target.value)}
           rows={2}
-          className="mt-1 w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+          className={`${TEXTAREA} mt-1.5`}
         />
       </div>
       <div>
-        <label htmlFor="kit-notes" className="text-[12px] font-medium text-[var(--ui-soft)]">
+        <label htmlFor="kit-notes" className={LABEL}>
           Notes for interviewers
         </label>
         <textarea
@@ -524,19 +602,19 @@ function KitEditor({
           disabled={!editable}
           onChange={(e) => setNotes(e.target.value)}
           rows={2}
-          className="mt-1 w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+          className={`${TEXTAREA} mt-1.5`}
         />
       </div>
 
       {criteria.map((c) => (
-        <div key={c.id} className="rounded-[10px] border border-border p-2.5">
-          <p className="text-[12.5px] font-medium text-foreground">{c.name}</p>
+        <div key={c.id} className="rounded-[16px] border border-border p-3.5">
+          <p className="text-[14px] font-semibold text-foreground">{c.name}</p>
           {frozenFor(c.id).length > 0 ? (
-            <p className="mt-1 text-[11px] text-[var(--ui-faint)]">
+            <p className="mt-1 text-[12.5px] text-muted-foreground">
               Frozen probes (from the rubric): {frozenFor(c.id).join('; ')}
             </p>
           ) : null}
-          <div className="mt-2 flex flex-col gap-2">
+          <div className="mt-3 flex flex-col gap-3">
             <LinesEditor
               label="What to evaluate"
               value={rows[c.id]?.what_to_evaluate ?? []}
@@ -575,14 +653,14 @@ function KitEditor({
       ))}
 
       {editable ? (
-        <button
+        <Button
           type="button"
           onClick={() => saveMut.mutate()}
           disabled={saveMut.isPending}
-          className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+          className="self-start"
         >
           {saveMut.isPending ? 'Saving…' : 'Save interview kit'}
-        </button>
+        </Button>
       ) : null}
     </div>
   );
@@ -598,6 +676,7 @@ export default function RoundInspector({
   editable,
   saving,
   roundErrors = [],
+  returnTo,
   onPatch,
   onCriteria,
 }: Props): JSX.Element {
@@ -613,13 +692,10 @@ export default function RoundInspector({
     setTitle(round.title);
   }
 
-  const field =
-    'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60';
-
   return (
     <div className="flex flex-col gap-5">
       <header className="flex items-center gap-2.5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[var(--ui-inset)]">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-[var(--ui-inset)]">
           <Icon className="h-4 w-4 text-foreground" aria-hidden="true" />
         </span>
         <div className="min-w-0">
@@ -629,7 +705,7 @@ export default function RoundInspector({
                 aria-label="Round type"
                 value={round.kind}
                 onChange={(e) => onPatch({ kind: e.target.value as RoundKind })}
-                className="rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                className={cn(SELECT, 'w-auto min-w-0 font-semibold')}
               >
                 {ROUND_KIND_ORDER.map((k) => (
                   <option key={k} value={k}>
@@ -641,15 +717,12 @@ export default function RoundInspector({
               <StatusTag tone={meta.tone}>{meta.label}</StatusTag>
             )}
             {saving ? (
-              <Loader2
-                className="h-3.5 w-3.5 animate-spin text-[var(--ui-faint)]"
-                aria-hidden="true"
-              />
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden="true" />
             ) : null}
           </div>
-          <p className="mt-1 text-[11.5px] leading-snug text-muted-foreground">{meta.blurb}</p>
+          <p className="mt-1 text-[13px] leading-snug text-muted-foreground">{meta.blurb}</p>
           {editable ? (
-            <p className="mt-1 text-[11px] leading-snug text-[var(--ui-faint)]">
+            <p className="mt-1 text-[12.5px] leading-snug text-muted-foreground">
               Changing the type clears what no longer applies — questions, threshold or time limit —
               and keeps the rest.
             </p>
@@ -658,31 +731,31 @@ export default function RoundInspector({
       </header>
 
       {/* 1. What it is */}
-      <section className="flex flex-col gap-2.5">
-        <label htmlFor="round-title" className="text-[12px] font-medium text-[var(--ui-soft)]">
-          Round name
-        </label>
-        <input
-          id="round-title"
-          value={title}
-          disabled={!editable}
-          onChange={(e) => setTitle(e.target.value)}
-          onBlur={() => {
-            const next = title.trim();
-            if (next && next !== round.title) onPatch({ title: next });
-          }}
-          className={field}
-        />
+      <section className="flex flex-col gap-3">
+        <h3 className={SECTION_TITLE}>Round settings</h3>
+        <div>
+          <label htmlFor="round-title" className={LABEL}>
+            Round name
+          </label>
+          <Input
+            id="round-title"
+            value={title}
+            disabled={!editable}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={() => {
+              const next = title.trim();
+              if (next && next !== round.title) onPatch({ title: next });
+            }}
+            className="mt-1.5"
+          />
+        </div>
 
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
           <div>
-            <label
-              htmlFor="deadline"
-              className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
-            >
+            <label htmlFor="deadline" className={cn(LABEL, 'mb-1.5 block')}>
               Days to complete
             </label>
-            <input
+            <Input
               id="deadline"
               type="number"
               min={1}
@@ -693,17 +766,13 @@ export default function RoundInspector({
                 const n = Number(e.target.value);
                 if (n >= 1 && n <= 365) onPatch({ deadline_days: n });
               }}
-              className={field}
             />
           </div>
           <div>
-            <label
-              htmlFor="timelimit"
-              className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
-            >
+            <label htmlFor="timelimit" className={cn(LABEL, 'mb-1.5 block')}>
               Time limit (min)
             </label>
-            <input
+            <Input
               id="timelimit"
               type="number"
               min={1}
@@ -716,7 +785,6 @@ export default function RoundInspector({
                 const v = e.target.value.trim();
                 onPatch({ time_limit_seconds: v === '' ? null : Number(v) * 60 });
               }}
-              className={field}
             />
           </div>
         </div>
@@ -728,45 +796,57 @@ export default function RoundInspector({
             real answer — collapsing it into "automatic" would freeze this round
             at whatever the workflow happened to say today. */}
         <div>
-          <label
-            htmlFor="autoadvance"
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
+          <label htmlFor="autoadvance" className={cn(LABEL, 'mb-1.5 block')}>
             After a candidate passes
           </label>
           <select
             id="autoadvance"
             disabled={!editable}
-            value={
-              round.auto_advance === null ? 'inherit' : round.auto_advance ? 'auto' : 'manual'
-            }
+            value={round.auto_advance === null ? 'inherit' : round.auto_advance ? 'auto' : 'manual'}
             onChange={(e) => {
               const v = e.target.value;
               onPatch({ auto_advance: v === 'inherit' ? null : v === 'auto' });
             }}
-            className={field}
+            className={SELECT}
           >
             <option value="inherit">Follow the workflow default</option>
             <option value="auto">Move them on automatically</option>
             <option value="manual">Hold for my review</option>
           </select>
           <p
-            className="mt-1.5 text-[11.5px] leading-relaxed text-[var(--ui-faint)]"
+            className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground"
             data-testid="hold-behaviour-copy"
           >
-            On <span className="font-medium">hold</span> the candidate stops here, you are
-            notified, and they wait in your review queue with the reason recorded. Releasing them
-            moves them on to {round.on_pass_next_round_id ? 'the next round' : 'the final decision'}
-            {' '}exactly as an automatic pass would. Nobody is rejected by this setting — ending a
-            candidacy still goes through the decision that asks you for a reason.
+            On <span className="font-medium">hold</span> the candidate stops here, you are notified,
+            and they wait in your review queue with the reason recorded. Releasing them moves them
+            on to {round.on_pass_next_round_id ? 'the next round' : 'the final decision'} exactly as
+            an automatic pass would. Nobody is rejected by this setting — ending a candidacy still
+            goes through the decision that asks you for a reason.
           </p>
         </div>
       </section>
 
       {/* 2. What it asks */}
       {meta.needsExam ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">Questions</h3>
+        <section className={SECTION}>
+          <h3 className={SECTION_TITLE}>Questions</h3>
+          {round.needs_questions ? (
+            <Well data-testid="needs-exam" role="status">
+              <p className="text-[13px] font-semibold text-foreground">This round needs an exam</p>
+              <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
+                Pick a published exam round below. If there is none yet, create or publish one in
+                Exams
+                {returnTo ? ' — you can come straight back to this workflow from there' : ''}.
+              </p>
+              <Link
+                to={returnTo ? `/hr/exams?returnTo=${encodeURIComponent(returnTo)}` : '/hr/exams'}
+                className="mt-2 inline-flex min-h-[40px] items-center gap-1.5 text-[13px] font-medium text-[var(--accent)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              >
+                Go to Exams
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            </Well>
+          ) : null}
           <ExamPicker
             value={round.exam_round_id}
             editable={editable}
@@ -780,8 +860,8 @@ export default function RoundInspector({
           `exam_round_id` is: `editable` already reflects the workflow's own
           published/in-review lock. */}
       {(TASK_KINDS as readonly string[]).includes(round.kind) ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">Task</h3>
+        <section className={SECTION}>
+          <h3 className={SECTION_TITLE}>Task</h3>
           <TaskEditor
             key={round.id}
             roundId={round.id}
@@ -792,8 +872,8 @@ export default function RoundInspector({
       ) : null}
 
       {meta.supportsCriteria ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">
+        <section className={SECTION}>
+          <h3 className={SECTION_TITLE}>
             {round.kind === 'human_review' || (TASK_KINDS as readonly string[]).includes(round.kind)
               ? `Reviewer’s checklist (${round.criteria.length})`
               : `What this round assesses (${round.criteria.length})`}
@@ -810,9 +890,9 @@ export default function RoundInspector({
       {/* Interview kit — human_review only. Criteria are frozen above; this
           edits the guidance an interviewer sees for each one. */}
       {round.kind === 'human_review' ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">Interview kit</h3>
-          <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+        <section className={SECTION}>
+          <h3 className={SECTION_TITLE}>Interview kit</h3>
+          <p className="text-[13px] leading-relaxed text-muted-foreground">
             What the interviewer sees alongside the checklist above: instructions, your notes, and
             per-criterion guidance. Criteria themselves are frozen — set them above.
           </p>
@@ -827,31 +907,31 @@ export default function RoundInspector({
 
       {/* 3. What it means */}
       {meta.needsThreshold ? (
-        <section>
-          <label
-            htmlFor="threshold"
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
-            Advance at or above
-          </label>
-          <div className="flex items-center gap-2">
-            <input
-              id="threshold"
-              type="number"
-              min={0}
-              max={100}
-              disabled={!editable}
-              value={round.pass_threshold ?? ''}
-              placeholder="required"
-              onChange={(e) => {
-                const v = e.target.value.trim();
-                onPatch({ pass_threshold: v === '' ? null : Number(v) });
-              }}
-              className={cn(field, 'w-24')}
-            />
-            <span className="text-[13px] text-muted-foreground">%</span>
+        <section className={SECTION}>
+          <h3 className={SECTION_TITLE}>Advance threshold</h3>
+          <div>
+            <label htmlFor="threshold" className={cn(LABEL, 'mb-1.5 block')}>
+              Advance at or above
+            </label>
+            <div className="flex items-center gap-2">
+              <Input
+                id="threshold"
+                type="number"
+                min={0}
+                max={100}
+                disabled={!editable}
+                value={round.pass_threshold ?? ''}
+                placeholder="required"
+                onChange={(e) => {
+                  const v = e.target.value.trim();
+                  onPatch({ pass_threshold: v === '' ? null : Number(v) });
+                }}
+                className="w-28"
+              />
+              <span className="text-[14px] text-muted-foreground">%</span>
+            </div>
           </div>
-          <p className="mt-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
+          <p className="text-[13px] leading-relaxed text-muted-foreground">
             {/* Said plainly because it is the single most common thing people
                 assume a threshold does, and it does not. */}
             Scoring below this does not reject anyone. It puts the candidate in your decision queue
@@ -859,7 +939,7 @@ export default function RoundInspector({
           </p>
         </section>
       ) : (
-        <section className="rounded-[10px] border border-border p-3 text-[11.5px] leading-relaxed text-muted-foreground">
+        <section className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 text-[13px] leading-relaxed text-muted-foreground">
           {meta.decidedBy === 'person'
             ? 'Nothing here is scored automatically — a threshold has nothing to compare against. Candidates who reach it appear in your decision queue with the checklist above; someone passes them on or holds them for a decision. Nobody is rejected automatically.'
             : 'This round kind has no threshold.'}
@@ -879,8 +959,8 @@ export default function RoundInspector({
 
       {/* PH4-O1 — operational, so editable on a live version too (like the
           interview kit below). */}
-      <section className="flex flex-col gap-2">
-        <h3 className="text-[12px] font-medium text-[var(--ui-soft)]">Stage owner &amp; SLA</h3>
+      <section className={SECTION}>
+        <h3 className={SECTION_TITLE}>Stage owner &amp; SLA</h3>
         <StageSettings workflowId={workflowId} roundId={round.id} label={round.title} />
       </section>
     </div>

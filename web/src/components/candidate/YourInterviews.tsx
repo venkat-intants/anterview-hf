@@ -21,9 +21,19 @@ import {
   type CandidateSession,
 } from '@/api/scheduling';
 import { toast } from '@/lib/toast';
-import { browserTimezone, dayHeading, dayKey, formatDayTime, timeInZone, zoneAbbrev } from '@/lib/timezone';
-import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
-import { Download } from '@/design/components/icons';
+import {
+  browserTimezone,
+  dayHeading,
+  dayKey,
+  formatDayTime,
+  timeInZone,
+  zoneAbbrev,
+} from '@/lib/timezone';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { SectionCard, EmptyState } from '@/design/components/page';
+import { StatusTag, type TagTone } from '@/design/components/primitives';
+import { CalendarDays, Download } from '@/design/components/icons';
 
 function localeFor(lang: string): string {
   if (lang.startsWith('hi')) return 'hi-IN';
@@ -88,13 +98,15 @@ function ChooseTimeSection({
 
   if (!open) {
     return (
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         onClick={() => setOpen(true)}
-        className="mt-2 rounded-[9px] border border-[var(--accent)] px-3 py-1.5 text-[12.5px] font-medium text-[var(--ui-info)] hover:bg-[rgba(var(--accent-rgb),0.08)]"
+        className="mt-3"
       >
         {t('myInterviews.chooseTime')}
-      </button>
+      </Button>
     );
   }
 
@@ -111,31 +123,31 @@ function ChooseTimeSection({
   }
 
   return (
-    <div className="mt-2 rounded-[10px] border border-border p-3">
+    <div className="mt-3 rounded-[14px] bg-card p-4">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[12.5px] font-medium text-foreground">{t('myInterviews.chooseTime')}</p>
+        <p className="text-[14px] font-semibold text-foreground">{t('myInterviews.chooseTime')}</p>
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="text-[12px] text-muted-foreground hover:text-foreground"
+          className="min-h-[40px] rounded px-1 text-[13px] font-semibold text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {t('myInterviews.hideTimes')}
         </button>
       </div>
 
       {slots.isLoading ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">{t('myInterviews.slotsLoading')}</p>
+        <p className="mt-2 text-[13px] text-muted-foreground">{t('myInterviews.slotsLoading')}</p>
       ) : slots.isError ? (
-        <p className="mt-2 text-[12.5px] text-[var(--ui-danger)]">
+        <p role="alert" className="mt-2 text-[13px] text-[var(--ui-danger)]">
           {errText(slots.error, t('myInterviews.slotsError'))}
         </p>
       ) : (slots.data ?? []).length === 0 ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">{t('myInterviews.slotsEmpty')}</p>
+        <p className="mt-2 text-[13px] text-muted-foreground">{t('myInterviews.slotsEmpty')}</p>
       ) : (
         <div className="mt-2 flex flex-col gap-3">
           {Array.from(groups.entries()).map(([day, isos]) => (
             <div key={day}>
-              <p className="text-[11.5px] font-medium text-[var(--ui-soft)]">
+              <p className="text-[12px] font-semibold text-[var(--ui-soft)]">
                 {dayHeading(isos[0], myTz, locale)}
               </p>
               <div className="mt-1 flex flex-wrap gap-1.5">
@@ -145,7 +157,7 @@ function ChooseTimeSection({
                     type="button"
                     disabled={bookMut.isPending}
                     onClick={() => bookMut.mutate(iso)}
-                    className="rounded-[8px] border border-border px-2.5 py-1 text-[12px] text-foreground hover:border-[var(--accent)] disabled:opacity-40"
+                    className="min-h-[40px] rounded-full border border-input bg-card px-3.5 text-[13px] font-medium text-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
                   >
                     {timeInZone(iso, myTz, locale)}
                   </button>
@@ -159,17 +171,25 @@ function ChooseTimeSection({
   );
 }
 
-function SessionRow({ loop, session, locale }: { loop: CandidateLoop; session: CandidateSession; locale: string }) {
+function SessionRow({
+  loop,
+  session,
+  locale,
+}: {
+  loop: CandidateLoop;
+  session: CandidateSession;
+  locale: string;
+}) {
   const { t } = useTranslation();
   return (
-    <li className="rounded-[10px] border border-border p-3">
+    <li className="rounded-[14px] bg-[var(--ui-inset-soft)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[13px] font-medium text-foreground">{session.title}</p>
+        <p className="text-[14px] font-semibold text-foreground">{session.title}</p>
         <StatusTag tone={STATUS_TONE[session.status]} dot>
           {t(`myInterviews.status.${session.status}`)}
         </StatusTag>
       </div>
-      <p className="mt-1 text-[12px] text-muted-foreground">
+      <p className="mt-1 text-[13px] text-muted-foreground">
         {session.starts_at
           ? `${formatDayTime(session.starts_at, loop.timezone, locale)} ${zoneAbbrev(session.starts_at, loop.timezone)} · ${t(
               'myInterviews.duration',
@@ -179,7 +199,7 @@ function SessionRow({ loop, session, locale }: { loop: CandidateLoop; session: C
         {session.location ? ` · ${session.location}` : ''}
       </p>
       {session.interviewers.length > 0 ? (
-        <p className="mt-1 text-[12px] text-[var(--ui-soft)]">
+        <p className="mt-1 text-[13px] text-[var(--ui-soft)]">
           {t('myInterviews.withInterviewers', { names: session.interviewers.join(', ') })}
         </p>
       ) : null}
@@ -190,13 +210,27 @@ function SessionRow({ loop, session, locale }: { loop: CandidateLoop; session: C
 
       {/* A23 — fixed once set. No reschedule or cancel control here, ever. */}
       {session.status === 'scheduled' ? (
-        <p className="mt-2 text-[11.5px] text-[var(--ui-faint)]">{t('myInterviews.fixedNotice')}</p>
+        <p className="mt-2 text-[12px] text-muted-foreground">{t('myInterviews.fixedNotice')}</p>
       ) : null}
     </li>
   );
 }
 
-function LoopCard({ loop, locale }: { loop: CandidateLoop; locale: string }) {
+/**
+ * One interview loop. `embedded` is for a loop shown ON its application card,
+ * where the card already names the role: the heading is then the loop's own
+ * title ("Panel interview"), not the job title again. The wrapper is a focus
+ * target so the card's "See available times" action can scroll to it.
+ */
+function LoopCard({
+  loop,
+  locale,
+  embedded = false,
+}: {
+  loop: CandidateLoop;
+  locale: string;
+  embedded?: boolean;
+}) {
   const { t } = useTranslation();
 
   const icsMut = useMutation({
@@ -205,21 +239,26 @@ function LoopCard({ loop, locale }: { loop: CandidateLoop; locale: string }) {
   });
 
   return (
-    <GlassCard className="p-5">
+    <div id={`loop-${loop.id}`} tabIndex={-1} className="outline-none">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="text-[15px] font-semibold text-foreground">{loop.job_title}</h3>
-          <p className="mt-0.5 text-[12px] text-muted-foreground">{loop.timezone}</p>
+          <h3 className="text-[15px] font-bold text-foreground">
+            {embedded ? loop.title : loop.job_title}
+          </h3>
+          <p className="mt-0.5 text-[13px] text-muted-foreground">{loop.timezone}</p>
         </div>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => icsMut.mutate()}
           disabled={icsMut.isPending}
-          className="inline-flex items-center gap-1.5 text-[12px] text-[var(--ui-info)] hover:underline disabled:opacity-40"
         >
-          <Download size={13} aria-hidden="true" />
-          {icsMut.isPending ? t('myInterviews.downloadingCalendar') : t('myInterviews.addToCalendar')}
-        </button>
+          <Download aria-hidden="true" />
+          {icsMut.isPending
+            ? t('myInterviews.downloadingCalendar')
+            : t('myInterviews.addToCalendar')}
+        </Button>
       </div>
 
       {loop.sessions.length > 0 ? (
@@ -229,11 +268,34 @@ function LoopCard({ loop, locale }: { loop: CandidateLoop; locale: string }) {
           ))}
         </ul>
       ) : null}
-    </GlassCard>
+    </div>
   );
 }
 
-export default function YourInterviews(): JSX.Element {
+/** Loops shown on their application card (the server sent an `application_id`). */
+export function EmbeddedLoops({ loops }: { loops: CandidateLoop[] }): JSX.Element {
+  const { i18n } = useTranslation();
+  const locale = localeFor(i18n.language);
+  return (
+    <div className="flex flex-col gap-4">
+      {loops.map((loop) => (
+        <LoopCard key={loop.id} loop={loop} locale={locale} embedded />
+      ))}
+    </div>
+  );
+}
+
+interface YourInterviewsProps {
+  /** Loop ids already shown on an application card; they are left out here. */
+  exclude?: ReadonlySet<string>;
+  /** Render nothing (rather than an empty card) when there is nothing to show. */
+  hideWhenEmpty?: boolean;
+}
+
+export default function YourInterviews({
+  exclude,
+  hideWhenEmpty = false,
+}: YourInterviewsProps = {}): JSX.Element | null {
   const { t, i18n } = useTranslation();
   const locale = localeFor(i18n.language);
 
@@ -245,29 +307,31 @@ export default function YourInterviews(): JSX.Element {
     throwOnError: false,
   });
 
-  const rows = data ?? [];
+  const rows = (data ?? []).filter((l) => !exclude?.has(l.id));
+
+  if (hideWhenEmpty && !isLoading && !isError && rows.length === 0) return null;
 
   return (
-    <section aria-labelledby="your-interviews-heading" className="mt-6">
-      <h2 id="your-interviews-heading" className="text-[18px] font-semibold text-foreground">
-        {t('myInterviews.heading')}
-      </h2>
-
+    <SectionCard title={t('myInterviews.heading')} icon={CalendarDays}>
       {isLoading ? (
-        <p className="mt-2 text-[13px] text-muted-foreground">{t('myInterviews.loading')}</p>
+        <div aria-busy="true" className="space-y-2">
+          <Skeleton className="h-4 w-1/2" />
+          <Skeleton className="h-4 w-1/3" />
+          <span className="sr-only">{t('myInterviews.loading')}</span>
+        </div>
       ) : isError ? (
-        <p className="mt-2 text-[13px] text-[var(--ui-danger)]">
+        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
           {errText(error, t('myInterviews.loadError'))}
         </p>
       ) : rows.length === 0 ? (
-        <p className="mt-2 text-[13px] text-muted-foreground">{t('myInterviews.empty')}</p>
+        <EmptyState title={t('myInterviews.empty')} />
       ) : (
-        <div className="mt-3 flex flex-col gap-3">
+        <div className="flex flex-col gap-5">
           {rows.map((loop) => (
             <LoopCard key={loop.id} loop={loop} locale={locale} />
           ))}
         </div>
       )}
-    </section>
+    </SectionCard>
   );
 }

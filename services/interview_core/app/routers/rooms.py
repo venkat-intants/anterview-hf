@@ -43,6 +43,7 @@ from app.dependencies import GuestBoundUserDep
 from app.graph.state import Language as InterviewLanguage
 from app.models import Job
 from app.models import Session as InterviewSession
+from app.rate_limit import enforce_user_rate_limit
 from app.redis_client import get_redis
 from app.worker_capacity import read_active_jobs
 
@@ -81,6 +82,35 @@ async def _scorecard_exists(db: AsyncSession, session_id: uuid.UUID) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+async def _has_other_active_session(
+    db: AsyncSession, user_id: str, session_id: uuid.UUID
+) -> bool:
+    """True iff this user has a DIFFERENT session currently running.
+
+    'Running' = status 'in_progress' and touched within
+    ``active_session_window_minutes``. The window is what stops a row stranded by
+    a crashed worker from locking the candidate out for good.
+    """
+    cap = settings.max_active_sessions_per_user
+    if cap <= 0:
+        return False
+    result = await db.execute(
+        text(
+            "SELECT count(*) AS active_session_probe FROM sessions"
+            " WHERE user_id = :uid AND id <> :sid AND status = 'in_progress'"
+            "   AND deleted_at IS NULL"
+            "   AND updated_at > now() - make_interval(mins => :mins)"
+        ),
+        {
+            "uid": uuid.UUID(user_id),
+            "sid": session_id,
+            "mins": settings.active_session_window_minutes,
+        },
+    )
+    running = result.scalar_one_or_none() or 0
+    return int(running) >= cap
+
+
 @router.post(
     "/{session_id}/token",
     response_model=RoomTokenResponse,
@@ -107,6 +137,11 @@ async def create_room_token(
         )
 
     user_id_str: str = current_user["sub"]
+
+    # 0. Per-user cap on token requests (M3). Each successful call can dispatch a
+    #    worker. 20/min is far above a reload or a flaky-network retry; a script
+    #    hits it at once. Before any DB work so a flood is cheap to refuse.
+    await enforce_user_rate_limit("room_token", user_id_str, settings.room_token_per_minute)
 
     # 1. Session must exist.
     result = await db.execute(
@@ -194,6 +229,25 @@ async def create_room_token(
             detail=(
                 "DPDP consent required before starting an interview session. "
                 "Call POST /consent (data_gateway) first."
+            ),
+        )
+
+    # 5b. One RUNNING interview per user (M3). A second worker is refused while
+    #     another of this user's sessions is in progress -- unless this request is
+    #     for that same session, which is a reload / rejoin and must keep working
+    #     (the probe excludes `session_id`, and dispatch is idempotent per room).
+    #     A database check, so it holds even while the Redis limiter fails open.
+    if await _has_other_active_session(db, user_id_str, session_id):
+        log.warning(
+            "rooms.token.other_session_active",
+            session_id=str(session_id),
+            user_id=user_id_str,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "You already have an interview in progress. Finish it, or wait a "
+                "few minutes for it to close, before starting another."
             ),
         )
 

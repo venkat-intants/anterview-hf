@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import APIRouter
 
-from app.company_board import hiring_board
+from app.company_board import hiring_board, read_only_dashboard
 from app.database import DbSessionDep
 from app.routers.admin_hr import CompanyAdminCtxDep
 from app.routers.hr_requisitions import build_requisition_dashboard
@@ -41,8 +41,14 @@ async def get_hiring_board(ctx: CompanyAdminCtxDep, db: DbSessionDep) -> dict[st
 async def get_requisition_dashboard_read_only(
     requisition_id: uuid.UUID, ctx: CompanyAdminCtxDep, db: DbSessionDep
 ) -> dict[str, Any]:
-    """The same dashboard HR sees, built by the same function, without its controls."""
+    """The same numbers HR sees, built by the same function, without its controls.
+
+    The company comes from the authenticated session (``ctx``), never from the
+    request. The candidate-bearing sections are passed through
+    ``read_only_dashboard`` -- an allowlist, not HR's raw payload.
+    """
     _admin_uid, company_id = ctx
-    return await build_requisition_dashboard(
+    full = await build_requisition_dashboard(
         db, company_id=company_id, requisition_id=requisition_id
     )
+    return read_only_dashboard(full)

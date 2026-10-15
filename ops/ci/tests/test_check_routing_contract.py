@@ -40,6 +40,9 @@ GOOD_CADDY = """
 \t\trespond "Forbidden" 403
 \t}
 \thandle /apply* {
+\t\trequest_body {
+\t\t\tmax_size 256KB
+\t\t}
 \t\treverse_proxy 127.0.0.1:8002
 \t}
 \tlog {
@@ -121,7 +124,7 @@ def test_a_prefix_matched_but_not_proxied_is_caught(fake) -> None:
     """A `handle` that only responds is not routing; catching the block but not
     the proxy would be a false pass."""
     caddy = GOOD_CADDY.replace(
-        '\thandle /apply* {\n\t\treverse_proxy 127.0.0.1:8002\n\t}',
+        '\thandle /apply* {\n\t\trequest_body {\n\t\t\tmax_size 256KB\n\t\t}\n\t\treverse_proxy 127.0.0.1:8002\n\t}',
         '\thandle /apply* {\n\t\trespond "Not Found" 404\n\t}',
     )
     assert fake(caddy=caddy) == 1
@@ -243,17 +246,46 @@ def test_a_cap_above_the_limit_passes(fake, tmp_path: Path) -> None:
     assert fake(caddy=UPLOAD_CADDY, upload_limits=(ROW,)) == 0
 
 
-def test_a_block_with_no_cap_at_all_is_not_reported(fake, tmp_path: Path) -> None:
-    """Deliberate asymmetry, stated in the script's scope note: this check only
-    says a cap is not too SMALL. Whether a route needs one is a judgement the
-    checker cannot make, and reporting every uncapped prefix would turn a precise
-    gate into a list nobody reads."""
+def test_a_block_with_no_cap_at_all_is_reported(fake, tmp_path: Path, capsys) -> None:
+    """REVERSED on purpose (security audit M2). This test used to assert the opposite -
+    that an uncapped block passed - on the grounds that "whether a route needs a cap
+    is a judgement the checker cannot make". That judgement was left to whoever added
+    the block, and ten proxied prefixes (/consent*, /agent/*, /notifications*,
+    /admin/*, /users/*/dpdp/*, /api/*, /ws/* ...) shipped with no cap, so fastapi
+    buffered an unbounded pre-auth body. Capped or named in NO_BODY_CAP_EXEMPT."""
     _service_file(tmp_path, "_MAX = 999 * 1024 * 1024\n")
     no_cap = UPLOAD_CADDY.replace(
         "\t\trequest_body {\n\t\t\tmax_size 6MB\n\t\t}\n", ""
     )
 
-    assert fake(caddy=no_cap, upload_limits=(ROW,)) == 0
+    assert fake(caddy=no_cap, upload_limits=(ROW,)) == 1
+    err = capsys.readouterr().err
+    assert "handle /apply*" in err and "no `request_body" in err
+
+
+def test_an_exempt_uncapped_block_passes(fake, monkeypatch: pytest.MonkeyPatch) -> None:
+    """/health is a bodyless GET probe; the exemption table must actually work."""
+    caddy = GOOD_CADDY.replace(
+        "\tlog {",
+        "\thandle /health {\n\t\treverse_proxy 127.0.0.1:8002\n\t}\n\tlog {",
+        1,
+    )
+    assert fake(caddy=caddy) == 0
+
+
+def test_the_real_caddyfiles_cap_every_proxied_block() -> None:
+    """Pins the specific prefixes the audit named, against the committed files."""
+    named = {
+        "/consent*", "/agent/*", "/notifications*", "/admin/*", "/admin/analytics/*",
+        "/admin/interviews*", "/users/*/dpdp/*", "/api/scorecards*", "/api/*", "/ws/*",
+    }
+    for caddyfile in module.CADDYFILES:
+        blocks = dict(module.handle_blocks(caddyfile.read_text(encoding="utf-8")))
+        for pat in named:
+            assert pat in blocks, (caddyfile.name, pat)
+            cap = module.body_cap(blocks[pat])
+            assert cap is not None, (caddyfile.name, pat)
+            assert cap <= 1024**2, (caddyfile.name, pat, cap)
 
 
 def test_a_symbol_that_stopped_being_a_literal_is_reported_not_skipped(

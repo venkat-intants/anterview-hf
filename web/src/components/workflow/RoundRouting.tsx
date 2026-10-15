@@ -31,7 +31,7 @@ interface Props {
 }
 
 const SELECT =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60';
+  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60';
 
 export default function RoundRouting({
   round,
@@ -130,7 +130,7 @@ export default function RoundRouting({
                     fast_track_min_percent: e.target.value === '' ? null : Number(e.target.value),
                   })
                 }
-                className="w-20 rounded-[10px] border border-border bg-secondary px-2 py-1.5 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+                className="w-20 rounded-[10px] border border-border bg-secondary px-2 py-1.5 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
               />
               <span>%</span>
               <span>go to</span>
@@ -154,7 +154,7 @@ export default function RoundRouting({
           ) : null}
         </div>
       ) : (
-        <p className="border-t border-border pt-3 text-[11.5px] leading-relaxed text-muted-foreground">
+        <p className="border-t border-border pt-3 text-[12px] leading-relaxed text-muted-foreground">
           {round.kind === 'human_review'
             ? 'A human review has no score, so it cannot fast-track anyone.'
             : 'Add another round before this one can fast-track anyone.'}
@@ -164,7 +164,7 @@ export default function RoundRouting({
       {errors.length > 0 ? (
         <ul className="flex flex-col gap-1">
           {errors.map((e) => (
-            <li key={e} className="flex items-start gap-1.5 text-[11.5px] text-[var(--ui-warn)]">
+            <li key={e} className="flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               {e}
             </li>

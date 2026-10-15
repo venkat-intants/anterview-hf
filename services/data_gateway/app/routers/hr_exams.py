@@ -37,7 +37,11 @@ from app.code_evidence import coding_results_for_screen
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
-from app.exam_ai_client import ExamGenerationError, generate_exam_questions_remote
+from app.exam_ai_client import (
+    ExamGenerationError,
+    client_message,
+    generate_exam_questions_remote,
+)
 from app.exam_grading import GradeInput, GradeQuestion, grade_breakdown
 from app.exam_link import hash_exam_token, mint_exam_token
 from app.mailer import candidate_language, enqueue_email
@@ -52,6 +56,7 @@ from app.models import (
     ExamRound,
     ExamSection,
 )
+from app.rate_limit import enforce_company_budget
 from app.requisitions import enrolment_for_exam_round
 from app.utils.ownership import get_owned
 from app.workflows import round_rubric_for_generation, rubric_for_exam
@@ -839,14 +844,39 @@ async def bulk_add_questions(
     return [_question_out(q) for q in created]
 
 
-@router.post("/exams/{exam_id}/questions/generate", response_model=GenerateQuestionsOut)
+@router.post(
+    "/exams/{exam_id}/questions/generate",
+    response_model=GenerateQuestionsOut,
+)
 async def generate_questions(
     exam_id: uuid.UUID, body: GenerateQuestionsIn, ctx: HrCtxDep, db: DbSessionDep
 ) -> GenerateQuestionsOut:
     """Draft MCQs with Gemini (via feedback_billing). Returned for PREVIEW — not saved.
-    HR reviews them, then persists the wanted ones via the bulk endpoint."""
+    HR reviews them, then persists the wanted ones via the bulk endpoint.
+
+    Order matters: ownership + the rubric are READ first; only then is the
+    company's per-minute AI budget charged (per COMPANY, shared with the coding
+    generator; FAILS CLOSED, 503, when Redis is down — every call is an LLM
+    bill), so a 404 or a 422 costs nothing; and the pooled connection is handed
+    back (``rollback``) BEFORE the model call, which can take ~100 s. The
+    session is not used again afterwards: nothing is saved here.
+    """
     hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
+    round_rubric = (
+        await round_rubric_for_generation(
+            db, company_id=company_id, workflow_round_id=body.workflow_round_id
+        )
+        if body.workflow_round_id
+        # Not named: use the round this exam belongs to, when exactly
+        # one does. The authoring screen does not know it; the data does.
+        else await rubric_for_exam(db, company_id=company_id, exam_id=exam_id)
+    )
+    await enforce_company_budget(
+        company_id, bucket="exam_generate", limit=settings.exam_generate_per_minute,
+        fail_closed=True,
+    )
+    await db.rollback()
 
     try:
         raw = await generate_exam_questions_remote(
@@ -857,19 +887,12 @@ async def generate_questions(
             acting_user_id=str(hr_uid),
             job_title=body.job_title,
             experience_level=body.experience_level,
-            round_rubric=(
-                await round_rubric_for_generation(
-                    db, company_id=company_id, workflow_round_id=body.workflow_round_id
-                )
-                if body.workflow_round_id
-                # Not named: use the round this exam belongs to, when exactly
-                # one does. The authoring screen does not know it; the data does.
-                else await rubric_for_exam(db, company_id=company_id, exam_id=exam_id)
-            ),
+            round_rubric=round_rubric,
         )
     except ExamGenerationError as exc:
+        # Fixed sentence to the browser; the specifics were logged by the client.
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI generation failed: {exc}"
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=client_message(exc)
         ) from exc
 
     out: list[GeneratedQuestionOut] = []

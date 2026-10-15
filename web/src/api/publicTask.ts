@@ -15,6 +15,7 @@
 // `public_router` and app/job_tasks.py's `candidate_view` EXACTLY.
 
 import { ApiError } from './client';
+import { pathSegment } from './pathId';
 import type { TaskItem, TaskKind, TaskLinkKind, TaskResponseOut } from './jobTasks';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -119,7 +120,7 @@ export async function saveTaskResponse(
   itemKey: string,
   body: { text_value?: string | null; link_url?: string | null },
 ): Promise<SaveResponseResult> {
-  const res = await fetch(`${API_BASE}/task/responses/${encodeURIComponent(itemKey)}`, {
+  const res = await fetch(`${API_BASE}/task/responses/${pathSegment(itemKey)}`, {
     method: 'PUT',
     headers: taskHeaders(token, { 'Content-Type': 'application/json' }),
     body: JSON.stringify({
@@ -179,7 +180,7 @@ export async function addTaskArtifact(
 }
 
 export async function removeTaskArtifact(token: string, responseId: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/task/artifacts/${encodeURIComponent(responseId)}`, {
+  const res = await fetch(`${API_BASE}/task/artifacts/${pathSegment(responseId)}`, {
     method: 'DELETE',
     headers: taskHeaders(token),
   });
@@ -245,7 +246,7 @@ export async function downloadTaskMaterial(
   token: string,
   materialId: string,
 ): Promise<SignedDownload> {
-  const res = await fetch(`${API_BASE}/task/materials/${encodeURIComponent(materialId)}/download`, {
+  const res = await fetch(`${API_BASE}/task/materials/${pathSegment(materialId)}/download`, {
     headers: taskHeaders(token),
   });
   if (!res.ok) return readError(res);

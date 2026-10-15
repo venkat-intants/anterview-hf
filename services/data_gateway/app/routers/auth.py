@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import re
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -50,13 +51,13 @@ import structlog
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from shared.auth.base import AuthProvider, User
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth_tokens import hash_token, mint_token, ttl_hours_for
 from app.config import settings
 from app.database import get_db_session
-from app.dependencies import get_auth_provider_dep, get_current_user
+from app.dependencies import get_auth_provider_dep, get_current_user, reject_role
 from app.mailer import enqueue_email
 from app.models import AuthToken
 from app.notifications_util import create_notification
@@ -65,6 +66,16 @@ from app.rate_limit import rate_limit
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# An interview magic-link token (role ``guest_candidate``) has the applicant's REAL
+# user id as `sub`, and get_current_user does not look at roles. Without this, a
+# forwarded interview link could read/edit the account profile, change its
+# password (the bootstrap path needs no current password), sign every device out
+# or trigger verification mail. `/auth/logout` is deliberately NOT guarded: a
+# guest ending their own session must work, and it only revokes a refresh token
+# the caller already holds. The guest flow calls none of the guarded routes
+# (redeem/resume/consent/interview/scorecard only).
+_NOT_GUEST = Depends(reject_role("guest_candidate", "service"))
 
 # ---------------------------------------------------------------------------
 # Request / Response schemas
@@ -179,6 +190,9 @@ _PROFILE_EDITABLE: dict[str, int | None] = {
 _EMPLOYMENT_STATUSES = {"student", "employed"}
 
 
+_AVATAR_DATA_URI = re.compile(r"data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}")
+
+
 class UserProfileUpdate(BaseModel):
     """Request body for PATCH /auth/me/profile.
 
@@ -200,6 +214,22 @@ class UserProfileUpdate(BaseModel):
     location: str | None = Field(default=None, max_length=120)
     # Opt-in for the "new sign-in" email alert (separate — it's a bool, not text).
     notify_login_email: bool | None = None
+
+    @field_validator("avatar_url")
+    @classmethod
+    def _validate_avatar_data_uri(cls, v: str | None) -> str | None:
+        """Only an inline png/jpeg/webp data URI (or empty, which clears it).
+
+        The profile page downscales to a small JPEG data URI before upload, so
+        nothing legitimate is a remote URL — and a remote URL is a tracking
+        pixel that fires whenever staff open the profile. Must stay identical to
+        `safeAvatarSrc` in web/src/lib/safeUrl.ts.
+        """
+        if v is None or v == "":
+            return v
+        if _AVATAR_DATA_URI.fullmatch(v) is None:
+            raise ValueError("avatar must be an inline png, jpeg or webp image")
+        return v
 
     @field_validator("linkedin_url", "github_url")
     @classmethod
@@ -717,6 +747,7 @@ async def logout(
 
 @router.post(
     "/logout-all",
+    dependencies=[_NOT_GUEST],
     status_code=status.HTTP_200_OK,
     response_model=LogoutAllResponse,
     summary="Log out of all devices (revoke every session)",
@@ -794,6 +825,7 @@ async def _build_me_response(db: object, user_id_str: str, user: object) -> MeRe
 
 @router.get(
     "/me",
+    dependencies=[_NOT_GUEST],
     status_code=status.HTTP_200_OK,
     response_model=MeResponse,
     summary="Get current user profile",
@@ -818,6 +850,7 @@ async def me(
 
 @router.patch(
     "/me/profile",
+    dependencies=[_NOT_GUEST],
     status_code=status.HTTP_200_OK,
     response_model=MeResponse,
     summary="Update current user profile",
@@ -906,7 +939,10 @@ class ChangePasswordBody(BaseModel):
     # of a worker thread on a service with a p95-under-2s NFR, i.e. an
     # authenticated CPU-exhaustion primitive. Keyed like login, because the cost
     # and the guessing are the same shape.
-    dependencies=[rate_limit("change_password", settings.rate_limit_login_per_minute)],
+    dependencies=[
+        _NOT_GUEST,
+        rate_limit("change_password", settings.rate_limit_login_per_minute),
+    ],
 )
 async def change_password(
     body: ChangePasswordBody,
@@ -1021,6 +1057,46 @@ async def change_password(
 
 
 # ---------------------------------------------------------------------------
+# Single-use token consumption
+# ---------------------------------------------------------------------------
+async def _consume_auth_token(
+    db: AsyncSession, raw_token: str, kind: str, now: datetime
+) -> uuid.UUID | None:
+    """Atomically consume a single-use token; the user it belongs to, or None.
+
+    ONE conditional UPDATE decides the race. The previous shape (SELECT the row,
+    test ``consumed_at``/``expires_at`` in Python, then set ``consumed_at``) let two
+    concurrent submissions both pass the test and both succeed -- for a reset link
+    that is two different new passwords from one email. ``RETURNING`` says whether
+    THIS call won. On a win, the user's other outstanding tokens of the same kind
+    are consumed with it, so an older link mailed earlier cannot outlive the one
+    just used. Does not commit.
+    """
+    row = (
+        await db.execute(
+            text(
+                "UPDATE auth_tokens SET consumed_at = :now"
+                " WHERE token_hash = :th AND kind = :kind"
+                "   AND consumed_at IS NULL AND expires_at > :now"
+                " RETURNING user_id"
+            ),
+            {"now": now, "th": hash_token(raw_token, kind), "kind": kind},
+        )
+    ).first()
+    if row is None:
+        return None
+    user_id: uuid.UUID = row[0]
+    await db.execute(
+        text(
+            "UPDATE auth_tokens SET consumed_at = :now"
+            " WHERE user_id = :uid AND kind = :kind AND consumed_at IS NULL"
+        ),
+        {"now": now, "uid": user_id, "kind": kind},
+    )
+    return user_id
+
+
+# ---------------------------------------------------------------------------
 # Email verification (signup confirmation flow)
 # ---------------------------------------------------------------------------
 class VerifyEmailBody(BaseModel):
@@ -1038,28 +1114,22 @@ async def verify_email(body: VerifyEmailBody, db: DbSessionDep) -> OkResponse:
 
     Idempotent-ish: a consumed/expired token returns 400. The endpoint is public
     (the user clicks the link from their inbox, possibly before logging in)."""
-    tok = await db.scalar(
-        select(AuthToken).where(
-            AuthToken.token_hash == hash_token(body.token, "email_verify"),
-            AuthToken.kind == "email_verify",
-        )
-    )
     now = datetime.now(tz=UTC)
-    if tok is None or tok.consumed_at is not None or tok.expires_at <= now:
+    token_user_id = await _consume_auth_token(db, body.token, "email_verify", now)
+    if token_user_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This verification link is invalid or has expired.",
         )
-    tok.consumed_at = now
     await db.execute(
         text(
             "UPDATE users SET email_verified_at = COALESCE(email_verified_at, :now), "
             "updated_at = :now WHERE id = :uid"
         ),
-        {"now": now, "uid": tok.user_id},
+        {"now": now, "uid": token_user_id},
     )
     await db.commit()
-    log.info("auth.email_verified", user_id=str(tok.user_id))
+    log.info("auth.email_verified", user_id=str(token_user_id))
     return OkResponse()
 
 
@@ -1068,7 +1138,7 @@ async def verify_email(body: VerifyEmailBody, db: DbSessionDep) -> OkResponse:
     status_code=status.HTTP_200_OK,
     response_model=OkResponse,
     summary="Resend the email-verification link to the current user",
-    dependencies=[rate_limit("auth", settings.rate_limit_login_per_minute)],
+    dependencies=[_NOT_GUEST, rate_limit("auth", settings.rate_limit_login_per_minute)],
 )
 async def resend_verification(
     current_user: CurrentUserDep, db: DbSessionDep
@@ -1178,14 +1248,12 @@ async def reset_password(
     any sessions an attacker holds must die. The user simply logs in again with
     the new password.
     """
-    tok = await db.scalar(
-        select(AuthToken).where(
-            AuthToken.token_hash == hash_token(body.token, "password_reset"),
-            AuthToken.kind == "password_reset",
-        )
-    )
     now = datetime.now(tz=UTC)
-    if tok is None or tok.consumed_at is not None or tok.expires_at <= now:
+    # One conditional UPDATE decides who consumed the token, BEFORE the slow bcrypt
+    # hash (so a bogus token costs a cheap UPDATE, not 250 ms of CPU). A request
+    # that loses the race, or presents a used/expired/unknown token, gets the same 400.
+    token_user_id = await _consume_auth_token(db, body.token, "password_reset", now)
+    if token_user_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This reset link is invalid or has expired. Please request a new one.",
@@ -1196,17 +1264,16 @@ async def reset_password(
             body.new_password.encode(), bcrypt.gensalt(rounds=rounds)
         ).decode()
     )
-    tok.consumed_at = now
     await db.execute(
         text(
             "UPDATE users SET password_hash = :pw, must_change_password = false, "
             "email_verified_at = COALESCE(email_verified_at, :now), updated_at = :now "
             "WHERE id = :uid"
         ),
-        {"pw": new_hash, "now": now, "uid": tok.user_id},
+        {"pw": new_hash, "now": now, "uid": token_user_id},
     )
     await db.commit()
     # Revoke every existing session — a reset may follow a compromise.
-    await auth.logout_all(str(tok.user_id))
-    log.info("auth.password_reset", user_id=str(tok.user_id))
+    await auth.logout_all(str(token_user_id))
+    log.info("auth.password_reset", user_id=str(token_user_id))
     return OkResponse()

@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 from app import health
 from app.config import settings
+from app.dependencies import require_service_jwt
 from app.main import app
 
 
@@ -129,7 +130,15 @@ def test_deep_health_response_body_carries_no_connection_detail(
     _arm_all_failures(monkeypatch)
 
     # No lifespan: /health/deep builds its own clients, so it needs no pool.
-    response = TestClient(app).get("/health/deep")
+    # The route is service-gated and cached (test_health_deep_access.py covers
+    # both); bypass the first and reset the second so this test sees a real run.
+    app.dependency_overrides[require_service_jwt] = lambda: {"sub": "interview_core"}
+    health._deep_cache = None
+    try:
+        response = TestClient(app).get("/health/deep")
+    finally:
+        app.dependency_overrides.pop(require_service_jwt, None)
+        health._deep_cache = None
 
     assert response.status_code == 200
     body = response.json()

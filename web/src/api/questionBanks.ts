@@ -44,6 +44,12 @@ export interface BankOut {
   /** Question count keyed by status, e.g. {draft: 2, approved: 5}. */
   counts: Partial<Record<BankQuestionStatus, number>>;
   used_in_exams: number;
+  /**
+   * OPTIONAL — sent by a newer backend. How many of the bank's questions are
+   * multiple-choice and how many are coding. Absent means "the server did not
+   * say": the list shows nothing for it, never zeros it does not know.
+   */
+  kind_counts?: { mcq: number; coding: number };
   created_at: string;
   updated_at: string;
 }
@@ -389,6 +395,115 @@ export function generateBankQuestions(
     `/hr/question-banks/${pathId(bankId)}/questions/generate`,
     params,
   );
+}
+
+// ---------------------------------------------------------------------------
+// AI drafting of CODING questions — the coding twin of generateBankQuestions.
+//
+// Mirrors `BankGenerateCodingIn` / `BankGenerateCodingOut` in
+// services/data_gateway/app/routers/question_banks.py and
+// `GeneratedBankCodingQuestion` in app/bank_coding_generation.py.
+// ---------------------------------------------------------------------------
+
+/** The server refuses more than this per request — it is the token budget. */
+export const BANK_CODING_MAX_GENERATED = 5;
+
+/** Stamped by the SERVER on every AI-drafted coding question (with or without a
+ *  reference solution) and re-added on edit until a version has been approved:
+ *  a model wrote the tests, and any reference solution, and nothing ran them. */
+export const REFERENCE_UNVERIFIED_TAG = 'reference-unverified';
+
+/** The one sentence every "Unverified" badge explains itself with. */
+export const UNVERIFIED_EXPLANATION =
+  'The tests and any reference solution were written by AI and have not been run.';
+
+export interface BankCodingGenerateParams {
+  topic: string;
+  /** 1 to BANK_CODING_MAX_GENERATED. Server default: 2. */
+  num_questions?: number;
+  difficulty?: BankDifficulty;
+  /** The language the STATEMENT is written in — shown to candidates. */
+  language?: ExamLanguage;
+  /** Programming-language slugs candidates may solve in; at least one. */
+  allowed_languages: string[];
+  job_title?: string;
+  experience_level?: string;
+}
+
+/** One AI draft. Everything a `BankQuestionInput` needs, plus three
+ *  preview-only fields the save endpoint ignores. */
+export interface GeneratedBankCodingQuestion {
+  kind: 'coding';
+  prompt: string;
+  points: number;
+  difficulty: BankDifficulty;
+  language: ExamLanguage;
+  allowed_languages: string[];
+  /** Always null: one starter string is pre-filled whichever language the
+   *  candidate picks, so the generator does not invent a single-language stub. */
+  starter_code: null;
+  reference_solution: string | null;
+  /** The language the reference solution is written in; null without one. */
+  reference_solution_language: string | null;
+  /** Always false — nothing executes generated code at authoring time. */
+  reference_solution_verified: false;
+  test_cases: CodingTestCase[];
+  time_limit_ms: number;
+  /** Always includes `REFERENCE_UNVERIFIED_TAG` - the server marks every item. */
+  tags: string[];
+  /** What the server repaired, e.g. "1 duplicate test case removed". */
+  warnings: string[];
+}
+
+export interface BankCodingGenerateResult {
+  questions: GeneratedBankCodingQuestion[];
+  requested: number;
+  /** Items the generator returned that the server refused, each with why. */
+  dropped: { index: number; reason: string }[];
+  /** Items the generator never returned at all (no reason is available). */
+  not_returned: number;
+}
+
+/** Draft coding questions with the configured LLM — a PREVIEW, nothing saved.
+ *  Save the ones HR keeps with `createBankQuestionsBulk(bankId,
+ *  kept.map(toBankQuestionInput))`. Pass `signal` to cancel: the request is
+ *  abandoned client-side (the server may still finish the model call). */
+export function generateBankCodingQuestions(
+  bankId: string,
+  params: BankCodingGenerateParams,
+  opts: { signal?: AbortSignal } = {},
+): Promise<BankCodingGenerateResult> {
+  return apiPost<BankCodingGenerateResult>(
+    `/hr/question-banks/${pathId(bankId)}/questions/generate-coding`,
+    params,
+    opts.signal ? { signal: opts.signal } : undefined,
+  );
+}
+
+/** The saveable part of a generated draft — drops the preview-only fields. */
+export function toBankQuestionInput(q: GeneratedBankCodingQuestion): BankQuestionInput {
+  return {
+    kind: 'coding',
+    prompt: q.prompt,
+    points: q.points,
+    difficulty: q.difficulty,
+    language: q.language,
+    tags: q.tags,
+    allowed_languages: q.allowed_languages,
+    starter_code: q.starter_code,
+    reference_solution: q.reference_solution,
+    test_cases: q.test_cases,
+    time_limit_ms: q.time_limit_ms,
+  };
+}
+
+/** True when the server marked a coding question's tests (and any reference
+ *  solution) as written by a model and never run. The TAG is the single source:
+ *  it does not depend on a reference solution being present, and an AI origin
+ *  alone does not imply it (an approved version has had its tag cleared).
+ *  Works on a preview draft and on a saved bank question. */
+export function isReferenceUnverified(q: { tags?: string[] | null }): boolean {
+  return (q.tags ?? []).includes(REFERENCE_UNVERIFIED_TAG);
 }
 
 /** Upload an .xlsx/.csv; the server parses it and saves the valid rows as

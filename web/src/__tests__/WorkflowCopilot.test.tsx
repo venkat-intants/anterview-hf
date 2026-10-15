@@ -278,8 +278,15 @@ function panel(): HTMLElement {
   return screen.getByLabelText('Ask the design assistant').closest('div') as HTMLElement;
 }
 
+// The assistant lives under the builder's "Assistant" inspector tab.
+async function openAssistant(): Promise<void> {
+  const tab = await screen.findByRole('tab', { name: 'Assistant' });
+  if (tab.getAttribute('aria-selected') !== 'true') await userEvent.setup().click(tab);
+}
+
 async function ask(text: string): Promise<void> {
   const user = userEvent.setup();
+  await openAssistant();
   const box = await screen.findByLabelText('Ask the design assistant');
   await user.type(box, text);
   await user.click(screen.getByLabelText('Send'));
@@ -487,6 +494,7 @@ describe('WorkflowCopilot — a published version', () => {
     getWorkflow.mockResolvedValue(PUBLISHED);
     renderBuilder();
 
+    await openAssistant();
     const box = await screen.findByLabelText('Ask the design assistant');
     expect(box).toHaveProperty('disabled', true);
     expect(within(panel()).getByPlaceholderText(/clone to edit/)).toBeTruthy();

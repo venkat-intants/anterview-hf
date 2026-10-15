@@ -40,7 +40,8 @@ import { downloadUrl } from '@/lib/safeUrl';
 import { ACTIVE_POLL_MS } from '@/lib/polling';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
+import { StatusTag, type TagTone } from '@/design/components/primitives';
+import { PageHeader, SectionCard, EmptyState, Toolbar, Page } from '@/design/components/page';
 import { Reveal } from '@/design/components/Reveal';
 import {
   AlertTriangle,
@@ -149,7 +150,8 @@ export default function CorpusDocuments(): JSX.Element {
     // Poll only while that is true, and stop the moment every row has
     // settled (indexed or failed) — an idle library should make no requests
     // (lib/polling.ts's ACTIVE_POLL_MS, the "watch something finish" cadence).
-    refetchInterval: (query) => (corpusListHasPendingVersion(query.state.data) ? ACTIVE_POLL_MS : false),
+    refetchInterval: (query) =>
+      corpusListHasPendingVersion(query.state.data) ? ACTIVE_POLL_MS : false,
   });
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['hr', 'documents'] });
 
@@ -335,21 +337,16 @@ export default function CorpusDocuments(): JSX.Element {
   const citedDocMissing = Boolean(citedDocumentId) && list.isSuccess && citedDoc === undefined;
 
   return (
-    <div className="mx-auto max-w-[1080px] px-0 py-2 space-y-6">
-      <Reveal>
-        <div>
-          <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Documents</h1>
-          <p className="mt-1 text-[14px] text-muted-foreground">
-            Company policies, handbooks and process notes the staff assistant can search and cite
-            — never a candidate record.
-          </p>
-        </div>
-      </Reveal>
+    <Page width="default">
+      <PageHeader
+        title="Documents"
+        description="Company policies, handbooks and process notes the staff assistant can search and cite — never a candidate record."
+      />
 
       {semanticUnavailable ? (
         <div
           role="status"
-          className="flex items-center gap-2 rounded-[10px] border border-[var(--ui-warn)]/30 bg-[rgba(255,183,100,0.12)] px-3 py-2 text-[12.5px] text-[var(--ui-warn)]"
+          className="flex items-center gap-2 rounded-[12px] border border-[var(--ui-warn)] bg-[var(--ui-warn-wash)] px-3 py-2.5 text-[13px] text-foreground"
         >
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {SEMANTIC_UNAVAILABLE_TEXT}
@@ -359,140 +356,17 @@ export default function CorpusDocuments(): JSX.Element {
       {citedDocMissing ? (
         <div
           role="status"
-          className="flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[12.5px] text-muted-foreground"
+          className="flex items-center gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-[13px] text-muted-foreground"
         >
           <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {CITED_DOC_MISSING_TEXT}
         </div>
       ) : null}
 
-      {/* Upload */}
-      <Reveal delay={0.05}>
-        <GlassCard className="p-5 space-y-3">
-          <h3 className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
-            <UploadIcon size={16} aria-hidden="true" />
-            Upload a document
-          </h3>
-          <form className="grid gap-3 sm:grid-cols-2" onSubmit={handleUploadSubmit}>
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="corpus-upload-title"
-                className="text-[12px] font-medium text-[var(--ui-soft)]"
-              >
-                Title
-              </label>
-              <input
-                id="corpus-upload-title"
-                value={uploadTitle}
-                onChange={(e) => setUploadTitle(e.target.value)}
-                maxLength={200}
-                placeholder="e.g. Employee handbook"
-                className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
-              />
-            </div>
-
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="corpus-upload-file"
-                className="text-[12px] font-medium text-[var(--ui-soft)]"
-              >
-                File
-              </label>
-              <input
-                id="corpus-upload-file"
-                ref={uploadFileInputRef}
-                type="file"
-                accept={ACCEPT}
-                onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
-                className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
-              />
-              <span className="text-[11px] text-[var(--ui-faint)]">
-                PDF, Word (.docx), plain text or Markdown, up to 10 MB.
-              </span>
-            </div>
-
-            <fieldset className="flex flex-col gap-1.5">
-              <legend className="text-[12px] font-medium text-[var(--ui-soft)]">Audience</legend>
-              {canChooseHrOnly ? (
-                <div className="flex items-center gap-4">
-                  <label className="flex items-center gap-1.5 text-[13px] text-foreground">
-                    <input
-                      type="radio"
-                      name="corpus-upload-audience"
-                      value="hr_only"
-                      checked={uploadAudience === 'hr_only'}
-                      onChange={() => setUploadAudience('hr_only')}
-                    />
-                    HR only
-                  </label>
-                  <label className="flex items-center gap-1.5 text-[13px] text-foreground">
-                    <input
-                      type="radio"
-                      name="corpus-upload-audience"
-                      value="all_staff"
-                      checked={uploadAudience === 'all_staff'}
-                      onChange={() => setUploadAudience('all_staff')}
-                    />
-                    All staff
-                  </label>
-                </div>
-              ) : (
-                <p className="text-[13px] text-foreground">
-                  All staff
-                  <span className="ml-1.5 text-[11.5px] text-muted-foreground">
-                    — HR-only documents are created by HR managers.
-                  </span>
-                </p>
-              )}
-            </fieldset>
-
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="corpus-upload-expiry"
-                className="text-[12px] font-medium text-[var(--ui-soft)]"
-              >
-                Expiry date (optional)
-              </label>
-              <input
-                id="corpus-upload-expiry"
-                type="date"
-                value={uploadExpiresOn}
-                onChange={(e) => setUploadExpiresOn(e.target.value)}
-                className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
-              />
-            </div>
-
-            <label className="sm:col-span-2 flex items-start gap-2 text-[12.5px] text-foreground">
-              <input
-                type="checkbox"
-                checked={uploadAttested}
-                onChange={(e) => setUploadAttested(e.target.checked)}
-                className="mt-0.5"
-              />
-              {ATTESTATION_LABEL}
-            </label>
-
-            <div className="sm:col-span-2 flex items-center gap-3">
-              <button
-                type="submit"
-                disabled={!canSubmitUpload}
-                className="rounded-[10px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
-              >
-                {uploadMut.isPending ? 'Uploading…' : 'Upload'}
-              </button>
-              {uploadMut.isPending && uploadProgress !== null ? (
-                <span className="text-[12px] text-muted-foreground">{uploadProgress}%</span>
-              ) : null}
-            </div>
-          </form>
-        </GlassCard>
-      </Reveal>
-
-      {/* Search */}
-      <Reveal delay={0.08}>
-        <GlassCard className="p-5 space-y-3">
-          <h3 className="text-[15px] font-semibold text-foreground">Search your documents</h3>
-          <form className="flex flex-wrap items-center gap-2" onSubmit={handleSearchSubmit}>
+      {/* Search — find a passage across the library. */}
+      <div>
+        <Toolbar>
+          <form className="flex w-full flex-wrap items-center gap-2" onSubmit={handleSearchSubmit}>
             <label htmlFor="corpus-search-query" className="sr-only">
               Search your documents
             </label>
@@ -500,22 +374,27 @@ export default function CorpusDocuments(): JSX.Element {
               id="corpus-search-query"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="e.g. notice period"
-              className="min-w-0 flex-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+              placeholder="Search your documents, e.g. notice period"
+              className="min-h-[40px] min-w-0 flex-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
             <button
               type="submit"
               disabled={searchMut.isPending || !query.trim()}
-              className="rounded-[10px] border border-border px-3 py-2 text-[13px] text-foreground disabled:opacity-40"
+              className="min-h-[40px] rounded-full border border-[var(--ui-line-strong)] px-5 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
             >
               {searchMut.isPending ? 'Searching…' : 'Search'}
             </button>
           </form>
+        </Toolbar>
 
+        <div className="space-y-3">
           {searchMut.data && searchMut.data.passages.length > 0 ? (
             <ul className="flex flex-col gap-2">
               {searchMut.data.passages.map((p, i) => (
-                <li key={`${p.document_id}-${i}`} className="rounded-[10px] border border-border p-3">
+                <li
+                  key={`${p.document_id}-${i}`}
+                  className="rounded-[10px] border border-border p-3"
+                >
                   <p className="text-[12.5px] font-medium text-foreground">
                     {p.title} · v{p.version}
                     {p.page ? ` · page ${p.page}` : ''}
@@ -523,7 +402,7 @@ export default function CorpusDocuments(): JSX.Element {
                   </p>
                   <p className="mt-1 text-[12px] text-muted-foreground">{p.text}</p>
                   {p.contains_instructions ? (
-                    <p className="mt-1.5 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-warn)]">
+                    <p className="mt-1.5 flex items-center gap-1.5 text-[12px] text-[var(--ui-warn)]">
                       <AlertTriangle className="h-3 w-3" aria-hidden="true" />
                       {INJECTION_WARNING_TEXT}
                     </p>
@@ -536,14 +415,12 @@ export default function CorpusDocuments(): JSX.Element {
           {searchMut.data && searchMut.data.passages.length === 0 ? (
             <p className="text-[12px] text-muted-foreground">No matching passages.</p>
           ) : null}
-        </GlassCard>
-      </Reveal>
+        </div>
+      </div>
 
       {/* Library */}
       <Reveal delay={0.1}>
-        <GlassCard className="p-5">
-          <h3 className="mb-4 text-[15px] font-semibold text-foreground">Library</h3>
-
+        <SectionCard title="Library">
           {list.isLoading ? (
             <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -554,38 +431,41 @@ export default function CorpusDocuments(): JSX.Element {
               {list.error.message || "You don't have access to this company's documents."}
             </p>
           ) : list.isError ? (
-            <p className="text-[13px] text-[var(--ui-danger)]">
+            <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
               {corpusErrorMessage(list.error, 'Could not load documents.')}
             </p>
           ) : docs.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-muted-foreground">No documents yet</p>
+            <EmptyState
+              title="No documents yet"
+              description="Upload a policy or handbook below and the staff assistant can search it."
+            />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-[12.5px]">
+            <div className="max-h-[70vh] overflow-auto">
+              <table className="w-full min-w-[860px] border-collapse text-left text-[12.5px]">
                 <thead>
-                  <tr className="border-b border-border text-[11px] uppercase tracking-wide text-[var(--ui-faint)]">
-                    <th scope="col" className="py-2 pr-3 font-medium">
+                  <tr className="border-b border-border text-[12px] uppercase tracking-wide text-muted-foreground">
+                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
                       Title
                     </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
+                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
                       Audience
                     </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
+                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
                       Type
                     </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
+                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
                       Version
                     </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
+                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
                       Status
                     </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
+                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
                       Updated
                     </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
+                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
                       Uploaded by
                     </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
+                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
                       Actions
                     </th>
                   </tr>
@@ -603,7 +483,7 @@ export default function CorpusDocuments(): JSX.Element {
                           id={rowDomId(d.id)}
                           tabIndex={-1}
                           className={cn(
-                            'border-b border-border align-top outline-none',
+                            'border-b border-border align-top outline-none hover:bg-[var(--ui-inset-soft)]',
                             citedDoc?.id === d.id &&
                               'bg-[var(--ui-inset-soft)] ring-1 ring-inset ring-[var(--accent)]',
                           )}
@@ -611,7 +491,7 @@ export default function CorpusDocuments(): JSX.Element {
                           <td className="py-2.5 pr-3">
                             <p className="font-medium text-foreground">{d.title}</p>
                             {d.original_name ? (
-                              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                              <p className="mt-0.5 text-[12px] text-muted-foreground">
                                 {d.original_name}
                               </p>
                             ) : null}
@@ -644,7 +524,7 @@ export default function CorpusDocuments(): JSX.Element {
                               // re-uploading the same file would create a new
                               // version instead of retrying this one.
                               <>
-                                <p className="mt-1.5 max-w-[220px] text-[11.5px] text-[var(--ui-danger)]">
+                                <p className="mt-1.5 max-w-[220px] text-[12px] text-[var(--ui-danger)]">
                                   {corpusFailureSentence(d.failure_code)}
                                 </p>
                                 <button
@@ -652,7 +532,7 @@ export default function CorpusDocuments(): JSX.Element {
                                   onClick={() => reindexMut.mutate(d.id)}
                                   disabled={reindexMut.isPending}
                                   aria-label={`Retry indexing ${d.title}`}
-                                  className="mt-1.5 inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground disabled:opacity-40"
+                                  className="mt-1.5 inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-40"
                                 >
                                   <RefreshCw
                                     className={cn(
@@ -668,7 +548,7 @@ export default function CorpusDocuments(): JSX.Element {
                               </>
                             ) : null}
                             {d.injection_markers ? (
-                              <p className="mt-1.5 flex max-w-[220px] items-start gap-1 text-[11px] text-[var(--ui-warn)]">
+                              <p className="mt-1.5 flex max-w-[220px] items-start gap-1 text-[12px] text-[var(--ui-warn)]">
                                 <AlertTriangle
                                   className="mt-0.5 h-3 w-3 shrink-0"
                                   aria-hidden="true"
@@ -689,13 +569,13 @@ export default function CorpusDocuments(): JSX.Element {
                                 type="button"
                                 onClick={() => downloadMut.mutate(d.id)}
                                 disabled={downloadMut.isPending}
-                                className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground disabled:opacity-40"
+                                className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-40"
                               >
                                 <Download className="h-3 w-3" aria-hidden="true" />
                                 Download
                               </button>
 
-                              <label className="inline-flex cursor-pointer items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground">
+                              <label className="inline-flex cursor-pointer items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground">
                                 <RefreshCw className="h-3 w-3" aria-hidden="true" />
                                 Replace…
                                 <input
@@ -714,7 +594,7 @@ export default function CorpusDocuments(): JSX.Element {
                               <button
                                 type="button"
                                 onClick={() => startEdit(d)}
-                                className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground"
+                                className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground"
                               >
                                 <Pencil className="h-3 w-3" aria-hidden="true" />
                                 Edit
@@ -726,7 +606,7 @@ export default function CorpusDocuments(): JSX.Element {
                                   aria-label={`Confirm deleting ${d.title}`}
                                   className="flex flex-col gap-1"
                                 >
-                                  <span className="text-[11px] text-[var(--ui-danger)]">
+                                  <span className="text-[12px] text-[var(--ui-danger)]">
                                     {DELETE_CONFIRM_TEXT}
                                   </span>
                                   <span className="flex gap-1.5">
@@ -734,14 +614,14 @@ export default function CorpusDocuments(): JSX.Element {
                                       type="button"
                                       onClick={() => deleteMut.mutate(d.id)}
                                       disabled={deleteMut.isPending}
-                                      className="rounded-[8px] bg-[#e6714f]/20 px-2 py-1 text-[11px] font-semibold text-[#ff8a66] disabled:opacity-50"
+                                      className="rounded-[8px] bg-[var(--ui-danger-wash)] px-2 py-1 text-[12px] font-semibold text-[var(--ui-danger)] disabled:opacity-50"
                                     >
                                       {deleteMut.isPending ? '…' : 'Delete'}
                                     </button>
                                     <button
                                       type="button"
                                       onClick={() => setConfirmDeleteId(null)}
-                                      className="rounded-[8px] bg-[var(--ui-inset)] px-2 py-1 text-[11px] text-[var(--ui-soft)]"
+                                      className="rounded-[8px] bg-[var(--ui-inset)] px-2 py-1 text-[12px] text-[var(--ui-soft)]"
                                     >
                                       Cancel
                                     </button>
@@ -751,7 +631,7 @@ export default function CorpusDocuments(): JSX.Element {
                                 <button
                                   type="button"
                                   onClick={() => setConfirmDeleteId(d.id)}
-                                  className="inline-flex items-center gap-1 rounded-[8px] border border-[#e6714f]/30 px-2 py-1 text-[11.5px] text-[#ff8a66]"
+                                  className="ml-2 inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-muted-foreground hover:border-[var(--ui-danger)] hover:text-[var(--ui-danger)] focus-visible:border-[var(--ui-danger)] focus-visible:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                                 >
                                   Delete
                                 </button>
@@ -774,7 +654,7 @@ export default function CorpusDocuments(): JSX.Element {
                                 }}
                               >
                                 <fieldset className="flex flex-col gap-1.5">
-                                  <legend className="text-[11.5px] font-medium text-[var(--ui-soft)]">
+                                  <legend className="text-[13px] font-medium text-[var(--ui-soft)]">
                                     Audience
                                   </legend>
                                   {canChooseHrOnly ? (
@@ -805,7 +685,7 @@ export default function CorpusDocuments(): JSX.Element {
                                 <div className="flex flex-col gap-1.5">
                                   <label
                                     htmlFor={`edit-expiry-${d.id}`}
-                                    className="text-[11.5px] font-medium text-[var(--ui-soft)]"
+                                    className="text-[13px] font-medium text-[var(--ui-soft)]"
                                   >
                                     Expiry date
                                   </label>
@@ -842,8 +722,125 @@ export default function CorpusDocuments(): JSX.Element {
               </table>
             </div>
           )}
-        </GlassCard>
+        </SectionCard>
       </Reveal>
-    </div>
+      {/* Upload */}
+      <Reveal delay={0.05}>
+        <SectionCard title="Upload a document" icon={UploadIcon}>
+          <form className="grid gap-3 sm:grid-cols-2" onSubmit={handleUploadSubmit}>
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="corpus-upload-title"
+                className="text-[13px] font-medium text-[var(--ui-soft)]"
+              >
+                Title
+              </label>
+              <input
+                id="corpus-upload-title"
+                value={uploadTitle}
+                onChange={(e) => setUploadTitle(e.target.value)}
+                maxLength={200}
+                placeholder="e.g. Employee handbook"
+                className="min-h-[40px] rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="corpus-upload-file"
+                className="text-[13px] font-medium text-[var(--ui-soft)]"
+              >
+                File
+              </label>
+              <input
+                id="corpus-upload-file"
+                ref={uploadFileInputRef}
+                type="file"
+                accept={ACCEPT}
+                onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                className="min-h-[40px] rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
+              />
+              <span className="text-[12px] text-[var(--ui-faint)]">
+                PDF, Word (.docx), plain text or Markdown, up to 10 MB.
+              </span>
+            </div>
+
+            <fieldset className="flex flex-col gap-1.5">
+              <legend className="text-[13px] font-medium text-[var(--ui-soft)]">Audience</legend>
+              {canChooseHrOnly ? (
+                <div className="flex items-center gap-4">
+                  <label className="flex items-center gap-1.5 text-[13px] text-foreground">
+                    <input
+                      type="radio"
+                      name="corpus-upload-audience"
+                      value="hr_only"
+                      checked={uploadAudience === 'hr_only'}
+                      onChange={() => setUploadAudience('hr_only')}
+                    />
+                    HR only
+                  </label>
+                  <label className="flex items-center gap-1.5 text-[13px] text-foreground">
+                    <input
+                      type="radio"
+                      name="corpus-upload-audience"
+                      value="all_staff"
+                      checked={uploadAudience === 'all_staff'}
+                      onChange={() => setUploadAudience('all_staff')}
+                    />
+                    All staff
+                  </label>
+                </div>
+              ) : (
+                <p className="text-[13px] text-foreground">
+                  All staff
+                  <span className="ml-1.5 text-[12px] text-muted-foreground">
+                    — HR-only documents are created by HR managers.
+                  </span>
+                </p>
+              )}
+            </fieldset>
+
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="corpus-upload-expiry"
+                className="text-[13px] font-medium text-[var(--ui-soft)]"
+              >
+                Expiry date (optional)
+              </label>
+              <input
+                id="corpus-upload-expiry"
+                type="date"
+                value={uploadExpiresOn}
+                onChange={(e) => setUploadExpiresOn(e.target.value)}
+                className="min-h-[40px] rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              />
+            </div>
+
+            <label className="sm:col-span-2 flex items-start gap-2 text-[12.5px] text-foreground">
+              <input
+                type="checkbox"
+                checked={uploadAttested}
+                onChange={(e) => setUploadAttested(e.target.checked)}
+                className="mt-0.5"
+              />
+              {ATTESTATION_LABEL}
+            </label>
+
+            <div className="sm:col-span-2 flex items-center gap-3">
+              <button
+                type="submit"
+                disabled={!canSubmitUpload}
+                className="min-h-[40px] rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-50"
+              >
+                {uploadMut.isPending ? 'Uploading…' : 'Upload'}
+              </button>
+              {uploadMut.isPending && uploadProgress !== null ? (
+                <span className="text-[12px] text-muted-foreground">{uploadProgress}%</span>
+              ) : null}
+            </div>
+          </form>
+        </SectionCard>
+      </Reveal>
+    </Page>
   );
 }

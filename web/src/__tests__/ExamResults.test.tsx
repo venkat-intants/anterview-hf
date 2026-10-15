@@ -183,7 +183,7 @@ describe('ExamResults', () => {
     // Scoped per row: "100%" also appears in the Top-score tile, and an
     // unscoped match would pass even if both rows showed the same score.
     const rowFor = (name: string): HTMLElement =>
-      screen.getByText(name).parentElement!.parentElement!;
+      screen.getByText(name).closest('tr') as HTMLElement;
 
     await screen.findByText('Bhavya Nair');
     expect(within(rowFor('Bhavya Nair')).getByText('100%')).toBeInTheDocument();
@@ -333,7 +333,7 @@ describe('ExamResults — similarity signals column', () => {
 
     expect(await screen.findByText('Similarity signals')).toBeInTheDocument();
     // One signal touches both attempts — each gets a count of 1.
-    const rowFor = (name: string): HTMLElement => screen.getByText(name).parentElement!.parentElement!;
+    const rowFor = (name: string): HTMLElement => screen.getByText(name).closest('tr') as HTMLElement;
     await screen.findByText('Bhavya Nair');
     expect(within(rowFor('Bhavya Nair')).getByText('1')).toBeInTheDocument();
     expect(within(rowFor('Chetan Iyer')).getByText('1')).toBeInTheDocument();

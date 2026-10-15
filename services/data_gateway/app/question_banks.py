@@ -31,12 +31,13 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 from shared.intelligence.taxonomy import FAMILIES
-from sqlalchemy import func, select, text
+from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import exam_locks
@@ -56,6 +57,12 @@ log = structlog.get_logger(__name__)
 
 MAX_COMPETENCIES = 8
 MAX_TAGS = 20
+#: Caution label on every AI-drafted CODING question: a model wrote the expected
+#: outputs (and maybe a reference solution) and nothing has been executed. The
+#: ONE definition — generation, the bulk save, the edit path and the tests all
+#: import it (``app.bank_coding_generation.UNVERIFIED_TAG`` is this object).
+#: A label, not a gate: submission and approval never look at it.
+UNVERIFIED_TAG = "reference-unverified"
 _COMPETENCY_ID_RE = re.compile(r"^[a-z0-9_]{1,80}$")
 _WS_RE = re.compile(r"\s+")
 
@@ -308,15 +315,18 @@ async def archive_bank(db: AsyncSession, *, company_id: uuid.UUID, bank_id: uuid
 
 
 async def _bank_summary(db: AsyncSession, *, company_id: uuid.UUID, bank: QuestionBank) -> dict[str, Any]:
-    counts: dict[str, int] = dict(
-        (
-            await db.execute(
-                select(BankQuestion.status, func.count()).where(
-                    BankQuestion.bank_id == bank.id, BankQuestion.company_id == company_id,
-                ).group_by(BankQuestion.status)
-            )
-        ).tuples().all()
-    )
+    # ONE aggregate, grouped by (status, kind). ``counts`` and ``kind_counts``
+    # are both folded out of these same rows, so they cannot disagree on what
+    # a "question in the bank" is: ``counts`` is every status; ``kind_counts``
+    # is every status except ``retired`` (a retired version is superseded
+    # history, not something an exam can still pick).
+    grouped = (
+        await db.execute(
+            select(BankQuestion.status, BankQuestion.kind, func.count()).where(
+                BankQuestion.bank_id == bank.id, BankQuestion.company_id == company_id,
+            ).group_by(BankQuestion.status, BankQuestion.kind)
+        )
+    ).tuples().all()
     usage = await db.scalar(
         text(
             "SELECT count(*) FROM ("
@@ -330,9 +340,31 @@ async def _bank_summary(db: AsyncSession, *, company_id: uuid.UUID, bank: Questi
         ),
         {"b": bank.id},
     )
+    return _summary_payload(bank, [(str(st), str(k), int(n)) for st, k, n in grouped], usage)
+
+
+def _summary_payload(
+    bank: QuestionBank, grouped: Sequence[tuple[str, str, int]], usage: int | None
+) -> dict[str, Any]:
+    """The one place a bank's summary is built from its grouped rows.
+
+    Shared by ``_bank_summary`` (one bank) and ``list_banks`` (all of them), so
+    the two cannot drift. ``counts`` and ``kind_counts`` are both folded out of
+    the same ``(status, kind, n)`` rows, so they cannot disagree on what a
+    "question in the bank" is: ``counts`` is every status; ``kind_counts`` is
+    every status except ``retired`` (a retired version is superseded history,
+    not something an exam can still pick).
+    """
+    counts: dict[str, int] = {}
+    kind_counts: dict[str, int] = {"mcq": 0, "coding": 0}
+    for st, kind, n in grouped:
+        counts[st] = counts.get(st, 0) + int(n)
+        if st != "retired":
+            kind_counts[kind] = kind_counts.get(kind, 0) + int(n)
     return {
         "id": str(bank.id), "name": bank.name, "description": bank.description,
         "counts": {k: int(v) for k, v in counts.items()},
+        "kind_counts": kind_counts,
         "used_in_exams": int(usage or 0),
         "created_at": bank.created_at.isoformat(), "updated_at": bank.updated_at.isoformat(),
     }
@@ -351,7 +383,43 @@ async def list_banks(db: AsyncSession, *, company_id: uuid.UUID) -> list[dict[st
             .order_by(QuestionBank.created_at.desc())
         )
     ).scalars().all()
-    return [await _bank_summary(db, company_id=company_id, bank=b) for b in banks]
+    if not banks:
+        return []
+    # A CONSTANT number of queries however many banks there are (this runs
+    # against a database billed by wake-ups/compute; it used to cost two per
+    # bank). Both aggregates are scoped by company AND the bank ids, then
+    # folded per bank by the same code ``_bank_summary`` uses.
+    ids = [b.id for b in banks]
+    grouped_rows = (
+        await db.execute(
+            select(
+                BankQuestion.bank_id, BankQuestion.status, BankQuestion.kind, func.count(),
+            ).where(
+                BankQuestion.bank_id.in_(ids), BankQuestion.company_id == company_id,
+            ).group_by(BankQuestion.bank_id, BankQuestion.status, BankQuestion.kind)
+        )
+    ).tuples().all()
+    by_bank: dict[uuid.UUID, list[tuple[str, str, int]]] = {}
+    for bid, st, kind, n in grouped_rows:
+        by_bank.setdefault(bid, []).append((str(st), str(kind), int(n)))
+    usage_rows = (
+        await db.execute(
+            text(
+                "SELECT bank_id, count(*) FROM ("
+                " SELECT q.bank_id FROM exam_questions e"
+                "  JOIN bank_questions q ON q.id = e.source_bank_question_id"
+                "  WHERE q.bank_id IN :ids AND q.company_id = :c AND e.deleted_at IS NULL"
+                " UNION ALL"
+                " SELECT q.bank_id FROM coding_questions c"
+                "  JOIN bank_questions q ON q.id = c.source_bank_question_id"
+                "  WHERE q.bank_id IN :ids AND q.company_id = :c AND c.deleted_at IS NULL"
+                ") x GROUP BY bank_id"
+            ).bindparams(bindparam("ids", expanding=True)),
+            {"ids": ids, "c": company_id},
+        )
+    ).tuples().all()
+    usage = {bid: int(n) for bid, n in usage_rows}
+    return [_summary_payload(b, by_bank.get(b.id, []), usage.get(b.id, 0)) for b in banks]
 
 
 # ---------------------------------------------------------------------------
@@ -395,12 +463,38 @@ async def create_drafts_bulk(
     items: list[dict[str, Any]],
 ) -> list[BankQuestion]:
     """An AI preview, saved as ``origin='ai_draft'`` — always a plain draft
-    from this point on, reviewed exactly like anything HR typed by hand."""
+    from this point on, reviewed exactly like anything HR typed by hand.
+
+    EVERY coding item is stamped :data:`UNVERIFIED_TAG` here, whatever ``tags``
+    the client sent: the marker is derived from the server's own fact (an AI
+    draft that nobody has executed), not carried by the browser, so neither a
+    hand-built request nor deleting the chip in the editor can drop it."""
     return [
-        await create_question(db, company_id=company_id, bank_id=bank_id, actor=actor,
-                              origin="ai_draft", **item)
+        await create_question(
+            db, company_id=company_id, bank_id=bank_id, actor=actor, origin="ai_draft",
+            **(_with_unverified_tag(item) if item.get("kind") == "coding" else item),
+        )
         for item in items
     ]
+
+
+def _with_unverified_tag(item: dict[str, Any]) -> dict[str, Any]:
+    tags = list(item.get("tags") or [])
+    if UNVERIFIED_TAG not in [str(t).strip().lower() for t in tags]:
+        tags.append(UNVERIFIED_TAG)
+    return {**item, "tags": tags}
+
+
+async def _never_approved(db: AsyncSession, q: BankQuestion) -> bool:
+    """True when no version in this question's lineage has ever been approved
+    (an ``approved`` row, or a ``retired`` one — retirement follows approval)."""
+    hit = await db.scalar(
+        select(BankQuestion.id).where(
+            BankQuestion.root_id == q.root_id, BankQuestion.company_id == q.company_id,
+            BankQuestion.status.in_(("approved", "retired")),
+        ).limit(1)
+    )
+    return hit is None
 
 
 async def bank_content_hashes(
@@ -501,6 +595,16 @@ async def update_question(
         q.competency_ids = [c["id"] for c in comps] or None
     if fields.get("tags") is not None:
         q.tags = _clean_tags(fields["tags"])
+    # RULE: the unverified tag cannot be removed from an AI-drafted coding
+    # question while no version in its lineage has ever been approved — it is
+    # re-added on every save (so an older row saved without it gains it too).
+    # Once some version has been approved a person has signed the content off,
+    # and a later draft revision (new-version) keeps the tag it was copied with
+    # but may drop it deliberately.
+    if q.kind == "coding" and q.origin == "ai_draft" and await _never_approved(db, q):
+        current = list(q.tags or [])
+        if UNVERIFIED_TAG not in current:
+            q.tags = [*current, UNVERIFIED_TAG]
     q.content_hash = content_hash(
         kind=q.kind, prompt=q.prompt, options=q.options, correct_index=q.correct_index,
         test_cases=q.test_cases,

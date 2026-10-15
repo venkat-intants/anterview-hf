@@ -35,6 +35,7 @@ import {
   type LucideIcon,
 } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
+import { appPath } from '@/lib/safeUrl';
 
 /** The shape every console's citation type already satisfies. */
 export interface CitationLike {
@@ -120,15 +121,18 @@ export default function CitationChips({
           const key = `${c.kind}:${c.id}`;
           const text = c.ref ? `[${c.ref}]` : metaFor(c.kind).word;
           const chipClass = cn(
-            'mx-0.5 whitespace-nowrap rounded px-1 py-0 align-super text-[10px] font-medium',
+            'mx-0.5 whitespace-nowrap rounded-full px-1.5 py-0 align-baseline text-[12px] font-semibold text-[var(--ui-info)]',
             'bg-[var(--ui-inset-soft)]',
             className,
           );
           return c.href ? (
             <Link
               key={key}
-              to={c.href}
-              className={cn(chipClass, 'transition-colors hover:bg-white/10')}
+              to={appPath(c.href, '/')}
+              className={cn(
+                chipClass,
+                'transition-colors hover:bg-[var(--ui-inset-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+              )}
               title={c.locator ?? metaFor(c.kind).word}
             >
               {text}
@@ -164,8 +168,11 @@ export default function CitationChips({
         return c.href ? (
           <Link
             key={key}
-            to={c.href}
-            className={cn(chipClass, 'hover:bg-white/10')}
+            to={appPath(c.href, '/')}
+            className={cn(
+              chipClass,
+              'hover:bg-[var(--ui-inset-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+            )}
             title={c.locator ?? undefined}
           >
             {inner}

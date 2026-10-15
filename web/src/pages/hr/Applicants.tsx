@@ -6,16 +6,15 @@
 //           real ats_breakdown/strengths/concerns in the detail drawer.
 
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { motion, AnimatePresence } from 'framer-motion';
 import CandidatePanel from '@/components/agent/CandidatePanel';
 import CandidateDrawer from '@/components/CandidateDrawer';
 import {
   Upload,
   FileText,
   X,
+  Users,
   AlertTriangle,
   CheckCircle2,
   XCircle,
@@ -43,17 +42,19 @@ import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionR
 import { useSourceOptions } from '@/lib/sourceOptions';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { StatusTag, Avatar, SegTabs, type TagTone } from '@/design/components/primitives';
+import { PageHeader, SectionCard, EmptyState, Toolbar, Page } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
-  GlassCard,
-  StatusTag,
-  Avatar,
-  SegTabs,
-  Pill,
-  type TagTone,
-} from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
-import { staggerParent, staggerChild } from '@/design/lib/motion';
-import { initialsOf, gradientFor, scoreColor } from '@/design/data/shared';
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { initialsOf } from '@/design/data/shared';
+import { matchTextClass, scoreTextClass } from '@/lib/scoreTone';
 import { ACTIVE_POLL_MS, LIVE_POLL_MS } from '../../lib/polling';
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -150,12 +151,6 @@ function recInfo(rec: string | null): RecInfo {
   }
 }
 
-function seedFrom(name: string): number {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (Math.imul(31, h) + name.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
 /** Debounce a fast-changing value (search box) so we don't query on every keystroke. */
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -166,19 +161,12 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
-/** Match-score colour: warm at high relevance, cool at low. */
-function matchColor(score: number): string {
-  if (score >= 70) return '#27c93f';
-  if (score >= 45) return '#ffb764';
-  return '#888b91';
-}
-
 // ── Input base class ─────────────────────────────────────────────────────────
 
 const inputCls =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 ' +
-  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none ' +
-  'focus:border-[var(--accent)] transition-colors';
+  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 ' +
+  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] transition-colors ' +
+  'focus-visible:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 // ── Reject, with a required structured reason (O4) ──────────────────────────
 //
@@ -210,16 +198,18 @@ function RejectAction({
 
   if (!open) {
     return (
-      <Pill
-        variant="danger"
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
         onClick={() => setOpen(true)}
         disabled={disabled}
         aria-label={ariaLabel}
-        className="gap-1.5"
+        className="border-[var(--ui-danger)]/40 text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]"
       >
-        <XCircle size={15} aria-hidden="true" />
+        <XCircle aria-hidden="true" />
         Reject
-      </Pill>
+      </Button>
     );
   }
 
@@ -234,7 +224,7 @@ function RejectAction({
       <div>
         <label
           htmlFor={`reject-why-${idSuffix}`}
-          className="block text-[12px] text-[var(--ui-soft)]"
+          className="mb-1 block text-[13px] font-semibold text-foreground"
         >
           Why{chosen?.requires_explanation ? ` (at least ${minLen} characters)` : ''}
         </label>
@@ -247,13 +237,15 @@ function RejectAction({
         />
       </div>
       {!canConfirm ? (
-        <p className="text-[11px] text-[var(--ui-warn)]">
+        <p className="text-[12px] text-[var(--ui-warn)]">
           {!reasonCode ? 'Choose a reason first.' : `Write at least ${minLen} characters.`}
         </p>
       ) : null}
       <div className="flex gap-2">
-        <Pill
-          variant="danger"
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
           disabled={!canConfirm}
           onClick={() => {
             onConfirm(reasonCode, reason.trim());
@@ -264,10 +256,10 @@ function RejectAction({
           aria-label={`Confirm ${ariaLabel.toLowerCase()}`}
         >
           Confirm reject
-        </Pill>
-        <Pill variant="ghost" onClick={() => setOpen(false)}>
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>
           Cancel
-        </Pill>
+        </Button>
       </div>
     </div>
   );
@@ -331,108 +323,62 @@ function ApplicantDrawer({
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
-  // Close on Escape (hook must run before any early return).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  // Lock background scroll while the panel is open (restored on close).
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => {
-      document.body.style.overflow = prev;
-    };
-  }, []);
-
   if (!a) return null;
 
-  const seed = seedFrom(a.full_name);
   const atsDisplay = a.ats_overall ?? null;
   const rec = atsInfo(a);
 
-  return createPortal(
-    <motion.div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-xl"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-      onClick={onClose}
-    >
-      <motion.div
-        className="relative flex max-h-[90vh] w-full max-w-[1040px] flex-col overflow-hidden rounded-[24px] border border-border bg-card shadow-[0_30px_90px_rgba(0,0,0,0.65)]"
-        initial={{ opacity: 0, scale: 0.96, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.97, y: 8 }}
-        transition={{ type: 'spring', stiffness: 320, damping: 32, mass: 0.85 }}
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="flex max-h-[90vh] w-[calc(100%-2rem)] max-w-[1040px] flex-col gap-0 overflow-hidden rounded-card p-0 shadow-elevated"
         aria-label={`${a.full_name} applicant details`}
+        aria-describedby={undefined}
       >
-        {/* Header — pinned */}
-        <div className="flex shrink-0 items-center justify-between border-b border-border px-7 py-5">
-          <span className="text-[12px] uppercase tracking-[1px] text-[var(--ui-faint)]">
-            Candidate
-          </span>
-          <button
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-[9px] border border-border bg-[var(--ui-inset)] text-[var(--ui-soft)] hover:text-foreground transition-colors"
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </div>
+        {/* Header — pinned: who this is and where they stand */}
+        <DialogHeader className="shrink-0 border-b border-border px-6 py-5 pr-14 sm:px-7">
+          <DialogTitle className="sr-only">{`${a.full_name} applicant details`}</DialogTitle>
+          <div className="flex items-center gap-4">
+            <Avatar initials={initialsOf(a.full_name)} size={52} />
+            <div className="min-w-0">
+              <p className="truncate text-[20px] font-bold tracking-[-0.4px] text-foreground">
+                {a.full_name}
+              </p>
+              <p className="truncate text-[13px] text-muted-foreground">
+                {a.email ?? 'No email on file'}
+              </p>
+              {a.user_id && (
+                <Link
+                  to={`/u/${a.user_id}`}
+                  className="mt-0.5 inline-flex items-center gap-1 text-[13px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                >
+                  View full profile <ArrowRight size={12} aria-hidden="true" />
+                </Link>
+              )}
+            </div>
+          </div>
+        </DialogHeader>
 
-        {/* Body — sizes to content; scrolls only as a safety net on very short screens */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
-          {/* Wide landscape layout: two columns side by side */}
+        {/* Body — scrolls inside the dialog */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 sm:px-7">
           <div className="grid gap-x-8 gap-y-6 md:grid-cols-2">
             {/* LEFT column — identity, score/status, role, summary */}
             <div className="space-y-5">
-              {/* Identity */}
-              <div className="flex items-center gap-4">
-                <Avatar initials={initialsOf(a.full_name)} gradient={gradientFor(seed)} size={58} />
-                <div className="min-w-0">
-                  <div className="text-[20px] font-semibold tracking-[-0.5px] text-foreground">
-                    {a.full_name}
-                  </div>
-                  <div className="truncate text-[13px] text-[var(--ui-faint)]">
-                    {a.email ?? 'No email on file'}
-                  </div>
-                  {a.user_id && (
-                    <Link
-                      to={`/u/${a.user_id}`}
-                      className="mt-1 inline-flex items-center gap-1 text-[12px] font-medium text-[var(--ui-info)] hover:underline"
-                    >
-                      View full profile <ArrowRight size={12} aria-hidden="true" />
-                    </Link>
-                  )}
-                </div>
-              </div>
-
               {/* Score + status tiles */}
               <div className="grid grid-cols-2 gap-2.5">
-                <div className="rounded-[12px] border border-border bg-card p-4">
-                  <div className="text-[11px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                    ATS score
-                  </div>
+                <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
+                  <div className="text-[12px] font-semibold text-muted-foreground">ATS score</div>
                   <div
-                    className="mt-1 text-[28px] font-semibold tracking-[-1px]"
-                    style={{ color: atsDisplay !== null ? scoreColor(atsDisplay) : '#70757c' }}
+                    className={cn(
+                      'mt-1 font-display text-[28px] font-bold tracking-[-1px]',
+                      scoreTextClass(atsDisplay),
+                    )}
                   >
                     {atsDisplay ?? '—'}
                   </div>
                 </div>
-                <div className="rounded-[12px] border border-border bg-card p-4">
-                  <div className="text-[11px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                    Status
-                  </div>
+                <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
+                  <div className="text-[12px] font-semibold text-muted-foreground">Status</div>
                   <div className="mt-2">
                     <StatusTag tone={statusTone(a.status)} dot>
                       {statusLabel(a.status)}
@@ -442,7 +388,7 @@ function ApplicantDrawer({
               </div>
 
               {/* Role meta */}
-              <div className="space-y-1.5 text-[12.5px] text-[var(--ui-faint)]">
+              <div className="space-y-1.5 text-[13px] text-muted-foreground">
                 <p>
                   Role &middot;{' '}
                   <span className="text-[var(--ui-soft)]">
@@ -450,9 +396,7 @@ function ApplicantDrawer({
                   </span>
                 </p>
                 <div>
-                  <StatusTag tone={rec.tone} className="text-[11.5px]">
-                    {rec.label}
-                  </StatusTag>
+                  <StatusTag tone={rec.tone}>{rec.label}</StatusTag>
                 </div>
               </div>
 
@@ -463,7 +407,7 @@ function ApplicantDrawer({
 
               {/* Why matched — only during a search */}
               {showMatch && (
-                <div className="rounded-[12px] border border-[rgba(var(--accent-rgb),0.25)] bg-[rgba(var(--accent-rgb),0.06)] p-4">
+                <div className="rounded-[16px] border border-[var(--ui-info)]/30 bg-[var(--ui-info-wash)] p-4">
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[var(--ui-info)]">
                       <Search size={13} aria-hidden="true" />
@@ -471,14 +415,13 @@ function ApplicantDrawer({
                     </span>
                     {a.match_score != null && (
                       <span
-                        className="text-[13px] font-semibold"
-                        style={{ color: matchColor(a.match_score) }}
+                        className={cn('text-[13px] font-semibold', matchTextClass(a.match_score))}
                       >
                         {a.match_score}% match
                       </span>
                     )}
                   </div>
-                  <p className="mt-2 text-[13px] leading-relaxed text-[var(--ui-soft)]">
+                  <p className="mt-2 text-[13px] leading-relaxed text-foreground">
                     {!worthExplaining
                       ? 'Low relevance to this search.'
                       : whyLoading
@@ -494,17 +437,17 @@ function ApplicantDrawer({
               {/* ATS breakdown bars — REAL data, not fabricated competencies */}
               {a.ats_breakdown && Object.keys(a.ats_breakdown).length > 0 && (
                 <div>
-                  <div className="text-[13px] font-semibold text-foreground">Score breakdown</div>
+                  <h3 className="text-[15px] font-bold text-foreground">Score breakdown</h3>
                   <div className="mt-3 flex flex-col gap-3">
                     {Object.entries(a.ats_breakdown).map(([k, v]) => (
                       <div key={k}>
-                        <div className="mb-1 flex justify-between text-[12.5px]">
+                        <div className="mb-1 flex justify-between text-[13px]">
                           <span className="text-[var(--ui-soft)]">{BREAKDOWN_LABELS[k] ?? k}</span>
                           <span className="font-mono text-muted-foreground">{v}</span>
                         </div>
                         <div className="h-1.5 rounded-full bg-[var(--ui-inset-strong)]">
                           <div
-                            className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),#a887dc)]"
+                            className="h-full rounded-full bg-[var(--accent)]"
                             style={{ width: `${Math.max(0, Math.min(100, v))}%` }}
                           />
                         </div>
@@ -523,34 +466,36 @@ function ApplicantDrawer({
               {/* Several applications: each with where it is and its own actions. */}
               {several && (
                 <div>
-                  <p className="text-[12.5px] font-semibold text-foreground">
+                  <h3 className="text-[15px] font-bold text-foreground">
                     Applications ({applications.length})
-                  </p>
+                  </h3>
                   <ul className="mt-2 space-y-2" aria-label="Applications">
                     {applications.map((app) => (
                       <li
                         key={app.enrolment_id}
-                        className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-border px-3 py-2"
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-border px-3.5 py-2.5"
                       >
                         <div className="min-w-0">
-                          <p className="truncate text-[12.5px] font-medium text-foreground">
+                          <p className="truncate text-[13px] font-semibold text-foreground">
                             {app.opening_title ?? 'Untitled opening'}
                           </p>
-                          <p className="text-[11.5px] text-[var(--ui-faint)]">
+                          <p className="text-[12px] text-muted-foreground">
                             {app.status}
                             {app.ats_overall != null ? ` · resume ${app.ats_overall}/100` : ''}
                             {app.is_latest ? ' · latest' : ''}
                           </p>
                         </div>
                         <div className="flex w-full flex-wrap items-center justify-end gap-1.5 sm:w-auto">
-                          <Pill
-                            variant="ghost"
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
                             onClick={() => onShortlist(a.id, app.enrolment_id)}
                             disabled={statusPending || app.stored_status === 'shortlisted'}
                             aria-label={`Shortlist for ${app.opening_title ?? 'this opening'}`}
                           >
                             Shortlist
-                          </Pill>
+                          </Button>
                           <RejectAction
                             idSuffix={app.enrolment_id}
                             ariaLabel={`Reject for ${app.opening_title ?? 'this opening'}`}
@@ -572,14 +517,14 @@ function ApplicantDrawer({
                 <div className="grid gap-4">
                   {a.ats_strengths && a.ats_strengths.length > 0 && (
                     <div>
-                      <p className="text-[12.5px] font-semibold text-[var(--ui-ok)]">Strengths</p>
+                      <h3 className="text-[15px] font-bold text-foreground">Strengths</h3>
                       <ul className="mt-2 space-y-1">
                         {a.ats_strengths.map((s, i) => (
                           <li
                             key={i}
-                            className="flex items-start gap-1.5 text-[12px] text-[var(--ui-faint)]"
+                            className="flex items-start gap-2 text-[13px] text-muted-foreground"
                           >
-                            <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-ok)]" />
+                            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-ok)]" />
                             {s}
                           </li>
                         ))}
@@ -588,16 +533,14 @@ function ApplicantDrawer({
                   )}
                   {a.ats_concerns && a.ats_concerns.length > 0 && (
                     <div>
-                      <p className="text-[12.5px] font-semibold text-[var(--ui-danger)]">
-                        Concerns
-                      </p>
+                      <h3 className="text-[15px] font-bold text-foreground">Concerns</h3>
                       <ul className="mt-2 space-y-1">
                         {a.ats_concerns.map((c, i) => (
                           <li
                             key={i}
-                            className="flex items-start gap-1.5 text-[12px] text-[var(--ui-faint)]"
+                            className="flex items-start gap-2 text-[13px] text-muted-foreground"
                           >
-                            <span className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-danger)]" />
+                            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--ui-danger)]" />
                             {c}
                           </li>
                         ))}
@@ -610,35 +553,31 @@ function ApplicantDrawer({
           </div>
         </div>
 
-        {/* Actions — grouped on the right of the card */}
-        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2.5 border-t border-border px-7 py-5">
-          <Pill
+        {/* Actions — grouped on the right, pinned under the body */}
+        <DialogFooter className="shrink-0 flex-row flex-wrap items-center justify-end gap-2.5 border-t border-border bg-card px-6 py-4 sm:space-x-0 sm:px-7">
+          <Button
+            type="button"
             variant="outline"
             onClick={() => onRescore(a.id)}
             disabled={rescorePending}
             aria-label="Re-score"
-            className="gap-1.5"
           >
-            <RefreshCw
-              size={14}
-              className={cn(rescorePending && 'animate-spin')}
-              aria-hidden="true"
-            />
+            <RefreshCw className={cn(rescorePending && 'animate-spin')} aria-hidden="true" />
             Re-score
-          </Pill>
+          </Button>
           {/* With several applications the actions live on each one above. */}
           {!several && (
             <>
-              <Pill
-                variant="ghost"
+              <Button
+                type="button"
+                variant="secondary"
                 onClick={() => onShortlist(a.id, only?.enrolment_id)}
                 disabled={statusPending || a.status === 'shortlisted'}
                 aria-label="Shortlist"
-                className="gap-1.5"
               >
-                <CheckCircle2 size={15} aria-hidden="true" />
+                <CheckCircle2 aria-hidden="true" />
                 Shortlist
-              </Pill>
+              </Button>
               <RejectAction
                 idSuffix={only?.enrolment_id ?? a.id}
                 disabled={statusPending || a.status === 'rejected'}
@@ -648,86 +587,121 @@ function ApplicantDrawer({
               />
             </>
           )}
-        </div>
-      </motion.div>
-    </motion.div>,
-    document.body,
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 // ── Table row ─────────────────────────────────────────────────────────────────
 
-function ApplicantRow({ a, onSelect }: { a: Applicant; onSelect: (applicant: Applicant) => void }) {
-  const seed = seedFrom(a.full_name);
+const TH =
+  'sticky top-0 z-10 border-b border-border bg-[var(--ui-inset-soft)] px-4 py-3 text-left text-[12px] font-semibold uppercase tracking-[0.04em] text-muted-foreground first:pl-6 last:pr-6';
+const TD = 'px-4 py-3 align-middle first:pl-6 last:pr-6';
+
+/**
+ * One applicant. The name is the real button (so a keyboard or screen-reader
+ * user gets a named control), every other fact is an ordinary cell that the
+ * row announces; the whole row stays clickable for a mouse.
+ */
+function ApplicantRow({
+  a,
+  onSelect,
+  isSelected,
+}: {
+  a: Applicant;
+  onSelect: (applicant: Applicant) => void;
+  isSelected: boolean;
+}) {
   const atsDisplay = a.ats_overall;
   const rec = atsInfo(a);
 
   return (
-    <button
+    <tr
       onClick={() => onSelect(a)}
-      className="grid w-full grid-cols-[2fr_1.3fr_1fr_0.8fr_0.8fr_0.5fr] items-center gap-3 border-b border-border px-6 py-3.5 text-left transition-colors last:border-0 hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-inset"
-      aria-label={`Open details for ${a.full_name}`}
+      data-selected={isSelected ? 'true' : undefined}
+      className={cn(
+        'min-h-[64px] cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-[var(--ui-inset)]',
+        isSelected && 'bg-highlight hover:bg-highlight',
+      )}
     >
       {/* Candidate */}
-      <div className="flex min-w-0 items-center gap-3">
-        <Avatar initials={initialsOf(a.full_name)} gradient={gradientFor(seed)} size={36} />
-        <div className="min-w-0">
-          <div className="truncate text-[14px] font-medium text-foreground">{a.full_name}</div>
-          <div className="truncate text-[12px] text-[var(--ui-faint)]">{a.email ?? 'No email'}</div>
+      <td className={TD}>
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar initials={initialsOf(a.full_name)} size={36} />
+          <div className="min-w-0">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect(a);
+              }}
+              aria-haspopup="dialog"
+              className="block max-w-full truncate rounded-[6px] text-left text-[14px] font-semibold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            >
+              {a.full_name}
+            </button>
+            <div className="truncate text-[13px] text-muted-foreground">
+              {a.email ?? 'No email'}
+            </div>
+          </div>
         </div>
-      </div>
+      </td>
 
       {/* Role */}
-      <div className="min-w-0">
-        <div className="truncate text-[13.5px] text-[var(--ui-soft)]">{a.target_job_title}</div>
-        <div className="text-[11.5px] text-[var(--ui-faint)]">{a.target_level}</div>
-      </div>
+      <td className={cn(TD, 'max-w-[220px]')}>
+        <div className="truncate text-[14px] text-foreground">{a.target_job_title}</div>
+        <div className="text-[13px] text-muted-foreground">{a.target_level}</div>
+      </td>
 
       {/* Status */}
-      <div className="flex flex-col gap-1">
-        <StatusTag tone={statusTone(a.status)} dot>
-          {statusLabel(a.status)}
-        </StatusTag>
-        {a.ats_recommendation && (
-          <StatusTag tone={rec.tone} className="text-[10.5px]">
-            {rec.label}
+      <td className={TD}>
+        <div className="flex flex-col items-start gap-1">
+          <StatusTag tone={statusTone(a.status)} dot>
+            {statusLabel(a.status)}
           </StatusTag>
-        )}
-      </div>
+          {a.ats_recommendation && <StatusTag tone={rec.tone}>{rec.label}</StatusTag>}
+        </div>
+      </td>
 
       {/* ATS score */}
-      <div
-        className="text-[15px] font-semibold"
-        style={{ color: atsDisplay !== null ? scoreColor(atsDisplay) : '#70757c' }}
+      <td
+        className={cn(
+          TD,
+          'text-right font-display text-[16px] font-bold tabular-nums',
+          scoreTextClass(atsDisplay),
+        )}
       >
         {atsDisplay ?? '—'}
-      </div>
+      </td>
 
       {/* Match score (during search) — else shortlisted badge */}
-      <div>
+      <td className={TD}>
         {a.match_score != null ? (
           <span
-            className="inline-flex items-center gap-1 rounded-full bg-[var(--ui-inset)] px-2 py-0.5 text-[11.5px] font-semibold"
-            style={{ color: matchColor(a.match_score) }}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-full bg-[var(--ui-inset-strong)] px-2.5 py-0.5 text-[12px] font-semibold tabular-nums',
+              matchTextClass(a.match_score),
+            )}
             title="Relevance to your search"
           >
             {a.match_score}% match
           </span>
         ) : (
           a.status === 'shortlisted' && (
-            <span className="inline-flex items-center gap-1 text-[11.5px] font-semibold text-[var(--ui-ok)]">
+            <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-[var(--ui-ok)]">
               <Star size={12} aria-hidden="true" />
               Shortlisted
             </span>
           )
         )}
-      </div>
+      </td>
 
-      {/* Arrow */}
-      <div className="flex justify-end">
-        <ArrowRight size={14} className="text-[var(--ui-faint)]" aria-hidden="true" />
-      </div>
-    </button>
+      {/* Affordance only — the name above is the control */}
+      <td className={cn(TD, 'w-10 text-right')}>
+        <ArrowRight size={14} className="ml-auto text-muted-foreground" aria-hidden="true" />
+      </td>
+    </tr>
   );
 }
 
@@ -769,7 +743,7 @@ function UploadBatchProgress({ batchId }: { batchId: string }) {
   });
   if (isError) {
     return (
-      <p className="mt-4 text-[12.5px] text-muted-foreground">
+      <p role="alert" className="mt-4 text-[13px] text-muted-foreground">
         Could not load this upload&apos;s progress. It is still being processed.
       </p>
     );
@@ -783,7 +757,7 @@ function UploadBatchProgress({ batchId }: { batchId: string }) {
       data-testid="upload-progress"
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="text-[13px] font-medium text-foreground">
+        <p className="text-[13px] font-semibold text-foreground">
           {data.finished ? 'Upload finished' : 'Processing upload'} — {data.requisition_title}
         </p>
         <span className="text-[12px] tabular-nums text-muted-foreground">
@@ -810,7 +784,7 @@ function UploadBatchProgress({ batchId }: { batchId: string }) {
           : 'You can leave this page — it carries on, and you will be notified when it is done.'}
       </p>
       {data.failures && data.failures.length > 0 ? (
-        <ul className="mt-2 space-y-0.5 text-[12px] text-[var(--ui-warn)]">
+        <ul className="mt-2 space-y-0.5 text-[13px] text-[var(--ui-warn)]">
           {data.failures.map((f, i) => (
             <li key={`${f.filename}-${i}`} className="truncate">
               <span className="font-medium">{f.filename}</span> — {f.error}
@@ -839,28 +813,21 @@ function UploadSection({
 }: UploadSectionProps) {
   const { options: sourceOptions } = useSourceOptions();
   return (
-    <GlassCard className="p-6">
-      {/* Card header */}
-      <div className="mb-5 flex items-center gap-2.5">
-        <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
-          <Upload size={16} aria-hidden="true" />
-        </div>
-        <div>
-          <p className="text-[15px] font-semibold text-foreground">Bulk upload resumes</p>
-          <p className="text-[12.5px] text-muted-foreground">
-            Pick the opening, then select up to {MAX_BULK_FILES} PDF resumes. They are read, filed
-            and scored in the background.
-          </p>
-        </div>
-      </div>
-
+    <SectionCard
+      title="Bulk upload resumes"
+      icon={Upload}
+      description={`Pick the opening, then select up to ${MAX_BULK_FILES} PDF resumes. They are read, filed and scored in the background.`}
+    >
       <form onSubmit={onSubmit} className="space-y-4">
         {/* The opening. Required: every resume is filed under it and scored
             against its role and job description (E5). */}
         {openings.length === 0 ? (
-          <p className="text-[12.5px] text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             There is no open opening to upload into.{' '}
-            <Link to="/hr/requisitions" className="text-[var(--accent)] hover:underline">
+            <Link
+              to="/hr/requisitions"
+              className="font-semibold text-[var(--ui-info)] hover:underline"
+            >
               Create one first
             </Link>
             .
@@ -887,7 +854,7 @@ function UploadSection({
         <div>
           <label
             htmlFor="upload-source"
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+            className="mb-1.5 block text-[13px] font-semibold text-foreground"
           >
             Where did this candidate come from?
           </label>
@@ -903,16 +870,16 @@ function UploadSection({
               </option>
             ))}
           </select>
-          <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">Applies to the whole upload.</p>
+          <p className="mt-1 text-[12px] text-muted-foreground">Applies to the whole upload.</p>
         </div>
 
         {/* File drop zone */}
-        <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[16px] border-2 border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-inset-soft)] px-4 py-8 text-center transition-colors hover:border-[rgba(var(--accent-rgb),0.5)] hover:bg-[rgba(var(--accent-rgb),0.04)]">
+        <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[16px] border-2 border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-inset-soft)] px-4 py-8 text-center transition-colors focus-within:border-[var(--accent)] hover:border-[var(--accent)] hover:bg-[var(--ui-info-wash)]">
           <FileText size={28} className="text-[var(--ui-info)]" aria-hidden="true" />
           <span className="text-[14px] font-medium text-foreground">
             Click to choose PDF resumes
           </span>
-          <span className="text-[12px] text-[var(--ui-faint)]">
+          <span className="text-[13px] text-muted-foreground">
             Select multiple files &middot; up to {MAX_BULK_FILES} per batch
           </span>
           <input
@@ -932,12 +899,12 @@ function UploadSection({
         {files.length > 0 && (
           <div className="rounded-[14px] border border-border bg-[var(--ui-inset-soft)] p-3">
             <div className="mb-2 flex items-center justify-between px-1">
-              <span className="text-[12px] font-medium text-muted-foreground">
+              <span className="text-[13px] font-semibold text-foreground">
                 {files.length} resume{files.length === 1 ? '' : 's'} selected
               </span>
               <button
                 type="button"
-                className="text-[12px] text-muted-foreground hover:text-foreground transition-colors"
+                className="min-h-10 rounded-full px-3 text-[13px] font-semibold text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 onClick={onFilesClear}
               >
                 Clear all
@@ -947,21 +914,21 @@ function UploadSection({
               {files.map((f, i) => (
                 <li
                   key={`${f.name}:${f.size}:${i}`}
-                  className="flex items-center gap-2 rounded-[8px] px-2 py-1 text-[12px] text-[var(--ui-faint)] hover:bg-[var(--ui-inset)]"
+                  className="flex items-center gap-2 rounded-[8px] px-2 py-1 text-[13px] text-muted-foreground hover:bg-[var(--ui-inset)]"
                 >
                   <FileText
                     size={13}
-                    className="shrink-0 text-[var(--ui-faint)]"
+                    className="shrink-0 text-muted-foreground"
                     aria-hidden="true"
                   />
                   <span className="min-w-0 flex-1 truncate">{f.name}</span>
-                  <span className="shrink-0 text-[var(--ui-faint)]">
+                  <span className="shrink-0 text-muted-foreground">
                     {(f.size / 1024).toFixed(0)} KB
                   </span>
                   <button
                     type="button"
                     aria-label={`Remove ${f.name}`}
-                    className="shrink-0 text-[var(--ui-faint)] hover:text-[var(--ui-danger)] transition-colors"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                     onClick={() => onFileRemove(i)}
                   >
                     <X size={13} aria-hidden="true" />
@@ -977,7 +944,7 @@ function UploadSection({
           <div className="space-y-1.5">
             <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
               <div
-                className="h-1.5 rounded-full bg-[linear-gradient(90deg,var(--accent),#a887dc)] transition-all"
+                className="h-1.5 rounded-full bg-[var(--accent)] transition-all"
                 style={{ width: `${Math.min(progress, 100)}%` }}
                 role="progressbar"
                 aria-valuenow={progress}
@@ -985,29 +952,27 @@ function UploadSection({
                 aria-valuemax={100}
               />
             </div>
-            <p className="text-[12px] text-[var(--ui-faint)]">
+            <p className="text-[13px] text-muted-foreground">
               {progress < 100 ? `Uploading ${progress}%…` : 'Storing the files…'}
             </p>
           </div>
         )}
 
         {/* Submit */}
-        <Pill
+        <Button
           type="submit"
-          variant="primary"
           disabled={pending || files.length === 0 || !openingId}
           aria-busy={pending}
-          className="gap-1.5"
         >
-          <Upload size={15} aria-hidden="true" />
+          <Upload aria-hidden="true" />
           {pending
             ? 'Uploading…'
             : `Upload${files.length > 0 ? ` ${files.length} resume${files.length === 1 ? '' : 's'}` : ''}`}
-        </Pill>
+        </Button>
       </form>
 
       {batchId ? <UploadBatchProgress batchId={batchId} /> : null}
-    </GlassCard>
+    </SectionCard>
   );
 }
 
@@ -1223,17 +1188,12 @@ export default function Applicants() {
   const pending = uploadMut.isPending;
 
   return (
-    <div className="mx-auto max-w-[1280px] px-6 py-8 lg:px-8 space-y-8">
-      {/* Page header */}
-      <Reveal>
-        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
-          Resume screening
-        </h1>
-        <p className="mt-1 text-[14px] text-muted-foreground">
-          Drop in many resumes at once — each candidate&apos;s name &amp; email are read straight
-          from the resume, AI-scored against the role, then ranked.
-        </p>
-      </Reveal>
+    <Page width="workspace">
+      <PageHeader
+        className="mb-0"
+        title="Resume screening"
+        description="Drop in many resumes at once — each candidate's name & email are read straight from the resume, AI-scored against the role, then ranked."
+      />
 
       {/* Upload panel */}
       <UploadSection
@@ -1256,44 +1216,55 @@ export default function Applicants() {
       <div className="space-y-4">
         {/* Backfill banner — existing resumes need embedding before they're searchable */}
         {reindexStatus && reindexStatus.remaining > 0 && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-[rgba(255,183,100,0.25)] bg-[rgba(255,183,100,0.07)] px-4 py-3">
-            <p className="flex items-center gap-2 text-[12.5px] text-[var(--ui-warn)]">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn-wash)] px-4 py-3">
+            <p className="flex items-center gap-2 text-[13px] text-foreground">
               <AlertTriangle size={14} aria-hidden="true" />
               {reindexStatus.remaining} earlier resume{reindexStatus.remaining === 1 ? '' : 's'}{' '}
               {reindexStatus.remaining === 1 ? "isn't" : "aren't"} searchable yet — index{' '}
               {reindexStatus.remaining === 1 ? 'it' : 'them'} to include in semantic search.
             </p>
-            <Pill
+            <Button
+              type="button"
               variant="outline"
+              size="sm"
               onClick={() => reindexMut.mutate()}
               disabled={reindexMut.isPending}
-              className="gap-1.5"
             >
               <RefreshCw
-                size={14}
                 className={cn(reindexMut.isPending && 'animate-spin')}
                 aria-hidden="true"
               />
               {reindexMut.isPending ? 'Indexing…' : 'Make searchable'}
-            </Pill>
+            </Button>
           </div>
         )}
 
         {/* Controls bar */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex w-[320px] items-center gap-2 rounded-[9999px] border border-border bg-secondary px-3.5 py-2.5">
-            <Search size={15} className="shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+        <Toolbar
+          className="mb-0"
+          trailing={
+            <span className="text-[13px] tabular-nums text-muted-foreground" aria-live="polite">
+              {isLoading
+                ? '…'
+                : searching
+                  ? `${countLabel} match${list.length === 1 ? '' : 'es'}`
+                  : `${countLabel} applicant${list.length === 1 ? '' : 's'}`}
+            </span>
+          }
+        >
+          <div className="flex h-10 w-full items-center gap-2 rounded-full border border-input bg-card px-3.5 focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[var(--accent)]/30 sm:w-[320px]">
+            <Search size={15} className="shrink-0 text-muted-foreground" aria-hidden="true" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by skill, role, or meaning…"
               aria-label="Search applicants by skills or meaning"
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
+              className="min-w-0 flex-1 bg-transparent text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
             {searching && isFetching && (
               <RefreshCw
                 size={13}
-                className="shrink-0 animate-spin text-[var(--ui-faint)]"
+                className="shrink-0 animate-spin text-muted-foreground"
                 aria-hidden="true"
               />
             )}
@@ -1302,68 +1273,76 @@ export default function Applicants() {
                 type="button"
                 onClick={() => setQuery('')}
                 aria-label="Clear search"
-                className="shrink-0 text-[var(--ui-faint)] hover:text-foreground transition-colors"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
-                <X size={13} aria-hidden="true" />
+                <X size={14} aria-hidden="true" />
               </button>
             )}
           </div>
 
           <SegTabs tabs={STATUS_FILTERS} active={filter} onChange={setFilter} />
-
-          <span className="ml-auto text-[12.5px] text-[var(--ui-faint)]">
-            {isLoading
-              ? '…'
-              : searching
-                ? `${countLabel} match${list.length === 1 ? '' : 'es'}`
-                : `${countLabel} applicant${list.length === 1 ? '' : 's'}`}
-          </span>
-        </div>
+        </Toolbar>
 
         {/* Table */}
         {isLoading ? (
           <div className="space-y-2" role="status" aria-label="Loading applicants" aria-busy="true">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div
-                key={i}
-                className="h-16 w-full rounded-[16px] bg-[var(--ui-inset)] animate-pulse"
-              />
+              <Skeleton key={i} className="h-16 w-full rounded-card" />
             ))}
           </div>
         ) : list.length === 0 ? (
-          <GlassCard className="py-16 text-center">
-            <p className="text-[15px] font-medium text-foreground">
-              {searching || statusParam ? 'No matching candidates' : 'No applicants yet'}
-            </p>
-            <p className="mt-1 text-[13px] text-[var(--ui-faint)]">
-              {searching
+          <EmptyState
+            size="page"
+            icon={Users}
+            title={searching || statusParam ? 'No matching candidates' : 'No applicants yet'}
+            description={
+              searching
                 ? 'Try a broader phrase or different keywords.'
                 : statusParam
                   ? 'No applicants in this status.'
-                  : 'Upload resumes above to get started.'}
-            </p>
-          </GlassCard>
+                  : 'Upload resumes above to get started.'
+            }
+          />
         ) : (
-          <GlassCard className="overflow-hidden p-0">
-            {/* Table header */}
-            <div className="grid grid-cols-[2fr_1.3fr_1fr_0.8fr_0.8fr_0.5fr] gap-3 border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-              <div>Candidate</div>
-              <div>Role</div>
-              <div>Status</div>
-              <div>ATS</div>
-              <div>Badge</div>
-              <div />
+          <div className="overflow-hidden rounded-card border border-border bg-card shadow-card">
+            <div className="max-h-[70vh] overflow-auto">
+              <table className="w-full min-w-[760px] border-collapse">
+                <caption className="sr-only">Applicants</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" className={cn(TH, 'w-[30%]')}>
+                      Candidate
+                    </th>
+                    <th scope="col" className={TH}>
+                      Role
+                    </th>
+                    <th scope="col" className={TH}>
+                      Status
+                    </th>
+                    <th scope="col" className={cn(TH, 'text-right')}>
+                      ATS
+                    </th>
+                    <th scope="col" className={TH}>
+                      Badge
+                    </th>
+                    <th scope="col" className={TH}>
+                      <span className="sr-only">Open</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.map((a) => (
+                    <ApplicantRow
+                      key={a.id}
+                      a={a}
+                      onSelect={setSelected}
+                      isSelected={selected?.id === a.id}
+                    />
+                  ))}
+                </tbody>
+              </table>
             </div>
-
-            {/* Staggered rows */}
-            <motion.div variants={staggerParent} initial="hidden" animate="show">
-              {list.map((a) => (
-                <motion.div key={a.id} variants={staggerChild}>
-                  <ApplicantRow a={a} onSelect={setSelected} />
-                </motion.div>
-              ))}
-            </motion.div>
-          </GlassCard>
+          </div>
         )}
       </div>
 
@@ -1377,26 +1356,24 @@ export default function Applicants() {
         onClose={() => void navigate('/hr/applicants', { replace: true })}
       />
 
-      {/* Slide-in drawer */}
-      <AnimatePresence>
-        {selected && (
-          <ApplicantDrawer
-            key={selected.id}
-            applicant={selected}
-            onClose={() => setSelected(null)}
-            onShortlist={(id, enrolmentId) =>
-              statusMut.mutate({ id, status: 'shortlisted', enrolmentId })
-            }
-            onReject={(id, enrolmentId, reasonCode, reason) =>
-              statusMut.mutate({ id, status: 'rejected', enrolmentId, reason, reasonCode })
-            }
-            onRescore={(id) => rescoreMut.mutate(id)}
-            statusPending={statusMut.isPending}
-            rescorePending={rescoreMut.isPending}
-            searchQuery={trimmedQuery}
-          />
-        )}
-      </AnimatePresence>
-    </div>
+      {/* Applicant details */}
+      {selected && (
+        <ApplicantDrawer
+          key={selected.id}
+          applicant={selected}
+          onClose={() => setSelected(null)}
+          onShortlist={(id, enrolmentId) =>
+            statusMut.mutate({ id, status: 'shortlisted', enrolmentId })
+          }
+          onReject={(id, enrolmentId, reasonCode, reason) =>
+            statusMut.mutate({ id, status: 'rejected', enrolmentId, reason, reasonCode })
+          }
+          onRescore={(id) => rescoreMut.mutate(id)}
+          statusPending={statusMut.isPending}
+          rescorePending={rescoreMut.isPending}
+          searchQuery={trimmedQuery}
+        />
+      )}
+    </Page>
   );
 }

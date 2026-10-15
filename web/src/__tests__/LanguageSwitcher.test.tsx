@@ -134,11 +134,11 @@ describe('Landing page i18n integration', () => {
 
   it('shows English headline by default', async () => {
     renderLandingWithSwitcher();
-    // The aurora-redesigned Landing hero headline is hardcoded English copy.
-    // The h1 reads "Talk to an AI interviewer. / Get hired faster."
+    // The Landing hero headline is hardcoded English copy.
+    // The h1 reads "Practise the interview before it counts."
     await waitFor(() => {
       expect(
-        screen.getByRole('heading', { name: /talk to an ai interviewer/i }),
+        screen.getByRole('heading', { name: /practise the interview before it counts/i }),
       ).toBeInTheDocument();
     });
   });

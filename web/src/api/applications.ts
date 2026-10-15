@@ -11,6 +11,7 @@
 // appear, and would be an argument to have on the server.
 
 import { apiGet, apiPost } from './client';
+import { pathId } from './pathId';
 
 /** One application, from the candidate's side. */
 export interface MyApplication {
@@ -68,9 +69,19 @@ export interface MyApplication {
    * a deadline the candidate does not have.
    */
   exam_scheduled_at: string | null;
+  /**
+   * The candidate-facing stage vocabulary as a stable code (`received`,
+   * `shortlisted`, `interview_complete`, `under_review`, `selected`,
+   * `not_progressing`) — never the raw internal status. OPTIONAL: an older
+   * server omits it, and the page then translates from the English `stage`
+   * label and falls through to the server's own words for anything unknown.
+   */
+  stage_code?: string | null;
 }
 
 export interface StageEvent {
+  /** Optional, as on `MyApplication`: absent from an older server. */
+  stage_code?: string | null;
   stage: string;
   occurred_at: string;
   /** False when the workflow moved them rather than a person. */
@@ -93,7 +104,7 @@ export function listMyApplications(): Promise<MyApplication[]> {
 }
 
 export function getMyApplication(id: string): Promise<MyApplicationDetail> {
-  return apiGet<MyApplicationDetail>(`/users/me/applications/${id}`);
+  return apiGet<MyApplicationDetail>(`/users/me/applications/${pathId(id)}`);
 }
 
 /**
@@ -147,14 +158,14 @@ export interface InterviewLink {
  * emailed one — stops working. One invitation, one live link.
  */
 export function mintMyInterviewLink(inviteId: string): Promise<InterviewLink> {
-  return apiPost<InterviewLink>(`/users/me/interviews/${inviteId}/link`, {});
+  return apiPost<InterviewLink>(`/users/me/interviews/${pathId(inviteId)}/link`, {});
 }
 
 /** A freshly minted link to the candidate's own job simulation / portfolio
  *  task. Same rotate-on-mint rule as `mintMyInterviewLink`: any previously
  *  issued link, including the emailed one, stops working. */
 export function mintMyTaskLink(submissionId: string): Promise<{ url: string }> {
-  return apiPost<{ url: string }>(`/users/me/tasks/${submissionId}/link`, {});
+  return apiPost<{ url: string }>(`/users/me/tasks/${pathId(submissionId)}/link`, {});
 }
 
 /** A freshly minted link to an assessment this candidate was sent. */
@@ -181,7 +192,7 @@ export function mintMyExamLink(
   assignmentId: string,
   resumeAnyway = false,
 ): Promise<ExamLink> {
-  return apiPost<ExamLink>(`/users/me/exams/${assignmentId}/link`, {
+  return apiPost<ExamLink>(`/users/me/exams/${pathId(assignmentId)}/link`, {
     resume_anyway: resumeAnyway,
   });
 }

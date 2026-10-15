@@ -9,7 +9,17 @@
 import BankProvenanceChip from '@/components/bank/BankProvenanceChip';
 import { Suspense, lazy, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Trash2, Loader2, Lock, Code2, Library, Pencil, Sparkles, X } from '@/design/components/icons';
+import {
+  Plus,
+  Trash2,
+  Loader2,
+  Lock,
+  Code2,
+  Library,
+  Pencil,
+  Sparkles,
+  X,
+} from '@/design/components/icons';
 import {
   listSectionCodingQuestions,
   addSectionCodingQuestion,
@@ -24,22 +34,44 @@ import {
 import { saveCodingQuestionToBank, type SaveToBankInput } from '@/api/questionBanks';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import { Pill, StatusTag } from '@/design/components/primitives';
-import { Stagger, StaggerItem } from '@/design/components/Reveal';
+import { StatusTag } from '@/design/components/primitives';
+import { EmptyState } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { BankQuestionPicker } from '@/components/bank/BankQuestionPicker';
 import { SaveToBankButton } from '@/components/bank/SaveToBankButton';
+import { SourceBankUnverifiedBadge } from '@/components/bank/SourceBankUnverifiedBadge';
+import { GenerationError } from '@/components/bank/GenerationError';
+import { toGenerationFailure } from '@/lib/generationError';
 
 const CodeEditor = lazy(() => import('@/components/CodeEditor'));
 
 const LANG_LABEL: Record<string, string> = {
-  python: 'Python', javascript: 'JavaScript', typescript: 'TypeScript', java: 'Java',
-  cpp: 'C++', c: 'C', go: 'Go', csharp: 'C#', ruby: 'Ruby', rust: 'Rust',
+  python: 'Python',
+  javascript: 'JavaScript',
+  typescript: 'TypeScript',
+  java: 'Java',
+  cpp: 'C++',
+  c: 'C',
+  go: 'Go',
+  csharp: 'C#',
+  ruby: 'Ruby',
+  rust: 'Rust',
 };
 
-const inputCls =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 ' +
-  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none ' +
-  'focus:border-[var(--accent)] transition-colors';
+// Native <select>/<textarea> in the same look as the shared Input.
+const FIELD_CLS =
+  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground ' +
+  'placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] ' +
+  'focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 ' +
+  'focus-visible:ring-[var(--accent)]/30';
+const SELECT_CLS = cn(FIELD_CLS, 'h-11 py-0');
+const LABEL_CLS = 'mb-1.5 block text-[13px] font-semibold text-foreground';
+const CHIP =
+  'inline-flex min-h-10 items-center rounded-full border px-4 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+const ICON_BTN =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
 
 const emptyTest = (): CodingTestCase => ({
   stdin: '',
@@ -47,6 +79,136 @@ const emptyTest = (): CodingTestCase => ({
   is_sample: false,
   weight: 1,
 });
+
+/** The allowed-language chips, shared by the manual and AI composers. */
+function LanguageChips({
+  langs,
+  onToggle,
+}: {
+  langs: string[];
+  onToggle: (slug: string, on: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {CODING_LANGUAGES.map((slug) => {
+        const on = langs.includes(slug);
+        return (
+          <button
+            key={slug}
+            type="button"
+            onClick={() => onToggle(slug, !on)}
+            aria-pressed={on}
+            className={cn(
+              CHIP,
+              on
+                ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
+                : 'border-border text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {LANG_LABEL[slug]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The repeatable test-case rows: stdin, expected stdout, sample flag, weight. */
+function TestCasesEditor({
+  tests,
+  setTests,
+}: {
+  tests: CodingTestCase[];
+  setTests: React.Dispatch<React.SetStateAction<CodingTestCase[]>>;
+}) {
+  return (
+    <div>
+      <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[13px] font-semibold text-foreground">Test cases</span>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setTests((p) => [...p, emptyTest()])}
+        >
+          <Plus aria-hidden="true" /> Add test
+        </Button>
+      </div>
+      <div className="space-y-3">
+        {tests.map((tc, ti) => (
+          <div key={ti} className="rounded-[16px] border border-border bg-card p-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <textarea
+                className={cn(FIELD_CLS, 'min-h-[56px] resize-y font-mono text-[13px]')}
+                placeholder="stdin (input fed to the program)"
+                value={tc.stdin}
+                onChange={(e) =>
+                  setTests((p) => p.map((t, j) => (j === ti ? { ...t, stdin: e.target.value } : t)))
+                }
+                aria-label={`Test ${ti + 1} input`}
+              />
+              <textarea
+                className={cn(FIELD_CLS, 'min-h-[56px] resize-y font-mono text-[13px]')}
+                placeholder="expected stdout"
+                value={tc.expected_output}
+                onChange={(e) =>
+                  setTests((p) =>
+                    p.map((t, j) => (j === ti ? { ...t, expected_output: e.target.value } : t)),
+                  )
+                }
+                aria-label={`Test ${ti + 1} expected output`}
+              />
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-muted-foreground">
+              <label className="flex min-h-10 items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={tc.is_sample}
+                  onChange={(e) =>
+                    setTests((p) =>
+                      p.map((t, j) => (j === ti ? { ...t, is_sample: e.target.checked } : t)),
+                    )
+                  }
+                  className="h-4 w-4 accent-[var(--accent)]"
+                />
+                Sample (shown to candidate)
+              </label>
+              <label className="flex items-center gap-2">
+                Weight
+                <Input
+                  type="number"
+                  min={1}
+                  value={tc.weight}
+                  onChange={(e) =>
+                    setTests((p) =>
+                      p.map((t, j) =>
+                        j === ti ? { ...t, weight: Number(e.target.value) || 1 } : t,
+                      ),
+                    )
+                  }
+                  className="w-20"
+                  aria-label={`Test ${ti + 1} weight`}
+                />
+              </label>
+              {tests.length > 1 && (
+                <button
+                  type="button"
+                  aria-label="Remove test case"
+                  className={cn(ICON_BTN, 'ml-auto')}
+                  onClick={() => setTests((p) => p.filter((_, j) => j !== ti))}
+                >
+                  <Trash2 size={16} aria-hidden="true" />
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <p className="mt-1.5 text-[12.5px] text-muted-foreground">
+        Hidden (non-sample) tests grade the candidate without revealing the answer.
+      </p>
+    </div>
+  );
+}
 
 interface Props {
   examId: string;
@@ -58,10 +220,11 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
   const qc = useQueryClient();
   const qKey = ['hr', 'exam', examId, 'section', sectionId, 'coding-questions'];
 
-  const { data: questions = [] } = useQuery({
+  const questionsQuery = useQuery({
     queryKey: qKey,
     queryFn: () => listSectionCodingQuestions(examId, sectionId),
   });
+  const questions = questionsQuery.data ?? [];
 
   const refresh = () => void qc.invalidateQueries({ queryKey: qKey });
 
@@ -113,8 +276,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
       setAiPreview(res.questions);
       if (res.questions.length === 0) toast.error('The AI returned no usable problems.');
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'AI generation failed'),
+    // No toast: the failure is shown inline, with the server's own sentence.
   });
 
   const addGeneratedMut = useMutation({
@@ -194,79 +356,102 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
   }
 
   return (
-    <div className="mt-2 space-y-3">
+    <div className="mt-2 space-y-4">
       {/* Existing coding questions */}
-      {questions.length > 0 && (
-        <Stagger className="flex flex-col gap-2">
+      {questionsQuery.isLoading ? (
+        <div className="flex flex-col gap-2" aria-busy="true">
+          <span className="sr-only">Loading…</span>
+          <Skeleton className="h-20 rounded-[16px]" />
+          <Skeleton className="h-20 rounded-[16px]" />
+        </div>
+      ) : questionsQuery.isError ? (
+        <div role="alert" className="flex flex-wrap items-center gap-3">
+          <p className="text-[13.5px] text-[var(--ui-danger)]">
+            Could not load this section&apos;s coding questions.
+          </p>
+          <Button type="button" variant="outline" onClick={() => void questionsQuery.refetch()}>
+            Try again
+          </Button>
+        </div>
+      ) : questions.length === 0 ? (
+        <EmptyState
+          icon={Code2}
+          title="No coding questions in this section yet"
+          description={
+            locked
+              ? 'Questions are locked, so none can be added here.'
+              : 'Write one below, draft some with AI, or add approved ones from a bank.'
+          }
+        />
+      ) : (
+        <ul className="flex flex-col gap-3">
           {questions.map((q, i) => {
             const sampleN = q.test_cases.filter((t) => t.is_sample).length;
             return (
-              <StaggerItem key={q.id}>
-                <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3.5">
-                  <div className="flex items-start gap-3">
-                    <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[11px] text-[var(--ui-soft)]">
-                      {i + 1}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <p className="whitespace-pre-wrap text-[13px] font-medium leading-snug text-foreground">
-                          {q.prompt}{' '}
-                          <span className="font-normal text-muted-foreground">({q.points} pt)</span>
-                        </p>
-                        <BankProvenanceChip
-                          rootId={q.source_bank_root_id}
-                          version={q.source_bank_version}
-                        />
-                      </div>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                        {q.allowed_languages.map((l) => (
-                          <StatusTag key={l} tone="neutral" className="text-[10.5px]">
-                            {LANG_LABEL[l] ?? l}
-                          </StatusTag>
-                        ))}
-                        <span className="text-[11px] text-[var(--ui-faint)]">
-                          {q.test_cases.length} test{q.test_cases.length === 1 ? '' : 's'} ·{' '}
-                          {sampleN} sample
-                        </span>
-                      </div>
-                      {/* One control, not two: SaveToBankButton renders its
-                          own "Save to bank" link while closed. */}
-                      <SaveToBankButton
-                        className="mt-2"
-                        saving={saveToBankMut.isPending && savingToBankId === q.id}
-                        onSave={(body) => {
-                          setSavingToBankId(q.id);
-                          saveToBankMut.mutate({ qid: q.id, body });
-                        }}
+              <li
+                key={q.id}
+                className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-3.5"
+              >
+                <div className="flex items-start gap-3">
+                  <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[12px] text-[var(--ui-soft)]">
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <p className="whitespace-pre-wrap break-words text-[14px] font-medium leading-snug text-foreground">
+                        {q.prompt}{' '}
+                        <span className="font-normal text-muted-foreground">({q.points} pt)</span>
+                      </p>
+                      <BankProvenanceChip
+                        rootId={q.source_bank_root_id}
+                        version={q.source_bank_version}
                       />
+                      <SourceBankUnverifiedBadge bankQuestionId={q.source_bank_question_id} />
                     </div>
-                    {!locked && (
-                      <button
-                        type="button"
-                        aria-label="Delete question"
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] border border-border text-muted-foreground transition-colors hover:border-[rgba(230,113,79,0.4)] hover:text-[var(--ui-danger)]"
-                        onClick={() => delMut.mutate(q.id)}
-                      >
-                        <Trash2 size={13} aria-hidden="true" />
-                      </button>
-                    )}
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      {q.allowed_languages.map((l) => (
+                        <StatusTag key={l} tone="neutral" className="text-[12px]">
+                          {LANG_LABEL[l] ?? l}
+                        </StatusTag>
+                      ))}
+                      <span className="text-[12.5px] text-muted-foreground">
+                        {q.test_cases.length} test{q.test_cases.length === 1 ? '' : 's'} · {sampleN}{' '}
+                        sample
+                      </span>
+                    </div>
+                    {/* One control, not two: SaveToBankButton renders its
+                        own "Save to bank" link while closed. */}
+                    <SaveToBankButton
+                      className="mt-2"
+                      saving={saveToBankMut.isPending && savingToBankId === q.id}
+                      onSave={(body) => {
+                        setSavingToBankId(q.id);
+                        saveToBankMut.mutate({ qid: q.id, body });
+                      }}
+                    />
                   </div>
+                  {!locked && (
+                    <button
+                      type="button"
+                      aria-label="Delete question"
+                      className={ICON_BTN}
+                      onClick={() => delMut.mutate(q.id)}
+                    >
+                      <Trash2 size={16} aria-hidden="true" />
+                    </button>
+                  )}
                 </div>
-              </StaggerItem>
+              </li>
             );
           })}
-        </Stagger>
+        </ul>
       )}
 
       {/* PH4-D1 — add an approved coding question straight from a bank */}
       {!locked && (
-        <button
-          type="button"
-          onClick={() => setShowBankPicker(true)}
-          className="inline-flex items-center gap-1.5 rounded-[10px] border border-border px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:border-[var(--ui-line-strong)]"
-        >
-          <Library size={13} aria-hidden="true" /> Add from bank
-        </button>
+        <Button type="button" variant="outline" onClick={() => setShowBankPicker(true)}>
+          <Library aria-hidden="true" /> Add from bank
+        </Button>
       )}
       {showBankPicker && (
         <BankQuestionPicker
@@ -280,16 +465,17 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
       {/* Composer */}
       {locked ? (
-        <div className="flex items-center gap-2 rounded-[14px] border border-border bg-[rgba(28,29,31,0.3)] px-3.5 py-2.5 text-[12.5px] text-muted-foreground">
-          <Lock size={14} aria-hidden="true" /> Questions are locked — see the banner above.
+        <div className="flex items-center gap-2 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] px-4 py-3 text-[13.5px] text-muted-foreground">
+          <Lock size={15} className="shrink-0" aria-hidden="true" /> Questions are locked — see the
+          banner above.
         </div>
       ) : (
-        <div className="rounded-[14px] border border-dashed border-border bg-[rgba(28,29,31,0.3)] p-3.5">
+        <div className="rounded-[16px] border border-dashed border-[var(--ui-line-strong)] p-4">
           {/* Tab bar — mirrors the MCQ composer's Manual | AI switcher */}
           <div
             role="tablist"
             aria-label="How to add coding questions"
-            className="mb-3 flex gap-1 rounded-[10px] border border-border bg-[rgba(20,21,23,0.6)] p-1"
+            className="mb-4 flex gap-1 rounded-full bg-[var(--ui-inset-strong)] p-1"
           >
             {[
               { key: 'manual', label: 'Manual', icon: Pencil },
@@ -305,13 +491,13 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                   aria-selected={active}
                   onClick={() => setComposerTab(t.key as 'manual' | 'ai')}
                   className={cn(
-                    'flex flex-1 items-center justify-center gap-1.5 rounded-[8px] px-2 py-1.5 text-[12px] font-medium transition-colors',
+                    'flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-full px-3 text-[13.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
                     active
-                      ? 'bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]'
+                      ? 'bg-card text-foreground shadow-card'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  <Icon size={13} aria-hidden="true" />
+                  <Icon size={14} aria-hidden="true" />
                   {t.label}
                 </button>
               );
@@ -320,124 +506,109 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
           {/* AI generate */}
           {composerTab === 'ai' && (
-            <div className="space-y-3" aria-label="AI generate coding questions">
-              <input
-                className={cn(inputCls, 'text-[13px]')}
-                placeholder="Topic — e.g. arrays & strings, SQL joins, or Junior Python Developer"
-                value={aiTopic}
-                onChange={(e) => setAiTopic(e.target.value)}
-                aria-label="Topic"
-              />
-              <div className="flex flex-wrap items-end gap-2.5">
-                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                  Problems
-                  <input
-                    type="number"
-                    min={1}
-                    max={8}
-                    value={aiCount}
-                    onChange={(e) => setAiCount(e.target.value)}
-                    className="w-16 rounded-[7px] border border-border bg-secondary px-2 py-1.5 text-[12.5px] normal-case text-foreground focus:border-[var(--accent)] focus:outline-none"
-                    aria-label="Number of problems"
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                  Difficulty
-                  <select
-                    value={aiDifficulty}
-                    onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
-                    className="rounded-[7px] border border-border bg-secondary px-2 py-1.5 text-[12.5px] normal-case text-foreground focus:border-[var(--accent)] focus:outline-none"
-                  >
-                    <option value="easy">Easy</option>
-                    <option value="medium">Medium</option>
-                    <option value="hard">Hard</option>
-                    <option value="mixed">Mixed</option>
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                  Statement language
-                  <select
-                    value={aiLanguage}
-                    onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
-                    className="rounded-[7px] border border-border bg-secondary px-2 py-1.5 text-[12.5px] normal-case text-foreground focus:border-[var(--accent)] focus:outline-none"
-                  >
-                    <option value="en">English</option>
-                    <option value="hi">हिन्दी</option>
-                    <option value="te">తెలుగు</option>
-                  </select>
-                </label>
-                <Pill
+            <div className="space-y-5" aria-label="AI generate coding questions">
+              <div className="space-y-4">
+                <h3 className="text-[15px] font-bold text-foreground">What to generate</h3>
+                <Input
+                  placeholder="Topic — e.g. arrays & strings, SQL joins, or Junior Python Developer"
+                  value={aiTopic}
+                  onChange={(e) => setAiTopic(e.target.value)}
+                  aria-label="Topic"
+                />
+                <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-3">
+                  <label className="flex flex-col text-[13px] font-semibold text-foreground">
+                    <span className="mb-1.5">Problems</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={8}
+                      value={aiCount}
+                      onChange={(e) => setAiCount(e.target.value)}
+                      aria-label="Number of problems"
+                    />
+                  </label>
+                  <label className="flex flex-col text-[13px] font-semibold text-foreground">
+                    <span className="mb-1.5">Difficulty</span>
+                    <select
+                      value={aiDifficulty}
+                      onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
+                      className={cn(SELECT_CLS, 'font-normal')}
+                    >
+                      <option value="easy">Easy</option>
+                      <option value="medium">Medium</option>
+                      <option value="hard">Hard</option>
+                      <option value="mixed">Mixed</option>
+                    </select>
+                  </label>
+                  <label className="flex flex-col text-[13px] font-semibold text-foreground">
+                    <span className="mb-1.5">Statement language</span>
+                    <select
+                      value={aiLanguage}
+                      onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
+                      className={cn(SELECT_CLS, 'font-normal')}
+                    >
+                      <option value="en">English</option>
+                      <option value="hi">हिन्दी</option>
+                      <option value="te">తెలుగు</option>
+                    </select>
+                  </label>
+                </div>
+
+                {/* Allowed languages (shared with the manual composer) */}
+                <div>
+                  <span className={LABEL_CLS}>Candidates may solve in</span>
+                  <LanguageChips langs={langs} onToggle={toggleLang} />
+                </div>
+
+                <Button
                   type="button"
-                  variant="accent"
-                  className="gap-1 px-3 py-1.5 text-[12px]"
                   disabled={generateMut.isPending || !aiTopic.trim() || langs.length === 0}
                   aria-busy={generateMut.isPending}
                   onClick={() => generateMut.mutate()}
                 >
                   {generateMut.isPending ? (
-                    <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                    <Loader2 className="animate-spin" aria-hidden="true" />
                   ) : (
-                    <Sparkles size={13} aria-hidden="true" />
+                    <Sparkles aria-hidden="true" />
                   )}
                   {generateMut.isPending ? 'Generating…' : 'Generate'}
-                </Pill>
-              </div>
+                </Button>
 
-              {/* Allowed languages (shared with the manual composer) */}
-              <div>
-                <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                  Candidates may solve in
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {CODING_LANGUAGES.map((slug) => {
-                    const on = langs.includes(slug);
-                    return (
-                      <button
-                        key={slug}
-                        type="button"
-                        onClick={() => toggleLang(slug, !on)}
-                        className={cn(
-                          'rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors',
-                          on
-                            ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
-                            : 'border-border text-muted-foreground hover:text-foreground',
-                        )}
-                      >
-                        {LANG_LABEL[slug]}
-                      </button>
-                    );
-                  })}
-                </div>
+                {generateMut.isError ? (
+                  <GenerationError
+                    failure={toGenerationFailure(generateMut.error, 'AI generation failed.')}
+                    onRetry={() => generateMut.mutate()}
+                    retryDisabled={generateMut.isPending || !aiTopic.trim() || langs.length === 0}
+                  />
+                ) : null}
               </div>
 
               {/* Drafts preview */}
               {aiPreview.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[11.5px] text-muted-foreground">
-                    Review the drafts — check the sample cases and remove any problem you
-                    don&apos;t want. Each problem ships with hidden test cases used for grading.
+                <div className="space-y-3 border-t border-border pt-5">
+                  <h3 className="text-[15px] font-bold text-foreground">Review the drafts</h3>
+                  <p className="text-[13px] text-muted-foreground">
+                    Review the drafts — check the sample cases and remove any problem you don&apos;t
+                    want. Each problem ships with hidden test cases used for grading.
                   </p>
                   {aiPreview.map((q, i) => {
                     const sampleN = q.test_cases.filter((t) => t.is_sample).length;
                     const hiddenN = q.test_cases.length - sampleN;
                     return (
-                      <div
-                        key={i}
-                        className="rounded-[11px] border border-border bg-[rgba(28,29,31,0.5)] p-2.5"
-                      >
+                      <div key={i} className="rounded-[16px] border border-border bg-card p-3">
                         <div className="flex items-start gap-2.5">
-                          <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[11px] text-[var(--ui-soft)]">
+                          <span className="flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[var(--ui-inset)] font-mono text-[12px] text-[var(--ui-soft)]">
                             {i + 1}
                           </span>
                           <div className="min-w-0 flex-1">
-                            <p className="line-clamp-4 whitespace-pre-wrap text-[12.5px] leading-snug text-foreground">
+                            <p className="line-clamp-4 whitespace-pre-wrap break-words text-[13.5px] leading-snug text-foreground">
                               {q.prompt}
                             </p>
-                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--ui-faint)]">
-                              <StatusTag tone="neutral" className="text-[10.5px]">
+                            <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12.5px] text-muted-foreground">
+                              <StatusTag tone="neutral" className="text-[12px]">
                                 {sampleN} sample
                               </StatusTag>
-                              <StatusTag tone="neutral" className="text-[10.5px]">
+                              <StatusTag tone="neutral" className="text-[12px]">
                                 {hiddenN} hidden
                               </StatusTag>
                               {q.reference_solution ? (
@@ -450,40 +621,32 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                           <button
                             type="button"
                             aria-label={`Discard draft ${i + 1}`}
-                            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[6px] border border-border text-muted-foreground transition-colors hover:border-[rgba(230,113,79,0.4)] hover:text-[var(--ui-danger)]"
-                            onClick={() =>
-                              setAiPreview((p) => p.filter((_, j) => j !== i))
-                            }
+                            className={ICON_BTN}
+                            onClick={() => setAiPreview((p) => p.filter((_, j) => j !== i))}
                           >
-                            <X size={12} aria-hidden="true" />
+                            <X size={16} aria-hidden="true" />
                           </button>
                         </div>
                       </div>
                     );
                   })}
-                  <div className="flex items-center gap-2">
-                    <Pill
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
                       type="button"
-                      variant="accent"
-                      className="gap-1 px-3 py-1.5 text-[12px]"
                       disabled={addGeneratedMut.isPending}
                       aria-busy={addGeneratedMut.isPending}
                       onClick={() => addGeneratedMut.mutate()}
                     >
                       {addGeneratedMut.isPending ? (
-                        <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                        <Loader2 className="animate-spin" aria-hidden="true" />
                       ) : (
-                        <Plus size={13} aria-hidden="true" />
+                        <Plus aria-hidden="true" />
                       )}
                       Add {aiPreview.length} problem{aiPreview.length === 1 ? '' : 's'}
-                    </Pill>
-                    <button
-                      type="button"
-                      className="text-[12px] text-muted-foreground hover:text-foreground"
-                      onClick={() => setAiPreview([])}
-                    >
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={() => setAiPreview([])}>
                       Discard
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -492,193 +655,80 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
           {/* Manual */}
           {composerTab === 'manual' && (
-        <form
-          onSubmit={submit}
-          className="space-y-3"
-          aria-label="New coding question"
-        >
-          <textarea
-            className={cn(inputCls, 'resize-y text-[13px]')}
-            rows={3}
-            placeholder="Problem statement — describe the task, input format, and output format…"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            aria-label="Problem statement"
-          />
+            <form onSubmit={submit} className="space-y-5" aria-label="New coding question">
+              <div>
+                <h3 className="mb-3 text-[15px] font-bold text-foreground">Problem</h3>
+                <textarea
+                  className={cn(FIELD_CLS, 'resize-y')}
+                  rows={3}
+                  placeholder="Problem statement — describe the task, input format, and output format…"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  aria-label="Problem statement"
+                />
+              </div>
 
-          {/* Allowed languages */}
-          <div>
-            <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-              Allowed languages
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {CODING_LANGUAGES.map((slug) => {
-                const on = langs.includes(slug);
-                return (
-                  <button
-                    key={slug}
-                    type="button"
-                    onClick={() => toggleLang(slug, !on)}
-                    className={cn(
-                      'rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors',
-                      on
-                        ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
-                        : 'border-border text-muted-foreground hover:text-foreground',
-                    )}
-                  >
-                    {LANG_LABEL[slug]}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Starter code */}
-          <div>
-            <p className="mb-1.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-              Starter code (optional) — {LANG_LABEL[editorLang]}
-            </p>
-            <Suspense
-              fallback={
-                <div className="flex h-28 items-center justify-center rounded-[10px] border border-border bg-card">
-                  <Loader2 className="h-5 w-5 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
+              <div className="space-y-4 border-t border-border pt-5">
+                <h3 className="text-[15px] font-bold text-foreground">
+                  Languages and starter code
+                </h3>
+                {/* Allowed languages */}
+                <div>
+                  <span className={LABEL_CLS}>Allowed languages</span>
+                  <LanguageChips langs={langs} onToggle={toggleLang} />
                 </div>
-              }
-            >
-              <CodeEditor
-                language={editorLang}
-                value={starter}
-                onChange={setStarter}
-                minHeight={120}
-                placeholder="// pre-filled in the candidate's editor"
-                textareaId={`ce-section-${sectionId}`}
-              />
-            </Suspense>
-          </div>
 
-          {/* Test cases */}
-          <div>
-            <div className="mb-1.5 flex items-center justify-between">
-              <p className="text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">Test cases</p>
-              <button
-                type="button"
-                onClick={() => setTests((p) => [...p, emptyTest()])}
-                className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
-              >
-                <Plus size={12} aria-hidden="true" /> Add test
-              </button>
-            </div>
-            <div className="space-y-2">
-              {tests.map((tc, ti) => (
-                <div
-                  key={ti}
-                  className="rounded-[11px] border border-border bg-[rgba(28,29,31,0.5)] p-2.5"
+                {/* Starter code */}
+                <div>
+                  <span className={LABEL_CLS}>
+                    Starter code (optional) — {LANG_LABEL[editorLang]}
+                  </span>
+                  <Suspense fallback={<Skeleton className="h-28 rounded-[12px]" />}>
+                    <CodeEditor
+                      language={editorLang}
+                      value={starter}
+                      onChange={setStarter}
+                      minHeight={120}
+                      placeholder="// pre-filled in the candidate's editor"
+                      textareaId={`ce-section-${sectionId}`}
+                    />
+                  </Suspense>
+                </div>
+              </div>
+
+              <div className="space-y-3 border-t border-border pt-5">
+                <h3 className="text-[15px] font-bold text-foreground">Grading</h3>
+                <TestCasesEditor tests={tests} setTests={setTests} />
+              </div>
+
+              {/* Points + submit */}
+              <div className="flex flex-wrap items-center gap-3 border-t border-border pt-5">
+                <label className="flex items-center gap-2 text-[13.5px] font-semibold text-foreground">
+                  Points
+                  <Input
+                    type="number"
+                    min={1}
+                    value={points}
+                    onChange={(e) => setPoints(e.target.value)}
+                    className="w-24"
+                    aria-label="Points"
+                  />
+                </label>
+                <Button
+                  type="submit"
+                  className="ml-auto"
+                  disabled={addMut.isPending}
+                  aria-busy={addMut.isPending}
                 >
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <textarea
-                      className={cn(inputCls, 'min-h-[48px] resize-y font-mono text-[12px]')}
-                      placeholder="stdin"
-                      value={tc.stdin}
-                      onChange={(e) =>
-                        setTests((p) =>
-                          p.map((t, j) => (j === ti ? { ...t, stdin: e.target.value } : t)),
-                        )
-                      }
-                      aria-label={`Test ${ti + 1} input`}
-                    />
-                    <textarea
-                      className={cn(inputCls, 'min-h-[48px] resize-y font-mono text-[12px]')}
-                      placeholder="expected stdout"
-                      value={tc.expected_output}
-                      onChange={(e) =>
-                        setTests((p) =>
-                          p.map((t, j) =>
-                            j === ti ? { ...t, expected_output: e.target.value } : t,
-                          ),
-                        )
-                      }
-                      aria-label={`Test ${ti + 1} expected output`}
-                    />
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[11.5px] text-muted-foreground">
-                    <label className="flex items-center gap-1.5">
-                      <input
-                        type="checkbox"
-                        checked={tc.is_sample}
-                        onChange={(e) =>
-                          setTests((p) =>
-                            p.map((t, j) =>
-                              j === ti ? { ...t, is_sample: e.target.checked } : t,
-                            ),
-                          )
-                        }
-                        className="h-3.5 w-3.5 accent-[var(--accent)]"
-                      />
-                      Sample (shown to candidate)
-                    </label>
-                    <label className="flex items-center gap-1.5">
-                      Weight
-                      <input
-                        type="number"
-                        min={1}
-                        value={tc.weight}
-                        onChange={(e) =>
-                          setTests((p) =>
-                            p.map((t, j) =>
-                              j === ti ? { ...t, weight: Number(e.target.value) || 1 } : t,
-                            ),
-                          )
-                        }
-                        className="w-12 rounded-[6px] border border-border bg-secondary px-1.5 py-0.5 text-foreground focus:border-[var(--accent)] focus:outline-none"
-                        aria-label={`Test ${ti + 1} weight`}
-                      />
-                    </label>
-                    {tests.length > 1 && (
-                      <button
-                        type="button"
-                        aria-label="Remove test case"
-                        className="ml-auto text-muted-foreground transition-colors hover:text-[var(--ui-danger)]"
-                        onClick={() => setTests((p) => p.filter((_, j) => j !== ti))}
-                      >
-                        <Trash2 size={12} aria-hidden="true" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Points + submit */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Code2 size={15} className="text-[var(--ui-info)]" aria-hidden="true" />
-            <label className="ml-auto flex items-center gap-1.5 text-[12px] text-muted-foreground">
-              Points
-              <input
-                type="number"
-                min={1}
-                value={points}
-                onChange={(e) => setPoints(e.target.value)}
-                className="w-16 rounded-[7px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none"
-                aria-label="Points"
-              />
-            </label>
-            <Pill
-              type="submit"
-              variant="accent"
-              className="gap-1 px-3 py-1.5 text-[12px]"
-              disabled={addMut.isPending}
-              aria-busy={addMut.isPending}
-            >
-              {addMut.isPending ? (
-                <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-              ) : (
-                <Plus size={13} aria-hidden="true" />
-              )}
-              Add coding question
-            </Pill>
-          </div>
-        </form>
+                  {addMut.isPending ? (
+                    <Loader2 className="animate-spin" aria-hidden="true" />
+                  ) : (
+                    <Plus aria-hidden="true" />
+                  )}
+                  Add coding question
+                </Button>
+              </div>
+            </form>
           )}
         </div>
       )}

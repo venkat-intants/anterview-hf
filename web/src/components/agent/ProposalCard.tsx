@@ -14,6 +14,9 @@
 import { useState } from 'react';
 import { commitProposal, type CitationState, type Proposal } from '@/api/agent';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { AlertTriangle } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import CitationChips from './CitationChips';
 import EvidenceBanner from './EvidenceBanner';
@@ -81,83 +84,93 @@ export default function ProposalCard({
   const isDone = state === 'done';
 
   return (
-    <GlassCard className="p-4 space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 mb-1">
-            <StatusTag tone={isDone ? 'forest' : 'electric'}>
-              {isDone ? 'Completed' : KIND_LABEL[proposal.kind]}
-            </StatusTag>
-            {!isDone && <StatusTag tone="neutral">Needs your approval</StatusTag>}
+    <div role="group" aria-label={`Proposal: ${proposal.title}`}>
+      {/* A dashed accent border marks this as something drafted and not yet
+          done; it turns solid once the user has committed it. */}
+      <GlassCard
+        className={cn(
+          'space-y-3 p-4',
+          isDone ? 'border-[var(--ui-ok)]/40' : 'border-dashed border-[var(--ui-info)]/50',
+        )}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="mb-1.5 flex flex-wrap items-center gap-2">
+              <StatusTag tone={isDone ? 'forest' : 'electric'}>
+                {isDone ? 'Completed' : KIND_LABEL[proposal.kind]}
+              </StatusTag>
+              {!isDone && <StatusTag tone="neutral">Needs your approval</StatusTag>}
+            </div>
+            <h4 className="break-words text-[15px] font-bold text-foreground">{proposal.title}</h4>
+            <p className="mt-0.5 text-sm text-muted-foreground">{proposal.summary}</p>
           </div>
-          <h4 className="font-semibold text-[15px] truncate">{proposal.title}</h4>
-          <p className="text-sm opacity-70 mt-0.5">{proposal.summary}</p>
         </div>
-      </div>
 
-      {proposal.rationale && (
-        <p className="text-sm opacity-60 border-l-2 border-[var(--accent)] pl-3">
-          {proposal.rationale}
-        </p>
-      )}
+        {proposal.rationale && (
+          <p className="border-l-2 border-[var(--accent)] pl-3 text-sm text-muted-foreground">
+            {proposal.rationale}
+          </p>
+        )}
 
-      {citationState !== undefined && <EvidenceBanner citationState={citationState} />}
+        {citationState !== undefined && <EvidenceBanner citationState={citationState} />}
 
-      {/* The exact request that will be sent. Shown because "trust me" is not
+        {/* The exact request that will be sent. Shown because "trust me" is not
           a reviewable proposition — the user should be able to see what the
           button does before pressing it. */}
-      <details className="text-xs opacity-60">
-        <summary className="cursor-pointer select-none">What this will do</summary>
-        <pre className="mt-2 p-2 rounded bg-black/20 overflow-x-auto">
-          {proposal.commit.method} {proposal.commit.path}
-          {'\n'}
-          {JSON.stringify(proposal.commit.body, null, 2)}
-        </pre>
-      </details>
+        <details open className="text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none rounded py-1 font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
+            What this will do
+          </summary>
+          <pre
+            tabIndex={0}
+            className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-[10px] bg-[var(--ui-inset)] p-3 font-mono text-[12px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          >
+            {proposal.commit.method} {proposal.commit.path}
+            {'\n'}
+            {JSON.stringify(proposal.commit.body, null, 2)}
+          </pre>
+        </details>
 
-      <CitationChips citations={proposal.citations} variant="strip" />
+        <CitationChips citations={proposal.citations} variant="strip" />
 
-      {proposal.risk_note && !isDone && (
-        <div
-          className="text-sm rounded-lg px-3 py-2 flex gap-2"
-          style={{ background: 'rgba(255,183,100,0.12)', color: '#ffb764' }}
-          role="alert"
-        >
-          <span aria-hidden>⚠</span>
-          <span>{proposal.risk_note}</span>
-        </div>
-      )}
+        {proposal.risk_note && !isDone && (
+          <div
+            className="flex gap-2 rounded-[12px] bg-[var(--ui-warn-wash)] px-3 py-2 text-sm font-medium text-[var(--ui-warn)]"
+            role="alert"
+          >
+            <AlertTriangle size={16} className="mt-0.5 flex-none" aria-hidden="true" />
+            <span>{proposal.risk_note}</span>
+          </div>
+        )}
 
-      {state === 'failed' && (
-        <p className="text-sm" style={{ color: '#ff6b6b' }} role="alert">
-          {error}
-        </p>
-      )}
-
-      <div className="flex items-center gap-2 pt-1">
-        <button
-          type="button"
-          onClick={() => void handleCommit()}
-          disabled={state === 'committing' || isDone}
-          className="px-3 py-1.5 rounded-lg text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ background: 'var(--accent)', color: '#08131f' }}
-        >
-          {state === 'committing'
-            ? 'Working…'
-            : isDone
-              ? 'Done'
-              : proposal.commit.label}
-        </button>
         {state === 'failed' && (
-          <button
+          <p className="text-sm font-medium text-[var(--ui-danger)]" role="alert">
+            {error}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
+          {/* Nothing here takes focus on its own: the only way to commit is a
+              deliberate click or keypress on this button. */}
+          <Button
             type="button"
             onClick={() => void handleCommit()}
-            className="px-3 py-1.5 rounded-lg text-sm bg-white/5 hover:bg-white/10 transition"
+            disabled={state === 'committing' || isDone}
           >
-            Retry
-          </button>
-        )}
-      </div>
-    </GlassCard>
+            {state === 'committing' ? 'Working…' : isDone ? 'Done' : proposal.commit.label}
+          </Button>
+          {state === 'failed' && (
+            <Button type="button" variant="outline" onClick={() => void handleCommit()}>
+              Retry
+            </Button>
+          )}
+          {!isDone && state !== 'committing' && (
+            <span className="text-[12.5px] text-muted-foreground">
+              Nothing is sent until you click.
+            </span>
+          )}
+        </div>
+      </GlassCard>
+    </div>
   );
 }

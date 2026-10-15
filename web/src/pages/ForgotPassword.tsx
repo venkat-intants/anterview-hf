@@ -7,7 +7,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { forgotPassword } from '@/api/auth';
-import AuthLayout from '@/components/layout/AuthLayout';
+import AuthLayout, { FormError, StatusPanel } from '@/components/layout/AuthLayout';
+import { TEXT_LINK_CLASS } from '@/components/layout/authStyles';
 import { Field, Pill } from '@/design/components/primitives';
 import { Mail, CheckCircle2, ArrowLeft } from '@/design/components/icons';
 
@@ -35,36 +36,33 @@ export default function ForgotPassword() {
   if (mutation.isSuccess) {
     return (
       <AuthLayout>
-        <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[var(--ui-ok)]">
-            <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
-            Check your inbox
-          </h1>
-          <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
-            If an account exists for <span className="text-foreground">{email.trim()}</span>, we’ve sent
+        <StatusPanel
+          icon={CheckCircle2}
+          tone="ok"
+          title="Check your inbox"
+          actions={
+            <Link to="/login" className={TEXT_LINK_CLASS}>
+              <ArrowLeft size={14} aria-hidden="true" /> Back to sign in
+            </Link>
+          }
+        >
+          <p>
+            If an account exists for <span className="font-semibold text-foreground">{email.trim()}</span>, we’ve sent
             a password-reset link. It expires soon — check spam if you don’t see it.
           </p>
-          <Link
-            to="/login"
-            className="mt-6 inline-flex items-center gap-1.5 text-[13px] text-[var(--ui-info)] hover:underline underline-offset-4"
-          >
-            <ArrowLeft size={14} aria-hidden="true" /> Back to sign in
-          </Link>
-        </div>
+        </StatusPanel>
       </AuthLayout>
     );
   }
 
   return (
     <AuthLayout>
-      <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">Forgot password?</h1>
-      <p className="mt-1.5 text-[14px] text-muted-foreground">
+      <h1 className="text-[30px] font-bold leading-tight tracking-[-0.8px] text-foreground">Forgot password?</h1>
+      <p className="mt-2 text-[15px] text-muted-foreground">
         Enter your email and we’ll send you a secure link to reset it.
       </p>
 
-      <form onSubmit={onSubmit} noValidate aria-label="Forgot password form" className="mt-8 flex flex-col gap-4">
+      <form onSubmit={onSubmit} noValidate aria-label="Forgot password form" className="mt-8 flex flex-col gap-2">
         <Field
           id="fp-email"
           label="Email"
@@ -74,15 +72,13 @@ export default function ForgotPassword() {
           icon={<Mail size={15} aria-hidden="true" />}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'fp-error' : undefined}
         />
 
-        {error && (
-          <p role="alert" className="text-[12.5px] text-[var(--ui-danger)]">
-            {error}
-          </p>
-        )}
+        <FormError id="fp-error">{error}</FormError>
 
-        <Pill type="submit" disabled={mutation.isPending} aria-busy={mutation.isPending} className="w-full py-3">
+        <Pill type="submit" disabled={mutation.isPending} aria-busy={mutation.isPending} className="min-h-11 w-full py-3">
           {mutation.isPending ? 'Sending…' : 'Send reset link'}
         </Pill>
       </form>
@@ -91,7 +87,7 @@ export default function ForgotPassword() {
         Remembered it?{' '}
         <Link
           to="/login"
-          className="font-medium text-foreground hover:underline focus:outline-none focus:underline underline-offset-4"
+          className="inline-flex min-h-10 items-center rounded font-semibold text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           Back to sign in
         </Link>

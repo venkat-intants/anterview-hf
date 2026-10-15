@@ -37,9 +37,17 @@ import {
   type PublicChecklistItem,
   type PublicOffer as PublicOfferShape,
 } from '@/api/publicOffer';
-import { AuroraField } from '@/design/components/AuroraField';
-import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
-import LanguageSwitcher from '@/components/LanguageSwitcher';
+import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { DataList, Stepper } from '@/design/components/page';
+import type { DataItem } from '@/design/components/page';
+import { WhatNext } from '@/design/components/next-step';
+import { Button } from '@/components/ui/button';
+import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
+import {
+  documentsRemaining,
+  offerStep,
+  type OfferStepKey,
+} from '@/lib/offerSteps';
 import { AlertCircle, CheckCircle2, Loader2, Lock, Upload } from '@/design/components/icons';
 
 const MAX_DOC_BYTES = 10 * 1024 * 1024;
@@ -82,23 +90,15 @@ function money(offer: PublicOfferShape, locale: string): string | null {
 
 /* ── Shared page chrome ───────────────────────────────────────────────────── */
 
-function PageWrap({ children }: { children: React.ReactNode }) {
+const FIELD =
+  'mt-1.5 flex min-h-11 w-full rounded-[12px] border border-input bg-card px-3.5 py-2 text-base text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm';
+const FIELD_LABEL = 'block text-[13px] font-medium text-foreground';
+
+function PageWrap({ children, company }: { children: React.ReactNode; company?: string | null }) {
   return (
-    <div className="relative flex min-h-screen flex-col items-center bg-midnight px-6 py-12 font-sans text-foreground">
-      <AuroraField />
-      <div className="absolute left-6 top-6 z-10 flex items-center gap-2.5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)]">
-          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-        </span>
-        <span className="text-[15px] font-semibold text-foreground">AntHire</span>
-      </div>
-      <div className="absolute right-6 top-6 z-10">
-        <LanguageSwitcher />
-      </div>
-      <div className="relative z-10 mt-16 flex w-full max-w-[560px] flex-1 flex-col items-center gap-4">
-        {children}
-      </div>
-    </div>
+    <PublicFrame company={company} width="narrow" privateLink>
+      <div className="flex w-full flex-col gap-6">{children}</div>
+    </PublicFrame>
   );
 }
 
@@ -113,113 +113,134 @@ function CenteredMessage({
   desc: string;
   tone?: 'warn' | 'ok' | 'danger';
 }) {
-  const bg =
-    tone === 'ok'
-      ? 'bg-[rgba(39,201,63,0.15)] text-vivid-mint'
-      : tone === 'danger'
-        ? 'bg-[rgba(230,113,79,0.15)] text-ember'
-        : 'bg-[rgba(255,183,100,0.15)] text-amber-glow';
   return (
-    <div className="flex flex-col items-center gap-4 text-center">
-      <span className={`inline-flex h-12 w-12 items-center justify-center rounded-[9px] ${bg}`}>
-        {icon}
-      </span>
-      <h1 className="text-[20px] font-semibold text-foreground">{title}</h1>
-      <p className="max-w-sm text-[14px] text-muted-foreground">{desc}</p>
-    </div>
+    <PublicNotice
+      icon={icon}
+      tone={tone}
+      title={title}
+      description={desc}
+    />
   );
 }
 
 /* ── Offer summary ────────────────────────────────────────────────────────── */
 
-function OfferSummary({ offer, locale }: { offer: PublicOfferShape; locale: string }) {
+/** The offer's facts. With `hideTitle` it leaves out the tag and heading, for
+ *  when the page already names the offer (the collapsed "Offer accepted" row). */
+function OfferFacts({
+  offer,
+  locale,
+  hideTitle = false,
+}: {
+  offer: PublicOfferShape;
+  locale: string;
+  hideTitle?: boolean;
+}) {
   const { t } = useTranslation();
   const pay = money(offer, locale);
+  // Only the facts this offer actually states; an absent one is left out rather
+  // than shown as an empty row.
+  const facts: DataItem[] = [];
+  if (pay) {
+    facts.push({
+      label: t('offer.compensation'),
+      value: `${pay}${offer.pay_period ? ` / ${offer.pay_period}` : ''}`,
+    });
+  }
+  if (offer.employment_type) {
+    facts.push({
+      label: t('offer.employmentType'),
+      value: t(`offer.employmentTypes.${offer.employment_type}`),
+    });
+  }
+  if (offer.start_date) {
+    facts.push({
+      label: t('offer.startDate'),
+      value: new Date(offer.start_date).toLocaleDateString(locale, {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      }),
+    });
+  }
+  if (offer.location) facts.push({ label: t('offer.location'), value: offer.location });
+  if (offer.probation_months != null) {
+    facts.push({ label: t('offer.probation'), value: t('offer.months', { count: offer.probation_months }) });
+  }
+  if (offer.notice_period_days != null) {
+    facts.push({ label: t('offer.noticePeriod'), value: t('offer.days', { count: offer.notice_period_days }) });
+  }
   return (
-    <GlassCard className="w-full p-6">
-      <StatusTag tone="electric" dot>
-        {t('offer.title')}
-      </StatusTag>
-      <h1 className="mt-3 text-[24px] font-semibold tracking-[-0.6px] text-foreground">
-        {offer.job_title}
-      </h1>
-      {offer.company ? (
-        <p className="mt-1 text-[13.5px] text-muted-foreground">{offer.company}</p>
-      ) : null}
+    <>
+      {hideTitle ? null : (
+        <>
+          <StatusTag tone="electric" dot>
+            {t('offer.title')}
+          </StatusTag>
+          <h1 className="mt-3 text-[28px] font-bold leading-[1.15] tracking-[-0.6px] text-foreground">
+            {offer.job_title}
+          </h1>
+        </>
+      )}
+      {/* The company's name sits in the frame's header, so it is not repeated here. */}
 
-      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2.5 text-[13px]">
-        {pay ? (
-          <>
-            <dt className="text-muted-foreground">{t('offer.compensation')}</dt>
-            <dd className="text-foreground">
-              {pay}
-              {offer.pay_period ? ` / ${offer.pay_period}` : ''}
-            </dd>
-          </>
-        ) : null}
-        {offer.employment_type ? (
-          <>
-            <dt className="text-muted-foreground">{t('offer.employmentType')}</dt>
-            <dd className="text-foreground">
-              {t(`offer.employmentTypes.${offer.employment_type}`)}
-            </dd>
-          </>
-        ) : null}
-        {offer.start_date ? (
-          <>
-            <dt className="text-muted-foreground">{t('offer.startDate')}</dt>
-            <dd className="text-foreground">
-              {new Date(offer.start_date).toLocaleDateString(locale, {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              })}
-            </dd>
-          </>
-        ) : null}
-        {offer.location ? (
-          <>
-            <dt className="text-muted-foreground">{t('offer.location')}</dt>
-            <dd className="text-foreground">{offer.location}</dd>
-          </>
-        ) : null}
-        {offer.probation_months != null ? (
-          <>
-            <dt className="text-muted-foreground">{t('offer.probation')}</dt>
-            <dd className="text-foreground">
-              {t('offer.months', { count: offer.probation_months })}
-            </dd>
-          </>
-        ) : null}
-        {offer.notice_period_days != null ? (
-          <>
-            <dt className="text-muted-foreground">{t('offer.noticePeriod')}</dt>
-            <dd className="text-foreground">
-              {t('offer.days', { count: offer.notice_period_days })}
-            </dd>
-          </>
-        ) : null}
-      </dl>
+      <DataList
+        className={hideTitle ? undefined : 'mt-4 border-t border-border pt-4'}
+        columns={2}
+        items={facts}
+      />
 
       {offer.bonus ? (
-        <p className="mt-3 text-[13px] text-[var(--ui-soft)]">
+        <p className="mt-3 text-[14px] text-[var(--ui-soft)]">
           <span className="text-muted-foreground">{t('offer.bonus')}: </span>
           {offer.bonus}
         </p>
       ) : null}
       {offer.equity ? (
-        <p className="mt-1 text-[13px] text-[var(--ui-soft)]">
+        <p className="mt-1 text-[14px] text-[var(--ui-soft)]">
           <span className="text-muted-foreground">{t('offer.equity')}: </span>
           {offer.equity}
         </p>
       ) : null}
       {offer.benefits ? (
-        <p className="mt-3 text-[13px] leading-relaxed text-[var(--ui-soft)]">{offer.benefits}</p>
+        <p className="mt-3 text-[14px] leading-relaxed text-[var(--ui-soft)]">{offer.benefits}</p>
       ) : null}
       {offer.terms ? (
-        <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">{offer.terms}</p>
+        <p className="mt-4 rounded-[12px] bg-[var(--ui-inset-soft)] p-4 text-[13.5px] leading-relaxed text-muted-foreground">
+          {offer.terms}
+        </p>
       ) : null}
+    </>
+  );
+}
+
+/** The offer as a sent offer is read: one raised region holding the facts. */
+function OfferSummary({ offer, locale }: { offer: PublicOfferShape; locale: string }) {
+  return (
+    <GlassCard className="w-full p-5 sm:p-6">
+      <OfferFacts offer={offer} locale={locale} />
     </GlassCard>
+  );
+}
+
+/** Review -> Accept -> Joining documents. Real steps, driven by the offer's
+ *  status and `preboarding_completed_at`. The compact line (below `sm`) names
+ *  the step in words. Declined, expired and withdrawn offers draw no steps. */
+function OfferSteps({ current }: { current: OfferStepKey }) {
+  const { t } = useTranslation();
+  const steps: { key: OfferStepKey; label: string }[] = [
+    { key: 'review', label: t('public.offer.review') },
+    { key: 'accept', label: t('public.offer.accept') },
+    { key: 'documents', label: t('public.offer.documents') },
+  ];
+  const index = Math.max(0, steps.findIndex((s) => s.key === current));
+  return (
+    <Stepper
+      steps={steps}
+      current={current}
+      label={t('public.offer.stepsLabel')}
+      compactLabel={`${t('pageBlocks.stepOf', { n: index + 1, total: steps.length })} · ${steps[index].label}`}
+    />
   );
 }
 
@@ -272,22 +293,22 @@ function AnswerPanel({
   });
 
   return (
-    <GlassCard className="w-full p-6">
-      <h2 className="text-[16px] font-semibold text-foreground">
+    <GlassCard className="w-full p-5 sm:p-6">
+      <h2 className="text-[17px] font-bold text-foreground">
         {purpose === 'accept' ? t('offer.accept') : t('offer.decline')}
       </h2>
 
       {!codeSent ? (
         <>
-          <p className="mt-2 text-[13px] text-muted-foreground">
+          <p className="mt-2 text-[14px] text-muted-foreground">
             {purpose === 'accept' ? t('offer.acceptCodeIntro') : t('offer.declineCodeIntro')}
           </p>
-          <Pill className="mt-4" disabled={codeMut.isPending} onClick={() => codeMut.mutate()}>
+          <Button className="mt-4 h-12 w-full sm:w-auto" disabled={codeMut.isPending} onClick={() => codeMut.mutate()}>
             {codeMut.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : null}
             {t('offer.sendCode')}
-          </Pill>
+          </Button>
         </>
       ) : (
         <>
@@ -295,50 +316,52 @@ function AnswerPanel({
             {t('offer.codeSent', { minutes: minutes ?? '' })}
           </p>
           <div className="mt-4 flex flex-col gap-3">
-            <label className="block text-[12.5px] font-medium text-[var(--ui-soft)]">
+            <label className={FIELD_LABEL}>
               {t('offer.codeLabel')}
               <input
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
-                inputMode="numeric"
-                className="mt-1.5 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[14px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                inputMode="numeric" autoComplete="one-time-code"
+                className={FIELD}
               />
             </label>
             {purpose === 'accept' ? (
-              <label className="block text-[12.5px] font-medium text-[var(--ui-soft)]">
+              <label className={FIELD_LABEL}>
                 {t('offer.fullNameLabel')}
                 <input
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   placeholder={t('offer.fullNamePlaceholder')}
-                  className="mt-1.5 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[14px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                  className={FIELD}
                 />
               </label>
             ) : (
-              <label className="block text-[12.5px] font-medium text-[var(--ui-soft)]">
+              <label className={FIELD_LABEL}>
                 {t('offer.reasonLabel')}
                 <input
                   value={reason}
                   onChange={(e) => setReason(e.target.value)}
-                  className="mt-1.5 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[14px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                  className={FIELD}
                 />
               </label>
             )}
             {purpose === 'accept' ? (
               <>
                 {/* What accepting agrees to (DPDP): said here, before they do it. */}
-                <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+                <p className="text-[12.5px] leading-relaxed text-muted-foreground">
                   {t('offer.acceptConsent')}
                 </p>
                 {/* PH5 wave 1 follow-up (D) — the 90-day check-in is HR-recorded,
                     aggregate-only, and never a decision; disclosed here for the
                     same reason acceptConsent is: before they accept, not after. */}
-                <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+                <p className="text-[12.5px] leading-relaxed text-muted-foreground">
                   {t('offer.checkinNotice')}
                 </p>
               </>
             ) : null}
-            <Pill
+            <Button
+              className="h-12 w-full"
+              variant={purpose === 'accept' ? 'default' : 'destructive'}
               disabled={
                 answerMut.isPending ||
                 code.trim().length < 4 ||
@@ -350,13 +373,13 @@ function AnswerPanel({
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               ) : null}
               {purpose === 'accept' ? t('offer.confirmAccept') : t('offer.confirmDecline')}
-            </Pill>
+            </Button>
           </div>
         </>
       )}
 
       {error ? (
-        <p role="alert" className="mt-3 text-[13px] text-ember">
+        <p role="alert" className="mt-3 text-[13px] text-[var(--ui-danger)]">
           {error}
         </p>
       ) : null}
@@ -364,7 +387,7 @@ function AnswerPanel({
       <button
         type="button"
         onClick={onCancel}
-        className="mt-4 text-[12.5px] text-muted-foreground hover:text-foreground"
+        className="mt-4 inline-flex min-h-11 items-center text-[14px] font-medium text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       >
         {t('offer.cancel')}
       </button>
@@ -445,11 +468,11 @@ function DocumentRow({
   }
 
   return (
-    <li role="group" aria-label={item.name} className="rounded-[12px] border border-border p-4">
+    <li role="group" aria-label={item.name} className="py-4 first:pt-0 last:pb-0">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-[13.5px] font-medium text-foreground">{item.name}</p>
-          <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+          <p className="text-[14.5px] font-semibold text-foreground">{item.name}</p>
+          <p className="mt-0.5 text-[12.5px] text-muted-foreground">
             {item.mandatory ? t('offer.documents.mandatory') : t('offer.documents.optional')}
           </p>
         </div>
@@ -465,7 +488,7 @@ function DocumentRow({
           }
           dot
         >
-          {t(`offer.documents.state.${item.state}`)}
+          {t(`docs.state.${item.state}`)}
         </StatusTag>
       </div>
 
@@ -474,11 +497,11 @@ function DocumentRow({
       ) : null}
 
       {item.state === 'expired' ? (
-        <p className="mt-2 text-[12px] text-ember">{t('offer.documents.expiredHint')}</p>
+        <p className="mt-2 text-[13px] text-[var(--ui-danger)]">{t('offer.documents.expiredHint')}</p>
       ) : null}
 
       {aadhaarLike(item) ? (
-        <p className="mt-2 flex items-start gap-1.5 rounded-[8px] border border-[var(--ui-warn)]/30 bg-[rgba(255,183,100,0.08)] p-2.5 text-[12px] text-[var(--ui-soft)]">
+        <p className="mt-2 flex items-start gap-1.5 rounded-[12px] bg-[var(--ui-warn-wash)] p-2.5 text-[12px] text-[var(--ui-soft)]">
           <AlertCircle
             className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]"
             aria-hidden="true"
@@ -489,7 +512,7 @@ function DocumentRow({
 
       {item.document?.review_note &&
       (item.state === 'rejected' || item.state === 'replacement_requested') ? (
-        <p className="mt-2 rounded-[8px] border border-border bg-[var(--ui-inset-soft)] p-2.5 text-[12px] text-[var(--ui-soft)]">
+        <p className="mt-2 rounded-[12px] bg-[var(--ui-inset-soft)] p-2.5 text-[12.5px] text-[var(--ui-soft)]">
           {t('offer.documents.rejectedReason', { reason: item.document.review_note })}
         </p>
       ) : null}
@@ -497,18 +520,18 @@ function DocumentRow({
       {canUpload(item) ? (
         <div className="mt-3 flex flex-col gap-2">
           {item.requires_expiry ? (
-            <label className="block text-[12px] font-medium text-[var(--ui-soft)]">
+            <label className={FIELD_LABEL}>
               {t('offer.documents.expiryLabel')}
               <input
                 type="date"
                 value={expiresOn}
                 onChange={(e) => setExpiresOn(e.target.value)}
                 min={new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}
-                className="mt-1 block rounded-[8px] border border-border bg-secondary px-2.5 py-1.5 text-[12.5px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                className="mt-1 flex min-h-11 rounded-[12px] border border-input bg-card px-3 text-base text-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm"
               />
             </label>
           ) : null}
-          <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-[9px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12.5px] text-foreground hover:border-[var(--accent)]/60">
+          <label className="inline-flex min-h-11 w-fit cursor-pointer items-center gap-2 rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13.5px] font-medium text-foreground hover:bg-[var(--ui-inset)] focus-within:ring-2 focus-within:ring-[var(--accent)]">
             <Upload className="h-3.5 w-3.5" aria-hidden="true" />
             {uploadMut.isPending
               ? t('offer.documents.uploading')
@@ -523,11 +546,11 @@ function DocumentRow({
               onChange={(e) => pick(e.target.files?.[0] ?? null)}
             />
           </label>
-          <p className="text-[11px] text-[var(--ui-faint)]">{t('offer.documents.emailNotice')}</p>
+          <p className="text-[12px] text-[var(--ui-soft)]">{t('offer.documents.emailNotice')}</p>
         </div>
       ) : null}
 
-      {error ? <p className="mt-2 text-[12px] text-ember">{error}</p> : null}
+      {error ? <p className="mt-2 text-[13px] text-[var(--ui-danger)]">{error}</p> : null}
     </li>
   );
 }
@@ -594,9 +617,9 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
 
   if (offer.preboarding_completed_at) {
     return (
-      <GlassCard className="w-full p-6">
-        <h2 className="flex items-center gap-2 text-[16px] font-semibold text-foreground">
-          <CheckCircle2 className="h-4 w-4 text-vivid-mint" aria-hidden="true" />
+      <GlassCard className="w-full p-5 sm:p-6">
+        <h2 className="flex items-center gap-2 text-[17px] font-bold text-foreground">
+          <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
           {t('offer.documents.heading')}
         </h2>
         <p className="mt-2 text-[13px] text-muted-foreground">{t('offer.documents.complete')}</p>
@@ -604,38 +627,59 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
     );
   }
 
+  const remaining =
+    checklist.data && checklist.data.items.length > 0 ? documentsRemaining(checklist.data) : null;
+
   return (
-    <GlassCard className="w-full p-6">
-      <h2 className="text-[16px] font-semibold text-foreground">{t('offer.documents.heading')}</h2>
+    <GlassCard className="w-full p-5 sm:p-6">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className="text-[17px] font-bold text-foreground">{t('offer.documents.heading')}</h2>
+        {remaining ? (
+          <p data-testid="docs-remaining" className="text-[13.5px] font-semibold text-foreground">
+            {remaining.n > 0
+              ? t('docs.remaining', { n: remaining.n, total: remaining.total })
+              : t('docs.allVerified')}
+          </p>
+        ) : null}
+      </div>
       <p className="mt-1 text-[13px] text-muted-foreground">{t('offer.documents.intro')}</p>
+      {remaining && remaining.n > 0 && remaining.inReview > 0 ? (
+        <p className="mt-1 text-[12.5px] text-muted-foreground">
+          {t('docs.inReview', { count: remaining.inReview })}
+        </p>
+      ) : null}
 
       {!session ? (
         <div className="mt-4">
+          {/* Why a second code: documents have their own, separate from the
+              one that confirmed the offer. Said once, before they are asked. */}
+          <p className="mb-3 text-[13px] text-muted-foreground">{t('docs.whyAgain')}</p>
           {!codeSent ? (
             <>
               <p className="text-[13px] text-muted-foreground">{t('offer.documents.codeIntro')}</p>
-              <Pill className="mt-3" disabled={codeMut.isPending} onClick={() => codeMut.mutate()}>
+              <Button className="mt-3 h-12 w-full sm:w-auto" disabled={codeMut.isPending} onClick={() => codeMut.mutate()}>
                 {codeMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                 ) : null}
                 {t('offer.documents.getCode')}
-              </Pill>
+              </Button>
             </>
           ) : (
             <div className="flex flex-col gap-3">
               <p className="text-[13px] text-[var(--ui-ok)]">
                 {t('offer.codeSent', { minutes: minutes ?? '' })}
               </p>
-              <label className="block text-[12.5px] font-medium text-[var(--ui-soft)]">
+              <label className={FIELD_LABEL}>
                 {t('offer.codeLabel')}
                 <input
                   value={code}
                   onChange={(e) => setCode(e.target.value)}
-                  inputMode="numeric"
-                  className="mt-1.5 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[14px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                  inputMode="numeric" autoComplete="one-time-code"
+                  className={FIELD}
                 />
               </label>
-              <Pill
+              <Button
+                className="h-12 w-full sm:w-auto"
                 disabled={sessionMut.isPending || code.trim().length < 4}
                 onClick={() => sessionMut.mutate()}
               >
@@ -643,11 +687,11 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                 ) : null}
                 {t('offer.documents.openChecklist')}
-              </Pill>
+              </Button>
             </div>
           )}
           {error ? (
-            <p role="alert" className="mt-3 text-[13px] text-ember">
+            <p role="alert" className="mt-3 text-[13px] text-[var(--ui-danger)]">
               {error}
             </p>
           ) : null}
@@ -655,7 +699,7 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
       ) : checklist.isLoading ? (
         <p className="mt-4 text-[13px] text-muted-foreground">{t('offer.documents.loading')}</p>
       ) : checklist.isError ? (
-        <p className="mt-4 text-[13px] text-ember">
+        <p className="mt-4 text-[13px] text-[var(--ui-danger)]">
           {isUnauthorized(checklist.error)
             ? t('offer.documents.sessionExpired')
             : errText(checklist.error, t('offer.documents.loadError'))}
@@ -663,7 +707,7 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
       ) : (checklist.data?.items ?? []).length === 0 ? (
         <p className="mt-4 text-[13px] text-muted-foreground">{t('offer.documents.none')}</p>
       ) : (
-        <ul className="mt-4 flex flex-col gap-3">
+        <ul className="mt-4 divide-y divide-border">
           {(checklist.data?.items ?? []).map((item) => (
             <DocumentRow
               key={item.requirement_id}
@@ -687,32 +731,29 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
             </p>
           ) : asking ? (
             <div className="flex flex-col gap-2">
-              <p className="text-[12.5px] text-foreground">
+              <p className="text-[14px] text-foreground">
                 {t('offer.documents.withdrawConfirm')}
               </p>
               <div className="flex flex-wrap items-center gap-2">
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   disabled={withdrawMut.isPending}
                   onClick={() => withdrawMut.mutate()}
-                  className="rounded-[9px] border border-[var(--ui-danger)]/40 px-3 py-1.5 text-[12.5px] font-medium text-[var(--ui-danger)] disabled:opacity-40"
+                  className="h-11 border-[var(--ui-danger)] text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]"
                 >
                   {t('offer.documents.withdrawYes')}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setAsking(false)}
-                  className="text-[12.5px] text-muted-foreground hover:text-foreground"
-                >
+                </Button>
+                <Button type="button" variant="ghost" className="h-11" onClick={() => setAsking(false)}>
                   {t('offer.cancel')}
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
             <button
               type="button"
               onClick={() => setAsking(true)}
-              className="text-[12.5px] text-[var(--ui-info)] hover:underline"
+              className="inline-flex min-h-11 items-center text-[13.5px] font-medium text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {t('offer.documents.withdraw')}
             </button>
@@ -771,26 +812,47 @@ function OfferBody({
   }
 
   if (offer.status === 'accepted') {
+    const step = offerStep(offer.status, offer.preboarding_completed_at);
     return (
       <>
-        <OfferSummary offer={offer} locale={locale} />
-        <CenteredMessage
-          icon={<CheckCircle2 className="h-6 w-6" aria-hidden="true" />}
-          title={t('offer.acceptedTitle')}
-          desc={t('offer.acceptedDesc')}
-          tone="ok"
-        />
+        {step ? <OfferSteps current={step.current} /> : null}
+        {/* Once accepted the offer collapses to one row; the documents lead. */}
+        <section
+          aria-label={t('public.offer.accepted')}
+          className="rounded-card border border-border bg-card px-4 py-3"
+        >
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+            <h1 className="text-[17px] font-bold text-foreground">{t('public.offer.accepted')}</h1>
+            <p className="text-[14px] text-muted-foreground">{offer.job_title}</p>
+          </div>
+          <p className="mt-0.5 text-[13px] text-muted-foreground">{t('offer.acceptedDesc')}</p>
+          <details className="mt-2">
+            <summary className="inline-flex min-h-[44px] cursor-pointer items-center rounded-[6px] text-[13.5px] font-medium text-[var(--ui-info)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
+              {t('public.offer.viewOffer')}
+            </summary>
+            <div className="border-t border-border pt-4">
+              <OfferFacts offer={offer} locale={locale} hideTitle />
+            </div>
+          </details>
+        </section>
         <DocumentsSection token={token} offer={offer} />
+        <WhatNext title={t('public.whatNext')}>
+          <p>
+            {step?.complete ? t('public.offer.nextDone') : t('public.offer.nextDocs')}
+          </p>
+        </WhatNext>
       </>
     );
   }
 
   // 'sent' — the only state left, and the only one an answer can still change.
+  const sentStep = offerStep(offer.status, offer.preboarding_completed_at, answering);
   return (
     <>
+      {sentStep ? <OfferSteps current={sentStep.current} /> : null}
       <OfferSummary offer={offer} locale={locale} />
       {offer.expires_at ? (
-        <p className="text-[12.5px] text-muted-foreground">
+        <p className="text-[13.5px] font-medium text-[var(--ui-soft)]">
           {t('offer.expiresOn', { date: new Date(offer.expires_at).toLocaleDateString(locale) })}
         </p>
       ) : null}
@@ -804,13 +866,13 @@ function OfferBody({
           onCancel={() => setAnswering(null)}
         />
       ) : (
-        <div className="flex w-full flex-wrap gap-3">
-          <Pill className="flex-1" onClick={() => setAnswering('accept')}>
+        <div className="flex w-full flex-col gap-3 sm:flex-row">
+          <Button className="h-12 flex-1 text-[15px]" onClick={() => setAnswering('accept')}>
             {t('offer.accept')}
-          </Pill>
-          <Pill variant="outline" className="flex-1" onClick={() => setAnswering('decline')}>
+          </Button>
+          <Button variant="outline" className="h-12 flex-1 text-[15px]" onClick={() => setAnswering('decline')}>
             {t('offer.decline')}
-          </Pill>
+          </Button>
         </div>
       )}
     </>
@@ -844,7 +906,7 @@ export default function PublicOffer(): JSX.Element {
 
   if (locked) {
     return (
-      <PageWrap>
+      <PageWrap company={view.data?.company}>
         <CenteredMessage
           icon={<Lock className="h-6 w-6" aria-hidden="true" />}
           title={t('offer.lockedTitle')}
@@ -863,7 +925,9 @@ export default function PublicOffer(): JSX.Element {
           title={t('offer.networkTitle')}
           desc={t('offer.networkDesc')}
         />
-        <Pill onClick={() => void view.refetch()}>{t('offer.retry')}</Pill>
+        <Button className="h-12 w-full" onClick={() => void view.refetch()}>
+          {t('offer.retry')}
+        </Button>
       </PageWrap>
     );
   }
@@ -876,6 +940,7 @@ export default function PublicOffer(): JSX.Element {
           title={t('offer.invalidTitle')}
           desc={t('offer.invalidDesc')}
         />
+        <p className="text-center text-[13px] text-[var(--ui-soft)]">{t('publicFrame.requestNew')}</p>
       </PageWrap>
     );
   }
@@ -883,14 +948,16 @@ export default function PublicOffer(): JSX.Element {
   if (view.isLoading || !view.data) {
     return (
       <PageWrap>
-        <Loader2 className="h-8 w-8 animate-spin text-electric" aria-hidden="true" />
-        <p className="text-[13px] text-muted-foreground">{t('offer.loading')}</p>
+        <div role="status" className="flex flex-col items-center gap-3 py-16">
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" aria-hidden="true" />
+          <p className="text-[14px] text-muted-foreground">{t('offer.loading')}</p>
+        </div>
       </PageWrap>
     );
   }
 
   return (
-    <PageWrap>
+    <PageWrap company={view.data.company}>
       <OfferBody
         token={token}
         offer={view.data}

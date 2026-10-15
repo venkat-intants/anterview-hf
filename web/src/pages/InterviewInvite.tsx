@@ -11,10 +11,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useTranslation, Trans } from 'react-i18next';
-import { motion } from 'framer-motion';
 import {
   Loader2,
-  AlertCircle,
   CheckCircle2,
   Clock,
   Camera,
@@ -25,27 +23,21 @@ import {
 import { getInterviewInvite, redeemInterviewInvite } from '@/api/publicInterview';
 import { isTransientApiError } from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
-import { AuroraField } from '@/design/components/AuroraField';
-import { GlassCard, Pill, StatusTag, Avatar } from '@/design/components/primitives';
+import { StatusTag, Avatar } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
+import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
+import { PublicNext } from '@/components/PublicNext';
+import { useFragmentToken } from '@/hooks/useFragmentToken';
 
 const LANGUAGE_STORAGE_KEY = 'intants:interview-language';
 
-// ── Full-page dark centred layout ──
+// ── Shared public frame, one centred card ──
 function PageWrap({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-midnight px-6 py-12 font-sans text-foreground">
-      <AuroraField />
-      {/* Logo mark */}
-      <div className="absolute left-6 top-6 z-10 flex items-center gap-2.5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)]">
-          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-        </span>
-        <span className="text-[15px] font-semibold text-foreground">AntHire</span>
-      </div>
-      <div className="relative z-10 flex w-full max-w-[520px] flex-col items-center gap-4 text-center">
-        {children}
-      </div>
-    </div>
+    <PublicFrame width="narrow" privateLink step={t('public.step.invite')}>
+      {children}
+    </PublicFrame>
   );
 }
 
@@ -55,7 +47,7 @@ export default function InterviewInvite() {
   const { setAuth } = useAuth();
 
   // SECURITY: token from #fragment — never from a path param.
-  const [token] = useState(() => window.location.hash.replace(/^#/, '').trim());
+  const token = useFragmentToken();
   const [consent, setConsent] = useState(false);
 
   const inviteQ = useQuery({
@@ -94,18 +86,15 @@ export default function InterviewInvite() {
   if (token && inviteQ.isError && isTransientApiError(inviteQ.error)) {
     return (
       <PageWrap>
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(255,183,100,0.15)] text-amber-glow shadow-sm">
-          <AlertCircle className="h-6 w-6" aria-hidden="true" />
-        </span>
-        <h1 className="text-subheading font-semibold text-foreground">
-          {t('interviewInvite.networkTitle')}
-        </h1>
-        <p className="max-w-sm text-body-sm text-muted-foreground">
-          {t('interviewInvite.networkDesc')}
-        </p>
-        <Pill className="mt-2 px-8 py-2.5" onClick={() => void inviteQ.refetch()}>
-          {t('interviewInvite.retry')}
-        </Pill>
+        <PublicNotice
+          title={t('interviewInvite.networkTitle')}
+          description={t('interviewInvite.networkDesc')}
+          action={
+            <Button className="h-12 px-8" onClick={() => void inviteQ.refetch()}>
+              {t('interviewInvite.retry')}
+            </Button>
+          }
+        />
       </PageWrap>
     );
   }
@@ -114,15 +103,11 @@ export default function InterviewInvite() {
   if (!token || inviteQ.isError) {
     return (
       <PageWrap>
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(255,183,100,0.15)] text-amber-glow shadow-sm">
-          <AlertCircle className="h-6 w-6" aria-hidden="true" />
-        </span>
-        <h1 className="text-subheading font-semibold text-foreground">
-          {t('interviewInvite.invalidTitle')}
-        </h1>
-        <p className="max-w-sm text-body-sm text-muted-foreground">
-          {t('interviewInvite.invalidDesc')}
-        </p>
+        <PublicNotice
+          title={t('interviewInvite.invalidTitle')}
+          description={t('interviewInvite.invalidDesc')}
+          hint={t('publicFrame.requestNew')}
+        />
       </PageWrap>
     );
   }
@@ -131,8 +116,10 @@ export default function InterviewInvite() {
   if (inviteQ.isLoading || !inviteQ.data) {
     return (
       <PageWrap>
-        <Loader2 className="h-8 w-8 animate-spin text-electric" aria-hidden="true" />
-        <p className="text-body-sm text-muted-foreground">{t('interviewInvite.loading')}</p>
+        <div role="status" className="flex flex-col items-center gap-3 py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" aria-hidden="true" />
+          <p className="text-[14px] text-muted-foreground">{t('interviewInvite.loading')}</p>
+        </div>
       </PageWrap>
     );
   }
@@ -143,15 +130,13 @@ export default function InterviewInvite() {
   if (info.already_completed) {
     return (
       <PageWrap>
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(39,201,63,0.15)] text-vivid-mint shadow-sm">
-          <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
-        </span>
-        <h1 className="text-subheading font-semibold text-foreground">
-          {t('interviewInvite.completedTitle')}
-        </h1>
-        <p className="max-w-sm text-body-sm text-muted-foreground">
-          {t('interviewInvite.completedDesc')}
-        </p>
+        <PublicNotice
+          tone="ok"
+          icon={<CheckCircle2 size={22} aria-hidden="true" />}
+          title={t('interviewInvite.completedTitle')}
+          description={t('interviewInvite.completedDesc')}
+        />
+        <PublicNext className="mt-6">{t('public.invite.next')}</PublicNext>
       </PageWrap>
     );
   }
@@ -164,137 +149,121 @@ export default function InterviewInvite() {
   ];
 
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-midnight px-6 py-12 font-sans text-foreground">
-      <AuroraField />
-      <div className="relative z-10 w-full max-w-[520px]">
-        {/* Logo */}
-        <div className="mb-6 flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)]">
-            <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-          </span>
-          <span className="text-[15px] font-semibold text-foreground">AntHire</span>
+    <PageWrap>
+      <div className="rounded-card border border-border bg-card p-5 shadow-card sm:p-8">
+        {/* Status badge */}
+        <StatusTag tone="electric" dot>
+          {t('interviewInvite.title')}
+        </StatusTag>
+
+        {/* Role heading */}
+        <h1 className="mt-4 text-[28px] font-bold leading-[1.15] tracking-[-0.6px] text-foreground">
+          {info.job_title}
+        </h1>
+
+        {/* Token hint — keeps the magic-link UX without leaking company_name (not in API type) */}
+        <p className="mt-1 font-mono text-[12px] text-[var(--ui-soft)]">#{token.slice(0, 8)}</p>
+
+        {/* Personalised greeting (Trans keeps the bold-name interpolation) */}
+        <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
+          <Trans
+            i18nKey="interviewInvite.greeting"
+            values={{ name: info.applicant_name, role: info.job_title }}
+            components={{ 1: <span className="font-medium text-foreground" /> }}
+          />
+        </p>
+
+        {/* Avatar / AI interviewer card */}
+        <div className="mt-5 flex items-center gap-3 rounded-[12px] bg-[var(--ui-inset-soft)] p-4">
+          <Avatar initials="AI" gradient="var(--ui-grad-avatar)" size={40} />
+          <div className="min-w-0">
+            <div className="text-[15px] font-semibold text-foreground">
+              {t('interviewInvite.avatarName')}
+            </div>
+            {info.scheduled_at ? (
+              <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+                <Calendar size={13} aria-hidden="true" />
+                {t('interviewInvite.scheduledFor', {
+                  time: new Date(info.scheduled_at).toLocaleString(),
+                })}
+              </p>
+            ) : (
+              <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+                <Calendar size={13} aria-hidden="true" />
+                {t('interviewInvite.availableNow')}
+              </div>
+            )}
+          </div>
         </div>
 
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
-          <GlassCard className="p-8">
-            {/* Status badge */}
-            <StatusTag tone="electric" dot>
-              {t('interviewInvite.title')}
-            </StatusTag>
-
-            {/* Role heading */}
-            <h1 className="mt-4 text-[26px] font-semibold tracking-[-0.8px] text-foreground">
-              {info.job_title}
-            </h1>
-
-            {/* Token hint — keeps the magic-link UX without leaking company_name (not in API type) */}
-            <p className="mt-1 font-mono text-[11px] text-fog">
-              #{token.slice(0, 8)}
-            </p>
-
-            {/* Personalised greeting (Trans keeps the bold-name interpolation) */}
-            <p className="mt-3 text-body-sm text-muted-foreground">
-              <Trans
-                i18nKey="interviewInvite.greeting"
-                values={{ name: info.applicant_name, role: info.job_title }}
-                components={{ 1: <span className="font-medium text-foreground" /> }}
-              />
-            </p>
-
-            {/* Avatar / AI interviewer card */}
-            <div className="mt-5 flex items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4">
-              <Avatar
-                initials="AI"
-                gradient="linear-gradient(135deg,var(--accent),#a887dc)"
-                size={40}
-              />
-              <div>
-                <div className="text-[14px] font-medium text-foreground">
-                  {t('interviewInvite.avatarName')}
+        {/* Device readiness checklist */}
+        <div className="mt-5">
+          <div className="mb-2 text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--ui-soft)]">
+            {t('interviewInvite.beforeYouBegin')}
+          </div>
+          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+            {checks.map((c) => {
+              const Icon = c.icon;
+              return (
+                <div
+                  key={c.label}
+                  className="flex flex-col items-center gap-2 rounded-[12px] bg-[var(--ui-inset-soft)] p-3 text-center sm:p-4"
+                >
+                  <Icon size={20} className="text-[var(--ui-info)]" aria-hidden="true" />
+                  <span className="text-[12.5px] leading-snug text-foreground">{c.label}</span>
                 </div>
-                {info.scheduled_at ? (
-                  <p className="flex items-center gap-1.5 text-[12.5px] text-ash">
-                    <Calendar size={13} aria-hidden="true" />
-                    {t('interviewInvite.scheduledFor', {
-                      time: new Date(info.scheduled_at).toLocaleString(),
-                    })}
-                  </p>
-                ) : (
-                  <div className="flex items-center gap-1.5 text-[12.5px] text-ash">
-                    <Calendar size={13} aria-hidden="true" />
-                    {t('interviewInvite.availableNow')}
-                  </div>
-                )}
-              </div>
-            </div>
+              );
+            })}
+          </div>
+        </div>
 
-            {/* Device readiness checklist */}
-            <div className="mt-5">
-              <div className="mb-2 text-[12px] uppercase tracking-[0.5px] text-fog">
-                {t('interviewInvite.beforeYouBegin')}
-              </div>
-              <div className="grid grid-cols-3 gap-3">
-                {checks.map((c) => {
-                  const Icon = c.icon;
-                  return (
-                    <div
-                      key={c.label}
-                      className="flex flex-col items-center gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4 text-center"
-                    >
-                      <Icon size={18} className="text-electric" aria-hidden="true" />
-                      <span className="text-[12px] text-mist">{c.label}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
+        {/* DPDP consent checkbox — gates the Begin button */}
+        <label className="mt-5 flex cursor-pointer items-start gap-3 rounded-[12px] bg-[var(--ui-inset-soft)] p-4 text-[13.5px] leading-relaxed text-[var(--ui-soft)] focus-within:ring-2 focus-within:ring-[var(--accent)]">
+          <input
+            type="checkbox"
+            checked={consent}
+            onChange={(e) => setConsent(e.target.checked)}
+            className="mt-0.5 h-5 w-5 flex-none accent-[var(--accent)]"
+          />
+          <span className="flex items-start gap-1.5">
+            <ShieldCheck size={16} className="mt-0.5 flex-none text-[var(--ui-ok)]" aria-hidden="true" />
+            {t('interviewInvite.consent')}
+          </span>
+        </label>
 
-            {/* DPDP consent checkbox — gates the Begin button */}
-            <label className="mt-5 flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4 text-[12.5px] text-mist">
-              <input
-                type="checkbox"
-                checked={consent}
-                onChange={(e) => setConsent(e.target.checked)}
-                className="mt-0.5 h-4 w-4 flex-none accent-electric"
-              />
-              <span className="flex items-center gap-1.5">
-                <ShieldCheck size={14} className="flex-none text-vivid-mint" aria-hidden="true" />
-                {t('interviewInvite.consent')}
-              </span>
-            </label>
+        {/* Begin button — disabled until consent is given */}
+        <Button
+          className="mt-6 h-12 w-full text-[15px]"
+          disabled={!consent || redeemMut.isPending}
+          onClick={() => redeemMut.mutate()}
+        >
+          {redeemMut.isPending ? (
+            <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+          ) : null}
+          {t('interviewInvite.begin')}
+        </Button>
 
-            {/* Begin button — disabled until consent is given */}
-            <Pill
-              className="mt-6 w-full py-3.5"
-              disabled={!consent || redeemMut.isPending}
-              onClick={() => redeemMut.mutate()}
-            >
-              {redeemMut.isPending ? (
-                <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
-              ) : null}
-              {t('interviewInvite.begin')}
-            </Pill>
+        {redeemMut.isError && (
+          <p role="alert" className="mt-3 text-center text-[14px] text-[var(--ui-danger)]">
+            {redeemMut.error instanceof Error
+              ? redeemMut.error.message
+              : t('interviewInvite.startError')}
+          </p>
+        )}
 
-            {redeemMut.isError && (
-              <p className="mt-3 text-center text-body-sm text-ember">
-                {redeemMut.error instanceof Error
-                  ? redeemMut.error.message
-                  : t('interviewInvite.startError')}
-              </p>
-            )}
-
-            {/* Help footer — support contact only. This is an HR-issued invite
-                link; the applicant has NO account, so there is deliberately no
-                login/sign-in affordance anywhere in this flow. */}
-            <p className="mt-4 text-center text-[12px] text-fog">
-              {t('interviewInvite.needHelp')}{' '}
-              <a href="mailto:support@intants.com" className="text-electric hover:underline">
-                support@intants.com
-              </a>
-            </p>
-          </GlassCard>
-        </motion.div>
+        {/* Help footer — support contact only. This is an HR-issued invite
+            link; the applicant has NO account, so there is deliberately no
+            login/sign-in affordance anywhere in this flow. */}
+        <p className="mt-4 text-center text-[13px] text-[var(--ui-soft)]">
+          {t('interviewInvite.needHelp')}{' '}
+          <a
+            href="mailto:support@intants.com"
+            className="font-medium text-[var(--ui-info)] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          >
+            support@intants.com
+          </a>
+        </p>
       </div>
-    </div>
+    </PageWrap>
   );
 }

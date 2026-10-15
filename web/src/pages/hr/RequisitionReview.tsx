@@ -49,8 +49,10 @@ import {
 } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import { GlassCard, StatusTag } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
+import { StatusTag } from '@/design/components/primitives';
+import { Breadcrumbs, PageHeader, EmptyState, Page } from '@/design/components/page';
+import { buttonVariants } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const REVIEW_KEY = ['hr', 'requisitions', 'review'] as const;
 
@@ -157,244 +159,245 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
     // opening lists its source titles verbatim), so "the card containing this
     // text" is genuinely ambiguous here.
     <div data-testid={`opening-${req.id}`}>
-    <GlassCard className="p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Briefcase className="h-4 w-4 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
-            <span className="truncate text-[15px] font-semibold text-foreground">{req.title}</span>
-            {folded ? (
-              <StatusTag tone="amber" dot>
-                {req.distinct_source_titles} spellings folded
-              </StatusTag>
-            ) : (
-              <StatusTag tone="neutral">1 spelling</StatusTag>
-            )}
-          </div>
-          <div className="mt-1 text-[12.5px] text-muted-foreground">
-            {req.enrolments} candidate{req.enrolments === 1 ? '' : 's'} · {req.status}
+      <div className="rounded-card border border-border bg-card p-5 shadow-card">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Briefcase className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span className="truncate text-[15px] font-semibold text-foreground">
+                {req.title}
+              </span>
+              {folded ? (
+                <StatusTag tone="amber" dot>
+                  {req.distinct_source_titles} spellings folded
+                </StatusTag>
+              ) : (
+                <StatusTag tone="neutral">1 spelling</StatusTag>
+              )}
+            </div>
+            <div className="mt-1 text-[13px] text-muted-foreground">
+              {req.enrolments} candidate{req.enrolments === 1 ? '' : 's'} · {req.status}
+            </div>
           </div>
         </div>
-      </div>
 
-      {folded ? (
-        <div className="mt-4 rounded-[12px] border border-[var(--ui-warn)]/25 bg-[var(--ui-warn)]/[0.06] p-3">
-          <div className="flex items-start gap-2">
-            <AlertTriangle
-              className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]"
-              aria-hidden="true"
-            />
-            <div className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
-              These titles were treated as one opening. If two of them are really
-              different jobs, split them apart before building a workflow — a workflow
-              is configured per opening, so everyone here would otherwise be assessed
-              against the same rounds.
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {req.source_titles.map((t) => (
-                  <span
-                    key={t}
-                    className="rounded-pill border border-border bg-[var(--ui-inset)] px-2.5 py-1 text-[11.5px] text-[var(--ui-soft)]"
-                  >
-                    {t}
-                  </span>
-                ))}
+        {folded ? (
+          <div className="mt-4 rounded-[12px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn-wash)] p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle
+                className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]"
+                aria-hidden="true"
+              />
+              <div className="text-[13px] leading-relaxed text-foreground">
+                These titles were treated as one opening. If two of them are really different jobs,
+                split them apart before building a workflow — a workflow is configured per opening,
+                so everyone here would otherwise be assessed against the same rounds.
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {req.source_titles.map((t) => (
+                    <span
+                      key={t}
+                      className="rounded-pill border border-border bg-[var(--ui-inset)] px-2.5 py-1 text-[12px] text-[var(--ui-soft)]"
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {/* Confirm / rename */}
-      <div className="mt-4 flex flex-wrap items-end gap-2">
-        <div className="min-w-[220px] flex-1">
-          <label
-            htmlFor={`title-${req.id}`}
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
-            Opening title
-          </label>
-          <input
-            id={`title-${req.id}`}
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            className="w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground focus:border-[var(--accent)] focus:outline-none"
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => confirmMut.mutate()}
-          disabled={confirmMut.isPending || title.trim().length < 2}
-          className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-        >
-          {confirmMut.isPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          ) : title.trim() === req.title ? (
-            <Check className="h-4 w-4" aria-hidden="true" />
-          ) : (
-            <Pencil className="h-4 w-4" aria-hidden="true" />
-          )}
-          {title.trim() === req.title ? 'Looks right' : 'Rename & confirm'}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setSplitting((s) => !s);
-            setMerging(false);
-          }}
-          className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2.5 text-[13px] font-medium text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)] hover:text-foreground"
-        >
-          {splitting ? 'Cancel split' : 'Split apart'}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setMerging((m) => !m);
-            setSplitting(false);
-            setMergeConfirming(false);
-          }}
-          className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2.5 text-[13px] font-medium text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)] hover:text-foreground"
-        >
-          {merging ? 'Cancel merge' : 'Merge into another opening…'}
-        </button>
-      </div>
-
-      {/* Merge into another opening */}
-      {merging ? (
-        <div className="mt-4 rounded-[14px] border border-border bg-black/25 p-4">
-          <div className="text-[13px] font-medium text-foreground">
-            This is the same job as another opening
-          </div>
-          <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-            Everyone here moves into the opening you choose, keeping every assessment they
-            have. This opening is then closed and retired.
-          </p>
-          <label
-            htmlFor={`into-${req.id}`}
-            className="mb-1.5 mt-3 block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
-            Merge into
-          </label>
-          <select
-            id={`into-${req.id}`}
-            value={into}
-            onChange={(e) => {
-              setInto(e.target.value);
-              setMergeConfirming(false);
-            }}
-            className="w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground focus:border-[var(--accent)] focus:outline-none"
-          >
-            <option value="">Choose an opening…</option>
-            {targets.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.title} · {r.status}
-              </option>
-            ))}
-          </select>
-          {mergeConfirming ? (
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <span className="text-[12.5px] text-[var(--ui-soft)]">
-                Move {req.enrolments} candidate{req.enrolments === 1 ? '' : 's'} into “
-                {intoTitle}” and retire “{req.title}”?
-              </span>
-              <button
-                type="button"
-                onClick={() => mergeMut.mutate()}
-                disabled={mergeMut.isPending}
-                className="inline-flex items-center gap-1.5 rounded-[12px] bg-[var(--accent)] px-4 py-2 text-[13px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
-              >
-                {mergeMut.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                ) : null}
-                Yes, merge
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setMergeConfirming(true)}
-              disabled={!into}
-              className="mt-3 rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
-            >
-              Merge…
-            </button>
-          )}
-        </div>
-      ) : null}
-
-      {/* Split */}
-      {splitting ? (
-        <div className="mt-4 rounded-[14px] border border-border bg-black/25 p-4">
-          <div className="text-[13px] font-medium text-foreground">
-            Move some of these candidates into their own opening
-          </div>
-          <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-            Tick the candidates who do not belong here. They keep every assessment they
-            have — only which opening they sit in changes.
-          </p>
-
-          {candidates.isLoading ? (
-            <p className="mt-3 text-[12.5px] text-muted-foreground">Loading candidates…</p>
-          ) : null}
-          <div className="mt-3 flex max-h-[280px] flex-col gap-1.5 overflow-y-auto">
-            {candidates.data?.map((c) => (
-              <label
-                key={c.id}
-                className="flex cursor-pointer items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-[13px] text-[var(--ui-soft)] hover:bg-[var(--ui-inset)]"
-              >
-                <input
-                  type="checkbox"
-                  aria-label={c.full_name}
-                  checked={picked.includes(c.id)}
-                  onChange={() => toggle(c.id)}
-                  className="h-4 w-4 accent-[var(--accent)]"
-                />
-                <span className="text-foreground">{c.full_name}</span>
-                {/* The spelling they applied under: the best clue to which
-                    opening they meant. */}
-                <span className="ml-auto truncate text-[11.5px] text-[var(--ui-faint)]">
-                  applied as “{c.target_job_title}”
-                </span>
-              </label>
-            ))}
-          </div>
-
-          <div className="mt-3">
+        {/* Confirm / rename */}
+        <div className="mt-4 flex flex-wrap items-end gap-2">
+          <div className="min-w-[220px] flex-1">
             <label
-              htmlFor={`new-title-${req.id}`}
-              className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+              htmlFor={`title-${req.id}`}
+              className="mb-1.5 block text-[13px] font-semibold text-foreground"
             >
-              New opening title
+              Opening title
             </label>
             <input
-              id={`new-title-${req.id}`}
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="e.g. Senior Python Developer"
-              className="w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+              id={`title-${req.id}`}
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="w-full h-10 rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
             />
           </div>
-
-          {wouldEmpty ? (
-            <p className="mt-2 text-[12px] text-[var(--ui-warn)]">
-              That moves every candidate out — rename the opening instead of splitting it.
-            </p>
-          ) : null}
-
           <button
             type="button"
-            onClick={() => splitMut.mutate()}
-            disabled={!canSplit || splitMut.isPending}
-            className="mt-3 inline-flex items-center gap-1.5 rounded-[12px] bg-[var(--accent)] px-4 py-2.5 text-[13px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
+            onClick={() => confirmMut.mutate()}
+            disabled={confirmMut.isPending || title.trim().length < 2}
+            className={buttonVariants()}
           >
-            {splitMut.isPending ? (
+            {confirmMut.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            ) : null}
-            Create opening & move {picked.length || 0} candidate
-            {picked.length === 1 ? '' : 's'}
+            ) : title.trim() === req.title ? (
+              <Check className="h-4 w-4" aria-hidden="true" />
+            ) : (
+              <Pencil className="h-4 w-4" aria-hidden="true" />
+            )}
+            {title.trim() === req.title ? 'Looks right' : 'Rename & confirm'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSplitting((s) => !s);
+              setMerging(false);
+            }}
+            className={buttonVariants({ variant: 'outline' })}
+          >
+            {splitting ? 'Cancel split' : 'Split apart'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMerging((m) => !m);
+              setSplitting(false);
+              setMergeConfirming(false);
+            }}
+            className={buttonVariants({ variant: 'outline' })}
+          >
+            {merging ? 'Cancel merge' : 'Merge into another opening…'}
           </button>
         </div>
-      ) : null}
-    </GlassCard>
+
+        {/* Merge into another opening */}
+        {merging ? (
+          <div className="mt-4 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
+            <div className="text-[15px] font-bold text-foreground">
+              This is the same job as another opening
+            </div>
+            <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+              Everyone here moves into the opening you choose, keeping every assessment they have.
+              This opening is then closed and retired.
+            </p>
+            <label
+              htmlFor={`into-${req.id}`}
+              className="mb-1.5 mt-3 block text-[13px] font-semibold text-foreground"
+            >
+              Merge into
+            </label>
+            <select
+              id={`into-${req.id}`}
+              value={into}
+              onChange={(e) => {
+                setInto(e.target.value);
+                setMergeConfirming(false);
+              }}
+              className="w-full h-10 rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
+            >
+              <option value="">Choose an opening…</option>
+              {targets.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.title} · {r.status}
+                </option>
+              ))}
+            </select>
+            {mergeConfirming ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="text-[12.5px] text-[var(--ui-soft)]">
+                  Move {req.enrolments} candidate{req.enrolments === 1 ? '' : 's'} into “{intoTitle}
+                  ” and retire “{req.title}”?
+                </span>
+                <button
+                  type="button"
+                  onClick={() => mergeMut.mutate()}
+                  disabled={mergeMut.isPending}
+                  className={buttonVariants()}
+                >
+                  {mergeMut.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : null}
+                  Yes, merge
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setMergeConfirming(true)}
+                disabled={!into}
+                className={cn(buttonVariants({ variant: 'outline' }), 'mt-3')}
+              >
+                Merge…
+              </button>
+            )}
+          </div>
+        ) : null}
+
+        {/* Split */}
+        {splitting ? (
+          <div className="mt-4 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
+            <div className="text-[15px] font-bold text-foreground">
+              Move some of these candidates into their own opening
+            </div>
+            <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
+              Tick the candidates who do not belong here. They keep every assessment they have —
+              only which opening they sit in changes.
+            </p>
+
+            {candidates.isLoading ? (
+              <p className="mt-3 text-[13px] text-muted-foreground">Loading candidates…</p>
+            ) : null}
+            <div className="mt-3 flex max-h-[280px] flex-col gap-1.5 overflow-y-auto">
+              {candidates.data?.map((c) => (
+                <label
+                  key={c.id}
+                  className="flex cursor-pointer items-center gap-2.5 rounded-[10px] px-2 py-1.5 text-[13px] text-[var(--ui-soft)] hover:bg-[var(--ui-inset)]"
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={c.full_name}
+                    checked={picked.includes(c.id)}
+                    onChange={() => toggle(c.id)}
+                    className="h-4 w-4 accent-[var(--accent)]"
+                  />
+                  <span className="text-foreground">{c.full_name}</span>
+                  {/* The spelling they applied under: the best clue to which
+                    opening they meant. */}
+                  <span className="ml-auto truncate text-[12px] text-muted-foreground">
+                    applied as “{c.target_job_title}”
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            <div className="mt-3">
+              <label
+                htmlFor={`new-title-${req.id}`}
+                className="mb-1.5 block text-[13px] font-semibold text-foreground"
+              >
+                New opening title
+              </label>
+              <input
+                id={`new-title-${req.id}`}
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="e.g. Senior Python Developer"
+                className="w-full h-10 rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 placeholder:text-[var(--ui-faint)]"
+              />
+            </div>
+
+            {wouldEmpty ? (
+              <p role="alert" className="mt-2 text-[13px] text-[var(--ui-warn)]">
+                That moves every candidate out — rename the opening instead of splitting it.
+              </p>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => splitMut.mutate()}
+              disabled={!canSplit || splitMut.isPending}
+              className={cn(buttonVariants(), 'mt-3')}
+            >
+              {splitMut.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : null}
+              Create opening & move {picked.length || 0} candidate
+              {picked.length === 1 ? '' : 's'}
+            </button>
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -434,108 +437,109 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
 
   return (
     <div data-testid={`dupe-${dup.email}`}>
-    <GlassCard className="p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Users className="h-4 w-4 text-[var(--ui-faint)]" aria-hidden="true" />
-          <span className="text-[15px] font-semibold text-foreground">{dup.email}</span>
+      <div className="rounded-card border border-border bg-card p-5 shadow-card">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+            <span className="text-[15px] font-semibold text-foreground">{dup.email}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <StatusTag tone="lavender">{dup.applicant_ids.length} records</StatusTag>
+            {dup.has_history ? (
+              <StatusTag tone="amber" dot>
+                has assessment history
+              </StatusTag>
+            ) : null}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <StatusTag tone="lavender">{dup.applicant_ids.length} records</StatusTag>
-          {dup.has_history ? (
-            <StatusTag tone="amber" dot>
-              has assessment history
-            </StatusTag>
-          ) : null}
+
+        <div className="mt-1 text-[13px] text-muted-foreground">
+          {dup.enrolment_count} enrolment{dup.enrolment_count === 1 ? '' : 's'} across these records
         </div>
-      </div>
 
-      <div className="mt-1 text-[12.5px] text-muted-foreground">
-        {dup.enrolment_count} enrolment{dup.enrolment_count === 1 ? '' : 's'} across these records
-      </div>
+        <fieldset className="mt-4">
+          <legend className="mb-2 text-[13px] font-semibold text-foreground">
+            Keep which record?
+          </legend>
+          <div className="flex flex-col gap-1.5">
+            {dup.applicant_ids.map((id, i) => (
+              <label
+                key={id}
+                className={cn(
+                  'flex cursor-pointer items-center gap-2.5 rounded-[10px] border px-3 py-2 text-[13px]',
+                  id === survivor
+                    ? 'border-[var(--accent)] bg-[var(--ui-info-wash)] text-foreground'
+                    : 'border-border text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)]',
+                )}
+              >
+                <input
+                  type="radio"
+                  name={`survivor-${dup.email}`}
+                  value={id}
+                  checked={id === survivor}
+                  onChange={() => {
+                    setSurvivor(id);
+                    setConfirming(false);
+                  }}
+                  className="h-4 w-4 accent-[var(--accent)]"
+                />
+                <span className="font-medium">{dup.names[i] ?? 'Unnamed'}</span>
+                <span className="ml-auto font-mono text-[12px] text-muted-foreground">
+                  {id.slice(0, 8)}
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
 
-      <fieldset className="mt-4">
-        <legend className="mb-2 text-[12px] font-medium text-[var(--ui-soft)]">
-          Keep which record?
-        </legend>
-        <div className="flex flex-col gap-1.5">
-          {dup.applicant_ids.map((id, i) => (
-            <label
-              key={id}
-              className={cn(
-                'flex cursor-pointer items-center gap-2.5 rounded-[10px] border px-3 py-2 text-[13px]',
-                id === survivor
-                  ? 'border-[var(--accent)]/50 bg-[var(--accent)]/[0.08] text-foreground'
-                  : 'border-border text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)]',
-              )}
-            >
-              <input
-                type="radio"
-                name={`survivor-${dup.email}`}
-                value={id}
-                checked={id === survivor}
-                onChange={() => {
-                  setSurvivor(id);
-                  setConfirming(false);
-                }}
-                className="h-4 w-4 accent-[var(--accent)]"
+        {confirming ? (
+          <div className="mt-4 rounded-[12px] border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle
+                className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]"
+                aria-hidden="true"
               />
-              <span className="font-medium">{dup.names[i] ?? 'Unnamed'}</span>
-              <span className="ml-auto font-mono text-[11px] text-[var(--ui-faint)]">
-                {id.slice(0, 8)}
-              </span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
-
-      {confirming ? (
-        <div className="mt-4 rounded-[12px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger)]/[0.07] p-3">
-          <div className="flex items-start gap-2">
-            <AlertTriangle
-              className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]"
-              aria-hidden="true"
-            />
-            <div className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
-              This cannot be undone. Exam attempts, assignments and interview invites
-              from the other {absorbed.length} record{absorbed.length === 1 ? '' : 's'}{' '}
-              move onto <span className="font-medium text-foreground">{
-                dup.names[dup.applicant_ids.indexOf(survivor)] ?? 'the kept record'
-              }</span>, and those records are then retired.
+              <div className="text-[13px] leading-relaxed text-foreground">
+                This cannot be undone. Exam attempts, assignments and interview invites from the
+                other {absorbed.length} record{absorbed.length === 1 ? '' : 's'} move onto{' '}
+                <span className="font-medium text-foreground">
+                  {dup.names[dup.applicant_ids.indexOf(survivor)] ?? 'the kept record'}
+                </span>
+                , and those records are then retired.
+              </div>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button
+                type="button"
+                onClick={() => mergeMut.mutate()}
+                disabled={mergeMut.isPending || absorbed.length === 0}
+                className={buttonVariants({ variant: 'destructive' })}
+              >
+                {mergeMut.isPending ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : null}
+                Yes, merge permanently
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                className={buttonVariants({ variant: 'outline' })}
+              >
+                Cancel
+              </button>
             </div>
           </div>
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              onClick={() => mergeMut.mutate()}
-              disabled={mergeMut.isPending || absorbed.length === 0}
-              className="inline-flex items-center gap-1.5 rounded-[12px] bg-[var(--ui-danger)] px-4 py-2 text-[13px] font-medium text-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-            >
-              {mergeMut.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : null}
-              Yes, merge permanently
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirming(false)}
-              className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-[var(--ui-soft)] hover:text-foreground"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setConfirming(true)}
-          disabled={absorbed.length === 0}
-          className="mt-4 rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2.5 text-[13px] font-medium text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)] hover:text-foreground disabled:opacity-40"
-        >
-          Merge into one person…
-        </button>
-      )}
-    </GlassCard>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            disabled={absorbed.length === 0}
+            className={cn(buttonVariants({ variant: 'outline' }), 'mt-4')}
+          >
+            Merge into one person…
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -555,58 +559,57 @@ export default function RequisitionReview(): JSX.Element {
   const risky = reqs.filter((r) => r.distinct_source_titles > 1).length;
 
   return (
-    <div className="mx-auto w-full max-w-[1100px] px-4 py-8">
-      <Reveal>
-        <header className="mb-6">
-          <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
-            Review imported openings
-          </h1>
-          <p className="mt-1.5 max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">
-            Your existing applicants were sorted into openings by job title. Confirm what
-            that produced before you build workflows on top of it — a workflow belongs to
-            one opening, so the grouping decides who gets assessed together.
-          </p>
-          {(data?.unfiled_applicants ?? 0) > 0 ? (
-            // The backfill could not group anyone without a job title, and used
-            // to drop them silently. Counted here so they are not lost from view.
-            <p className="mt-3 flex items-start gap-1.5 text-[12.5px] text-[var(--ui-warn)]">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-              {data?.unfiled_applicants} applicant
-              {data?.unfiled_applicants === 1 ? ' is' : 's are'} not filed under any opening —
-              they had no job title to group by. Re-upload them against an opening to include
-              them.
-            </p>
-          ) : null}
-        </header>
-      </Reveal>
+    <Page width="default">
+      <PageHeader
+        breadcrumbs={
+          <Breadcrumbs
+            items={[
+              { label: 'Openings', to: '/hr/requisitions' },
+              { label: 'Review imported openings' },
+            ]}
+          />
+        }
+        title="Review imported openings"
+        description="Your existing applicants were sorted into openings by job title. Confirm what that produced before you build workflows on top of it — a workflow belongs to one opening, so the grouping decides who gets assessed together."
+      />
+      {(data?.unfiled_applicants ?? 0) > 0 ? (
+        // The backfill could not group anyone without a job title, and used
+        // to drop them silently. Counted here so they are not lost from view.
+        <p className="-mt-3 flex items-start gap-1.5 text-[13px] text-[var(--ui-warn)]">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {data?.unfiled_applicants} applicant
+          {data?.unfiled_applicants === 1 ? ' is' : 's are'} not filed under any opening — they had
+          no job title to group by. Re-upload them against an opening to include them.
+        </p>
+      ) : null}
 
       {isLoading ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading review…
+        <div className="flex flex-col gap-3" role="status">
+          <Skeleton className="h-40 rounded-card" />
+          <Skeleton className="h-40 rounded-card" />
+          <span className="sr-only">Loading review…</span>
         </div>
       ) : isError ? (
-        <GlassCard className="p-6">
-          <div className="flex items-center gap-2 text-[13.5px] text-[var(--ui-danger)]">
-            <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-            {errText(error, 'Could not load the review')}
-          </div>
-        </GlassCard>
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-card border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] p-6 text-[14px] text-[var(--ui-danger)]"
+        >
+          <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+          {errText(error, 'Could not load the review')}
+        </div>
       ) : reqs.length === 0 && dupes.length === 0 ? (
-        <GlassCard className="p-10 text-center">
-          <CheckCircle2 className="mx-auto h-8 w-8 text-[var(--ui-ok)]" aria-hidden="true" />
-          <div className="mt-3 text-[15px] font-medium text-foreground">Nothing left to review</div>
-          <p className="mx-auto mt-1.5 max-w-[46ch] text-[13px] text-muted-foreground">
-            Every imported opening has been confirmed and no duplicate applicant records
-            were found.
-          </p>
-        </GlassCard>
+        <EmptyState
+          size="page"
+          icon={CheckCircle2}
+          title="Nothing left to review"
+          description="Every imported opening has been confirmed and no duplicate applicant records were found."
+        />
       ) : (
         <div className="flex flex-col gap-8">
           {reqs.length > 0 ? (
             <section>
               <div className="mb-3 flex items-center gap-2">
-                <h2 className="text-[15px] font-semibold text-foreground">
+                <h2 className="text-[17px] font-bold text-foreground">
                   Openings to confirm ({reqs.length})
                 </h2>
                 {risky > 0 ? (
@@ -625,13 +628,13 @@ export default function RequisitionReview(): JSX.Element {
 
           {dupes.length > 0 ? (
             <section>
-              <h2 className="mb-1 text-[15px] font-semibold text-foreground">
+              <h2 className="mb-1 text-[17px] font-bold text-foreground">
                 People who look like duplicates ({dupes.length})
               </h2>
-              <p className="mb-3 flex items-start gap-1.5 text-[12.5px] text-muted-foreground">
+              <p className="mb-3 flex items-start gap-1.5 text-[13px] text-muted-foreground">
                 <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                Matched on email only. Nothing was merged automatically, because merging
-                moves someone&rsquo;s assessment history and cannot be reversed.
+                Matched on email only. Nothing was merged automatically, because merging moves
+                someone&rsquo;s assessment history and cannot be reversed.
               </p>
               <div className="flex flex-col gap-3">
                 {dupes.map((d) => (
@@ -642,6 +645,6 @@ export default function RequisitionReview(): JSX.Element {
           ) : null}
         </div>
       )}
-    </div>
+    </Page>
   );
 }

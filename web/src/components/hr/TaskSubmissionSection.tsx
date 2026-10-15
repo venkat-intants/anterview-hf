@@ -47,6 +47,13 @@ import { toast } from '@/lib/toast';
 import { ExternalLinkGate } from '@/components/interviewer/SubmissionPanel';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { Download, Loader2 } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+
+// The candidate drawer's section rhythm: a hairline, then a 15px bold title.
+const SECTION = 'mt-6 border-t border-border pt-5';
+const SECTION_TITLE = 'text-[15px] font-bold text-foreground';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -100,16 +107,22 @@ function TaskFileDownload({
         type="button"
         onClick={() => void open()}
         disabled={pending}
-        className="inline-flex items-center gap-1.5 text-[12px] text-[var(--ui-info)] hover:underline disabled:opacity-50"
+        className="-ml-1 inline-flex min-h-10 items-center gap-1.5 rounded-full px-1 text-[13px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
       >
         {pending ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
         ) : (
           <Download className="h-3.5 w-3.5" aria-hidden="true" />
         )}
-        {response.original_name ?? 'Download file'}
+        <span className="min-w-0 break-all text-left">
+          {response.original_name ?? 'Download file'}
+        </span>
       </button>
-      {error ? <p className="mt-1 text-[11px] text-ember">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="mt-1 text-[12px] text-[var(--ui-danger)]">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -132,24 +145,22 @@ function TaskItemAnswer({
   response: TaskResponseOut | undefined;
 }) {
   return (
-    <li className="rounded-[10px] border border-border p-3">
-      <p className="whitespace-pre-wrap text-[12.5px] font-medium text-foreground">
+    <li className="rounded-[12px] border border-border p-3">
+      <p className="whitespace-pre-wrap break-words text-[13px] font-medium text-foreground">
         {item.prompt}
       </p>
       <div className="mt-1.5">
         {!response ? (
-          <span className="text-[12px] text-[var(--ui-faint)]">No answer given.</span>
+          <span className="text-[12px] text-muted-foreground">No answer given.</span>
         ) : item.response_type === 'text' ? (
-          <p className="whitespace-pre-wrap text-[13px] text-[var(--ui-soft)]">
-            {response.text_value || (
-              <span className="text-[var(--ui-faint)]">No answer given.</span>
-            )}
+          <p className="whitespace-pre-wrap break-words text-[13px] text-[var(--ui-soft)]">
+            {response.text_value || <span className="text-muted-foreground">No answer given.</span>}
           </p>
         ) : item.response_type === 'link' ? (
           response.link_url ? (
             <ExternalLinkGate href={response.link_url} />
           ) : (
-            <span className="text-[12px] text-[var(--ui-faint)]">No link given.</span>
+            <span className="text-[12px] text-muted-foreground">No link given.</span>
           )
         ) : (
           <TaskFileDownload submissionId={submissionId} response={response} />
@@ -169,12 +180,12 @@ function TaskArtifactRow({
   artifact: TaskResponseOut;
 }) {
   return (
-    <li className="rounded-[10px] border border-border p-3">
+    <li className="rounded-[12px] border border-border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="min-w-0 truncate text-[12.5px] font-medium text-foreground">
+        <p className="min-w-0 truncate text-[13px] font-medium text-foreground">
           {artifact.title || artifact.original_name || artifact.link_url || 'Portfolio artifact'}
         </p>
-        <span className="shrink-0 text-[11px] text-[var(--ui-faint)]">
+        <span className="shrink-0 text-[12px] text-muted-foreground">
           {itemTypeLabel(artifact)}
         </span>
       </div>
@@ -216,7 +227,7 @@ function TaskSubmissionContent({
 
   return (
     <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3">
-      <p className="whitespace-pre-wrap text-[12.5px] text-[var(--ui-soft)]">{brief}</p>
+      <p className="whitespace-pre-wrap break-words text-[13px] text-[var(--ui-soft)]">{brief}</p>
 
       {items.length > 0 ? (
         <ul className="flex flex-col gap-2">
@@ -233,7 +244,7 @@ function TaskSubmissionContent({
 
       {kind === 'portfolio' ? (
         <div>
-          <h4 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ui-faint)]">
+          <h4 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
             Portfolio
           </h4>
           {artifacts.length === 0 ? (
@@ -281,7 +292,8 @@ export default function TaskSubmissionSection({
   });
 
   const withdrawMut = useMutation({
-    mutationFn: (submissionId: string) => withdrawTaskSubmission(submissionId, reasons[submissionId]),
+    mutationFn: (submissionId: string) =>
+      withdrawTaskSubmission(submissionId, reasons[submissionId]),
     onSuccess: (_data, submissionId) => {
       toast.success('Submission withdrawn');
       setReasons((prev) => {
@@ -302,20 +314,25 @@ export default function TaskSubmissionSection({
   const rows = list.data ?? [];
 
   return (
-    <div className="mt-5">
-      <h3 className="text-[13px] font-medium text-foreground">Job simulation / portfolio</h3>
+    <div className={SECTION}>
+      <h3 className={SECTION_TITLE}>Job simulation / portfolio</h3>
 
       {list.isLoading ? (
-        <p className="mt-2 flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          Loading…
-        </p>
+        <div className="mt-2 flex flex-col gap-2" aria-busy="true">
+          <span className="sr-only">Loading…</span>
+          <Skeleton className="h-20 rounded-[16px]" />
+        </div>
       ) : list.isError ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">
-          Could not load this application&rsquo;s task submissions.
-        </p>
+        <div role="alert" className="mt-2 flex flex-wrap items-center gap-3">
+          <p className="text-[13px] text-muted-foreground">
+            Could not load this application&rsquo;s task submissions.
+          </p>
+          <Button type="button" variant="outline" onClick={() => void list.refetch()}>
+            Try again
+          </Button>
+        </div>
       ) : (
-        <div className="mt-2 flex flex-col gap-2">
+        <div className="mt-2 flex flex-col gap-3">
           {rows.map((row) => {
             // The live row for this (enrolment, round) — PH4-D4 gap 4 fix:
             // `is_current` from the server, never list position.
@@ -324,9 +341,9 @@ export default function TaskSubmissionSection({
             // still stands — the same gate the server applies to `brief`.
             const readable = row.status === 'submitted' && !row.consent_withdrawn && row.brief;
             return (
-              <div key={row.id} className="rounded-[10px] border border-border p-3">
+              <div key={row.id} className="rounded-[16px] border border-border p-3.5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[12.5px] font-medium text-foreground">
+                  <span className="min-w-0 text-[13px] font-medium text-foreground">
                     {row.round_title ?? 'Task round'}
                     {row.attempt_no > 1 ? ` · attempt ${row.attempt_no}` : ''}
                   </span>
@@ -346,7 +363,7 @@ export default function TaskSubmissionSection({
                     </StatusTag>
                   </div>
                 </div>
-                <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[11.5px] text-muted-foreground">
+                <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-[12px] text-muted-foreground">
                   {row.due_at ? <div>Due {formatDate(row.due_at)}</div> : null}
                   {row.started_at ? <div>Started {formatDate(row.started_at)}</div> : null}
                   {row.submitted_at ? <div>Submitted {formatDate(row.submitted_at)}</div> : null}
@@ -363,10 +380,10 @@ export default function TaskSubmissionSection({
                 ) : null}
 
                 {isCurrent ? (
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
                     {OPEN_STATUSES.includes(row.status) ? (
                       <>
-                        <input
+                        <Input
                           type="text"
                           value={reasons[row.id] ?? ''}
                           onChange={(e) =>
@@ -374,26 +391,27 @@ export default function TaskSubmissionSection({
                           }
                           placeholder="Withdraw reason (optional)"
                           aria-label={`Withdraw reason for ${row.round_title ?? 'this task'}`}
-                          className="w-full max-w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+                          className="max-w-[260px] flex-1 basis-40"
                         />
-                        <button
+                        <Button
                           type="button"
+                          variant="outline"
                           onClick={() => withdrawMut.mutate(row.id)}
                           disabled={withdrawMut.isPending}
-                          className="rounded-[8px] border border-[var(--ui-danger)]/30 px-2.5 py-1 text-[11.5px] text-[var(--ui-danger)] hover:bg-[var(--ui-danger)]/10 disabled:opacity-40"
+                          className="border-[var(--ui-danger)]/40 text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]"
                         >
                           Withdraw
-                        </button>
+                        </Button>
                       </>
                     ) : (
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
                         onClick={() => reissueMut.mutate(row.id)}
                         disabled={reissueMut.isPending}
-                        className="rounded-[8px] border border-[var(--ui-line-strong)] px-2.5 py-1 text-[11.5px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
                       >
                         {reissueMut.isPending ? 'Issuing…' : 'Re-issue a link'}
-                      </button>
+                      </Button>
                     )}
                   </div>
                 ) : null}

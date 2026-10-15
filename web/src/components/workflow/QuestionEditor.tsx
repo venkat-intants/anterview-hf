@@ -29,12 +29,18 @@ import {
   type QuestionKind,
 } from '@/api/questions';
 import { toast } from '@/lib/toast';
-import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
+import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { EmptyState } from '@/design/components/page';
 import { AlertCircle, Lock, Plus, Trash2 } from '@/design/components/icons';
-import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 
-const INPUT =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-50';
+// Native <select>/<textarea> in the same look as the shared Input.
+const FIELD =
+  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-50';
+const SELECT = `${FIELD} h-11 py-0`;
+const LABEL = 'mb-1.5 block text-[13px] font-semibold text-foreground';
 
 const KIND_ORDER: QuestionKind[] = [
   'short_text',
@@ -57,8 +63,7 @@ function QuestionRow({
   const [prompt, setPrompt] = useState(question.prompt);
 
   const save = useMutation({
-    mutationFn: (body: Parameters<typeof updateQuestion>[1]) =>
-      updateQuestion(question.id, body),
+    mutationFn: (body: Parameters<typeof updateQuestion>[1]) => updateQuestion(question.id, body),
     onSuccess: (list) => client.setQueryData(['questions', requisitionId], list),
     onError: (err: unknown) =>
       toast.error(err instanceof Error ? err.message : 'Could not save that change.'),
@@ -76,7 +81,7 @@ function QuestionRow({
     <GlassCard className="p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <input
+          <Input
             aria-label={`Question ${question.position + 1}`}
             value={prompt}
             disabled={frozen}
@@ -86,21 +91,20 @@ function QuestionRow({
                 save.mutate({ prompt: prompt.trim() });
               }
             }}
-            className={INPUT}
           />
-          <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
             <StatusTag tone="neutral">{QUESTION_KIND_LABELS[question.kind]}</StatusTag>
-            <label className="flex cursor-pointer items-center gap-1.5 text-[12.5px] text-[var(--ui-soft)]">
+            <label className="flex min-h-10 cursor-pointer items-center gap-2 text-[13px] text-[var(--ui-soft)]">
               <input
                 type="checkbox"
                 checked={question.required}
                 onChange={(e) => save.mutate({ required: e.target.checked })}
-                className="h-3.5 w-3.5 accent-[var(--accent)]"
+                className="h-4 w-4 accent-[var(--accent)]"
               />
               Required
             </label>
             {question.options.length > 0 ? (
-              <span className="text-[12px] text-[var(--ui-faint)]">
+              <span className="min-w-0 break-words text-[12.5px] text-muted-foreground">
                 {question.options.join(' · ')}
               </span>
             ) : null}
@@ -111,21 +115,21 @@ function QuestionRow({
           type="button"
           onClick={() => retire.mutate()}
           aria-label={`Retire question: ${question.prompt}`}
-          className="shrink-0 rounded-[8px] p-1.5 text-muted-foreground hover:text-[var(--ui-danger)] focus:outline-none focus-visible:text-[var(--ui-danger)]"
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
-          <Trash2 size={15} aria-hidden="true" />
+          <Trash2 size={16} aria-hidden="true" />
         </button>
       </div>
 
       {/* Said before anyone types, not after they press save. */}
       {frozen ? (
-        <p className="mt-3 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-2.5 text-[12px] leading-relaxed text-muted-foreground">
+        <p className="mt-3 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3 text-[13px] leading-relaxed text-muted-foreground">
           <Lock size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span>
             {question.answer_count}{' '}
-            {question.answer_count === 1 ? 'applicant has' : 'applicants have'} answered
-            this, so the wording is fixed — changing it would rewrite what they were
-            asked. Retire it and add a new one instead; their answers stay on file.
+            {question.answer_count === 1 ? 'applicant has' : 'applicants have'} answered this, so
+            the wording is fixed — changing it would rewrite what they were asked. Retire it and add
+            a new one instead; their answers stay on file.
           </span>
         </p>
       ) : null}
@@ -175,9 +179,9 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex w-full items-center justify-center gap-1.5 rounded-[14px] border border-dashed border-[var(--ui-line-strong)] py-3 text-[13px] text-[var(--ui-soft)] hover:text-foreground focus:outline-none focus-visible:border-[var(--accent)]"
+        className="flex min-h-12 w-full items-center justify-center gap-1.5 rounded-[16px] border border-dashed border-[var(--ui-line-strong)] py-3 text-[14px] font-semibold text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       >
-        <Plus size={14} aria-hidden="true" />
+        <Plus size={16} aria-hidden="true" />
         Add a question
       </button>
     );
@@ -185,35 +189,28 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
 
   return (
     <GlassCard className="p-4">
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-4">
         <div>
-          <label
-            htmlFor="new-question-prompt"
-            className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
-          >
+          <label htmlFor="new-question-prompt" className={LABEL}>
             What do you want to ask?
           </label>
-          <input
+          <Input
             id="new-question-prompt"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="Why are you interested in this role?"
-            className={INPUT}
           />
         </div>
 
         <div>
-          <label
-            htmlFor="new-question-kind"
-            className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
-          >
+          <label htmlFor="new-question-kind" className={LABEL}>
             Answer type
           </label>
           <select
             id="new-question-kind"
             value={kind}
             onChange={(e) => setKind(e.target.value as QuestionKind)}
-            className={INPUT}
+            className={SELECT}
           >
             {KIND_ORDER.map((k) => (
               <option key={k} value={k}>
@@ -224,17 +221,14 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
           {/* The type cannot be changed later, answered or not — changing it
               would reinterpret every answer given. Said here, where it is
               still a free choice. */}
-          <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+          <p className="mt-1.5 text-[12.5px] text-muted-foreground">
             This cannot be changed later, so pick the one that fits.
           </p>
         </div>
 
         {needsOptions ? (
           <div>
-            <label
-              htmlFor="new-question-options"
-              className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
-            >
+            <label htmlFor="new-question-options" className={LABEL}>
               Options, one per line
             </label>
             <textarea
@@ -243,42 +237,36 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
               value={optionText}
               onChange={(e) => setOptionText(e.target.value)}
               placeholder={'Immediate\n30 days\n60 days'}
-              className={INPUT}
+              className={FIELD}
             />
             {!optionsOk ? (
-              <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-danger)]">
-                <AlertCircle size={12} aria-hidden="true" />
-                A choice needs at least two options.
+              <p
+                role="alert"
+                className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-[var(--ui-danger)]"
+              >
+                <AlertCircle size={13} aria-hidden="true" />A choice needs at least two options.
               </p>
             ) : null}
           </div>
         ) : null}
 
-        <label className="flex cursor-pointer items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
+        <label className="flex min-h-10 cursor-pointer items-center gap-2 text-[14px] text-[var(--ui-soft)]">
           <input
             type="checkbox"
             checked={required}
             onChange={(e) => setRequired(e.target.checked)}
-            className="h-3.5 w-3.5 accent-[var(--accent)]"
+            className="h-4 w-4 accent-[var(--accent)]"
           />
           Applicants must answer this
         </label>
 
-        <div className="flex items-center gap-2">
-          <Pill
-            onClick={() => add.mutate()}
-            disabled={!canAdd || add.isPending}
-            className="px-4 py-2"
-          >
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" onClick={() => add.mutate()} disabled={!canAdd || add.isPending}>
             {add.isPending ? 'Adding…' : 'Add question'}
-          </Pill>
-          <button
-            type="button"
-            onClick={() => setOpen(false)}
-            className="text-[12.5px] text-muted-foreground hover:text-foreground"
-          >
+          </Button>
+          <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
             Cancel
-          </button>
+          </Button>
         </div>
       </div>
     </GlassCard>
@@ -298,19 +286,38 @@ export default function QuestionEditor({ requisitionId }: { requisitionId: strin
   return (
     <section aria-labelledby="questions-heading" className="flex flex-col gap-3">
       <div>
-        <h2 id="questions-heading" className="text-[16px] font-semibold text-foreground">
+        <h2
+          id="questions-heading"
+          className="text-[17px] font-bold tracking-[-0.2px] text-foreground"
+        >
           Application questions
         </h2>
         <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-muted-foreground">
-          Asked on the application form, after the CV. Leave this empty and the form
-          simply does not have a questions step.
+          Asked on the application form, after the CV. Leave this empty and the form simply does not
+          have a questions step.
         </p>
       </div>
 
+      {questions.isLoading ? (
+        <div className="flex flex-col gap-3" aria-busy="true">
+          <span className="sr-only">Loading…</span>
+          <Skeleton className="h-24 rounded-card" />
+        </div>
+      ) : null}
+
       {questions.isError ? (
-        <p className="text-[13px] text-muted-foreground">
-          Could not load the questions. Refresh to try again.
-        </p>
+        <div role="alert" className="flex flex-wrap items-center gap-3">
+          <p className="text-[13.5px] text-muted-foreground">
+            Could not load the questions. Refresh to try again.
+          </p>
+          <Button type="button" variant="outline" onClick={() => void questions.refetch()}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+
+      {!questions.isLoading && !questions.isError && items.length === 0 ? (
+        <EmptyState title="No questions yet" description="Add the first one below." />
       ) : null}
 
       {items.map((q) => (
@@ -320,7 +327,7 @@ export default function QuestionEditor({ requisitionId }: { requisitionId: strin
       <NewQuestion requisitionId={requisitionId} />
 
       {items.length > 0 ? (
-        <p className={cn('text-[12px] text-[var(--ui-faint)]')}>
+        <p className="text-[12.5px] text-muted-foreground">
           {items.filter((q) => q.required).length} of {items.length} required.
         </p>
       ) : null}

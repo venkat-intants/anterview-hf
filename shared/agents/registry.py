@@ -161,6 +161,11 @@ class ToolRegistry:
             )
         if spec.name in self._tools:
             raise ValueError(f"tool {spec.name!r} is already registered")
+        # Re-validate the access matrix HERE, not only at construction: this is the
+        # moment a tool becomes callable, and a spec produced by
+        # ``model_copy(update=...)`` (or built with ``model_construct``) never ran
+        # ToolSpec's validators.
+        spec.assert_roles_match_data_class()
         self._tools[spec.name] = (spec, handler)
 
     def tool(

@@ -32,12 +32,20 @@ from fastapi import (
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import exam_locks, question_import
+from app import bank_coding_generation, exam_locks, question_import
 from app import question_banks as svc
+from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep, SuperAdminCtxDep
-from app.exam_ai_client import ExamGenerationError, generate_exam_questions_remote
-from app.routers.hr_coding import CodingQuestionIn, TestCaseIn
+from app.exam_ai_client import (
+    ExamGenerationError,
+    client_message,
+    generate_coding_questions_remote,
+    generate_exam_questions_remote,
+)
+from app.execution import SUPPORTED_LANGUAGES
+from app.rate_limit import enforce_company_budget
+from app.routers.hr_coding import CodingQuestionIn, TestCaseIn, _normalize_languages
 from app.routers.hr_exams import QuestionIn
 
 hr_router = APIRouter(prefix="/hr", tags=["question-banks"])
@@ -52,6 +60,33 @@ LANGUAGES = {"en", "hi", "te"}
 async def _fail(db: AsyncSession, exc: svc.QuestionBankError) -> HTTPException:
     await db.rollback()
     return HTTPException(status_code=exc.status_code, detail=exc.detail)
+
+
+async def _charge_generation_budget(company_id: uuid.UUID, *, bucket: str, per_minute: int) -> None:
+    """Spend one request of the company's per-minute AND daily AI-generation
+    budget. Called only once the request is valid and the bank is the caller's
+    — i.e. when it is about to reach the model — so a 404 or a 422 costs
+    nothing. FAILS CLOSED (503) if Redis is down: this is an LLM bill.
+
+    The daily counter is shared by MCQ and coding generation. The minute
+    counter is charged first so a request refused for speed does not also
+    burn the day.
+    """
+    await enforce_company_budget(
+        company_id, bucket=bucket, limit=per_minute, fail_closed=True,
+    )
+    await enforce_company_budget(
+        company_id, bucket="bank_generate_daily", limit=settings.bank_generate_daily_per_company,
+        window_seconds=86_400, fail_closed=True,
+        detail="Your company has reached today's limit for AI question generation. Try again tomorrow.",
+    )
+
+
+def _generation_failed(exc: ExamGenerationError, *, what: str) -> HTTPException:
+    """The 502 for a failed generator call. The browser gets a fixed sentence;
+    the specifics (origin, upstream body) are already in the log."""
+    log.warning("hr.bank.generation_failed", what=what, error_type=type(exc).__name__)
+    return HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=client_message(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +248,84 @@ class BankGenerateIn(BaseModel):
         return v
 
 
+class BankGenerateCodingIn(BaseModel):
+    """What the AI needs in order to draft CODING questions for a bank.
+
+    The same fields as :class:`BankGenerateIn` plus the programming languages
+    candidates may solve in. ``language`` is the language the STATEMENT is
+    written in (EN / HI / TE), exactly as for MCQs; ``allowed_languages`` are
+    the programming languages. There is no company or bank in the body — both
+    come from the session and the path.
+
+    ``num_questions`` stops at five. It is the cost bound, not a UI nicety: the
+    generator budgets ``4096 + 2048 * n`` output tokens, so one request is at
+    most 14,336.
+    """
+
+    topic: str = Field(min_length=2, max_length=200)
+    num_questions: int = Field(
+        default=2, ge=1, le=bank_coding_generation.MAX_GENERATED_QUESTIONS
+    )
+    difficulty: str = Field(default="medium")
+    language: str = Field(default="en")
+    allowed_languages: list[str] = Field(min_length=1, max_length=len(SUPPORTED_LANGUAGES))
+    job_title: str = Field(default="", max_length=200)
+    experience_level: str = Field(default="mid", max_length=40)
+
+    @field_validator("difficulty")
+    @classmethod
+    def _difficulty(cls, v: str) -> str:
+        if v not in DIFFICULTIES:
+            raise ValueError("difficulty must be easy, medium or hard")
+        return v
+
+    @field_validator("language")
+    @classmethod
+    def _language(cls, v: str) -> str:
+        if v not in LANGUAGES:
+            raise ValueError("language must be en, hi or te")
+        return v
+
+    @field_validator("allowed_languages")
+    @classmethod
+    def _allowed_languages(cls, v: list[str]) -> list[str]:
+        return _normalize_languages(v)
+
+
+class BankGenerateCodingOut(BaseModel):
+    """A preview — nothing is saved.
+
+    ``questions`` can be posted to ``questions/bulk`` unchanged. ``dropped``
+    names every item the generator returned that this service refused, and
+    ``not_returned`` counts the ones the generator did not return at all (it
+    discards its own unusable items before answering, and does not say why).
+    The UI shows all of it rather than a bare count.
+    """
+
+    questions: list[bank_coding_generation.GeneratedBankCodingQuestion]
+    requested: int
+    dropped: list[bank_coding_generation.DroppedItem]
+    not_returned: int
+
+
+class BankOut(BaseModel):
+    """One bank with its counts — exactly what ``svc._bank_summary`` returns.
+
+    ``counts`` is keyed by status and includes every status; ``kind_counts`` is
+    keyed by kind (``mcq`` / ``coding``, always both present) and excludes
+    retired versions. Timestamps are ISO-8601 strings, as they always were.
+    """
+
+    id: str
+    name: str
+    description: str | None
+    counts: dict[str, int]
+    kind_counts: dict[str, int]
+    used_in_exams: int
+    created_at: str
+    updated_at: str
+
+
 class BankImportOut(BaseModel):
     """Partial success, reported per row.
 
@@ -291,13 +404,13 @@ def _question_kwargs(body: BankQuestionIn) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # HR — banks
 # ---------------------------------------------------------------------------
-@hr_router.get("/question-banks")
+@hr_router.get("/question-banks", response_model=list[BankOut])
 async def list_question_banks(ctx: HrCtxDep, db: DbSessionDep) -> list[dict[str, Any]]:
     _uid, company_id = ctx
     return await svc.list_banks(db, company_id=company_id)
 
 
-@hr_router.post("/question-banks", status_code=201)
+@hr_router.post("/question-banks", status_code=201, response_model=BankOut)
 async def create_question_bank(body: BankCreateIn, ctx: HrCtxDep, db: DbSessionDep) -> dict[str, Any]:
     uid, company_id = ctx
     try:
@@ -310,7 +423,7 @@ async def create_question_bank(body: BankCreateIn, ctx: HrCtxDep, db: DbSessionD
     return await svc.bank_summary(db, company_id=company_id, bank_id=bank_id)
 
 
-@hr_router.patch("/question-banks/{bank_id}")
+@hr_router.patch("/question-banks/{bank_id}", response_model=BankOut)
 async def update_question_bank(
     bank_id: uuid.UUID, body: BankUpdateIn, ctx: HrCtxDep, db: DbSessionDep
 ) -> dict[str, Any]:
@@ -408,6 +521,13 @@ async def generate_bank_questions(
         await svc.bank_summary(db, company_id=company_id, bank_id=bank_id)
     except svc.QuestionBankError as exc:
         raise await _fail(db, exc) from exc
+    # Reads are done and the request is valid: charge the budget, then hand the
+    # connection back BEFORE the model call (up to ~100 s). The session is not
+    # used again below.
+    await _charge_generation_budget(
+        company_id, bucket="bank_generate_mcq", per_minute=settings.bank_generate_mcq_per_minute,
+    )
+    await db.rollback()
     try:
         raw = await generate_exam_questions_remote(
             topic=body.topic, num_questions=body.num_questions, difficulty=body.difficulty,
@@ -415,9 +535,7 @@ async def generate_bank_questions(
             experience_level=body.experience_level,
         )
     except ExamGenerationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"AI generation failed: {exc}"
-        ) from exc
+        raise _generation_failed(exc, what="mcq") from exc
     out: list[dict[str, Any]] = []
     for q in raw:
         opts = [str(o) for o in (q.get("options") or [])]
@@ -438,6 +556,86 @@ async def generate_bank_questions(
         )
     log.info("hr.bank.questions.generated", bank_id=str(bank_id), count=len(out))
     return {"questions": out}
+
+
+@hr_router.post(
+    "/question-banks/{bank_id}/questions/generate-coding",
+    response_model=BankGenerateCodingOut,
+)
+async def generate_bank_coding_questions(
+    bank_id: uuid.UUID, body: BankGenerateCodingIn, ctx: HrCtxDep, db: DbSessionDep
+) -> BankGenerateCodingOut:
+    """Draft CODING questions with the configured LLM. PREVIEW — nothing saved.
+
+    The coding twin of ``generate_bank_questions`` above, and the same two
+    steps: this returns suggestions, a person reads them, and
+    ``questions/bulk`` stores the ones they keep as ``origin='ai_draft'``
+    drafts that then need a second person's approval like any other question.
+
+    It reuses the exam coding round's generator rather than a second prompt, so
+    ``LLM_PROVIDER``, the injection framing of ``topic`` / ``job_title`` and the
+    role engine's allocator are the ones already in service.
+
+    NOTHING IS EXECUTED. The reference solution and every expected output were
+    written by a model and have not been run; each question says so
+    (``reference_solution_verified: false``, tag ``reference-unverified``).
+
+    Partial success is the normal case, not an error: usable questions come
+    back alongside ``dropped`` (with a reason each) and ``not_returned``. Only
+    "nothing usable at all" is a 502.
+    """
+    uid, company_id = ctx
+    try:
+        await svc.bank_summary(db, company_id=company_id, bank_id=bank_id)
+        existing = await svc.bank_content_hashes(db, company_id=company_id, bank_id=bank_id)
+    except svc.QuestionBankError as exc:
+        raise await _fail(db, exc) from exc
+    # Per-company budget (minute + day), charged only now: a 422 never reaches
+    # this body and a 404 above has already returned. Fails closed.
+    await _charge_generation_budget(
+        company_id, bucket="bank_generate_coding",
+        per_minute=settings.bank_generate_coding_per_minute,
+    )
+    # Hand the pooled connection back BEFORE the model call (up to 180 s): the
+    # transaction the two reads opened is ended and the session is not touched
+    # again in this handler.
+    await db.rollback()
+    try:
+        raw = await generate_coding_questions_remote(
+            topic=body.topic, num_questions=body.num_questions, difficulty=body.difficulty,
+            language=body.language, allowed_languages=body.allowed_languages,
+            acting_user_id=str(uid), job_title=body.job_title,
+            experience_level=body.experience_level,
+        )
+    except ExamGenerationError as exc:
+        raise _generation_failed(exc, what="coding") from exc
+    raw_items: list[Any] = raw if isinstance(raw, list) else []
+    outcome = bank_coding_generation.validate_generated(
+        raw_items, requested=body.num_questions, difficulty=body.difficulty,
+        language=body.language, allowed_languages=body.allowed_languages,
+        existing_hashes=existing,
+    )
+    if not outcome.questions:
+        why = bank_coding_generation.summarise_dropped(outcome.dropped)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "The AI returned no usable coding questions"
+                + (f" ({why})" if why else "")
+                + ". Try again or refine the topic."
+            ),
+        )
+    # Counts only — never the topic or a statement (the bank's own rule for its
+    # event and audit rows: what happened, not the content).
+    log.info(
+        "hr.bank.coding_questions.generated", bank_id=str(bank_id),
+        requested=body.num_questions, count=len(outcome.questions),
+        dropped=len(outcome.dropped),
+    )
+    return BankGenerateCodingOut(
+        questions=outcome.questions, requested=body.num_questions, dropped=outcome.dropped,
+        not_returned=max(0, body.num_questions - len(raw_items)),
+    )
 
 
 @hr_router.post(

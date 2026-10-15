@@ -132,16 +132,16 @@ export default function WorkflowCopilot({
       <header className="flex items-center gap-2 border-b border-border pb-3">
         <Sparkles className="h-4 w-4 text-[var(--accent)]" aria-hidden="true" />
         <span className="text-[13px] font-medium text-foreground">Design assistant</span>
-        <span className="ml-auto text-[11px] text-[var(--ui-faint)]">reads &amp; drafts only</span>
+        <span className="ml-auto text-[12px] text-[var(--ui-faint)]">reads &amp; drafts only</span>
       </header>
 
       <div className="flex-1 overflow-y-auto py-3">
         {turns.length === 0 ? (
           <div>
             <p className="text-[12.5px] leading-relaxed text-muted-foreground">
-              Describe the process you want and I&rsquo;ll lay it out on the canvas. I can
-              read this opening&rsquo;s role model and your exams. I can&rsquo;t create
-              anything — you approve every change, and it stays a draft until you publish.
+              Describe the process you want and I&rsquo;ll lay it out on the canvas. I can read this
+              opening&rsquo;s role model and your exams. I can&rsquo;t create anything — you approve
+              every change, and it stays a draft until you publish.
             </p>
             <div className="mt-3 flex flex-col gap-1.5">
               {suggestionsFor(hasRounds, jobTitle).map((s) => (
@@ -168,7 +168,7 @@ export default function WorkflowCopilot({
                 ) : (
                   <div className="space-y-1.5">
                     {turn.citationState !== undefined ? (
-                      <EvidenceBanner citationState={turn.citationState} className="text-[11px]" />
+                      <EvidenceBanner citationState={turn.citationState} className="text-[12px]" />
                     ) : null}
                     <div className="max-w-[95%] whitespace-pre-wrap text-[12.5px] leading-relaxed text-foreground">
                       <CitedText text={turn.text} citations={turn.citations ?? []} />
@@ -182,7 +182,10 @@ export default function WorkflowCopilot({
                     surfaces cannot disagree about what is pending. */}
                 {turn.proposals && turn.proposals.length > 0 ? (
                   <div className="mt-2 flex items-center gap-1.5 rounded-[10px] border border-electric/35 bg-electric/[0.07] px-3 py-2 text-[12px] text-foreground">
-                    <Sparkles className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]" aria-hidden="true" />
+                    <Sparkles
+                      className="h-3.5 w-3.5 shrink-0 text-[var(--accent)]"
+                      aria-hidden="true"
+                    />
                     {turn.proposals.length === 1
                       ? 'Previewed on the canvas — review it there.'
                       : `${turn.proposals.length} changes previewed on the canvas.`}
@@ -190,7 +193,7 @@ export default function WorkflowCopilot({
                 ) : null}
 
                 {turn.stopReason && turn.stopReason !== 'completed' ? (
-                  <div className="mt-1.5 flex items-start gap-1.5 text-[11.5px] text-[var(--ui-warn)]">
+                  <div className="mt-1.5 flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]">
                     <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
                     {turn.stopReason === 'no_llm'
                       ? 'No language model is configured for this deployment.'
@@ -224,17 +227,15 @@ export default function WorkflowCopilot({
           onChange={(e) => setInput(e.target.value)}
           disabled={!editable || busy}
           aria-label="Ask the design assistant"
-          placeholder={
-            editable ? 'Describe the process you want…' : 'Published — clone to edit'
-          }
-          className="min-w-0 flex-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-50"
+          placeholder={editable ? 'Describe the process you want…' : 'Published — clone to edit'}
+          className="min-w-0 flex-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
         />
         <button
           type="submit"
           disabled={!editable || busy || !input.trim()}
           aria-label="Send"
           className={cn(
-            'flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-primary text-primary-foreground transition-opacity',
+            'flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-primary text-primary-foreground transition-opacity',
             (!editable || busy || !input.trim()) && 'opacity-40',
           )}
         >

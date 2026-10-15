@@ -266,20 +266,24 @@ async def run_overdue_jobs_on_startup(
     jobs: list[Job],
     *,
     trigger: str = "catchup",
-) -> None:
+) -> int:
     """Run every job whose window was missed. One tick of the catch-up loop.
+
+    Returns how many jobs actually ran this tick (0 on the usual quiet tick).
 
     Each job's own claim inside :func:`run_scheduled_job` decides whether it
     actually runs, so this is safe to call as often as you like: a job that ran
     an hour ago stays put. (The name predates the loop; it is still the right
     thing to call once at startup, and the loop calls it every tick.)
     """
+    ran_count = 0
     for job_id, interval, fn in jobs:
         try:
             ran = await run_scheduled_job(
                 factory, job_id=job_id, interval=interval, fn=fn, trigger=trigger
             )
             if ran:
+                ran_count += 1
                 log.info("scheduler.catchup.ran", job_id=job_id)
         except Exception as exc:  # noqa: BLE001 — one bad job must not block the rest
             log.error(
@@ -288,6 +292,7 @@ async def run_overdue_jobs_on_startup(
                 exc_type=type(exc).__name__,
                 exc_msg=str(exc),
             )
+    return ran_count
 
 
 async def _prune_history(factory: async_sessionmaker[AsyncSession]) -> None:
@@ -313,8 +318,14 @@ async def _catchup_loop(
     await asyncio.sleep(60)
     while True:
         try:
-            await run_overdue_jobs_on_startup(factory, jobs)
-            await _prune_history(factory)
+            ran = await run_overdue_jobs_on_startup(factory, jobs)
+            # Prune only when a job actually ran. The DELETE used to run on every
+            # tick, so even a tick where nothing was due wrote to the database,
+            # and on a serverless Postgres billed by wake-ups that alone keeps the
+            # compute awake around the clock. History only grows when a job runs,
+            # so a tick with no run has nothing new to prune.
+            if ran:
+                await _prune_history(factory)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001

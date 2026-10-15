@@ -10,7 +10,7 @@
 //
 // Rendered without AppShell, like Dashboard.test.tsx, to keep the scope tight.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -103,6 +103,7 @@ function renderWizard() {
               <Routes>
                 <Route path="/onboarding" element={<Onboarding />} />
                 <Route path="/dashboard" element={<h1>Dashboard</h1>} />
+                <Route path="/start" element={<h1>Start page</h1>} />
               </Routes>
             </TokenSetter>
           </AuthProvider>
@@ -207,6 +208,67 @@ describe('Onboarding wizard', () => {
       expect(vi.mocked(getOnboardingStatus)).toHaveBeenCalled();
     });
     expect(nameInput).toHaveValue('Venkat');
+  });
+
+  it('shows where they are with the shared stepper, in words, not a private progress bar', async () => {
+    const user = userEvent.setup();
+    const { container } = renderWizard();
+
+    const nav = await screen.findByRole('navigation', { name: 'Practice set-up' });
+    const current = () =>
+      within(nav)
+        .getAllByRole('listitem')
+        .find((li) => li.getAttribute('aria-current') === 'step');
+    expect(current()?.textContent).toContain('Your name');
+    expect(within(nav).getByText('Step 1 of 4')).toBeInTheDocument();
+
+    await user.click(await screen.findByRole('button', { name: /continue/i }));
+    expect(current()?.textContent).toContain('Your goal');
+    expect(within(nav).getByText('Step 2 of 4')).toBeInTheDocument();
+
+    // The old bar was four aria-hidden segments; nothing like it is left.
+    expect(container.querySelector('div.flex.gap-1\\.5[aria-hidden="true"]')).toBeNull();
+  });
+
+  describe('the finish line', () => {
+    async function finish() {
+      const user = userEvent.setup();
+      renderWizard();
+      await advanceToLanguageStep(user);
+      await user.click(screen.getByRole('button', { name: /build my practice plan/i }));
+      return await screen.findByRole('button', { name: 'Start my first practice interview' });
+    }
+
+    it('offers an explicit primary and a secondary, and moves on only when asked', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const start = await finish();
+        expect(start).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Go to my dashboard' })).toBeInTheDocument();
+
+        // The old recap left on a 2.6 s timer the person could not extend.
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(screen.queryByRole('heading', { name: 'Dashboard' })).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: 'Start my first practice interview' })).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('takes the secondary to the dashboard', async () => {
+      await finish();
+      await userEvent.click(screen.getByRole('button', { name: 'Go to my dashboard' }));
+      expect(await screen.findByRole('heading', { name: 'Dashboard' })).toBeInTheDocument();
+    });
+
+    it('takes the primary to the first practice interview', async () => {
+      const user = userEvent.setup();
+      renderWizard();
+      await advanceToLanguageStep(user);
+      await user.click(screen.getByRole('button', { name: /build my practice plan/i }));
+      await user.click(await screen.findByRole('button', { name: 'Start my first practice interview' }));
+      expect(await screen.findByRole('heading', { name: 'Start page' })).toBeInTheDocument();
+    });
   });
 
   it('exposes selection state on the option groups, not just a colour', async () => {

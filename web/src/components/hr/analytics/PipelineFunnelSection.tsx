@@ -66,7 +66,7 @@ export default function PipelineFunnelSection({
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[12px] text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         {group.in_progress} still in progress
         {rejections ? ` · ${rejections.value.toLocaleString('en-IN')} rejected` : ''}
       </p>
@@ -81,10 +81,10 @@ export default function PipelineFunnelSection({
               <div className="w-[104px] shrink-0 text-[13px] text-[var(--ui-soft)]">
                 {metricLabel(name, def)}
               </div>
-              <div className="h-7 flex-1 overflow-hidden rounded-[8px] bg-[var(--ui-inset)]">
+              <div className="h-7 flex-1 overflow-hidden rounded-[8px] bg-[var(--ui-inset-strong)]">
                 {pct > 0 ? (
                   <div
-                    className="h-full rounded-[8px] bg-[linear-gradient(90deg,var(--accent),#a887dc)]"
+                    className="h-full rounded-[8px] bg-[var(--accent)]"
                     style={{ width: `${pct}%` }}
                   />
                 ) : null}
@@ -109,8 +109,8 @@ export default function PipelineFunnelSection({
             const result = group.metrics[name];
             const def = findDefinition(definitions, name, result.version);
             return (
-              <div key={name} className="flex items-center gap-2 text-[12.5px]">
-                <span className="text-[var(--ui-faint)]">{metricLabel(name, def)}:</span>
+              <div key={name} className="flex items-center gap-2 text-[13px]">
+                <span className="text-muted-foreground">{metricLabel(name, def)}:</span>
                 <MetricCell
                   name={name}
                   result={result}

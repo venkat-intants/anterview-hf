@@ -56,7 +56,9 @@ export class ErrorBoundary extends Component<Props, State> {
     const msg = error instanceof Error ? error.message : 'Unknown render error';
     // Non-blocking toast so the fallback UI renders first
     setTimeout(() => {
-      toast.error(`App error: ${msg}`);
+      // The exception text can carry a URL, an id or a server fragment, so it is
+      // shown in development only.
+      toast.error(import.meta.env.DEV ? `App error: ${msg}` : 'Something went wrong.');
     }, 0);
     // In production you would send to Sentry here:
     // Sentry.captureException(error, { extra: info });
@@ -85,24 +87,24 @@ export class ErrorBoundary extends Component<Props, State> {
           role="alert"
           aria-live="assertive"
         >
-          <div className="max-w-md w-full text-center space-y-8">
-            <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-xl bg-destructive/10 ring-1 ring-inset ring-destructive/20">
-              <AlertTriangle className="h-8 w-8 text-destructive" aria-hidden="true" />
+          <div className="w-full max-w-md space-y-8 rounded-card border border-border bg-card p-8 text-center shadow-card">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-[var(--ui-danger-wash)] text-[var(--ui-danger)]">
+              <AlertTriangle className="h-6 w-6" aria-hidden="true" />
             </div>
             <div className="space-y-3">
-              <h1 className="text-heading font-semibold text-foreground">
+              <h1 className="font-display text-[24px] font-bold leading-tight tracking-[-0.5px] text-foreground">
                 {i18n.t('error.errorBoundaryTitle')}
               </h1>
               <p className="text-body-sm text-muted-foreground">
                 {i18n.t('error.errorBoundaryDesc')}
               </p>
               {import.meta.env.DEV && this.state.errorMessage && (
-                <p className="mt-2 rounded-xl border border-border bg-muted/40 px-4 py-2 text-left font-mono text-caption text-muted-foreground break-all">
+                <p className="mt-2 rounded-[12px] border border-border bg-muted/40 px-4 py-2 text-left font-mono text-caption text-muted-foreground break-all">
                   {this.state.errorMessage}
                 </p>
               )}
             </div>
-            <Button onClick={this.handleReload} className="gap-2">
+            <Button onClick={this.handleReload} className="min-h-11 gap-2">
               <RotateCcw className="h-4 w-4" aria-hidden="true" />
               {i18n.t('error.reload')}
             </Button>

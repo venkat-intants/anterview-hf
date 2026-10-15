@@ -6,17 +6,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { verifyEmail } from '@/api/auth';
-import AuthLayout from '@/components/layout/AuthLayout';
+import AuthLayout, { StatusPanel } from '@/components/layout/AuthLayout';
+import { PRIMARY_LINK_CLASS, TEXT_LINK_CLASS } from '@/components/layout/authStyles';
 import { CheckCircle2, AlertCircle, Loader2 } from '@/design/components/icons';
+import { useFragmentToken } from '@/hooks/useFragmentToken';
 
 type Status = 'verifying' | 'success' | 'error';
 
-function tokenFromHash(): string {
-  if (typeof window === 'undefined') return '';
-  return window.location.hash.replace(/^#/, '').trim();
-}
-
 export default function VerifyEmail() {
+  // Read once, then removed from the address bar and history entry.
+  const token = useFragmentToken();
   const [status, setStatus] = useState<Status>('verifying');
   const [message, setMessage] = useState('');
   // Guard React 18 StrictMode double-invoke so we don't burn the single-use token.
@@ -25,7 +24,6 @@ export default function VerifyEmail() {
   useEffect(() => {
     if (ran.current) return;
     ran.current = true;
-    const token = tokenFromHash();
     if (!token) {
       setStatus('error');
       setMessage('This verification link is missing its token.');
@@ -39,62 +37,46 @@ export default function VerifyEmail() {
           err instanceof Error ? err.message : 'This verification link is invalid or has expired.',
         );
       });
-  }, []);
+  }, [token]);
 
   return (
     <AuthLayout>
-      <div className="flex flex-col items-center text-center">
+      <div aria-live="polite">
         {status === 'verifying' && (
-          <>
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
-              <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
-            </span>
-            <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
-              Confirming your email…
-            </h1>
-            <p className="mt-2 text-[14px] text-muted-foreground">One moment.</p>
-          </>
+          <StatusPanel icon={Loader2} tone="info" spin title="Confirming your email…">
+            <p>One moment.</p>
+          </StatusPanel>
         )}
 
         {status === 'success' && (
-          <>
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[var(--ui-ok)]">
-              <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
-            </span>
-            <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
-              Email confirmed
-            </h1>
-            <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
-              Thanks — your email address is verified. You can sign in and get started.
-            </p>
-            <Link
-              to="/login"
-              className="mt-6 inline-flex items-center justify-center rounded-pill bg-primary px-5 py-2.5 text-[14px] font-semibold text-primary-foreground hover:bg-primary/90"
-            >
-              Continue to sign in
-            </Link>
-          </>
+          <StatusPanel
+            icon={CheckCircle2}
+            tone="ok"
+            title="Email confirmed"
+            actions={
+              <Link to="/login" className={PRIMARY_LINK_CLASS}>
+                Continue to sign in
+              </Link>
+            }
+          >
+            <p>Thanks — your email address is verified. You can sign in and get started.</p>
+          </StatusPanel>
         )}
 
         {status === 'error' && (
-          <>
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[var(--ui-danger)]">
-              <AlertCircle className="h-6 w-6" aria-hidden="true" />
-            </span>
-            <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
-              Couldn’t verify your email
-            </h1>
-            <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">{message}</p>
-            <p className="mt-4 max-w-sm text-[13px] text-[var(--ui-faint)]">
-              You can request a fresh link from your profile after signing in.
-            </p>
-            <Link
-              to="/login"
-              className="mt-6 text-[13px] text-[var(--ui-info)] hover:underline underline-offset-4"
-            >
-              Back to sign in
-            </Link>
-          </>
+          <StatusPanel
+            icon={AlertCircle}
+            tone="danger"
+            title="Couldn’t verify your email"
+            actions={
+              <Link to="/login" className={TEXT_LINK_CLASS}>
+                Back to sign in
+              </Link>
+            }
+          >
+            <p>{message}</p>
+            <p className="text-[13px]">You can request a fresh link from your profile after signing in.</p>
+          </StatusPanel>
         )}
       </div>
     </AuthLayout>

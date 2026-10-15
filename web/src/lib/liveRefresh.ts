@@ -47,6 +47,13 @@ export const REFRESH_ON: Record<string, QueryKey[]> = {
   // Candidate
   interview_invite: [['my-applications'], ['my-application']],
   results_ready: [['my-applications'], ['my-application']],
+  // Written for a signed-in candidate when an offer is sent, re-sent,
+  // withdrawn or expires (offers._tell_candidate). Text carries no terms.
+  candidate_offer: [['me', 'offers'], ['my-applications'], ['my-application']],
+  // Written for the candidate when a panel-interview loop is sent, moved or
+  // cancelled, and by the reminder sweep (interview_scheduling.py,
+  // reminders.py).
+  interview_schedule: [['my-applications'], ['my-application'], ['me', 'interview-loops']],
 };
 
 /** The distinct query prefixes to refresh for a batch of new notification kinds. */

@@ -30,6 +30,7 @@ import type { CodingResult } from '@/api/exams';
 import { CODING_LANGUAGES } from '@/api/exams';
 import { toast } from '@/lib/toast';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { EmptyState } from '@/design/components/page';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -43,6 +44,8 @@ import {
   Users,
   XCircle,
 } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import CodeSimilarityCompare from './CodeSimilarityCompare';
 
 const CodeEditor = lazy(() => import('@/components/CodeEditor'));
@@ -80,21 +83,21 @@ function QualityMetrics({ report }: { report: CodeQualityReport }) {
   const metrics = report.metrics;
   if (report.status === 'unsupported') {
     return (
-      <p className="text-[12.5px] text-muted-foreground">
+      <p className="text-[13px] text-muted-foreground">
         No structured quality metrics for {report.language}.
       </p>
     );
   }
   if (report.status === 'failed') {
     return (
-      <p className="text-[12.5px] text-[var(--ui-warn)]">
+      <p className="text-[13px] text-[var(--ui-warn)]">
         Analysis failed{report.error_class ? ` (${report.error_class})` : ''} — the submission
         itself is unaffected.
       </p>
     );
   }
   if (!('kind' in metrics)) {
-    return <p className="text-[12.5px] text-muted-foreground">No metrics recorded.</p>;
+    return <p className="text-[13px] text-muted-foreground">No metrics recorded.</p>;
   }
 
   const tiles: Array<{ label: string; value: string }> =
@@ -102,7 +105,10 @@ function QualityMetrics({ report }: { report: CodeQualityReport }) {
       ? [
           { label: 'Functions', value: String(metrics.function_count) },
           { label: 'Avg. complexity', value: metrics.complexity_avg.toFixed(2) },
-          { label: 'Max. nesting', value: String(Math.max(0, ...metrics.functions.map((f) => f.nesting_depth))) },
+          {
+            label: 'Max. nesting',
+            value: String(Math.max(0, ...metrics.functions.map((f) => f.nesting_depth))),
+          },
           { label: 'Maintainability', value: metrics.maintainability_index.toFixed(0) },
           { label: 'Duplication', value: pct(metrics.duplication_ratio) },
           { label: 'Lines', value: String(metrics.lines_of_code) },
@@ -120,8 +126,10 @@ function QualityMetrics({ report }: { report: CodeQualityReport }) {
     <div>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {tiles.map((t) => (
-          <div key={t.label} className="rounded-[10px] border border-border p-2.5">
-            <div className="text-[11px] uppercase tracking-[0.4px] text-[var(--ui-faint)]">{t.label}</div>
+          <div key={t.label} className="rounded-[12px] border border-border p-2.5">
+            <div className="text-[12px] uppercase tracking-[0.4px] text-muted-foreground">
+              {t.label}
+            </div>
             <div className="mt-0.5 font-mono text-[15px] text-foreground">{t.value}</div>
           </div>
         ))}
@@ -132,14 +140,14 @@ function QualityMetrics({ report }: { report: CodeQualityReport }) {
           {metrics.functions.map((f) => (
             <li
               key={`${f.name}-${f.line}`}
-              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 rounded-[8px] bg-[var(--ui-inset-soft)] px-2.5 py-1.5 text-[11.5px] text-[var(--ui-soft)]"
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 rounded-[8px] bg-[var(--ui-inset-soft)] px-2.5 py-1.5 text-[12px] text-[var(--ui-soft)]"
             >
               <span className="font-mono">
                 {f.name}() · line {f.line}
               </span>
-              <span className="text-[var(--ui-faint)]">
-                complexity {f.cyclomatic_complexity} · nesting {f.nesting_depth} · {f.length_lines} lines ·{' '}
-                {f.parameter_count} params
+              <span className="text-muted-foreground">
+                complexity {f.cyclomatic_complexity} · nesting {f.nesting_depth} · {f.length_lines}{' '}
+                lines · {f.parameter_count} params
               </span>
             </li>
           ))}
@@ -149,14 +157,25 @@ function QualityMetrics({ report }: { report: CodeQualityReport }) {
       {report.findings.length > 0 ? (
         <ul className="mt-3 flex flex-col gap-1.5" aria-label="Quality findings">
           {report.findings.map((f, i) => (
-            <li key={`${f.rule}-${i}`} className="flex items-start gap-2 text-[12px] text-[var(--ui-soft)]">
+            <li
+              key={`${f.rule}-${i}`}
+              className="flex items-start gap-2 text-[12px] text-[var(--ui-soft)]"
+            >
               {f.severity === 'warning' ? (
-                <AlertTriangle size={12} className="mt-0.5 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
+                <AlertTriangle
+                  size={12}
+                  className="mt-0.5 shrink-0 text-[var(--ui-warn)]"
+                  aria-hidden="true"
+                />
               ) : (
-                <Info size={12} className="mt-0.5 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+                <Info
+                  size={12}
+                  className="mt-0.5 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
               )}
               <span>
-                {f.message} <span className="text-[var(--ui-faint)]">(line {f.line})</span>
+                {f.message} <span className="text-muted-foreground">(line {f.line})</span>
               </span>
             </li>
           ))}
@@ -172,12 +191,12 @@ function QualityCard({ report }: { report: CodeQualityReport | undefined }) {
   return (
     <div className="rounded-[12px] border border-border p-3.5">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-[12.5px] font-medium text-foreground">Code quality</h4>
-        <span className="text-[11px] text-[var(--ui-faint)]">Signals, not a score.</span>
+        <h4 className="text-[14px] font-semibold text-foreground">Code quality</h4>
+        <span className="text-[12px] text-muted-foreground">Signals, not a score.</span>
       </div>
       {report ? (
         <>
-          <p className="mt-1 text-[11px] uppercase tracking-[0.4px] text-[var(--ui-faint)]">
+          <p className="mt-1 text-[12px] uppercase tracking-[0.4px] text-muted-foreground">
             {analyserLabel(report)}
           </p>
           <div className="mt-2.5">
@@ -185,13 +204,13 @@ function QualityCard({ report }: { report: CodeQualityReport | undefined }) {
           </div>
         </>
       ) : (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">
+        <p className="mt-2 text-[13px] text-muted-foreground">
           Not analysed yet — run analysis for this attempt to see quality metrics here.
         </p>
       )}
       {/* Coverage is never available for any language — a reason, never a
           figure (checklist #6). */}
-      <p className="mt-3 flex items-start gap-1.5 text-[11px] text-[var(--ui-faint)]">
+      <p className="mt-3 flex items-start gap-1.5 text-[12px] text-muted-foreground">
         <Info size={11} className="mt-0.5 shrink-0" aria-hidden="true" />
         Test coverage: not available —{' '}
         {report?.coverage.reason ??
@@ -209,8 +228,8 @@ function TestResultsCard({ result }: { result: CodingResult | undefined }) {
   if (!result) {
     return (
       <div className="rounded-[12px] border border-border p-3.5">
-        <h4 className="text-[12.5px] font-medium text-foreground">Test results</h4>
-        <p className="mt-1.5 text-[12.5px] text-muted-foreground">
+        <h4 className="text-[14px] font-semibold text-foreground">Test results</h4>
+        <p className="mt-1.5 text-[13px] text-muted-foreground">
           No test results recorded for this question.
         </p>
       </div>
@@ -222,7 +241,7 @@ function TestResultsCard({ result }: { result: CodingResult | undefined }) {
   return (
     <div className="rounded-[12px] border border-border p-3.5">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-[12.5px] font-medium text-foreground">Test results</h4>
+        <h4 className="text-[14px] font-semibold text-foreground">Test results</h4>
         {full ? (
           <StatusTag tone="forest" dot>
             <CheckCircle2 size={11} aria-hidden="true" /> Passed
@@ -235,16 +254,18 @@ function TestResultsCard({ result }: { result: CodingResult | undefined }) {
           </StatusTag>
         )}
       </div>
-      <p className="mt-1.5 text-[12.5px] text-muted-foreground">
+      <p className="mt-1.5 text-[13px] text-muted-foreground">
         {result.submitted === false
           ? 'Not submitted'
           : result.error
             ? result.error
             : `Language: ${result.language ?? 'unknown'}`}
       </p>
-      <p className="mt-1 font-mono text-[12px] text-[var(--ui-faint)]">
+      <p className="mt-1 font-mono text-[12px] text-muted-foreground">
         {earned}/{result.points} pts
-        {Array.isArray(result.tests) ? ` · ${result.tests.length} test case${result.tests.length === 1 ? '' : 's'}` : ''}
+        {Array.isArray(result.tests)
+          ? ` · ${result.tests.length} test case${result.tests.length === 1 ? '' : 's'}`
+          : ''}
       </p>
     </div>
   );
@@ -266,43 +287,42 @@ function SimilaritySignalsCard({
   return (
     <div className="rounded-[12px] border border-border p-3.5">
       <div className="flex items-center gap-1.5">
-        <Users size={13} className="text-[var(--ui-faint)]" aria-hidden="true" />
-        <h4 className="text-[12.5px] font-medium text-foreground">
+        <Users size={13} className="text-muted-foreground" aria-hidden="true" />
+        <h4 className="text-[14px] font-semibold text-foreground">
           Similarity signals (automated, unreviewed)
         </h4>
       </div>
       {signals.length === 0 ? (
-        <p className="mt-1.5 text-[12.5px] text-muted-foreground">
+        <p className="mt-1.5 text-[13px] text-muted-foreground">
           No similarity signals for this question.
         </p>
       ) : (
         <ul className="mt-2 flex flex-col gap-2" aria-label="Similarity signals">
           {signals.map((s) => {
-            const otherAttemptId = s.attempt_low_id === attemptId ? s.attempt_high_id : s.attempt_low_id;
+            const otherAttemptId =
+              s.attempt_low_id === attemptId ? s.attempt_high_id : s.attempt_low_id;
             return (
-            <li key={s.id} className="rounded-[10px] bg-[var(--ui-inset-soft)] p-2.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-[12px] text-foreground">
-                  {s.reference_kind === 'reference_solution'
-                    ? 'Matches the reference solution'
-                    : `Matches attempt ${shortId(otherAttemptId ?? '')}`}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onCompare(s)}
-                  className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2.5 py-1 text-[11.5px] text-[var(--ui-info)] hover:underline focus:outline-none"
-                >
-                  <Eye size={11} aria-hidden="true" />
-                  Compare &amp; record a finding
-                </button>
-              </div>
-              <p className="mt-1 font-mono text-[11px] text-[var(--ui-faint)]">
-                containment {pct(s.containment_low)}
-                {s.containment_high != null ? ` / ${pct(s.containment_high)}` : ''} · jaccard{' '}
-                {pct(s.jaccard)} · {s.shared_fingerprints} shared fingerprints
-              </p>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--ui-faint)]">{s.caption}</p>
-            </li>
+              <li key={s.id} className="rounded-[10px] bg-[var(--ui-inset-soft)] p-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[12px] text-foreground">
+                    {s.reference_kind === 'reference_solution'
+                      ? 'Matches the reference solution'
+                      : `Matches attempt ${shortId(otherAttemptId ?? '')}`}
+                  </span>
+                  <Button type="button" variant="outline" onClick={() => onCompare(s)}>
+                    <Eye size={14} aria-hidden="true" />
+                    Compare &amp; record a finding
+                  </Button>
+                </div>
+                <p className="mt-1 break-words font-mono text-[12px] text-muted-foreground">
+                  containment {pct(s.containment_low)}
+                  {s.containment_high != null ? ` / ${pct(s.containment_high)}` : ''} · jaccard{' '}
+                  {pct(s.jaccard)} · {s.shared_fingerprints} shared fingerprints
+                </p>
+                <p className="mt-1.5 text-[12px] leading-relaxed text-muted-foreground">
+                  {s.caption}
+                </p>
+              </li>
             );
           })}
         </ul>
@@ -330,13 +350,13 @@ function IntegrityFindingsCard({ findings }: { findings: IntegrityFinding[] }) {
   return (
     <div className="rounded-[12px] border border-border p-3.5">
       <div className="flex items-center gap-1.5">
-        <ClipboardCheck size={13} className="text-[var(--ui-faint)]" aria-hidden="true" />
-        <h4 className="text-[12.5px] font-medium text-foreground">
+        <ClipboardCheck size={13} className="text-muted-foreground" aria-hidden="true" />
+        <h4 className="text-[14px] font-semibold text-foreground">
           Integrity findings (recorded by people)
         </h4>
       </div>
       {findings.length === 0 ? (
-        <p className="mt-1.5 text-[12.5px] text-muted-foreground">
+        <p className="mt-1.5 text-[13px] text-muted-foreground">
           No finding has been recorded for this question.
         </p>
       ) : (
@@ -345,8 +365,9 @@ function IntegrityFindingsCard({ findings }: { findings: IntegrityFinding[] }) {
             <li key={f.id} className="rounded-[10px] bg-[var(--ui-inset-soft)] p-2.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <StatusTag tone={OUTCOME_TONE[f.outcome]}>{OUTCOME_LABEL[f.outcome]}</StatusTag>
-                <span className="text-[11px] text-[var(--ui-faint)]">
-                  {new Date(f.created_at).toLocaleString()} · recorded by {shortId(f.recorded_by_user_id)}
+                <span className="text-[12px] text-muted-foreground">
+                  {new Date(f.created_at).toLocaleString()} · recorded by{' '}
+                  {shortId(f.recorded_by_user_id)}
                 </span>
               </div>
               <p className="mt-1.5 text-[12px] text-[var(--ui-soft)]">
@@ -385,41 +406,31 @@ function SourceViewer({
   return (
     <div className="rounded-[12px] border border-border p-3.5">
       <div className="flex items-center justify-between gap-2">
-        <h4 className="text-[12.5px] font-medium text-foreground">Submitted source</h4>
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2.5 py-1 text-[11.5px] text-[var(--ui-info)] hover:underline focus:outline-none"
-        >
-          <Eye size={11} aria-hidden="true" />
+        <h4 className="text-[14px] font-semibold text-foreground">Submitted source</h4>
+        <Button type="button" variant="outline" onClick={() => setOpen((v) => !v)}>
+          <Eye size={14} aria-hidden="true" />
           {open ? 'Hide source' : 'View source'}
-        </button>
+        </Button>
       </div>
       {/* Viewing this is audited on the server every time — this only fires
           the request once HR clicked the button above. */}
       {open ? (
         source.isLoading ? (
-          <p className="mt-2 flex items-center gap-1.5 text-[12px] text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            Loading…
-          </p>
+          <div className="mt-2" aria-busy="true">
+            <span className="sr-only">Loading…</span>
+            <Skeleton className="h-24 rounded-[12px]" />
+          </div>
         ) : source.isError ? (
-          <p className="mt-2 text-[12px] text-[var(--ui-danger)]">
+          <p role="alert" className="mt-2 text-[13px] text-[var(--ui-danger)]">
             {errText(source.error, 'Could not load this submission.')}
           </p>
         ) : source.data?.redacted ? (
-          <p className="mt-2 text-[12px] text-muted-foreground">
+          <p className="mt-2 text-[13px] text-muted-foreground">
             This submission&rsquo;s source has been redacted (retention or an erasure request).
           </p>
         ) : (
           <div className="mt-2">
-            <Suspense
-              fallback={
-                <div className="flex h-24 items-center justify-center rounded-[10px] border border-border bg-card">
-                  <Loader2 className="h-4 w-4 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
-                </div>
-              }
-            >
+            <Suspense fallback={<Skeleton className="h-24 rounded-[12px]" />}>
               <CodeEditor
                 value={source.data?.source ?? ''}
                 language={editorLanguage(source.data?.language)}
@@ -444,8 +455,8 @@ function IntegritySummaryCard({ integrity }: { integrity: CodeEvidence['integrit
   return (
     <GlassCard className="p-4">
       <div className="flex items-center gap-1.5">
-        <ShieldCheck size={14} className="text-[var(--ui-faint)]" aria-hidden="true" />
-        <h3 className="text-[13px] font-medium text-foreground">Integrity</h3>
+        <ShieldCheck size={14} className="text-muted-foreground" aria-hidden="true" />
+        <h3 className="text-[15px] font-bold text-foreground">Integrity</h3>
       </div>
       {integrity.integrity_score !== null ? (
         <p className="mt-1.5 text-[13px] text-foreground">
@@ -455,14 +466,16 @@ function IntegritySummaryCard({ integrity }: { integrity: CodeEvidence['integrit
             : ''}
         </p>
       ) : (
-        <p className="mt-1.5 text-[12.5px] text-muted-foreground">No proctoring data for this attempt.</p>
+        <p className="mt-1.5 text-[13px] text-muted-foreground">
+          No proctoring data for this attempt.
+        </p>
       )}
       {counts.length > 0 ? (
         <ul className="mt-2 flex flex-wrap gap-2" aria-label="Proctoring event counts">
           {counts.map(([type, n]) => (
             <li
               key={type}
-              className="rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-[var(--ui-soft)]"
+              className="rounded-[8px] border border-border px-2 py-1 text-[12px] text-[var(--ui-soft)]"
             >
               {type} × {n}
             </li>
@@ -501,10 +514,10 @@ function QuestionEvidenceCard({
   return (
     <GlassCard className="p-4">
       <div className="flex items-center gap-1.5">
-        <Code2 size={13} className="text-[var(--ui-faint)]" aria-hidden="true" />
-        <h3 className="text-[13px] font-medium text-foreground">
+        <Code2 size={13} className="text-muted-foreground" aria-hidden="true" />
+        <h3 className="text-[15px] font-bold text-foreground">
           Coding question {index + 1}
-          <span className="ml-1.5 font-mono text-[11px] text-[var(--ui-faint)]">
+          <span className="ml-1.5 font-mono text-[12px] text-muted-foreground">
             {shortId(questionId)}
           </span>
         </h3>
@@ -577,17 +590,29 @@ export default function CodeEvidencePanel({
 
   if (evidence.isLoading) {
     return (
-      <GlassCard className="p-8 text-center">
-        <Loader2 className="mx-auto h-6 w-6 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
-      </GlassCard>
+      <div className="flex flex-col gap-4" aria-busy="true">
+        <span className="sr-only">Loading…</span>
+        <Skeleton className="h-16 rounded-card" />
+        <Skeleton className="h-56 rounded-card" />
+      </div>
     );
   }
   if (evidence.isError || !evidence.data) {
     return (
       <GlassCard className="p-6 text-center">
-        <p className="text-[13.5px] text-[var(--ui-danger)]">
-          {errText(evidence.error, 'Could not load code evidence for this attempt.')}
-        </p>
+        <div role="alert">
+          <p className="text-[14px] text-[var(--ui-danger)]">
+            {errText(evidence.error, 'Could not load code evidence for this attempt.')}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-3"
+          onClick={() => void evidence.refetch()}
+        >
+          Try again
+        </Button>
       </GlassCard>
     );
   }
@@ -597,7 +622,7 @@ export default function CodeEvidencePanel({
   return (
     <div className="flex flex-col gap-4">
       {ev.code_redacted ? (
-        <div className="flex items-start gap-2 rounded-[12px] border border-[var(--ui-warn)]/30 bg-[var(--ui-warn)]/[0.06] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
+        <div className="flex items-start gap-2 rounded-[12px] border border-[var(--ui-warn)]/30 bg-[var(--ui-warn-wash)] p-3 text-[13px] leading-relaxed text-[var(--ui-soft)]">
           <Info size={13} className="mt-0.5 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
           Source and program output for this attempt have been redacted (retention or an erasure
           request). Scores are unaffected.
@@ -605,33 +630,33 @@ export default function CodeEvidencePanel({
       ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[12px] text-muted-foreground">
-          The sweep analyses recent submissions automatically. Use this for an older attempt, or
-          to re-run after a fix.
+        <p className="min-w-0 flex-1 basis-60 text-[13px] text-muted-foreground">
+          The sweep analyses recent submissions automatically. Use this for an older attempt, or to
+          re-run after a fix.
         </p>
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={() => analyseMut.mutate()}
           disabled={analyseMut.isPending}
-          className="inline-flex items-center gap-1.5 rounded-[10px] border border-border px-3 py-1.5 text-[12px] text-foreground disabled:opacity-50"
         >
           {analyseMut.isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            <Loader2 className="animate-spin" aria-hidden="true" />
           ) : (
-            <Clock size={13} aria-hidden="true" />
+            <Clock aria-hidden="true" />
           )}
           Run analysis now
-        </button>
+        </Button>
       </div>
 
       <IntegritySummaryCard integrity={ev.integrity} />
 
       {questionIds.length === 0 ? (
-        <GlassCard className="p-6 text-center">
-          <p className="text-[13px] text-muted-foreground">
-            No coding evidence recorded for this attempt yet.
-          </p>
-        </GlassCard>
+        <EmptyState
+          icon={Code2}
+          title="No coding evidence recorded for this attempt yet."
+          description="If this attempt had coding questions, use Run analysis now above to generate their quality metrics."
+        />
       ) : (
         questionIds.map((qid, i) => (
           <QuestionEvidenceCard

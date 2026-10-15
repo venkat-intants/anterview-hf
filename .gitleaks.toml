@@ -63,6 +63,21 @@ regexes = [
   # else. The spec now generates one per run; the literal stays allowlisted
   # because the scanner walks history and that commit is published.
   '''E2e-Scheduling-Cand-9''',
+  # web/e2e/exam-from-dashboard.spec.ts and web/e2e/journey-candidate-view.spec.ts
+  # — the same shape as the entry above: a password each spec assigns to an
+  # account it creates on a disposable local stack and nowhere else. Verifiably
+  # fake on its face, and allowlisted as EXACT literals rather than by path, per
+  # this file's header. Prefer the scheduling spec's generate-per-run pattern for
+  # any NEW spec; these two are already written and the scanner walks history.
+  '''E2e-Exam-Dashboard-7''',
+  '''E2e-Candidate-View-7''',
+
+  # services/data_gateway/tests/unit/test_bank_coding_generation.py — fixtures
+  # for the guard that REFUSES a generated question containing credential-shaped
+  # text. The test needs a string the detector fires on, so the only way to have
+  # no match here is to have no test. Both are inert on their face: the AKIA id
+  # is the alphabet in order, and the PEM is a header with no key body.
+  '''AKIAABCDEFGHIJKLMNOP''',
 
   '''change-me-to-random-64-char-hex''',
   '''sk-ant-your-key-here''',

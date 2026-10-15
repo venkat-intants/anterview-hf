@@ -6,6 +6,7 @@
 // data_gateway contract EXACTLY.
 
 import { apiGet, apiPost } from './client';
+import { pathId } from './pathId';
 
 /** A hire at least 80 days in with no live check-in yet, oldest first. */
 export interface CheckinDueRow {
@@ -66,7 +67,7 @@ export interface EnrolmentCheckins {
 }
 
 export function getEnrolmentCheckins(enrolmentId: string): Promise<EnrolmentCheckins> {
-  return apiGet<EnrolmentCheckins>(`/hr/enrolments/${enrolmentId}/checkins`);
+  return apiGet<EnrolmentCheckins>(`/hr/enrolments/${pathId(enrolmentId)}/checkins`);
 }
 
 export interface CheckinInput {
@@ -83,7 +84,7 @@ export interface CheckinInput {
  * day 80 (`left` is allowed any time). 422 on a vocabulary error.
  */
 export function createCheckin(enrolmentId: string, body: CheckinInput): Promise<CheckinOut> {
-  return apiPost<CheckinOut>(`/hr/enrolments/${enrolmentId}/checkins`, body);
+  return apiPost<CheckinOut>(`/hr/enrolments/${pathId(enrolmentId)}/checkins`, body);
 }
 
 /**
@@ -94,5 +95,5 @@ export function createCheckin(enrolmentId: string, body: CheckinInput): Promise<
  * no longer stands, or the candidate is erased.
  */
 export function correctCheckin(checkinId: string, body: CheckinInput): Promise<CheckinOut> {
-  return apiPost<CheckinOut>(`/hr/checkins/${checkinId}/correct`, body);
+  return apiPost<CheckinOut>(`/hr/checkins/${pathId(checkinId)}/correct`, body);
 }

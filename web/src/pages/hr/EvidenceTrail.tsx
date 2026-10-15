@@ -9,6 +9,7 @@
 
 import { useMemo } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { appPath } from '@/lib/safeUrl';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError, isTransientApiError } from '@/api/client';
 import {
@@ -23,8 +24,9 @@ import {
   type ProducedBy,
   type TraceEvidenceItem,
 } from '@/api/evidence';
-import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
-import { Loader2 } from '@/design/components/icons';
+import { StatusTag, type TagTone } from '@/design/components/primitives';
+import { Breadcrumbs, PageHeader, Page } from '@/design/components/page';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const KIND_LABELS: Record<EvidenceNode['kind'], string> = {
   application: 'Application',
@@ -146,35 +148,37 @@ function EvidenceRow({
   const node = item.node;
   const summary = node.content ? contentSummary(node.kind, node.content) : null;
   return (
-    <li className="rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3">
+    <li className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="flex items-center gap-2">
           <StatusTag tone={PRODUCED_BY_TONE[node.provenance.produced_by]}>
             {PRODUCED_BY_LABELS[node.provenance.produced_by]}
           </StatusTag>
-          <span className="text-[13px] font-medium text-foreground">{KIND_LABELS[node.kind]}</span>
+          <span className="text-[14px] font-semibold text-foreground">
+            {KIND_LABELS[node.kind]}
+          </span>
         </div>
         <Link
-          to={node.href}
-          className="text-[12px] text-[var(--ui-info)] underline decoration-dotted underline-offset-2 hover:opacity-80"
+          to={appPath(node.href, '/')}
+          className="inline-flex min-h-8 items-center rounded text-[13px] font-semibold text-[var(--ui-info)] underline decoration-dotted underline-offset-2 hover:opacity-80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           Open
         </Link>
       </div>
-      <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+      <p className="mt-1 text-[12px] text-muted-foreground">
         {formatDateTime(node.occurred_at)}
         {node.provenance.actor?.name ? ` · ${node.provenance.actor.name}` : ''}
         {node.lifecycle !== 'live' ? ` · ${node.lifecycle}` : ''}
       </p>
       {node.content_hidden_reason ? (
-        <p className="mt-1.5 text-[12px] italic text-[var(--ui-faint)]">
+        <p className="mt-1.5 text-[13px] italic text-muted-foreground">
           {node.content_hidden_reason}
         </p>
       ) : summary ? (
-        <p className="mt-1.5 text-[12.5px] text-[var(--ui-soft)]">{summary}</p>
+        <p className="mt-1.5 text-[13px] text-foreground">{summary}</p>
       ) : null}
       {showChangeNote && item.changed_after_decision ? (
-        <p className="mt-1.5 text-[11.5px] text-[var(--ui-warn)]">{item.changed_after_decision}</p>
+        <p className="mt-1.5 text-[12px] text-[var(--ui-warn)]">{item.changed_after_decision}</p>
       ) : null}
     </li>
   );
@@ -233,43 +237,59 @@ export default function EvidenceTrail(): JSX.Element {
   }, [trace.data]);
 
   return (
-    <div className="mx-auto max-w-[880px] px-6 py-8 lg:px-8">
-      <h1 className="text-[26px] font-semibold tracking-[-1px] text-foreground">Evidence trail</h1>
-      <p className="mt-1 text-[13px] text-muted-foreground">
-        This shows what existed when this was decided. It cannot show what the decider actually
-        read.
-      </p>
+    <Page width="form">
+      <PageHeader
+        breadcrumbs={
+          <Breadcrumbs
+            items={[
+              { label: 'Openings', to: '/hr/requisitions' },
+              ...(graph.data?.requisition.id
+                ? [
+                    {
+                      label: graph.data.requisition.title ?? 'Opening',
+                      to: `/hr/requisitions/${graph.data.requisition.id}`,
+                    },
+                  ]
+                : []),
+              { label: 'Evidence trail' },
+            ]}
+          />
+        }
+        title="Evidence trail"
+        description="This shows what existed when this was decided. It cannot show what the decider actually read."
+      />
 
       {graph.isLoading ? (
-        <div className="mt-6 flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading…
+        <div className="flex flex-col gap-3" role="status">
+          <Skeleton className="h-20 rounded-card" />
+          <Skeleton className="h-40 rounded-card" />
+          <span className="sr-only">Loading…</span>
         </div>
       ) : notFound ? (
-        <p className="mt-6 text-[13px] text-muted-foreground">
+        <p className="text-[14px] text-muted-foreground">
           This application could not be found, or you do not have access to it.
         </p>
       ) : graph.isError ? (
-        <p className="mt-6 text-[13px] text-[var(--ui-danger)]">Could not load this application.</p>
+        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
+          Could not load this application.
+        </p>
       ) : graph.data ? (
-        <div className="mt-5 flex flex-col gap-5">
-          <GlassCard className="p-4">
-            <p className="text-[15px] font-semibold text-foreground">
+        <div className="flex flex-col gap-5">
+          <div className="rounded-card border border-border bg-card p-5 shadow-card">
+            <p className="text-[17px] font-bold text-foreground">
               {graph.data.candidate.name}
               {graph.data.candidate.erased ? (
-                <span className="ml-2 text-[12px] font-normal text-[var(--ui-faint)]">
-                  (erased)
-                </span>
+                <span className="ml-2 text-[13px] font-normal text-muted-foreground">(erased)</span>
               ) : null}
             </p>
-            <p className="mt-0.5 text-[12.5px] text-muted-foreground">
+            <p className="mt-0.5 text-[13px] text-muted-foreground">
               {graph.data.requisition.title ?? 'No opening on file'}
               {graph.data.workflow.version ? ` · workflow v${graph.data.workflow.version}` : ''}
             </p>
-          </GlassCard>
+          </div>
 
           {decisions.length === 0 ? (
-            <p className="text-[13px] text-muted-foreground">
+            <p className="text-[14px] text-muted-foreground">
               No hire or reject decision has been recorded for this application yet.
             </p>
           ) : (
@@ -283,10 +303,10 @@ export default function EvidenceTrail(): JSX.Element {
                       role="tab"
                       aria-selected={d.id === selectedDecisionId}
                       onClick={() => setSearchParams({ decision: String(d.id) })}
-                      className={`rounded-[10px] border px-3 py-1.5 text-[12.5px] ${
+                      className={`min-h-10 rounded-full border px-4 text-[13px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
                         d.id === selectedDecisionId
-                          ? 'border-[var(--accent)] text-foreground'
-                          : 'border-border text-muted-foreground hover:border-[var(--ui-line-strong)]'
+                          ? 'border-foreground bg-foreground text-background'
+                          : 'border-input bg-card text-muted-foreground hover:border-[var(--ui-line-strong)]'
                       }`}
                     >
                       {d.outcome === 'hired' ? 'Hired' : 'Rejected'} ·{' '}
@@ -297,15 +317,17 @@ export default function EvidenceTrail(): JSX.Element {
               ) : null}
 
               {trace.isLoading ? (
-                <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  Loading…
+                <div role="status">
+                  <Skeleton className="h-32 rounded-card" />
+                  <span className="sr-only">Loading…</span>
                 </div>
               ) : trace.isError ? (
-                <p className="text-[13px] text-[var(--ui-danger)]">Could not load this decision.</p>
+                <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
+                  Could not load this decision.
+                </p>
               ) : trace.data ? (
                 <>
-                  <GlassCard className="p-4">
+                  <div className="rounded-card border border-border bg-card p-5 shadow-card">
                     <div className="flex flex-wrap items-center gap-2">
                       <StatusTag
                         tone={trace.data.decision.outcome === 'hired' ? 'forest' : 'ember'}
@@ -316,7 +338,7 @@ export default function EvidenceTrail(): JSX.Element {
                         <StatusTag tone="amber">reverses a hire</StatusTag>
                       ) : null}
                     </div>
-                    <p className="mt-2 text-[13px] text-foreground">
+                    <p className="mt-2 text-[14px] text-foreground">
                       {trace.data.decision.decided_by.name ?? 'A reviewer'}
                       <span className="text-muted-foreground">
                         {' '}
@@ -324,13 +346,13 @@ export default function EvidenceTrail(): JSX.Element {
                       </span>
                     </p>
                     {trace.data.decision.reason_label || trace.data.decision.reason ? (
-                      <p className="mt-1.5 text-[12.5px] text-[var(--ui-soft)]">
+                      <p className="mt-1.5 text-[13px] text-foreground">
                         {trace.data.decision.reason_label}
                         {trace.data.decision.reason_label && trace.data.decision.reason ? ': ' : ''}
                         {trace.data.decision.reason}
                       </p>
                     ) : null}
-                    <p className="mt-2.5 text-[12px] text-muted-foreground">
+                    <p className="mt-2.5 text-[13px] text-muted-foreground">
                       {trace.data.ai_involvement.ai_produced_evidence === 0
                         ? 'No evidence available when this was decided was produced by AI.'
                         : trace.data.ai_involvement.ai_produced_evidence === 1
@@ -338,10 +360,10 @@ export default function EvidenceTrail(): JSX.Element {
                           : `${trace.data.ai_involvement.ai_produced_evidence} pieces of evidence were produced by AI.`}{' '}
                       A named person made the decision.
                     </p>
-                  </GlassCard>
+                  </div>
 
                   <div>
-                    <h2 className="text-[15px] font-semibold text-foreground">
+                    <h2 className="text-[17px] font-bold text-foreground">
                       Available when this was decided
                     </h2>
                     {groupedEvidence.length === 0 ? (
@@ -352,7 +374,7 @@ export default function EvidenceTrail(): JSX.Element {
                       <div className="mt-3 flex flex-col gap-4">
                         {groupedEvidence.map((g) => (
                           <div key={g.stage}>
-                            <h3 className="text-[12px] font-medium uppercase tracking-wide text-[var(--ui-faint)]">
+                            <h3 className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
                               {STAGE_LABELS[g.stage]}
                             </h3>
                             <ul className="mt-1.5 flex flex-col gap-2">
@@ -367,8 +389,8 @@ export default function EvidenceTrail(): JSX.Element {
                   </div>
 
                   {trace.data.after_decision.length > 0 ? (
-                    <details className="rounded-[12px] border border-border p-3">
-                      <summary className="cursor-pointer text-[13px] font-medium text-foreground">
+                    <details className="rounded-[16px] border border-border bg-card p-4">
+                      <summary className="cursor-pointer text-[14px] font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
                         Recorded after the decision ({trace.data.after_decision.length})
                       </summary>
                       <ul className="mt-2 flex flex-col gap-2">
@@ -384,7 +406,7 @@ export default function EvidenceTrail(): JSX.Element {
                   ) : null}
 
                   {trace.data.omitted.length > 0 ? (
-                    <p className="text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
+                    <p className="text-[12px] leading-relaxed text-muted-foreground">
                       Not shown here:{' '}
                       {trace.data.omitted.map((o, i) => (
                         <span key={o.kind}>
@@ -400,6 +422,6 @@ export default function EvidenceTrail(): JSX.Element {
           )}
         </div>
       ) : null}
-    </div>
+    </Page>
   );
 }

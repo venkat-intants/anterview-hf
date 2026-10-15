@@ -132,6 +132,9 @@ class _FakeResult:
     def fetchone(self) -> tuple[Any, ...] | None:
         return self._row
 
+    def first(self) -> tuple[Any, ...] | None:
+        return self._row
+
 
 class _FakeDbSession:
     """In-memory fake for AsyncSession — records execute/commit calls.
@@ -156,6 +159,9 @@ class _FakeDbSession:
         self.statements.append(rendered)
         if "JOIN user_roles" in rendered:
             return _FakeResult((1,) if self._privileged else None)
+        if rendered.lstrip().upper().startswith("SELECT"):
+            # account-state lookup (_upsert_naipunyam_user): no pre-existing row
+            return _FakeResult(None)
         return _FakeResult((self._user_id,))
 
     async def commit(self) -> None:

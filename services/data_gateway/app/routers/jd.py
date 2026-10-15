@@ -37,13 +37,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import pdf_text
 from app.config import settings
 from app.database import get_db_session
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, reject_role
 from app.models import Job
 from app.s3_upload import upload_file
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/jobs", tags=["jd"])
+# A guest interview token carries the applicant's real account id as `sub`; it has
+# no business uploading JDs (the handler's tenant check keys on that id).
+router = APIRouter(
+    prefix="/jobs",
+    tags=["jd"],
+    dependencies=[Depends(reject_role("guest_candidate", "service"))],
+)
 
 # ---------------------------------------------------------------------------
 # Dependency shortcuts

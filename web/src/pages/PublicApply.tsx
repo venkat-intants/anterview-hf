@@ -46,6 +46,10 @@ import {
   seedEmailFor,
 } from './publicApplyDrop';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
+import { PublicNext } from '@/components/PublicNext';
+import { ProgressMeter } from '@/design/components/page';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -69,17 +73,25 @@ function errText(e: unknown, fallback: string): string {
 
 /* ── States ─────────────────────────────────────────────────────────────── */
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({
+  children,
+  company,
+  step,
+}: {
+  children: React.ReactNode;
+  company?: string;
+  step?: React.ReactNode;
+}) {
   return (
-    <div className="min-h-screen bg-card px-4 py-10">
-      <div className="mx-auto w-full max-w-[680px]">{children}</div>
-    </div>
+    <PublicFrame company={company} step={step}>
+      {children}
+    </PublicFrame>
   );
 }
 
 function Panel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={cn('rounded-[20px] border border-border bg-card p-6', className)}>
+    <div className={cn('rounded-card border border-border bg-card p-5 shadow-card sm:p-6', className)}>
       {children}
     </div>
   );
@@ -89,37 +101,37 @@ function Unavailable() {
   const { t } = useTranslation();
   return (
     <Shell>
-      <Panel className="text-center">
-        <Briefcase className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
-        <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-          {t('apply.unavailableTitle')}
-        </h1>
-        <p className="mx-auto mt-2 max-w-[48ch] text-[13.5px] leading-relaxed text-muted-foreground">
-          {t('apply.unavailableDesc')}
-        </p>
-      </Panel>
+      <PublicNotice
+        icon={<Briefcase size={22} aria-hidden="true" />}
+        title={t('apply.unavailableTitle')}
+        description={t('apply.unavailableDesc')}
+        hint={t('publicFrame.requestNew')}
+      />
     </Shell>
   );
 }
 
-function Submitted({ result, title }: { result: ApplicationResult; title: string }) {
+function Submitted({
+  result,
+  title,
+  company,
+}: {
+  result: ApplicationResult;
+  title: string;
+  company: string;
+}) {
   const { t } = useTranslation();
   return (
-    <Shell>
-      <Panel className="text-center">
-        <CheckCircle2 className="mx-auto h-9 w-9 text-[var(--ui-ok)]" aria-hidden="true" />
-        <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-          {result.already_applied ? t('apply.alreadyApplied') : t('apply.received')}
-        </h1>
-        <p className="mx-auto mt-2 max-w-[50ch] text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
-          {result.message}
-        </p>
-        <p className="mx-auto mt-4 max-w-[50ch] text-[12.5px] leading-relaxed text-muted-foreground">
-          {/* Said plainly because the alternative — silence — is what makes
-              candidates assume they were rejected. */}
-          {t('apply.reviewNote', { title })}
-        </p>
-      </Panel>
+    <Shell company={company}>
+      <PublicNotice
+        tone="ok"
+        icon={<CheckCircle2 size={22} aria-hidden="true" />}
+        title={result.already_applied ? t('apply.alreadyApplied') : t('apply.received')}
+        description={result.message}
+      />
+      {/* Said plainly because the alternative — silence — is what makes
+          candidates assume they were rejected. */}
+      <PublicNext className="mt-6">{t('apply.reviewNote', { title })}</PublicNext>
     </Shell>
   );
 }
@@ -162,7 +174,7 @@ function SeedPanel({
         <h2 className="text-[15px] font-semibold text-foreground">
           Seed {rows.length} test application{rows.length === 1 ? '' : 's'}
         </h2>
-        <span className="ml-auto text-[11.5px] text-[var(--ui-faint)]">
+        <span className="ml-auto text-[12.5px] text-[var(--ui-soft)]">
           {done}/{rows.length}
         </span>
       </div>
@@ -290,7 +302,7 @@ function BulletPanel({ heading, items }: { heading: string; items?: string[] }) 
   if (!items || items.length === 0) return null;
   return (
     <Panel className="mb-5">
-      <h2 className="mb-2 text-[14px] font-medium text-foreground">{heading}</h2>
+      <h2 className="mb-2 text-[17px] font-bold text-foreground">{heading}</h2>
       <ul className="flex list-disc flex-col gap-1.5 pl-5 text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
         {items.map((item) => (
           <li key={item}>{item}</li>
@@ -338,32 +350,32 @@ function QuestionField({
 }) {
   const id = `q-${question.id}`;
   const inputClass =
-    'w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
+    'flex min-h-11 w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-base text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm';
 
   const label = (
-    <span className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
+    <span className="mb-1.5 block text-[13px] font-medium text-foreground">
       {question.prompt}
       {question.required ? (
         <span className="ml-1 text-[var(--ui-danger)]" aria-hidden="true">
           *
         </span>
       ) : (
-        <span className="ml-1 font-normal text-[var(--ui-faint)]">(optional)</span>
+        <span className="ml-1 font-normal text-[var(--ui-soft)]">(optional)</span>
       )}
     </span>
   );
 
   const help = question.help_text ? (
-    <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">{question.help_text}</p>
+    <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">{question.help_text}</p>
   ) : null;
 
   if (question.kind === 'yes_no') {
     return (
       <fieldset>
-        <legend className="mb-1.5 text-[12.5px] font-medium text-[var(--ui-soft)]">
+        <legend className="mb-1.5 text-[13px] font-medium text-foreground">
           {question.prompt}
           {question.required ? null : (
-            <span className="ml-1 font-normal text-[var(--ui-faint)]">(optional)</span>
+            <span className="ml-1 font-normal text-[var(--ui-soft)]">(optional)</span>
           )}
         </legend>
         <div className="flex gap-2">
@@ -374,9 +386,9 @@ function QuestionField({
             <label
               key={opt.label}
               className={cn(
-                'cursor-pointer rounded-[10px] border px-4 py-2 text-[13.5px]',
+                'cursor-pointer rounded-full border px-5 py-2.5 text-[14px] focus-within:ring-2 focus-within:ring-[var(--accent)]',
                 value === opt.v
-                  ? 'border-[var(--accent)] text-foreground'
+                  ? 'border-foreground bg-[var(--ui-inset)] font-medium text-foreground'
                   : 'border-border text-[var(--ui-soft)]',
               )}
             >
@@ -422,10 +434,10 @@ function QuestionField({
     const chosen = Array.isArray(value) ? value : [];
     return (
       <fieldset>
-        <legend className="mb-1.5 text-[12.5px] font-medium text-[var(--ui-soft)]">
+        <legend className="mb-1.5 text-[13px] font-medium text-foreground">
           {question.prompt}
           {question.required ? null : (
-            <span className="ml-1 font-normal text-[var(--ui-faint)]">(optional)</span>
+            <span className="ml-1 font-normal text-[var(--ui-soft)]">(optional)</span>
           )}
         </legend>
         <div className="flex flex-wrap gap-2">
@@ -433,9 +445,9 @@ function QuestionField({
             <label
               key={o}
               className={cn(
-                'cursor-pointer rounded-[10px] border px-3 py-1.5 text-[13px]',
+                'cursor-pointer rounded-full border px-4 py-2 text-[13.5px] focus-within:ring-2 focus-within:ring-[var(--accent)]',
                 chosen.includes(o)
-                  ? 'border-[var(--accent)] text-foreground'
+                  ? 'border-foreground bg-[var(--ui-inset)] font-medium text-foreground'
                   : 'border-border text-[var(--ui-soft)]',
               )}
             >
@@ -523,15 +535,28 @@ function stepsFor(t: TFunction, questionCount: number): string[] {
 
 function Stepper({ current, steps }: { current: number; steps: string[] }) {
   return (
-    <ol className="mb-5 flex items-center gap-2" aria-label="Application progress">
+    <div className="mb-5">
+      <p className="mb-2 text-[13px] font-medium text-foreground sm:hidden">
+        {current + 1} / {steps.length} · {steps[current]}
+      </p>
+      <ProgressMeter
+        className="mb-3 sm:hidden"
+        value={((current + 1) / steps.length) * 100}
+        label="Application progress"
+      />
+    <ol className="hidden items-center gap-2 sm:flex" aria-label="Application progress">
       {steps.map((label, i) => (
         <li key={label} className="flex flex-1 items-center gap-2">
           <span
             className={cn(
-              'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[11px] font-medium',
-              i < current && 'border-[var(--ui-line-strong)] bg-[var(--ui-inset-strong)] text-foreground',
-              i === current && 'border-[var(--accent)] text-foreground',
-              i > current && 'border-border text-[var(--ui-faint)]',
+              // Same look as the shared Stepper (design/components/page): done is
+              // the primary action colour, current the highlight tint with a ring.
+              // The shared component is not used itself because it carries
+              // English-only "Step n of N" text and this flow is localised.
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[12.5px] font-bold',
+              i < current && 'bg-primary text-primary-foreground',
+              i === current && 'bg-[var(--ui-highlight)] text-[var(--ui-highlight-ink)] ring-2 ring-[var(--accent)]',
+              i > current && 'border border-[var(--ui-line-strong)] text-muted-foreground',
             )}
             aria-current={i === current ? 'step' : undefined}
           >
@@ -539,18 +564,19 @@ function Stepper({ current, steps }: { current: number; steps: string[] }) {
           </span>
           <span
             className={cn(
-              'hidden text-[12px] sm:inline',
-              i === current ? 'text-foreground' : 'text-[var(--ui-faint)]',
+              'text-[13.5px]',
+              i === current ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground',
             )}
           >
             {label}
           </span>
           {i < steps.length - 1 ? (
-            <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
+            <span className="h-px flex-1 bg-[var(--ui-line-strong)]" aria-hidden="true" />
           ) : null}
         </li>
       ))}
     </ol>
+    </div>
   );
 }
 
@@ -559,11 +585,11 @@ function ReviewRow({ label, value }: { label: string; value: string | null }) {
   const { t } = useTranslation();
   return (
     <div className="flex items-baseline justify-between gap-4 border-b border-border py-2 last:border-b-0">
-      <span className="text-[12.5px] text-muted-foreground">{label}</span>
+      <span className="text-[13px] text-muted-foreground">{label}</span>
       <span
         className={cn(
-          'text-right text-[13px]',
-          value ? 'text-foreground' : 'italic text-[var(--ui-faint)]',
+          'min-w-0 break-words text-right text-[14px]',
+          value ? 'text-foreground' : 'italic text-[var(--ui-soft)]',
         )}
       >
         {value || t('apply.notProvided')}
@@ -757,7 +783,7 @@ export default function PublicApply(): JSX.Element {
   if (posting.isLoading) {
     return (
       <Shell>
-        <div className="flex items-center justify-center gap-2 py-20 text-[13px] text-muted-foreground">
+        <div role="status" className="flex items-center justify-center gap-2 py-20 text-[14px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           {t('apply.loading')}
         </div>
@@ -766,7 +792,13 @@ export default function PublicApply(): JSX.Element {
   }
   if (posting.isError || !posting.data) return <Unavailable />;
   if (submit.isSuccess) {
-    return <Submitted result={submit.data} title={posting.data.title} />;
+    return (
+      <Submitted
+        result={submit.data}
+        title={posting.data.title}
+        company={posting.data.company_name}
+      />
+    );
   }
 
   const job = posting.data;
@@ -802,21 +834,19 @@ export default function PublicApply(): JSX.Element {
           ? requiredAnswered
           : true;
   const field =
-    'w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
+    'flex min-h-11 w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-base text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm';
 
   return (
-    <Shell>
-      <header className="mb-5">
-        <div className="text-[12.5px] uppercase tracking-[1.2px] text-[var(--ui-faint)]">
-          {job.company_name}
-        </div>
-        <h1 className="mt-1 text-[28px] font-semibold tracking-[-0.8px] text-foreground">
+    <Shell company={job.company_name} step={t('public.step.apply')}>
+      <header className="mb-6">
+        {/* The company name sits in the frame's header, so it is not repeated here. */}
+        <h1 className="text-[28px] font-bold leading-[1.15] tracking-[-0.6px] text-foreground sm:text-[32px]">
           {job.title}
         </h1>
         {metaLine(t, job) ? (
-          <div className="mt-1.5 text-[13.5px] text-[var(--ui-soft)]">{metaLine(t, job)}</div>
+          <div className="mt-2 text-[15px] text-[var(--ui-soft)]">{metaLine(t, job)}</div>
         ) : null}
-        <div className="mt-1 text-[13px] text-muted-foreground">
+        <div className="mt-1 text-[13.5px] text-muted-foreground">
           {t('careers.levelLine', { level: job.level })}
           {experienceLine(t, job) ? ` · ${experienceLine(t, job)}` : ''}
           {job.closes_at
@@ -826,7 +856,7 @@ export default function PublicApply(): JSX.Element {
             : ''}
         </div>
         {salaryLine(t, job) ? (
-          <div className="mt-2 inline-block rounded-[10px] border border-border bg-[var(--ui-inset)] px-3 py-1.5 text-[13.5px] font-medium text-foreground">
+          <div className="mt-3 inline-block rounded-full border border-border bg-[var(--ui-inset)] px-3.5 py-1.5 text-[13.5px] font-medium text-foreground">
             {salaryLine(t, job)}
           </div>
         ) : null}
@@ -834,10 +864,10 @@ export default function PublicApply(): JSX.Element {
 
       {job.jd_text ? (
         <Panel className="mb-5">
-          <h2 className="mb-2 text-[14px] font-medium text-foreground">
+          <h2 className="mb-2 text-[17px] font-bold text-foreground">
             {t('apply.aboutRole')}
           </h2>
-          <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
+          <p className="whitespace-pre-wrap text-[14.5px] leading-relaxed text-[var(--ui-soft)]">
             {job.jd_text}
           </p>
         </Panel>
@@ -855,7 +885,7 @@ export default function PublicApply(): JSX.Element {
       ) : null}
 
       <Panel>
-        <h2 className="text-[16px] font-semibold text-foreground">
+        <h2 className="text-[20px] font-bold tracking-[-0.3px] text-foreground">
           {t('apply.applyHeading')}
         </h2>
 
@@ -880,7 +910,7 @@ export default function PublicApply(): JSX.Element {
           {step === 0 ? (
             <>
           <div>
-            <label htmlFor="name" className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
+            <label htmlFor="name" className="mb-1.5 block text-[13px] font-medium text-foreground">
               {t('apply.yourName')}
             </label>
             <input
@@ -893,7 +923,7 @@ export default function PublicApply(): JSX.Element {
           </div>
 
           <div>
-            <label htmlFor="email" className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
+            <label htmlFor="email" className="mb-1.5 block text-[13px] font-medium text-foreground">
               {t('apply.email')}
             </label>
             <input
@@ -904,7 +934,7 @@ export default function PublicApply(): JSX.Element {
               autoComplete="email"
               className={field}
             />
-            <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+            <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">
               {t('apply.emailHint')}
             </p>
           </div>
@@ -912,10 +942,10 @@ export default function PublicApply(): JSX.Element {
               <div>
                 <label
                   htmlFor="phone"
-                  className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
+                  className="mb-1.5 block text-[13px] font-medium text-foreground"
                 >
                   {t('apply.phone')}{' '}
-                  <span className="font-normal text-[var(--ui-faint)]">
+                  <span className="font-normal text-[var(--ui-soft)]">
                     {t('apply.optional')}
                   </span>
                 </label>
@@ -933,14 +963,14 @@ export default function PublicApply(): JSX.Element {
 
           {step === 1 ? (
             <>
-              <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+              <p className="text-[13.5px] leading-relaxed text-muted-foreground">
                 {t('apply.optionalIntro')}
               </p>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label
                     htmlFor="years"
-                    className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
+                    className="mb-1.5 block text-[13px] font-medium text-foreground"
                   >
                     {t('apply.years')}
                   </label>
@@ -957,7 +987,7 @@ export default function PublicApply(): JSX.Element {
                 <div>
                   <label
                     htmlFor="company"
-                    className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
+                    className="mb-1.5 block text-[13px] font-medium text-foreground"
                   >
                     {t('apply.currentCompany')}
                   </label>
@@ -973,7 +1003,7 @@ export default function PublicApply(): JSX.Element {
               <div>
                 <label
                   htmlFor="title"
-                  className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
+                  className="mb-1.5 block text-[13px] font-medium text-foreground"
                 >
                   {t('apply.currentRole')}
                 </label>
@@ -989,7 +1019,7 @@ export default function PublicApply(): JSX.Element {
                 <div>
                   <label
                     htmlFor="linkedin"
-                    className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
+                    className="mb-1.5 block text-[13px] font-medium text-foreground"
                   >
                     {t('apply.linkedin')}
                   </label>
@@ -1005,7 +1035,7 @@ export default function PublicApply(): JSX.Element {
                 <div>
                   <label
                     htmlFor="github"
-                    className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]"
+                    className="mb-1.5 block text-[13px] font-medium text-foreground"
                   >
                     {t('apply.github')}
                   </label>
@@ -1023,7 +1053,7 @@ export default function PublicApply(): JSX.Element {
           ) : null}
 
           {step === 2 ? <>          <div>
-            <label htmlFor="cv" className="mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]">
+            <label htmlFor="cv" className="mb-1.5 block text-[13px] font-medium text-foreground">
               {t('apply.cvLabel')}
             </label>
             <label
@@ -1042,18 +1072,20 @@ export default function PublicApply(): JSX.Element {
                 void filesFromDrop(e.dataTransfer).then(acceptDropped);
               }}
               className={cn(
-                'flex cursor-pointer items-center gap-3 rounded-[12px] border border-dashed px-3.5 py-4 transition-colors',
-                dragging
-                  ? 'border-[var(--accent)] bg-[var(--accent)]/[0.06]'
-                  : 'border-[var(--ui-line-strong)] hover:border-[var(--accent)]/50',
+                'flex cursor-pointer items-center gap-3 rounded-[16px] border border-dashed px-4 py-6 transition-colors focus-within:ring-2 focus-within:ring-[var(--accent)]',
+                resume
+                  ? 'border-[var(--ui-ok)] bg-[var(--ui-ok-wash)]'
+                  : dragging
+                    ? 'border-[var(--accent)] bg-[var(--ui-inset)]'
+                    : 'border-[var(--ui-line-strong)] hover:border-foreground/40',
               )}
             >
               {resume ? (
                 <FileText className="h-5 w-5 shrink-0 text-[var(--ui-ok)]" aria-hidden="true" />
               ) : (
-                <Upload className="h-5 w-5 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+                <Upload className="h-5 w-5 shrink-0 text-[var(--ui-soft)]" aria-hidden="true" />
               )}
-              <span className="min-w-0 flex-1 truncate text-[13px] text-[var(--ui-soft)]">
+              <span className="min-w-0 flex-1 truncate text-[14px] text-foreground">
                 {resume
                   ? resume.name
                   : dragging
@@ -1069,11 +1101,11 @@ export default function PublicApply(): JSX.Element {
               onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
             />
             {fileError ? (
-              <p className="mt-1.5 text-[12px] text-[var(--ui-danger)]" role="alert">
+              <p className="mt-2 text-[13px] text-[var(--ui-danger)]" role="alert">
                 {fileError}
               </p>
             ) : (
-              <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+              <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">
                 {t('apply.cvHint')}
               </p>
             )}
@@ -1096,7 +1128,7 @@ export default function PublicApply(): JSX.Element {
 
           {step === steps.length - 1 ? (
             <>
-              <div className="rounded-[12px] border border-border p-3">
+              <div className="rounded-[12px] bg-[var(--ui-inset-soft)] px-4 py-1">
                 <ReviewRow label={t('apply.reviewName')} value={fullName.trim() || null} />
                 <ReviewRow label={t('apply.email')} value={email.trim() || null} />
                 <ReviewRow label={t('apply.phone')} value={phone.trim() || null} />
@@ -1136,7 +1168,7 @@ export default function PublicApply(): JSX.Element {
           <div>
             <label
               htmlFor="apply-language"
-              className="mb-1.5 block text-[12.5px] text-[var(--ui-soft)]"
+              className="mb-1.5 block text-[13px] font-medium text-foreground"
             >
               {t('apply.emailLanguage')}
             </label>
@@ -1144,7 +1176,7 @@ export default function PublicApply(): JSX.Element {
               id="apply-language"
               value={language}
               onChange={(e) => setLanguage(e.target.value as 'en' | 'hi' | 'te')}
-              className="w-full rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[13.5px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+              className={field}
             >
               <option value="en">English</option>
               <option value="hi">हिन्दी (Hindi)</option>
@@ -1154,14 +1186,14 @@ export default function PublicApply(): JSX.Element {
 
           {/* The lawful basis. Unticked by default, and the button below cannot
               be pressed until it is ticked. */}
-          <label className="flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-border p-3">
+          <label className="flex cursor-pointer items-start gap-3 rounded-[16px] border border-border p-4">
             <input
               type="checkbox"
               checked={consent}
               onChange={(e) => setConsent(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
+              className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--accent)]"
             />
-            <span className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
+            <span className="text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
               {t('apply.consent', { company: job.company_name })}
             </span>
           </label>
@@ -1171,14 +1203,14 @@ export default function PublicApply(): JSX.Element {
               consent (being found again for a FUTURE opening), and bundling
               it with the application consent above would make it
               non-optional, which D5-1's "opt-in" design rules out. */}
-          <label className="flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-border p-3">
+          <label className="flex cursor-pointer items-start gap-3 rounded-[16px] border border-border p-4">
             <input
               type="checkbox"
               checked={rediscoveryConsent}
               onChange={(e) => setRediscoveryConsent(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--accent)]"
+              className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--accent)]"
             />
-            <span className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
+            <span className="text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
               {t('apply.rediscoveryConsent', { company: job.company_name, months: 12 })}
             </span>
           </label>
@@ -1189,10 +1221,10 @@ export default function PublicApply(): JSX.Element {
               a draft without recorded permission. The button is not hidden
               when consent is missing — it is visible and inert, so the reason
               it cannot be pressed is the checkbox directly above it. */}
-          <div className="rounded-[12px] border border-border p-3">
+          <div className="rounded-[12px] bg-[var(--ui-inset-soft)] p-4">
             {saveLater.data ? (
               <>
-                <p className="text-[12.5px] font-medium text-[var(--ui-text)]">
+                <p className="text-[14px] font-semibold text-foreground">
                   {t('apply.savedTitle')}
                 </p>
                 <input
@@ -1200,27 +1232,28 @@ export default function PublicApply(): JSX.Element {
                   aria-label={t('apply.resumeLinkAria')}
                   value={`${window.location.origin}/apply/draft#${saveLater.data.resume_token}`}
                   onFocus={(e) => e.currentTarget.select()}
-                  className="mt-2 w-full rounded-[10px] border border-border bg-transparent px-2.5 py-2 text-[12px] text-[var(--ui-soft)]"
+                  className="mt-2 w-full rounded-[12px] border border-border bg-transparent px-3 py-2.5 text-[13px] text-[var(--ui-soft)]"
                 />
-                <p className="mt-1.5 text-[11.5px] text-[var(--ui-soft)]">
+                <p className="mt-1.5 text-[12.5px] text-[var(--ui-soft)]">
                   {t('apply.savedAgainst', { email: email.trim() })}
                 </p>
               </>
             ) : (
               <>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
                   onClick={() => saveLater.mutate()}
                   disabled={!consent || email.trim().length < 4 || saveLater.isPending}
-                  className="text-[12.5px] font-medium text-[var(--ui-text)] underline underline-offset-2 disabled:opacity-40 disabled:no-underline"
+                  className="h-11"
                 >
                   {saveLater.isPending ? t('apply.saving') : t('apply.saveLater')}
-                </button>
-                <p className="mt-1 text-[11.5px] text-[var(--ui-soft)]">
+                </Button>
+                <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">
                   {consent ? t('apply.saveHint') : t('apply.saveNeedsConsent')}
                 </p>
                 {saveLater.isError ? (
-                  <p className="mt-1.5 text-[11.5px] text-[var(--ui-danger)]">
+                  <p className="mt-1.5 text-[12.5px] text-[var(--ui-danger)]">
                     {errText(saveLater.error, t('apply.errSave'))}
                   </p>
                 ) : null}
@@ -1230,7 +1263,7 @@ export default function PublicApply(): JSX.Element {
 
           {submit.isError ? (
             <div
-              className="flex items-start gap-2 rounded-[12px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger)]/[0.07] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
+              className="flex items-start gap-2 rounded-[16px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-wash)] p-4 text-[13.5px] leading-relaxed text-foreground"
               role="alert"
             >
               <AlertTriangle
@@ -1241,16 +1274,12 @@ export default function PublicApply(): JSX.Element {
             </div>
           ) : null}
 
-          <button
-            type="submit"
-            disabled={!ready || submit.isPending}
-            className="inline-flex items-center justify-center gap-1.5 rounded-[12px] bg-primary px-5 py-3 text-[14px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
+          <Button type="submit" disabled={!ready || submit.isPending} className="h-12 w-full text-[15px]">
             {submit.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : null}
             {t('apply.send')}
-          </button>
+          </Button>
             </>
           ) : null}
 
@@ -1259,43 +1288,27 @@ export default function PublicApply(): JSX.Element {
           {step < steps.length - 1 ? (
             <div className="flex items-center justify-between gap-3">
               {step > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setStep(step - 1)}
-                  className="rounded-[12px] border border-border px-4 py-2.5 text-[13.5px] text-[var(--ui-soft)] hover:text-foreground"
-                >
+                <Button type="button" variant="outline" className="h-11" onClick={() => setStep(step - 1)}>
                   {t('apply.back')}
-                </button>
+                </Button>
               ) : (
                 <span />
               )}
               <div className="flex items-center gap-2">
                 {step === 1 ? (
-                  <button
-                    type="button"
-                    onClick={() => setStep(step + 1)}
-                    className="rounded-[12px] px-3 py-2.5 text-[13.5px] text-muted-foreground hover:text-foreground"
-                  >
+                  <Button type="button" variant="ghost" className="h-11" onClick={() => setStep(step + 1)}>
                     {t('apply.skip')}
-                  </button>
+                  </Button>
                 ) : null}
-                <button
-                  type="submit"
-                  disabled={!canContinue}
-                  className="rounded-[12px] bg-primary px-5 py-2.5 text-[14px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-                >
+                <Button type="submit" disabled={!canContinue} className="h-11 px-6">
                   {t('apply.continue')}
-                </button>
+                </Button>
               </div>
             </div>
           ) : (
-            <button
-              type="button"
-              onClick={() => setStep(step - 1)}
-              className="self-start rounded-[12px] border border-border px-4 py-2.5 text-[13.5px] text-[var(--ui-soft)] hover:text-foreground"
-            >
+            <Button type="button" variant="outline" className="h-11 self-start" onClick={() => setStep(step - 1)}>
               {t('apply.back')}
-            </button>
+            </Button>
           )}
         </form>
       </Panel>
@@ -1313,7 +1326,7 @@ export default function PublicApply(): JSX.Element {
             <button
               type="button"
               onClick={() => folderInput.current?.click()}
-              className="text-[12px] text-[var(--ui-faint)] underline-offset-2 hover:text-muted-foreground hover:underline"
+              className="text-[12px] text-[var(--ui-soft)] underline-offset-2 hover:text-muted-foreground hover:underline"
             >
               Dev: drop or choose a folder of CVs to seed test applications
             </button>
@@ -1334,7 +1347,7 @@ export default function PublicApply(): JSX.Element {
         )
       ) : null}
 
-      <p className="mt-4 text-center text-[11.5px] text-[var(--ui-faint)]">
+      <p className="mt-4 text-center text-[12.5px] text-[var(--ui-soft)]">
         {t('apply.humanReview', { company: job.company_name })}
       </p>
     </Shell>

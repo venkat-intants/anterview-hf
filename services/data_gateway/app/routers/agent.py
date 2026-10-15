@@ -61,7 +61,7 @@ from app.agents.tools import registry
 from app.config import settings
 from app.corpus import embeddings_available
 from app.database import get_db_session
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_role_password_ok
 from app.models import AuditLog
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 
@@ -71,6 +71,16 @@ router = APIRouter(prefix="/agent", tags=["agent"])
 
 DbSessionDep = Annotated[Any, Depends(get_db_session)]
 UserDep = Annotated[User, Depends(get_current_user)]
+# Routes that RUN a copilot or read candidate evidence. Requires a console role AND
+# a changed bootstrap password: a freshly provisioned account still on the
+# password an admin set could otherwise drive the copilot (which reads company
+# records) by talking to the API directly, since the forced reset lives only in
+# the SPA. /agent/status stays on UserDep: candidates poll it to learn the
+# assistant is NOT for them.
+StaffUserDep = Annotated[
+    User,
+    Depends(require_role_password_ok("platform_owner", "super_admin", "hr_manager", "admin")),
+]
 
 # How much prior conversation the client may replay. Long histories are the
 # main driver of agent cost, and beyond a handful of turns a console copilot is
@@ -472,7 +482,7 @@ async def _write_panel_audit(
 
 @router.post("/chat", response_model=ChatOut)
 async def agent_chat(
-    body: ChatIn, user: UserDep, db: DbSessionDep, request: Request
+    body: ChatIn, user: StaffUserDep, db: DbSessionDep, request: Request
 ) -> ChatOut:
     """Ask this console's copilot a question."""
     if not settings.agents_enabled:
@@ -541,7 +551,7 @@ async def agent_chat(
 
 
 @router.post("/watchers/run")
-async def run_watchers_now(user: UserDep) -> dict[str, Any]:
+async def run_watchers_now(user: StaffUserDep) -> dict[str, Any]:
     """Trigger the watcher sweep immediately.
 
     Platform-owner only. Exists so the nightly job can be verified after a
@@ -564,7 +574,7 @@ async def run_watchers_now(user: UserDep) -> dict[str, Any]:
 
 @router.post("/panel/{applicant_id}")
 async def agent_panel(
-    applicant_id: uuid.UUID, user: UserDep, db: DbSessionDep, request: Request
+    applicant_id: uuid.UUID, user: StaffUserDep, db: DbSessionDep, request: Request
 ) -> dict[str, Any]:
     """Run the specialist panel on one candidate.
 

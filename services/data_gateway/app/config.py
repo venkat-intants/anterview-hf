@@ -345,6 +345,29 @@ class Settings(BaseSettings):
     # MEDIUM-4: the on-demand /code-analysis route, capped per COMPANY (not
     # per IP — many HR seats at one company must share one budget).
     code_analysis_ondemand_per_minute: int = 10
+    # AI drafting of CODING questions into a question bank
+    # (POST /hr/question-banks/{id}/questions/generate-coding), capped per
+    # COMPANY on the precedent above. Each call is one LLM round trip of up to
+    # 14,336 output tokens (five problems), so this bounds a company at roughly
+    # 57k output tokens a minute. The MCQ generators have no limiter of their
+    # own; this one exists because a coding generation's output budget is
+    # several times an MCQ one's (2048 vs 256 tokens per question). Unlike the
+    # other limiters here this one FAILS CLOSED: with Redis unreachable the
+    # route answers 503 rather than running unmetered, because every request
+    # is an LLM bill. Charged after the bank lookup, so a 404 spends nothing.
+    bank_generate_coding_per_minute: int = 4
+    # The same per-minute cap for the MCQ bank generator (POST
+    # /hr/question-banks/{id}/questions/generate), which had no limiter at all.
+    bank_generate_mcq_per_minute: int = 6
+    # A per-COMPANY DAILY ceiling on bank AI generation, MCQ and coding
+    # TOGETHER (one shared counter, fixed 24 h window from the first request of
+    # the window). A per-minute cap alone still allows ~5,700 calls a day.
+    # Env: BANK_GENERATE_DAILY_PER_COMPANY. Fails closed, like the above.
+    bank_generate_daily_per_company: int = 200
+    # The exam-editor generators (POST /hr/exams/{id}/questions/generate and
+    # .../coding-questions/generate) share the same client and the same cost
+    # but had no limiter. Per COMPANY, both routes on one counter; fails closed.
+    exam_generate_per_minute: int = 6
     # Candidate source and program stdout/stderr are redacted this many days
     # after the application is decided (or after submission, when there is no
     # application) — the same policy shape as accommodation_retention_days.
@@ -727,6 +750,19 @@ class Settings(BaseSettings):
     # sends, a one-way status flip for completion), so running it more often
     # cannot double-send or double-notify.
     reminders_enabled: bool = True
+
+    # ── Missed-window catch-up (scheduling.start_catchup) ─────────────────
+    # Every 15 minutes the catch-up loop claims each job's window in
+    # scheduled_job_run_log, which is a database round trip per job per tick
+    # whether or not anything is due. On a metered serverless Postgres that is
+    # what keeps the compute awake (see email_poll_interval_seconds); slowing it
+    # does not help, only not polling does. SCHEDULER_CATCHUP_ENABLED=false turns
+    # the loop off. The cost: a window the in-process scheduler missed (the
+    # service was asleep at 03:00 UTC) is no longer replayed, so the retention
+    # purge, the nightly watchers and the applicant-identity-index backstop only
+    # run when the scheduler's own trigger fires while the service is up. Default
+    # true: today's behaviour.
+    scheduler_catchup_enabled: bool = True
     # 300 -> 3600 on 2026-09-26 (see email_poll_interval_seconds). Deadline
     # reminders are about days, so hourly gives every reminder its own window,
     # and the sweep is idempotent by construction — nothing depended on the

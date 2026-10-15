@@ -12,11 +12,14 @@ test.describe('creating an opening', () => {
     await page.locator('#new-title').fill(title);
     await page.locator('#new-level').selectOption('mid');
     await page.locator('#new-target').fill('2');
+    // Three steps: role basics, an optional budget, then review and create.
+    await page.getByTestId('new-opening-continue').click();
+    await page.getByTestId('new-opening-continue').click();
     await page.getByTestId('create-opening').click();
     await expect(page.getByText(`Opened “${title}”`)).toBeVisible();
 
-    await page.getByTestId('opening-row').filter({ hasText: title }).click();
-    await expect(page).toHaveURL(/\/hr\/requisitions\/[0-9a-f-]{36}$/);
+    // Creating lands on the new opening's Setup tab.
+    await expect(page).toHaveURL(/\/hr\/requisitions\/[0-9a-f-]{36}\?tab=setup$/);
     await expect(page.getByRole('heading', { name: title })).toBeVisible();
     // Nothing is published yet, and the dashboard says so rather than implying
     // candidates are moving.
@@ -27,10 +30,14 @@ test.describe('creating an opening', () => {
     await signIn(page, tenant.accounts.hr_manager);
     await page.goto('/hr/requisitions');
     await page.getByTestId('new-opening').click();
-    await expect(page.getByTestId('create-opening')).toBeDisabled();
+    await page.getByTestId('new-opening-continue').click();
+    await expect(page.getByRole('alert')).toContainText(/at least 2 characters/);
+    await expect(page.getByTestId('new-opening-step-budget')).toHaveCount(0);
     await page.locator('#new-title').fill('A');
-    await expect(page.getByTestId('create-opening')).toBeDisabled();
+    await page.getByTestId('new-opening-continue').click();
+    await expect(page.getByTestId('new-opening-step-budget')).toHaveCount(0);
     await page.locator('#new-title').fill('QA Engineer');
-    await expect(page.getByTestId('create-opening')).toBeEnabled();
+    await page.getByTestId('new-opening-continue').click();
+    await expect(page.getByTestId('new-opening-step-budget')).toBeVisible();
   });
 });

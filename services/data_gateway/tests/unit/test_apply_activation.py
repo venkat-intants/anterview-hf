@@ -166,6 +166,7 @@ async def test_activate_promotes_when_no_account_exists(monkeypatch: pytest.Monk
         executes=[
             _token_result(),
             _result(_row(id=uuid.uuid4(), email="Asha@Example.com", full_name="Asha")),
+            _result(_row(id=uuid.uuid4())),  # _consume: the conditional UPDATE won
         ],
         scalar=None,  # no existing user with that address
     )
@@ -197,6 +198,10 @@ async def test_activate_links_when_the_address_already_has_an_account(
         executes=[
             _token_result(),
             _result(_row(id=uuid.uuid4(), email="ravi@example.com", full_name="Ravi")),
+            _result(_row(id=uuid.uuid4())),  # _consume: the conditional UPDATE won
+            _result(),  # _consume: sweep of the user's other outstanding tokens
+            # _is_takeover_target: a VERIFIED account is linked, never rewritten
+            _result(_row(password_hash="$2b$x", email_verified_at=datetime.now(tz=UTC), roles=[])),
         ],
         scalar=str(uuid.uuid4()),  # an account already holds this address
     )
@@ -332,3 +337,97 @@ async def test_activation_token_outlives_a_password_reset(
     insert_params = db.execute.await_args_list[1].args[1]
     assert insert_params["exp"] - now == timedelta(hours=settings.apply_activation_ttl_hours)
     assert settings.apply_activation_ttl_hours > settings.password_reset_ttl_hours
+
+
+# ===========================================================================
+# H2 - an unverified password account is TAKEN OVER, never linked as-is
+# L10 - the token is consumed by one conditional UPDATE
+# ===========================================================================
+async def _run_link(
+    monkeypatch: pytest.MonkeyPatch, trust_row: object | None
+) -> tuple[dict[str, str], AsyncMock]:
+    from app import apply_activation
+
+    monkeypatch.setattr(apply_activation, "_link_to_existing", AsyncMock())
+    db = _db(
+        executes=[
+            _token_result(),
+            _result(_row(id=uuid.uuid4(), email="victim@example.com", full_name="V")),
+            _result(_row(id=uuid.uuid4())),  # consume won
+            _result(),  # ...and its second UPDATE (other outstanding tokens)
+            _result(trust_row),
+        ],
+        scalar=str(uuid.uuid4()),
+    )
+    out = await apply_activation.activate(db, raw_token="raw", new_password="MyNewPass123!")
+    return out, db
+
+
+def _sql(db: AsyncMock) -> list[str]:
+    return [str(c.args[0]) for c in db.execute.call_args_list]
+
+
+@pytest.mark.asyncio
+async def test_unverified_password_account_is_taken_over_and_sessions_revoked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pre-hijack: an attacker registered the victim's address first."""
+    out, db = await _run_link(
+        monkeypatch, _row(password_hash="$2b$attacker", email_verified_at=None, roles=["candidate"])
+    )
+    assert out["linked"] == "existing"
+    assert out["revoke_sessions_for"], "sessions on the taken-over account must be revoked"
+    takeover = [q for q in _sql(db) if "SET password_hash" in q and "email_verified_at" in q]
+    assert takeover, "the attacker's password must be replaced and the address marked verified"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "trust_row",
+    [
+        _row(password_hash="$2b$x", email_verified_at=datetime.now(tz=UTC), roles=["candidate"]),
+        _row(password_hash=None, email_verified_at=None, roles=["candidate"]),  # SSO/passwordless
+        _row(password_hash="$2b$x", email_verified_at=None, roles=["hr_manager"]),  # staff
+        None,
+    ],
+    ids=["verified", "passwordless", "staff-account", "row-vanished"],
+)
+async def test_verified_passwordless_and_staff_accounts_are_linked_not_rewritten(
+    monkeypatch: pytest.MonkeyPatch, trust_row: object | None
+) -> None:
+    out, db = await _run_link(monkeypatch, trust_row)
+    assert out["linked"] == "existing"
+    assert not out["revoke_sessions_for"]
+    assert not [q for q in _sql(db) if "SET password_hash" in q]
+
+
+@pytest.mark.asyncio
+async def test_token_consumption_is_one_conditional_update_and_losing_raises() -> None:
+    from app.apply_activation import ActivationError, activate
+
+    # consume returns no row: a concurrent submission already took the token
+    db = _db(
+        executes=[
+            _token_result(),
+            _result(_row(id=uuid.uuid4(), email="a@example.com", full_name="A")),
+            _result(None),
+        ],
+        scalar=None,
+    )
+    with pytest.raises(ActivationError):
+        await activate(db, raw_token="raw", new_password="GoodPass123!")
+    consume_sql = _sql(db)[2]
+    assert "consumed_at IS NULL" in consume_sql
+    assert "expires_at >" in consume_sql
+    assert "RETURNING" in consume_sql
+
+
+@pytest.mark.asyncio
+async def test_successful_consume_also_kills_the_users_other_outstanding_tokens() -> None:
+    from app.apply_activation import _consume
+
+    db = _db(executes=[_result(_row(id=uuid.uuid4())), _result()])
+    await _consume(db, uuid.uuid4(), "raw", datetime.now(tz=UTC))
+    sqls = _sql(db)
+    assert len(sqls) == 2
+    assert "user_id = :uid" in sqls[1] and "consumed_at IS NULL" in sqls[1]

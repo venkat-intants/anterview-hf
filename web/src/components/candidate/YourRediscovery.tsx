@@ -27,8 +27,10 @@ import {
   type MyRediscoveryCompany,
   type MyRediscoveryResponse,
 } from '@/api/rediscovery';
-import { GlassCard, StatusTag } from '@/design/components/primitives';
-import { Search } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Section } from '@/design/components/rows';
+import { StatusTag } from '@/design/components/primitives';
 
 function localeFor(lang: string): string {
   if (lang.startsWith('hi')) return 'hi-IN';
@@ -76,13 +78,13 @@ function CompanyRow({
   });
 
   return (
-    <div className="rounded-[10px] border border-border p-3.5">
+    <div className="rounded-[14px] bg-[var(--ui-inset-soft)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-[13.5px] font-medium text-foreground">
+          <p className="text-[14px] font-semibold text-foreground">
             {t('rediscovery.toggleLabel', { company: company.company_name })}
           </p>
-          <p className="mt-1 max-w-[52ch] text-[12px] leading-relaxed text-muted-foreground">
+          <p className="mt-1 max-w-[52ch] text-[13px] leading-relaxed text-muted-foreground">
             {t('rediscovery.notice', { company: company.company_name, months: consentMonths })}
           </p>
         </div>
@@ -97,22 +99,23 @@ function CompanyRow({
               : t('rediscovery.off')}
           </StatusTag>
           {company.state === 'on' ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => setConfirmingOff(true)}
-              className="rounded-[8px] border border-border px-3 py-1.5 text-[12.5px] text-foreground"
             >
               {t('rediscovery.turnOff')}
-            </button>
+            </Button>
           ) : (
-            <button
+            <Button
               type="button"
+              size="sm"
               onClick={() => mut.mutate(true)}
               disabled={mut.isPending}
-              className="rounded-[8px] bg-primary px-3 py-1.5 text-[12.5px] font-semibold text-primary-foreground disabled:opacity-60"
             >
               {mut.isPending ? '…' : t('rediscovery.turnOn')}
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -121,35 +124,41 @@ function CompanyRow({
         <div
           role="group"
           aria-label={t('rediscovery.turnOffConfirmTitle')}
-          className="mt-3 rounded-[10px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger)]/[0.06] p-3"
+          className="mt-3 rounded-[14px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-wash)] p-4"
         >
-          <p className="text-[12.5px] font-medium text-foreground">
+          <p className="text-[14px] font-semibold text-foreground">
             {t('rediscovery.turnOffConfirmTitle')}
           </p>
-          <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+          <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
             {t('rediscovery.turnOffConfirmDesc', { company: company.company_name })}
           </p>
-          <div className="mt-2.5 flex gap-2">
-            <button
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
               type="button"
+              variant="destructive"
+              size="sm"
               onClick={() => mut.mutate(false)}
               disabled={mut.isPending}
-              className="rounded-[8px] bg-[#e6714f]/20 px-3 py-1.5 text-[12px] font-semibold text-[#ff8a66] disabled:opacity-50"
             >
               {mut.isPending ? '…' : t('rediscovery.turnOffConfirmYes')}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => setConfirmingOff(false)}
-              className="rounded-[8px] bg-[var(--ui-inset)] px-3 py-1.5 text-[12px] text-[var(--ui-soft)]"
             >
               {t('rediscovery.cancel')}
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
 
-      {err ? <p className="mt-2 text-[12px] text-[var(--ui-danger)]">{err}</p> : null}
+      {err ? (
+        <p role="alert" className="mt-2 text-[13px] text-[var(--ui-danger)]">
+          {err}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -174,35 +183,31 @@ export default function YourRediscovery(): JSX.Element | null {
   if (!isLoading && !isError && companies.length === 0) return null;
 
   return (
-    <section aria-labelledby="your-rediscovery-heading" className="mt-6">
-      <GlassCard className="p-5">
-        <h2
-          id="your-rediscovery-heading"
-          className="flex items-center gap-2 text-[15px] font-semibold text-foreground"
-        >
-          <Search size={15} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-          {t('rediscovery.heading')}
-        </h2>
-
-        {isLoading ? (
-          <p className="mt-2 text-[13px] text-muted-foreground">{t('rediscovery.loading')}</p>
-        ) : isError ? (
-          <p className="mt-2 text-[13px] text-[var(--ui-danger)]">
-            {rediscoveryErrorMessage(error, t('rediscovery.loadError'))}
-          </p>
-        ) : (
-          <div className="mt-3 flex flex-col gap-2.5">
-            {companies.map((c) => (
-              <CompanyRow
-                key={c.company_id}
-                company={c}
-                consentMonths={data?.consent_months ?? 12}
-                locale={locale}
-              />
-            ))}
-          </div>
-        )}
-      </GlassCard>
-    </section>
+    // The last block on /applications: a consent setting, not a status, so it
+    // sits below every application and is titled for what it is.
+    <Section title={t('track.privacy')} data-testid="rediscovery-section">
+      {isLoading ? (
+        <div aria-busy="true" className="space-y-2">
+          <Skeleton className="h-4 w-1/2" />
+          <Skeleton className="h-4 w-1/3" />
+          <span className="sr-only">{t('rediscovery.loading')}</span>
+        </div>
+      ) : isError ? (
+        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
+          {rediscoveryErrorMessage(error, t('rediscovery.loadError'))}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {companies.map((c) => (
+            <CompanyRow
+              key={c.company_id}
+              company={c}
+              consentMonths={data?.consent_months ?? 12}
+              locale={locale}
+            />
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }

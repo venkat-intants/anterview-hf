@@ -272,10 +272,44 @@ describe('PlatformOwnerConsole — creating a tenant', () => {
     renderConsole();
 
     await screen.findByText('Acme Skills University');
-    await user.type(screen.getByLabelText(/new company name/i), '  Zeta Institute  ');
-    await user.click(screen.getByRole('button', { name: /^create$/i }));
+    // The form does not exist until the dialog is opened from the header.
+    expect(screen.queryByLabelText(/company name/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^new company$/i }));
+    await user.type(screen.getByLabelText(/company name/i), '  Zeta Institute  ');
+    await user.click(screen.getByRole('button', { name: /^create company$/i }));
 
     await waitFor(() => expect(api.createCompany).toHaveBeenCalledWith('Zeta Institute'));
+    // The dialog closes on success and the new company's panel takes over.
+    await waitFor(() => expect(screen.queryByLabelText(/company name/i)).not.toBeInTheDocument());
+  });
+
+  it('Cancel discards what was typed', async () => {
+    const user = userEvent.setup();
+    renderConsole();
+
+    await screen.findByText('Acme Skills University');
+    await user.click(screen.getByRole('button', { name: /^new company$/i }));
+    await user.type(screen.getByLabelText(/company name/i), 'Half typed');
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(screen.queryByLabelText(/company name/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^new company$/i }));
+    expect(screen.getByLabelText(/company name/i)).toHaveValue('');
+    expect(api.createCompany).not.toHaveBeenCalled();
+  });
+
+  it('keeps the dialog open and shows the server reason when the create fails', async () => {
+    api.createCompany.mockRejectedValue(new Error('Company already exists'));
+    const user = userEvent.setup();
+    renderConsole();
+
+    await screen.findByText('Acme Skills University');
+    await user.click(screen.getByRole('button', { name: /^new company$/i }));
+    await user.type(screen.getByLabelText(/company name/i), 'Acme Skills University');
+    await user.click(screen.getByRole('button', { name: /^create company$/i }));
+
+    expect(await screen.findByText('Company already exists')).toBeInTheDocument();
+    expect(screen.getByLabelText(/company name/i)).toHaveValue('Acme Skills University');
   });
 
   it('refuses an empty name instead of POSTing a blank tenant', async () => {
@@ -283,10 +317,11 @@ describe('PlatformOwnerConsole — creating a tenant', () => {
     renderConsole();
 
     await screen.findByText('Acme Skills University');
-    await user.click(screen.getByRole('button', { name: /^create$/i }));
+    await user.click(screen.getByRole('button', { name: /^new company$/i }));
+    await user.click(screen.getByRole('button', { name: /^create company$/i }));
 
     expect(api.createCompany).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith('Company name is required.');
+    expect(await screen.findByText('Company name is required.')).toBeInTheDocument();
   });
 });
 
@@ -300,7 +335,7 @@ describe('PlatformOwnerConsole — super-admin panel', () => {
 
     await screen.findByText('Acme Skills University');
     expect(screen.getByText(/click a row above to manage its super admin/i)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /create super admin/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add super admin/i })).not.toBeInTheDocument();
   });
 
   it('creates the super admin against the SELECTED company only', async () => {
@@ -313,6 +348,7 @@ describe('PlatformOwnerConsole — super-admin panel', () => {
 
     await user.click(await screen.findByRole('button', { name: /select nova polytechnic/i }));
 
+    await user.click(await screen.findByRole('button', { name: /^add super admin$/i }));
     await user.type(await screen.findByLabelText(/^email$/i), 'boss@nova.edu');
     await user.type(screen.getByLabelText(/full name/i), 'Nova Boss');
     await user.click(screen.getByRole('button', { name: /create super admin/i }));
@@ -332,6 +368,7 @@ describe('PlatformOwnerConsole — super-admin panel', () => {
     renderConsole();
 
     await user.click(await screen.findByRole('button', { name: /select nova polytechnic/i }));
+    await user.click(await screen.findByRole('button', { name: /^add super admin$/i }));
     await user.type(await screen.findByLabelText(/^email$/i), 'boss@nova.edu');
     await user.type(screen.getByLabelText(/full name/i), 'Nova Boss');
     await user.click(screen.getByRole('button', { name: /create super admin/i }));
@@ -339,6 +376,8 @@ describe('PlatformOwnerConsole — super-admin panel', () => {
     await waitFor(() => expect(api.createCompanyAdmin).toHaveBeenCalled());
     const payload = api.createCompanyAdmin.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(Object.keys(payload)).toEqual(['email', 'full_name']);
+    // The hint stays on the page after the dialog closes, not only inside it.
+    await waitFor(() => expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument());
     expect(screen.getByText(/set your password.*link is emailed/i)).toBeInTheDocument();
   });
 
@@ -349,7 +388,7 @@ describe('PlatformOwnerConsole — super-admin panel', () => {
     await user.click(await screen.findByRole('button', { name: /select acme/i }));
 
     expect(await screen.findByText('Asha Rao')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /create super admin/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add super admin/i })).not.toBeInTheDocument();
   });
 
   it('shows the tenant HR managers read-only — the super admin owns that list', async () => {

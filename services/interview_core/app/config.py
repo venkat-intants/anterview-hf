@@ -205,6 +205,23 @@ class Settings(BaseSettings):
     worker_load_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
     worker_max_concurrent_jobs: int = Field(default=4, ge=0)
 
+    # Per-USER cost guards (M3). Session creation and room-token issuance (which
+    # DISPATCHES a worker: LLM + speech + avatar) were unlimited. Defaults are far
+    # above anything a real candidate does -- a reload or a dropped connection is one
+    # token call, a retry storm of 20/minute is a script -- and every one is
+    # env-configurable (0 disables). Fixed 60 s window in Redis; fails OPEN when
+    # Redis is unavailable, like data_gateway's limiter and the capacity check.
+    session_create_per_minute: int = Field(default=10, ge=0)
+    room_token_per_minute: int = Field(default=20, ge=0)
+    # How many sessions one user may have RUNNING (status='in_progress') at once
+    # before a token request for a DIFFERENT session is refused with 409. 1 = a user
+    # cannot hold two workers. 0 disables. Re-joining the SAME session is always
+    # allowed (reload / dropped connection). A row stuck 'in_progress' after a worker
+    # crash stops counting after `active_session_window_minutes` (the worker's reaper
+    # also closes it); the interview itself runs ~10 minutes.
+    max_active_sessions_per_user: int = Field(default=1, ge=0)
+    active_session_window_minutes: int = Field(default=20, ge=1)
+
     # Per-job soft memory ceiling in MB.  When non-zero, request_fnc checks
     # whether accepting one more job would push estimated RSS above the VM's
     # hard cap (container_memory_limit_mb).  Set to 0 to disable the check.

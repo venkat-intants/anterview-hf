@@ -30,11 +30,11 @@ import {
 export type { ProctorIndicatorSignals, ProctorIndicatorStatus };
 
 const TONE: Record<ProctorIndicatorStatus, string> = {
-  unavailable: 'text-fog',
-  starting: 'text-amber-glow',
-  calibrating: 'text-amber-glow',
-  warning: 'text-ember',
-  ok: 'text-vivid-mint',
+  unavailable: 'text-[var(--ui-soft)]',
+  starting: 'text-[var(--ui-warn)]',
+  calibrating: 'text-[var(--ui-warn)]',
+  warning: 'text-[var(--ui-danger)]',
+  ok: 'text-[var(--ui-ok)]',
 };
 
 export default function ProctorIndicator(signals: ProctorIndicatorSignals) {
@@ -61,13 +61,13 @@ export default function ProctorIndicator(signals: ProctorIndicatorSignals) {
       aria-live="polite"
       data-testid="proctor-indicator"
       className={cn(
-        'flex items-center gap-1.5 rounded-full border border-border bg-[var(--ui-inset-soft)] px-3 py-1.5 text-caption',
+        'flex items-center gap-1.5 rounded-full border border-current bg-card px-3 py-1.5 text-[13px] font-medium',
         TONE[status],
       )}
     >
       <Icon
         className={cn(
-          'h-3.5 w-3.5 shrink-0',
+          'h-4 w-4 shrink-0',
           (status === 'starting' || status === 'calibrating') && 'animate-spin',
         )}
         aria-hidden="true"

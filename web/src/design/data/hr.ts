@@ -30,11 +30,11 @@ export const PIPELINE: Record<Stage, PipelineCard[]> = {
 };
 
 export const STAGE_META: { key: Stage; title: string; dot: string }[] = [
-  { key: 'applied', title: 'Applied', dot: '#888b91' },
-  { key: 'screened', title: 'Screened', dot: '#0088ff' },
-  { key: 'interviewed', title: 'Interviewed', dot: '#a887dc' },
-  { key: 'offer', title: 'Offer', dot: '#ffb764' },
-  { key: 'hired', title: 'Hired', dot: '#27c93f' },
+  { key: 'applied', title: 'Applied', dot: 'var(--ui-faint)' },
+  { key: 'screened', title: 'Screened', dot: 'var(--ui-info)' },
+  { key: 'interviewed', title: 'Interviewed', dot: 'var(--ui-lavender)' },
+  { key: 'offer', title: 'Offer', dot: 'var(--ui-warn)' },
+  { key: 'hired', title: 'Hired', dot: 'var(--ui-ok)' },
 ];
 
 export interface Applicant {
@@ -147,9 +147,9 @@ export interface LangSlice {
 }
 
 export const LANG_MIX: LangSlice[] = [
-  { label: 'हिन्दी', value: 46, color: '#0088ff' },
-  { label: 'English', value: 28, color: '#a887dc' },
-  { label: 'తెలుగు', value: 26, color: '#16c253' },
+  { label: 'हिन्दी', value: 46, color: 'var(--ui-info)' },
+  { label: 'English', value: 28, color: 'var(--ui-lavender)' },
+  { label: 'తెలుగు', value: 26, color: 'var(--ui-ok)' },
 ];
 
 export interface TrendPoint {

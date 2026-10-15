@@ -211,12 +211,12 @@ describe('uploadJd', () => {
     global.XMLHttpRequest = vi.fn(() => mock) as unknown as typeof XMLHttpRequest;
 
     const file = new File(['%PDF-1.4'], 'jd.pdf', { type: 'application/pdf' });
-    const result = await uploadJd('job-uuid-123', file);
+    const result = await uploadJd('00000000-0000-4000-8000-000000000123', file);
 
     expect(result.text_length).toBe(4200);
     expect(result.jd_s3_key).toBe('jds/job123.pdf');
     // Check correct URL was opened (includes job ID)
-    expect(mock.open).toHaveBeenCalledWith('POST', expect.stringContaining('job-uuid-123'));
+    expect(mock.open).toHaveBeenCalledWith('POST', expect.stringContaining('00000000-0000-4000-8000-000000000123'));
     // Must NOT manually set Content-Type
     const contentTypeCalls = (mock.setRequestHeader.mock.calls as [string, string][]).filter(
       ([header]) => header.toLowerCase() === 'content-type',
@@ -227,12 +227,12 @@ describe('uploadJd', () => {
   it('throws with the detail from a 404 response', async () => {
     const mock = createXhrMock({
       status: 404,
-      responseText: JSON.stringify({ detail: 'Job job-uuid-999 not found.' }),
+      responseText: JSON.stringify({ detail: 'Job 00000000-0000-4000-8000-000000000999 not found.' }),
     });
     global.XMLHttpRequest = vi.fn(() => mock) as unknown as typeof XMLHttpRequest;
 
     const file = new File(['%PDF-1.4'], 'jd.pdf', { type: 'application/pdf' });
-    await expect(uploadJd('job-uuid-999', file)).rejects.toThrow('Job job-uuid-999 not found.');
+    await expect(uploadJd('00000000-0000-4000-8000-000000000999', file)).rejects.toThrow('Job 00000000-0000-4000-8000-000000000999 not found.');
   });
 
   it('throws a network error when XHR fires onerror', async () => {
@@ -244,6 +244,6 @@ describe('uploadJd', () => {
     global.XMLHttpRequest = vi.fn(() => mock) as unknown as typeof XMLHttpRequest;
 
     const file = new File(['%PDF'], 'jd.pdf', { type: 'application/pdf' });
-    await expect(uploadJd('job-id', file)).rejects.toThrow(/network error/i);
+    await expect(uploadJd('00000000-0000-4000-8000-0000000000ff', file)).rejects.toThrow(/network error/i);
   });
 });

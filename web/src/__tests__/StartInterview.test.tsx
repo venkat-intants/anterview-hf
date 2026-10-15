@@ -122,8 +122,8 @@ describe('StartInterview page', () => {
     // The submit button text depends on consent state (loaded async).
     // Wait for consent to resolve (consented=true) → button reads "Start Interview".
     await screen.findByRole('button', { name: /start interview/i });
-    // Avatar step heading is rendered statically
-    expect(screen.getByText(/choose your interviewer/i)).toBeInTheDocument();
+    // Avatar step heading is rendered statically (the Stepper repeats the label, so match the heading)
+    expect(screen.getByRole('heading', { name: /choose your interviewer/i })).toBeInTheDocument();
   });
 
   it('shows "resume on file" when has_resume is true', async () => {

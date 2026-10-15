@@ -12,6 +12,8 @@
 import { useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { requestFullscreen, isFullscreenSupported } from '@/features/interview/useFullscreen';
+import { Button } from '@/components/ui/button';
+import { Play } from '@/design/components/icons';
 import type { Language } from '../types/interview';
 
 interface InterviewIntroProps {
@@ -81,27 +83,22 @@ export default function InterviewIntro({ language, onDone }: InterviewIntroProps
 
   return (
     <div
-      className="h-screen flex flex-col items-center justify-center bg-aurora relative overflow-hidden"
+      className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background px-4 py-8"
       data-testid="interview-intro"
     >
-      {/* Midnight veil — keeps content legible over the darker upper region */}
-      <div
-        className="absolute inset-0 bg-gradient-to-b from-black/85 via-black/55 to-black/30 pointer-events-none"
-        aria-hidden="true"
-      />
-
-      {/* Video player */}
-      <div className="relative z-10 w-full max-w-2xl px-4 flex flex-col items-center gap-6">
+      <div className="flex w-full max-w-2xl flex-col items-center gap-6">
         {/* Header */}
         <div className="text-center">
-          <span className="text-caption font-semibold text-electric-signal tracking-wider uppercase">
+          <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[var(--ui-info)]">
             {t('interviewIntro.brand')}
           </span>
-          <h1 className="mt-1 text-heading font-semibold text-foreground">{t('interviewIntro.meetTitle')}</h1>
+          <h1 className="mt-1 text-[28px] font-bold tracking-[-0.6px] text-foreground sm:text-[32px]">
+            {t('interviewIntro.meetTitle')}
+          </h1>
         </div>
 
         {/* Video container */}
-        <div className="w-full rounded-3xl overflow-hidden shadow-elevated border border-border bg-background">
+        <div className="w-full overflow-hidden rounded-card border border-border bg-card shadow-elevated">
           {/*
            * onError: video 404, decode failure, or codec unsupported — call
            *   onDone so a broken clip never blocks the interview.
@@ -117,59 +114,47 @@ export default function InterviewIntro({ language, onDone }: InterviewIntroProps
             preload="auto"
             onEnded={safeDone}
             onError={safeDone}
-            aria-label="AI interviewer introduction video"
-            className="w-full aspect-video object-cover"
+            aria-label={t('interviewIntro.videoAria')}
+            className="aspect-video w-full bg-[var(--ui-inset-strong)] object-cover"
             data-testid="intro-video"
           />
         </div>
 
         {/* Camera consent — Phase A (DPDP video_capture) */}
-        <label className="flex items-start gap-3 w-full max-w-md rounded-xl bg-obsidian/70 backdrop-blur-sm border border-border px-4 py-3 cursor-pointer">
+        <label className="flex w-full max-w-md cursor-pointer items-start gap-3 rounded-[14px] border border-border bg-card px-4 py-3.5">
           <input
             type="checkbox"
             checked={cameraConsent}
             onChange={(e) => setCameraConsent(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-[var(--ui-line-strong)] bg-transparent accent-electric-signal"
+            className="mt-0.5 h-5 w-5 flex-none rounded border-[var(--ui-line-strong)] accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             data-testid="camera-consent-checkbox"
           />
-          <span className="text-body-sm text-mist leading-snug">
+          <span className="text-[14px] leading-snug text-foreground">
             {t('interviewIntro.cameraConsent')}
           </span>
         </label>
 
         {/* CTA buttons */}
-        <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+        <div className="flex w-full max-w-xs flex-col items-center gap-3">
           {!started && (
-            <button
+            <Button
               type="button"
+              size="lg"
               onClick={() => void handleBegin()}
               aria-label={t('interviewIntro.beginLabel')}
-              className="w-full flex items-center justify-center gap-2 rounded-[9px] bg-primary hover:bg-primary/90 text-primary-foreground font-semibold px-6 py-3.5 text-base shadow-elevated transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-black"
+              className="w-full"
               data-testid="begin-button"
             >
               {t('interviewIntro.beginButton')}
-              {/* Play triangle */}
-              <svg
-                aria-hidden="true"
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                className="h-5 w-5"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M4.5 5.653c0-1.427 1.529-2.33 2.779-1.643l11.54 6.347c1.295.712 1.295 2.573 0 3.286L7.28 19.99c-1.25.687-2.779-.217-2.779-1.643V5.653Z"
-                  clipRule="evenodd"
-                />
-              </svg>
-            </button>
+              <Play aria-hidden="true" />
+            </Button>
           )}
 
           <button
             type="button"
             onClick={() => void handleSkip()}
             aria-label={t('interviewIntro.skipLabel')}
-            className="text-body-sm text-mist hover:text-foreground underline underline-offset-2 transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 focus:ring-offset-black rounded"
+            className="min-h-[40px] rounded px-2 text-[14px] font-semibold text-muted-foreground underline underline-offset-2 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             data-testid="skip-button"
           >
             {t('interviewIntro.skipButton')}
@@ -178,14 +163,14 @@ export default function InterviewIntro({ language, onDone }: InterviewIntroProps
           {/* Fullscreen gate: required to start; denial shows a retry hint. */}
           {fsDenied ? (
             <p
-              className="text-body-sm text-amber-glow text-center"
+              className="rounded-[12px] bg-[var(--ui-warn-wash)] px-3 py-2 text-center text-[14px] text-foreground"
               role="alert"
               data-testid="fullscreen-denied"
             >
               {t('interviewIntro.fullscreenRequired')}
             </p>
           ) : (
-            <p className="text-caption text-ash text-center">
+            <p className="text-center text-[13px] text-muted-foreground">
               {t('interviewIntro.fullscreenNote')}
             </p>
           )}

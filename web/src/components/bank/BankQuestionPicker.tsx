@@ -17,15 +17,23 @@ import {
 import type { ExamLanguage } from '@/api/exams';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import { Loader2, X } from '@/design/components/icons';
+import { Loader2 } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { QuestionBadges } from '@/components/bank/QuestionBadges';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-const inputCls =
-  'rounded-[9px] border border-border bg-secondary px-2.5 py-1.5 text-[12.5px] text-foreground ' +
-  'placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
+// A native <select> keeps the filter row keyboard- and test-driven the way it was;
+// the look matches the shared Input.
+const selectCls =
+  'h-10 rounded-[10px] border border-input bg-card px-3.5 text-[14px] text-foreground ' +
+  'hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none ' +
+  'focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 /** A section add is one request carrying every id — an unbounded selection
  *  would be a payload of arbitrary size with no server-side cap to catch it. */
@@ -113,43 +121,34 @@ export function BankQuestionPicker({
   const reasonById = new Map((result?.skipped ?? []).map((s) => [s.id, s.reason]));
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="bank-picker-heading"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
-      }}
-    >
-      <div className="flex max-h-[85vh] w-full max-w-[720px] flex-col overflow-hidden rounded-[18px] border border-border bg-card shadow-xl">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 id="bank-picker-heading" className="text-[15px] font-semibold text-foreground">
+    // Radix supplies the dialog role, the focus trap, Escape and the overlay click.
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        aria-describedby={undefined}
+        className="flex max-h-[85dvh] w-[calc(100%-2rem)] max-w-[720px] flex-col gap-0 overflow-hidden p-0"
+      >
+        <div className="border-b border-border px-5 py-4 pr-14">
+          <DialogTitle className="text-[17px] font-bold leading-snug tracking-[-0.2px]">
             Add from bank — {sectionKind === 'mcq' ? 'MCQ' : 'Coding'}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="rounded-[8px] p-1 text-muted-foreground hover:text-foreground"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </DialogTitle>
+          <p className="mt-1 text-[13px] text-muted-foreground">
+            Approved questions from your banks. Each one is copied into this section.
+          </p>
         </div>
 
         <div className="flex flex-wrap gap-2 border-b border-border px-5 py-3">
-          <input
+          <Input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search prompt…"
             aria-label="Search bank questions"
-            className={cn(inputCls, 'min-w-[160px] flex-1')}
+            className="h-10 min-w-[160px] flex-1 basis-full rounded-[10px] sm:basis-40"
           />
           <select
             value={difficulty}
             onChange={(e) => setDifficulty(e.target.value as BankDifficulty | '')}
             aria-label="Filter by difficulty"
-            className={inputCls}
+            className={cn(selectCls, 'min-w-[10.5rem] flex-1')}
           >
             <option value="">Any difficulty</option>
             <option value="easy">Easy</option>
@@ -160,7 +159,7 @@ export function BankQuestionPicker({
             value={language}
             onChange={(e) => setLanguage(e.target.value as ExamLanguage | '')}
             aria-label="Filter by language"
-            className={inputCls}
+            className={cn(selectCls, 'min-w-[10.5rem] flex-1')}
           >
             <option value="">Any language</option>
             <option value="en">English</option>
@@ -171,7 +170,7 @@ export function BankQuestionPicker({
             value={competency}
             onChange={(e) => setCompetency(e.target.value)}
             aria-label="Filter by competency"
-            className={inputCls}
+            className={cn(selectCls, 'min-w-[10.5rem] flex-1')}
           >
             <option value="">Any competency</option>
             {(catalog.data ?? []).map((c) => (
@@ -182,22 +181,29 @@ export function BankQuestionPicker({
           </select>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-5 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
           {search.isLoading ? (
-            <p className="flex items-center gap-2 py-6 text-[13px] text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              Loading…
-            </p>
+            <div className="flex flex-col gap-2 py-2" aria-busy="true">
+              <span className="sr-only">Loading…</span>
+              <Skeleton className="h-14 rounded-[12px]" />
+              <Skeleton className="h-14 rounded-[12px]" />
+              <Skeleton className="h-14 rounded-[12px]" />
+            </div>
           ) : search.isError ? (
-            <p className="py-6 text-[13px] text-[var(--ui-danger)]">
-              Could not load the bank&apos;s approved questions.
-            </p>
+            <div role="alert" className="flex flex-wrap items-center gap-3 py-4">
+              <p className="text-[14px] text-[var(--ui-danger)]">
+                Could not load the bank&apos;s approved questions.
+              </p>
+              <Button type="button" variant="outline" onClick={() => void search.refetch()}>
+                Try again
+              </Button>
+            </div>
           ) : rows.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-muted-foreground">
+            <p className="py-6 text-center text-[14px] text-muted-foreground">
               No approved {sectionKind === 'mcq' ? 'MCQ' : 'coding'} questions match these filters.
             </p>
           ) : (
-            <ul className="flex flex-col gap-1.5" aria-label="Bank questions">
+            <ul className="flex flex-col gap-2" aria-label="Bank questions">
               {rows.map((row) => {
                 const isSelected = selected.has(row.id);
                 const capReached = !isSelected && selected.size >= SELECTION_CAP;
@@ -207,35 +213,41 @@ export function BankQuestionPicker({
                   <li
                     key={row.id}
                     className={cn(
-                      'flex items-start gap-2.5 rounded-[10px] border border-border px-3 py-2.5',
-                      disabled && 'opacity-50',
+                      'flex items-start gap-1 rounded-[12px] border border-border pr-3',
+                      disabled && 'opacity-60',
                     )}
                   >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      disabled={disabled}
-                      onChange={(e) => toggle(row.id, e.target.checked)}
-                      aria-label={`Select ${row.prompt}`}
-                      className="mt-1 h-3.5 w-3.5 accent-[var(--accent)]"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-medium text-foreground">
+                    {/* The whole 40px square is the checkbox's hit area. */}
+                    <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        disabled={disabled}
+                        onChange={(e) => toggle(row.id, e.target.checked)}
+                        aria-label={`Select ${row.prompt}`}
+                        className="h-4 w-4 accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                      />
+                    </label>
+                    <div className="min-w-0 flex-1 py-2.5">
+                      <p className="truncate text-[14px] font-medium text-foreground">
                         {row.prompt}
                       </p>
-                      <p className="text-[11.5px] text-muted-foreground">
+                      <p className="text-[12.5px] text-muted-foreground">
                         {row.bank_name} · v{row.version} · {row.difficulty} · {row.language}
                       </p>
+                      <QuestionBadges question={row} className="mt-1" />
                       {row.already_in_exam ? (
-                        <p className="mt-0.5 text-[11px] text-[var(--ui-warn)]">
+                        <p className="mt-0.5 text-[12.5px] text-[var(--ui-warn)]">
                           {reason ?? 'Already in this exam'}
                         </p>
                       ) : capReached ? (
-                        <p className="mt-0.5 text-[11px] text-[var(--ui-warn)]">
+                        <p className="mt-0.5 text-[12.5px] text-[var(--ui-warn)]">
                           Selection limit reached ({SELECTION_CAP})
                         </p>
                       ) : reason ? (
-                        <p className="mt-0.5 text-[11px] text-[var(--ui-danger)]">Skipped — {reason}</p>
+                        <p className="mt-0.5 text-[12.5px] text-[var(--ui-danger)]">
+                          Skipped — {reason}
+                        </p>
                       ) : null}
                     </div>
                   </li>
@@ -246,7 +258,7 @@ export function BankQuestionPicker({
         </div>
 
         {result ? (
-          <div className="border-t border-border px-5 py-3 text-[12.5px]">
+          <div className="border-t border-border px-5 py-3 text-[13px]" role="status">
             <p className="text-[var(--ui-ok)]">
               {result.added} added
               {result.skipped.length > 0 ? `, ${result.skipped.length} skipped` : ''}.
@@ -254,30 +266,25 @@ export function BankQuestionPicker({
           </div>
         ) : null}
 
-        <div className="flex items-center justify-between border-t border-border px-5 py-3">
-          <span className="text-[12px] text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3">
+          <span className="text-[13px] text-muted-foreground">
             {selected.size}/{SELECTION_CAP} selected · {pickableCount} available
           </span>
           <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground"
-            >
+            <Button type="button" variant="outline" onClick={onClose}>
               Done
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               disabled={selected.size === 0 || addMut.isPending}
               onClick={() => addMut.mutate()}
-              className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
             >
-              {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+              {addMut.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
               Add {selected.size || ''} question{selected.size === 1 ? '' : 's'}
-            </button>
+            </Button>
           </div>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

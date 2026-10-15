@@ -11,6 +11,7 @@
 // would render a page whose dropdowns pop in afterwards.
 
 import { ApiError } from './client';
+import { pathSegment } from './pathId';
 
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
 
@@ -108,7 +109,7 @@ export async function getCareersBoard(
   }
   const qs = params.toString();
   const res = await fetch(
-    `${API_BASE}/careers/${encodeURIComponent(slug)}${qs ? `?${qs}` : ''}`,
+    `${API_BASE}/careers/${pathSegment(slug)}${qs ? `?${qs}` : ''}`,
   );
   if (!res.ok) return readError(res);
   return (await res.json()) as CareersBoard;

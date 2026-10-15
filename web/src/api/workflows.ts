@@ -22,6 +22,7 @@
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './client';
 import type { CodeEvidenceSummary } from './codeEvidence';
 import type { StageSla } from './stageSla';
+import { pathId } from './pathId';
 
 /**
  * The six things a round can be. `human_review` is a deliberate pause;
@@ -182,7 +183,7 @@ export interface RoleModel {
 }
 
 export function getRoleModel(requisitionId: string): Promise<RoleModel> {
-  return apiGet<RoleModel>(`/hr/requisitions/${requisitionId}/role-model`);
+  return apiGet<RoleModel>(`/hr/requisitions/${pathId(requisitionId)}/role-model`);
 }
 
 // ── Validation + coverage ───────────────────────────────────────────────────
@@ -211,17 +212,17 @@ export interface ValidationReport {
 }
 
 export function validateWorkflow(workflowId: string): Promise<ValidationReport> {
-  return apiGet<ValidationReport>(`/hr/workflows/${workflowId}/validate`);
+  return apiGet<ValidationReport>(`/hr/workflows/${pathId(workflowId)}/validate`);
 }
 
 // ── Workflow CRUD ───────────────────────────────────────────────────────────
 
 export function listWorkflows(requisitionId: string): Promise<WorkflowSummary[]> {
-  return apiGet<WorkflowSummary[]>(`/hr/requisitions/${requisitionId}/workflows`);
+  return apiGet<WorkflowSummary[]>(`/hr/requisitions/${pathId(requisitionId)}/workflows`);
 }
 
 export function getWorkflow(workflowId: string): Promise<Workflow> {
-  return apiGet<Workflow>(`/hr/workflows/${workflowId}`);
+  return apiGet<Workflow>(`/hr/workflows/${pathId(workflowId)}`);
 }
 
 /** Start a draft. 409 when the opening already has one — there is only ever one. */
@@ -244,32 +245,32 @@ export interface WorkflowTemplateSummary {
 }
 
 export function listWorkflowTemplates(requisitionId: string): Promise<WorkflowTemplateSummary[]> {
-  return apiGet<WorkflowTemplateSummary[]>(`/hr/requisitions/${requisitionId}/workflow-templates`);
+  return apiGet<WorkflowTemplateSummary[]>(`/hr/requisitions/${pathId(requisitionId)}/workflow-templates`);
 }
 
 /** Create a DRAFT from a template — rounds, competencies, timings and settings
  *  in one transaction. Never touches a published workflow. */
 export function createFromTemplate(requisitionId: string, template: string): Promise<Workflow> {
-  return apiPost<Workflow>(`/hr/requisitions/${requisitionId}/workflows/from-template`, {
+  return apiPost<Workflow>(`/hr/requisitions/${pathId(requisitionId)}/workflows/from-template`, {
     template,
   });
 }
 
 export function startDraft(requisitionId: string, name?: string): Promise<Workflow> {
   const q = name ? `?name=${encodeURIComponent(name)}` : '';
-  return apiPost<Workflow>(`/hr/requisitions/${requisitionId}/workflows${q}`, {});
+  return apiPost<Workflow>(`/hr/requisitions/${pathId(requisitionId)}/workflows${q}`, {});
 }
 
 export function updateSettings(
   workflowId: string,
   fields: Partial<WorkflowSettings & { name: string }>,
 ): Promise<Workflow> {
-  return apiPatch<Workflow>(`/hr/workflows/${workflowId}`, fields);
+  return apiPatch<Workflow>(`/hr/workflows/${pathId(workflowId)}`, fields);
 }
 
 /** Throw away a draft. Refused (409) for anything published. */
 export function discardDraft(workflowId: string): Promise<void> {
-  return apiDelete<void>(`/hr/workflows/${workflowId}`);
+  return apiDelete<void>(`/hr/workflows/${pathId(workflowId)}`);
 }
 
 // ── Rounds ──────────────────────────────────────────────────────────────────
@@ -301,7 +302,7 @@ export interface RoundInput {
  * when a round moves, and reassembling that client-side is how canvases drift.
  */
 export function addRound(workflowId: string, body: RoundInput): Promise<Workflow> {
-  return apiPost<Workflow>(`/hr/workflows/${workflowId}/rounds`, body);
+  return apiPost<Workflow>(`/hr/workflows/${pathId(workflowId)}/rounds`, body);
 }
 
 /**
@@ -327,15 +328,15 @@ export function updateRound(
   roundId: string,
   fields: RoundPatch,
 ): Promise<Workflow> {
-  return apiPatch<Workflow>(`/hr/workflows/${workflowId}/rounds/${roundId}`, fields);
+  return apiPatch<Workflow>(`/hr/workflows/${pathId(workflowId)}/rounds/${pathId(roundId)}`, fields);
 }
 
 export function removeRound(workflowId: string, roundId: string): Promise<Workflow> {
-  return apiDelete<Workflow>(`/hr/workflows/${workflowId}/rounds/${roundId}`);
+  return apiDelete<Workflow>(`/hr/workflows/${pathId(workflowId)}/rounds/${pathId(roundId)}`);
 }
 
 export function reorderRounds(workflowId: string, roundIds: string[]): Promise<Workflow> {
-  return apiPut<Workflow>(`/hr/workflows/${workflowId}/rounds/order`, { round_ids: roundIds });
+  return apiPut<Workflow>(`/hr/workflows/${pathId(workflowId)}/rounds/order`, { round_ids: roundIds });
 }
 
 /** Replace a round's whole rubric — this is the freeze (C8). */
@@ -344,7 +345,7 @@ export function setRoundCriteria(
   roundId: string,
   criteria: CriterionInput[],
 ): Promise<Workflow> {
-  return apiPut<Workflow>(`/hr/workflows/${workflowId}/rounds/${roundId}/criteria`, {
+  return apiPut<Workflow>(`/hr/workflows/${pathId(workflowId)}/rounds/${pathId(roundId)}/criteria`, {
     criteria,
   });
 }
@@ -371,12 +372,12 @@ export function publishWorkflow(workflowId: string): Promise<
       attached_candidates?: number;
       started_candidates?: number;
     }
-  >(`/hr/workflows/${workflowId}/publish`, {});
+  >(`/hr/workflows/${pathId(workflowId)}/publish`, {});
 }
 
 /** Open a published workflow for editing as version n+1. The original is untouched. */
 export function cloneWorkflow(workflowId: string): Promise<Workflow> {
-  return apiPost<Workflow>(`/hr/workflows/${workflowId}/clone`, {});
+  return apiPost<Workflow>(`/hr/workflows/${pathId(workflowId)}/clone`, {});
 }
 
 /**
@@ -487,14 +488,14 @@ export function recordRoundReview(
   enrolmentId: string,
   body: { passed: boolean; note?: string | null },
 ): Promise<{ action: string; enrolment_id?: string; reason?: string; to_round?: string }> {
-  return apiPost(`/hr/enrolments/${enrolmentId}/round-review`, {
+  return apiPost(`/hr/enrolments/${pathId(enrolmentId)}/round-review`, {
     passed: body.passed,
     note: body.note?.trim() || null,
   });
 }
 
 export function getDecisionQueue(requisitionId: string): Promise<DecisionQueueRow[]> {
-  return apiGet<DecisionQueueRow[]>(`/hr/requisitions/${requisitionId}/decision-queue`);
+  return apiGet<DecisionQueueRow[]>(`/hr/requisitions/${pathId(requisitionId)}/decision-queue`);
 }
 
 export interface FinalDecisionResult {
@@ -518,7 +519,7 @@ export function recordFinalDecision(
   enrolmentId: string,
   body: { decision: 'hired' | 'rejected'; reason: string; reason_code: string },
 ): Promise<FinalDecisionResult> {
-  return apiPost<FinalDecisionResult>(`/hr/enrolments/${enrolmentId}/decision`, {
+  return apiPost<FinalDecisionResult>(`/hr/enrolments/${pathId(enrolmentId)}/decision`, {
     decision: body.decision,
     reason: body.reason.trim(),
     reason_code: body.reason_code,
@@ -552,7 +553,7 @@ export function releaseHold(
   opts: { to_status?: string; reason?: string } = {},
 ): Promise<ReleaseOutcome> {
   return apiPost<ReleaseOutcome>(
-    `/hr/enrolments/${enrolmentId}/release-hold`,
+    `/hr/enrolments/${pathId(enrolmentId)}/release-hold`,
     { to_status: opts.to_status ?? 'shortlisted', reason: opts.reason?.trim() || null },
   );
 }

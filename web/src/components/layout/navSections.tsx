@@ -37,6 +37,7 @@ import {
   LayoutDashboard,
   Library,
   ListChecks,
+  Mic,
   Search,
   ShieldCheck,
   TrendingUp,
@@ -58,6 +59,8 @@ export interface NavSection {
   id: string;
   /** Section heading. Absent for the primary group, which renders unlabelled. */
   label?: string;
+  /** i18n key for the heading; wins over `label`. For candidate-facing groups. */
+  labelKey?: string;
   items: NavItem[];
   /** Given the user's roles, may this section be rendered? */
   visibleTo: (roles: string[]) => boolean;
@@ -65,7 +68,13 @@ export interface NavSection {
 
 const ICON = 'h-[18px] w-[18px]';
 
-export const PRIVILEGED_ROLES = ['platform_owner', 'super_admin', 'admin', 'hr_manager', 'interviewer'];
+export const PRIVILEGED_ROLES = [
+  'platform_owner',
+  'super_admin',
+  'admin',
+  'hr_manager',
+  'interviewer',
+];
 
 /** True when the user holds no privileged role (plain candidate).
  *
@@ -82,23 +91,57 @@ export function isCandidateOnly(roles: string[]): boolean {
   return !roles.some((r) => PRIVILEGED_ROLES.includes(r));
 }
 
+// The candidate's nav is two groups, in the order a candidate uses them: where
+// they stand (Dashboard, My applications, Jobs), then the practice tools.
+// "Dashboard" is not renamed and there is no count badge: a badge would put
+// queries behind every candidate page.
 const CANDIDATE_NAV: NavItem[] = [
-  { to: '/dashboard', labelKey: 'nav.dashboard', icon: <LayoutDashboard className={ICON} aria-hidden="true" /> },
+  {
+    to: '/dashboard',
+    labelKey: 'nav.dashboard',
+    icon: <LayoutDashboard className={ICON} aria-hidden="true" />,
+  },
+  {
+    to: '/applications',
+    labelKey: 'nav.applications',
+    icon: <FileCheck2 className={ICON} aria-hidden="true" />,
+  },
   { to: '/jobs', labelKey: 'nav.jobs', icon: <Briefcase className={ICON} aria-hidden="true" /> },
-  // A literal label, not a key: the other three predate i18n coverage for this
-  // section and adding an untranslated key would render the key itself.
-  { to: '/applications', label: 'My applications', icon: <FileCheck2 className={ICON} aria-hidden="true" /> },
-  { to: '/history', labelKey: 'nav.history', icon: <History className={ICON} aria-hidden="true" /> },
+];
+
+const CANDIDATE_PRACTICE_NAV: NavItem[] = [
+  {
+    to: '/start',
+    labelKey: 'nav.practiceInterview',
+    icon: <Mic className={ICON} aria-hidden="true" />,
+  },
+  {
+    to: '/history',
+    labelKey: 'nav.history',
+    icon: <History className={ICON} aria-hidden="true" />,
+  },
   { to: '/resume', labelKey: 'nav.resume', icon: <FileText className={ICON} aria-hidden="true" /> },
 ];
 
 const HR_NAV: NavItem[] = [
   { to: '/hr', label: 'Hiring', icon: <Users className={ICON} aria-hidden="true" /> },
-  { to: '/hr/requisitions', label: 'Openings', icon: <Kanban className={ICON} aria-hidden="true" /> },
-  { to: '/hr/applicants', label: 'Applicants', icon: <FileSearch className={ICON} aria-hidden="true" /> },
+  {
+    to: '/hr/requisitions',
+    label: 'Openings',
+    icon: <Kanban className={ICON} aria-hidden="true" />,
+  },
+  {
+    to: '/hr/applicants',
+    label: 'Applicants',
+    icon: <FileSearch className={ICON} aria-hidden="true" />,
+  },
   { to: '/hr/exams', label: 'Exams', icon: <ClipboardList className={ICON} aria-hidden="true" /> },
   // PH4-D1 — reusable question banks, shared across every exam.
-  { to: '/hr/question-banks', label: 'Question banks', icon: <Library className={ICON} aria-hidden="true" /> },
+  {
+    to: '/hr/question-banks',
+    label: 'Question banks',
+    icon: <Library className={ICON} aria-hidden="true" />,
+  },
   // PH4-D1 — this company's own bank-question review queue (D4-2's two-person
   // gate). Without this entry the route was reachable only by typing the URL
   // — undiscoverable, which defeats a review gate nobody can find.
@@ -107,15 +150,35 @@ const HR_NAV: NavItem[] = [
     label: 'Question reviews',
     icon: <ShieldCheck className={ICON} aria-hidden="true" />,
   },
-  { to: '/hr/interviews', label: 'Interviews', icon: <Video className={ICON} aria-hidden="true" /> },
+  {
+    to: '/hr/interviews',
+    label: 'Interviews',
+    icon: <Video className={ICON} aria-hidden="true" />,
+  },
   // PH4 Wave 3 (O5) — panel workload, availability and calibration.
-  { to: '/hr/panel', label: 'Interview panel', icon: <Gauge className={ICON} aria-hidden="true" /> },
+  {
+    to: '/hr/panel',
+    label: 'Interview panel',
+    icon: <Gauge className={ICON} aria-hidden="true" />,
+  },
   // PH4-O1 — every application against its stage SLA.
-  { to: '/hr/stages-at-risk', label: 'Stages at risk', icon: <AlertTriangle className={ICON} aria-hidden="true" /> },
-  { to: '/hr/pipeline', label: 'Pipeline', icon: <TrendingUp className={ICON} aria-hidden="true" /> },
+  {
+    to: '/hr/stages-at-risk',
+    label: 'Stages at risk',
+    icon: <AlertTriangle className={ICON} aria-hidden="true" />,
+  },
+  {
+    to: '/hr/pipeline',
+    label: 'Pipeline',
+    icon: <TrendingUp className={ICON} aria-hidden="true" />,
+  },
   // PH4 Wave 4 (A3/A4) — offers, and the reusable templates behind them.
   { to: '/hr/offers', label: 'Offers', icon: <Handshake className={ICON} aria-hidden="true" /> },
-  { to: '/hr/offer-templates', label: 'Offer templates', icon: <FileText className={ICON} aria-hidden="true" /> },
+  {
+    to: '/hr/offer-templates',
+    label: 'Offer templates',
+    icon: <FileText className={ICON} aria-hidden="true" />,
+  },
   // PH5-E2 — the company's document library (policies, handbooks, process
   // notes) the staff copilot searches. Filed here, beside the other reference
   // material (question banks, offer templates) rather than in the pipeline
@@ -131,22 +194,54 @@ const HR_NAV: NavItem[] = [
   // beside Documents on the same reasoning Documents itself records: without
   // a nav entry, "authorised HR users can create and manage talent pools" is
   // not true of the product.
-  { to: '/hr/pools', label: 'Talent pools', icon: <Bookmark className={ICON} aria-hidden="true" /> },
-  { to: '/hr/rediscovery', label: 'Rediscovery', icon: <Search className={ICON} aria-hidden="true" /> },
-  { to: '/hr/analytics', label: 'Analytics', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
+  {
+    to: '/hr/pools',
+    label: 'Talent pools',
+    icon: <Bookmark className={ICON} aria-hidden="true" />,
+  },
+  {
+    to: '/hr/rediscovery',
+    label: 'Rediscovery',
+    icon: <Search className={ICON} aria-hidden="true" />,
+  },
+  {
+    to: '/hr/analytics',
+    label: 'Analytics',
+    icon: <BarChart2 className={ICON} aria-hidden="true" />,
+  },
   // D4-1: an HR manager can ALSO be assigned as an interviewer. Kept as an item
   // in THIS section (not a new one) so idsFor(['hr_manager']) still resolves to
   // exactly ['hr'] — see navRoleScoping.test.ts. The route itself lives outside
   // /hr (InterviewerRoute admits hr_manager too), which is the one deliberate
   // exception the "every item stays under its section's prefix" test allows.
-  { to: '/interviewer', label: 'My interviews', icon: <ClipboardCheck className={ICON} aria-hidden="true" /> },
+  {
+    to: '/interviewer',
+    label: 'My interviews',
+    icon: <ClipboardCheck className={ICON} aria-hidden="true" />,
+  },
 ];
 
 const ADMIN_NAV: NavItem[] = [
-  { to: '/admin/overview', labelKey: 'nav.adminOverview', icon: <BarChart2 className={ICON} aria-hidden="true" /> },
-  { to: '/admin/interviews', labelKey: 'nav.adminInterviews', icon: <ClipboardList className={ICON} aria-hidden="true" /> },
-  { to: '/admin/analytics', labelKey: 'nav.adminAnalytics', icon: <TrendingUp className={ICON} aria-hidden="true" /> },
-  { to: '/admin/jd', labelKey: 'nav.adminJd', icon: <Upload className={ICON} aria-hidden="true" /> },
+  {
+    to: '/admin/overview',
+    labelKey: 'nav.adminOverview',
+    icon: <BarChart2 className={ICON} aria-hidden="true" />,
+  },
+  {
+    to: '/admin/interviews',
+    labelKey: 'nav.adminInterviews',
+    icon: <ClipboardList className={ICON} aria-hidden="true" />,
+  },
+  {
+    to: '/admin/analytics',
+    labelKey: 'nav.adminAnalytics',
+    icon: <TrendingUp className={ICON} aria-hidden="true" />,
+  },
+  {
+    to: '/admin/jd',
+    labelKey: 'nav.adminJd',
+    icon: <Upload className={ICON} aria-hidden="true" />,
+  },
 ];
 
 // platform_owner — the Intants core: companies + their super admins.
@@ -156,36 +251,71 @@ const PLATFORM_NAV: NavItem[] = [
 
 // super_admin — a company's super admin: its HR managers and interviewers.
 const SUPER_NAV: NavItem[] = [
-  { to: '/superadmin/board', label: 'Hiring board', icon: <Kanban className={ICON} aria-hidden="true" /> },
+  {
+    to: '/superadmin/board',
+    label: 'Hiring board',
+    icon: <Kanban className={ICON} aria-hidden="true" />,
+  },
   // PH3-B2. Second, not last: an opening waiting on approval is blocking
   // somebody's hiring, and burying it under "Team" would make the queue
   // a thing you remember to check rather than a thing you see.
-  { to: '/superadmin/approvals', label: 'Approvals', icon: <ClipboardCheck className={ICON} aria-hidden="true" /> },
+  {
+    to: '/superadmin/approvals',
+    label: 'Approvals',
+    icon: <ClipboardCheck className={ICON} aria-hidden="true" />,
+  },
   // Renamed from "HR Managers": the console at this route now also manages
   // interviewers, so the nav label describes the page rather than one section
   // of it.
   { to: '/superadmin', label: 'Team', icon: <Users className={ICON} aria-hidden="true" /> },
-  { to: '/superadmin/decision-reasons', label: 'Decision reasons', icon: <ListChecks className={ICON} aria-hidden="true" /> },
+  {
+    to: '/superadmin/decision-reasons',
+    label: 'Decision reasons',
+    icon: <ListChecks className={ICON} aria-hidden="true" />,
+  },
   // PH4-O6: workflow versions waiting for this super admin's approval before
   // HR can publish them (D4-2).
-  { to: '/superadmin/workflow-reviews', label: 'Workflow reviews', icon: <FileCheck2 className={ICON} aria-hidden="true" /> },
+  {
+    to: '/superadmin/workflow-reviews',
+    label: 'Workflow reviews',
+    icon: <FileCheck2 className={ICON} aria-hidden="true" />,
+  },
   // PH4-D1 — the mirror of HR's bank-question review queue (D4-2), so a
   // single-HR company is never blocked on a second HR approver.
-  { to: '/superadmin/question-reviews', label: 'Question reviews', icon: <ShieldCheck className={ICON} aria-hidden="true" /> },
+  {
+    to: '/superadmin/question-reviews',
+    label: 'Question reviews',
+    icon: <ShieldCheck className={ICON} aria-hidden="true" />,
+  },
   // PH4-A3: offers waiting for this super admin's approval (D4-2).
-  { to: '/superadmin/offer-approvals', label: 'Offer approvals', icon: <Handshake className={ICON} aria-hidden="true" /> },
+  {
+    to: '/superadmin/offer-approvals',
+    label: 'Offer approvals',
+    icon: <Handshake className={ICON} aria-hidden="true" />,
+  },
   // PH5-E2 — the same document library as HR's, at this console's own path
   // (/superadmin/library). Its own entry rather than a link into /hr/library:
   // HRRoute admits only hr_manager, so an /hr link from here would bounce.
-  { to: '/superadmin/library', label: 'Documents', icon: <BookText className={ICON} aria-hidden="true" /> },
+  {
+    to: '/superadmin/library',
+    label: 'Documents',
+    icon: <BookText className={ICON} aria-hidden="true" />,
+  },
 ];
 
 // interviewer — company staff who see ONLY interviews assigned to them (D4-1).
 const INTERVIEWER_NAV: NavItem[] = [
-  { to: '/interviewer', label: 'My interviews', icon: <ClipboardCheck className={ICON} aria-hidden="true" /> },
+  {
+    to: '/interviewer',
+    label: 'My interviews',
+    icon: <ClipboardCheck className={ICON} aria-hidden="true" />,
+  },
 ];
 
-const hasRole = (role: string) => (roles: string[]): boolean => roles.includes(role);
+const hasRole =
+  (role: string) =>
+  (roles: string[]): boolean =>
+    roles.includes(role);
 
 // One table, so "who sees what" is a single readable list rather than five
 // inline `roles.includes(...)` guards scattered through JSX. Adding a section
@@ -204,6 +334,12 @@ const hasRole = (role: string) => (roles: string[]): boolean => roles.includes(r
 // hr_manager → /hr), so staff land on their own console and never needed it.
 export const NAV_SECTIONS: NavSection[] = [
   { id: 'candidate', items: CANDIDATE_NAV, visibleTo: isCandidateOnly },
+  {
+    id: 'practice',
+    labelKey: 'nav.practice',
+    items: CANDIDATE_PRACTICE_NAV,
+    visibleTo: isCandidateOnly,
+  },
   { id: 'hr', label: 'Hiring', items: HR_NAV, visibleTo: hasRole('hr_manager') },
   { id: 'admin', label: 'Admin', items: ADMIN_NAV, visibleTo: hasRole('admin') },
   { id: 'platform', label: 'Platform', items: PLATFORM_NAV, visibleTo: hasRole('platform_owner') },

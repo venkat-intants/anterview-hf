@@ -29,18 +29,30 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   Copy,
   Eye,
   Loader2,
+  Play,
+  Send,
   Sparkles,
   Trash2,
   Users,
 } from '@/design/components/icons';
 import { GlassCard, StatusTag, ToggleSwitch, type TagTone } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
+import { Page } from '@/design/components/page';
+import { Card } from '@/design/components/card';
+import { Section, Well } from '@/design/components/rows';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { EditorHeader, DocStatusPill } from '@/components/hr/EditorHeader';
 import { toast } from '@/lib/toast';
+import { queryKeys } from '@/lib/queryKeys';
 import { cn } from '@/lib/utils';
 import { getRequisition } from '@/api/requisitions';
 import {
@@ -69,7 +81,7 @@ import {
   type Workflow,
   type WorkflowSettings,
 } from '@/api/workflows';
-import { getSimulation, runSimulation } from '@/api/workflowReview';
+import { getReview, getSimulation, runSimulation } from '@/api/workflowReview';
 import WorkflowCanvas from '@/components/workflow/WorkflowCanvas';
 import WorkflowCopilot from '@/components/workflow/WorkflowCopilot';
 import ProposalPreview from '@/components/workflow/ProposalPreview';
@@ -77,15 +89,12 @@ import { getAgentStatus, type Proposal } from '@/api/agent';
 import RoundInspector from '@/components/workflow/RoundInspector';
 import CoveragePanel from '@/components/workflow/CoveragePanel';
 import CandidatePreview from '@/components/workflow/CandidatePreview';
-import LifecycleSteps from '@/components/workflow/LifecycleSteps';
+import WorkflowTrack from '@/components/workflow/WorkflowTrack';
+import SubmitBlockers from '@/components/workflow/SubmitBlockers';
 import ReviewPanel from '@/components/workflow/ReviewPanel';
 import DryRunPanel from '@/components/workflow/DryRunPanel';
 import StageSettings from '@/components/workflow/StageSettings';
-import { applicationsWarning, publishImpact } from '@/lib/workflowLifecycle';
-import GovernancePanel from '@/components/workflow/GovernancePanel';
-import JdVersionPanel from '@/components/workflow/JdVersionPanel';
-import PostingEditor from '@/components/workflow/PostingEditor';
-import QuestionEditor from '@/components/workflow/QuestionEditor';
+import { applicationsWarning, nextAction, publishImpact } from '@/lib/workflowLifecycle';
 import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
 
 /** PH4-O6 — the badge next to a version's status, everywhere this page shows one. */
@@ -95,6 +104,14 @@ const REVIEW_META: Record<ReviewStatus, { label: string; tone: TagTone }> = {
   changes_requested: { label: 'Changes requested', tone: 'amber' },
   approved: { label: 'Approved', tone: 'forest' },
 };
+
+type InspectorTab = 'round' | 'settings' | 'assistant';
+
+/** What the right-hand sheet is showing: the submit step, or the review and dry-run record. */
+type SheetKind = 'submit' | 'details' | null;
+
+const PRIMARY_CLASS =
+  'inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-40';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -151,7 +168,7 @@ function SettingsPanel({
           <div key={a.key} className="flex items-start gap-3">
             <div className="min-w-0 flex-1">
               <div className="text-[13px] text-foreground">{a.label}</div>
-              <div className="mt-0.5 text-[11.5px] leading-snug text-muted-foreground">{a.help}</div>
+              <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground">{a.help}</div>
             </div>
             <div className={cn(!editable && 'pointer-events-none opacity-50')}>
               <ToggleSwitch
@@ -168,10 +185,10 @@ function SettingsPanel({
         <label htmlFor="hold-band" className="block text-[13px] text-foreground">
           Mark near misses within
         </label>
-        <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
-          Everyone scoring below a round&rsquo;s threshold is held for your decision. Those
-          within this many points are marked as a near miss, so you can see who was close.
-          Nobody is ever rejected automatically.
+        <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
+          Everyone scoring below a round&rsquo;s threshold is held for your decision. Those within
+          this many points are marked as a near miss, so you can see who was close. Nobody is ever
+          rejected automatically.
         </p>
         <div className="mt-2 flex items-center gap-2">
           <input
@@ -185,7 +202,7 @@ function SettingsPanel({
               const v = e.target.value.trim();
               onPatch({ hold_band: v === '' ? null : Number(v) });
             }}
-            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
           />
           <span className="text-[13px] text-muted-foreground">points</span>
         </div>
@@ -195,7 +212,7 @@ function SettingsPanel({
         <label htmlFor="ats-threshold" className="block text-[13px] text-foreground">
           Suggest shortlisting at ATS score
         </label>
-        <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
+        <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
           Applicants at or above this are flagged to you as ready to shortlist. Nobody is
           shortlisted automatically — you confirm, and that starts their first round.
         </p>
@@ -212,7 +229,7 @@ function SettingsPanel({
               const v = e.target.value.trim();
               onPatch({ shortlist_ats_threshold: v === '' ? null : Number(v) });
             }}
-            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
           />
           <span className="text-[13px] text-muted-foreground">/ 10</span>
         </div>
@@ -247,9 +264,8 @@ function EmptyState({
     <GlassCard className="p-8">
       <h2 className="text-[18px] font-semibold text-foreground">Give this opening a process</h2>
       <p className="mt-1.5 max-w-[62ch] text-[13.5px] leading-relaxed text-muted-foreground">
-        Start from a shape that fits and change anything you like, or build it from
-        nothing. Either way it stays a draft until you publish it, and no candidate sees
-        it before then.
+        Start from a shape that fits and change anything you like, or build it from nothing. Either
+        way it stays a draft until you publish it, and no candidate sees it before then.
       </p>
 
       <div className="mt-5 grid gap-3 md:grid-cols-3">
@@ -272,7 +288,7 @@ function EmptyState({
             <span className="flex items-center justify-between gap-2">
               <span className="text-[14px] font-medium text-foreground">{t.name}</span>
               {t.recommended ? (
-                <span className="rounded-pill bg-[var(--accent)]/15 px-2 py-0.5 text-[10.5px] text-[var(--accent)]">
+                <span className="rounded-pill bg-[var(--accent)]/15 px-2 py-0.5 text-[12px] text-[var(--accent)]">
                   Suits this role
                 </span>
               ) : null}
@@ -284,7 +300,7 @@ function EmptyState({
                 the competencies it would assess. */}
             <ol className="mt-3 flex flex-col gap-1.5">
               {t.rounds.map((r, i) => (
-                <li key={`${r.kind}-${i}`} className="text-[11.5px] leading-snug">
+                <li key={`${r.kind}-${i}`} className="text-[12px] leading-snug">
                   <span className="font-medium text-[var(--ui-soft)]">
                     {i + 1}. {ROUND_KIND_META[r.kind].label}
                   </span>
@@ -297,9 +313,9 @@ function EmptyState({
           </button>
         ))}
       </div>
-      <p className="mt-3 text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
-        A template fills in the rounds, what each assesses, timings and settings. Test rounds
-        still need their questions attached before you can publish.
+      <p className="mt-3 text-[12px] leading-relaxed text-[var(--ui-faint)]">
+        A template fills in the rounds, what each assesses, timings and settings. Test rounds still
+        need their questions attached before you can publish.
       </p>
 
       <button
@@ -322,8 +338,9 @@ export default function WorkflowBuilder(): JSX.Element {
   const qc = useQueryClient();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selectedRound, setSelectedRound] = useState<string | null>(null);
-  const [tab, setTab] = useState<'round' | 'settings'>('round');
+  const [tab, setTab] = useState<InspectorTab>('round');
   const [confirmPublish, setConfirmPublish] = useState(false);
+  const [sheet, setSheet] = useState<SheetKind>(null);
   // D5: the candidate's-eye preview.
   const [previewOpen, setPreviewOpen] = useState(false);
   // What the copilot has drafted and the user has not yet accepted or
@@ -332,7 +349,7 @@ export default function WorkflowBuilder(): JSX.Element {
   const [pending, setPending] = useState<Proposal[]>([]);
 
   const req = useQuery({
-    queryKey: ['hr', 'requisition', requisitionId],
+    queryKey: queryKeys.requisition(requisitionId),
     queryFn: () => getRequisition(requisitionId),
     enabled: Boolean(requisitionId),
   });
@@ -377,6 +394,14 @@ export default function WorkflowBuilder(): JSX.Element {
     enabled: Boolean(workflowId),
   });
 
+  // Who submitted, who decided and why it was sent back — read only while the
+  // version is a draft (a live one's review is history), and only once.
+  const review = useQuery({
+    queryKey: ['hr', 'workflow', workflowId, 'review'],
+    queryFn: () => getReview(workflowId as string),
+    enabled: Boolean(workflowId) && wf.data?.status === 'draft',
+  });
+
   const templates = useQuery({
     queryKey: ['hr', 'workflow-templates', requisitionId],
     queryFn: () => listWorkflowTemplates(requisitionId),
@@ -398,7 +423,7 @@ export default function WorkflowBuilder(): JSX.Element {
   const workflow = wf.data;
   const editable = workflow?.editable ?? false;
   // Why the header Publish button is disabled, or null when it is not. Mirrors
-  // LifecycleSteps (publishable from the validate report), plus the states in
+  // the track (publishable from the validate report), plus the states in
   // which there is no report yet to trust.
   const publishIssues = validation.data?.errors.length ?? 0;
   const publishBlockedReason: string | null =
@@ -412,10 +437,40 @@ export default function WorkflowBuilder(): JSX.Element {
             : 'This workflow is not ready to publish yet.'
           : null;
 
+  const simulated = Boolean(simulation.data && !simulation.data.stale);
+  const trackInput = workflow
+    ? {
+        status: workflow.status,
+        reviewStatus: workflow.review_status,
+        simulated,
+        publishable: Boolean(validation.data?.publishable),
+        roundCount: workflow.rounds.length,
+        draftExists: (versions.data ?? []).some((v) => v.status === 'draft'),
+      }
+    : null;
+  const action = trackInput ? nextAction(trackInput) : null;
+  // Server validation errors that stop a submit, shown beside the action
+  // instead of being found by a refused request. Only while still authoring.
+  const authoring =
+    workflow?.status === 'draft' &&
+    (workflow.review_status === 'draft' || workflow.review_status === 'changes_requested');
+  const blockers = authoring ? (validation.data?.errors ?? []) : [];
+  const submitBlockedReason: string | null = !authoring
+    ? null
+    : validation.isLoading
+      ? 'Checking whether this version is ready…'
+      : blockers.length > 0
+        ? `Fix ${blockers.length} issue${blockers.length === 1 ? '' : 's'} before submitting.`
+        : null;
+
   /** Every round mutation lands here: cache the returned workflow, recheck. */
   const applyWorkflow = (next: Workflow) => {
     qc.setQueryData(['hr', 'workflow', next.id], next);
     void qc.invalidateQueries({ queryKey: ['hr', 'workflow', next.id, 'validate'] });
+    // An edit makes the last dry run stale. Without this the track and the
+    // header primary kept reading "Dry run: Done" and offered "Submit for
+    // review" when a new dry run was required.
+    void qc.invalidateQueries({ queryKey: ['hr', 'workflow', next.id, 'simulation'] });
     void qc.invalidateQueries({ queryKey: ['hr', 'workflows', requisitionId] });
   };
 
@@ -433,6 +488,8 @@ export default function WorkflowBuilder(): JSX.Element {
     mutationFn: () => runSimulation(workflowId as string),
     onSuccess: (result) => {
       qc.setQueryData(['hr', 'workflow', workflowId, 'simulation'], result);
+      // A clean run needs no reading; anything else is why the user ran it.
+      if (result.status !== 'passed') setSheet('details');
       toast.success(
         result.status === 'passed'
           ? 'Dry run passed'
@@ -489,7 +546,9 @@ export default function WorkflowBuilder(): JSX.Element {
     onSuccess: (draft) => {
       setActiveId(draft.id);
       applyWorkflow(draft);
-      toast.success(`Editing as version ${draft.version} — version ${draft.version - 1} stays live`);
+      toast.success(
+        `Editing as version ${draft.version} — version ${draft.version - 1} stays live`,
+      );
     },
     onError: (e) => toast.error(errText(e, 'Could not open a new version')),
   });
@@ -508,162 +567,255 @@ export default function WorkflowBuilder(): JSX.Element {
   const selected: Round | undefined = workflow?.rounds.find((r) => r.id === selectedRound);
   const busy = mutating.isPending || createMut.isPending;
 
+  // The inspector shows one panel at a time. Review status lives on the
+  // approval track and the review/dry-run record in its sheet, not here.
+  const inspectorTabs: [InspectorTab, string][] = [
+    ['round', selected ? 'Round' : 'Select a round'],
+    ['settings', 'Automation'],
+    ...(copilotAvailable ? [['assistant', 'Assistant'] as [InspectorTab, string]] : []),
+  ];
+  const activeTab: InspectorTab = inspectorTabs.some(([key]) => key === tab) ? tab : 'round';
+
+  // Validation problems, counted for the header and linked to the round each
+  // one names (the server prefixes a round's errors with its title).
+  const problems = validation.data?.errors ?? [];
+  const problemCount = problems.length;
+
+  const goToRound = (id: string) => {
+    setSelectedRound(id);
+    setTab('round');
+    setSheet(null);
+  };
+
   // ── Render ────────────────────────────────────────────────────────────────
   if (!requisitionId) {
     return <div className="p-8 text-[13px] text-muted-foreground">No opening selected.</div>;
   }
 
   return (
-    <div className="mx-auto w-full max-w-[1280px] px-4 py-8">
-      <Reveal>
-        <header className="mb-6">
-          <Link
-            to="/hr/requisitions"
-            className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            All openings
-          </Link>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h1 className="truncate text-[24px] font-semibold tracking-[-0.8px] text-foreground">
-                {req.data?.title ?? 'Hiring workflow'}
-              </h1>
-              <div
-                data-testid="workflow-meta"
-                className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground"
+    // EditorHeader hard-codes -mx-6 / lg:-mx-8 against the old page padding. The
+    // shell owns the gutters now, so those margins would push it into them (and
+    // past the viewport below sm); zero them from here rather than edit it.
+    <Page width="workspace">
+      <EditorHeader
+        breadcrumbs={[
+          { label: 'Openings', to: '/hr/requisitions' },
+          { label: 'Opening', to: `/hr/requisitions/${requisitionId}` },
+          { label: 'Workflow' },
+        ]}
+        title={req.data?.title ?? 'Hiring workflow'}
+        status={
+          workflow ? (
+            <span data-testid="workflow-meta" className="inline-flex flex-wrap items-center gap-2">
+              <DocStatusPill
+                status={
+                  workflow.status === 'published'
+                    ? 'live'
+                    : workflow.status === 'draft'
+                      ? workflow.review_status === 'approved'
+                        ? 'approved'
+                        : 'draft'
+                      : 'locked'
+                }
               >
-                {workflow ? (
-                  <>
-                    <StatusTag
-                      tone={
-                        workflow.status === 'published'
-                          ? 'forest'
-                          : workflow.status === 'draft'
-                            ? 'amber'
-                            : 'neutral'
-                      }
-                      dot
-                    >
-                      {workflow.status === 'published'
-                        ? `v${workflow.version} · live`
-                        : workflow.status === 'draft'
-                          ? `v${workflow.version} · draft`
-                          : `v${workflow.version} · archived`}
-                    </StatusTag>
-                    {/* PH4-O6: where this version stands in the approval
-                        lifecycle. Once published the review is history, not
-                        news, so this stops being worth a second badge. */}
-                    {workflow.status === 'draft' ? (
-                      <StatusTag tone={REVIEW_META[workflow.review_status].tone} dot>
-                        {REVIEW_META[workflow.review_status].label}
-                      </StatusTag>
-                    ) : null}
-                    <span>
-                      {workflow.rounds.length} round{workflow.rounds.length === 1 ? '' : 's'}
-                    </span>
-                  </>
-                ) : null}
-                {req.data ? (
-                  <span>
-                    {req.data.total_enrolments} candidate
-                    {req.data.total_enrolments === 1 ? '' : 's'}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-
+                {workflow.status === 'published'
+                  ? `v${workflow.version} · live`
+                  : workflow.status === 'draft'
+                    ? `v${workflow.version} · draft`
+                    : `v${workflow.version} · archived`}
+              </DocStatusPill>
+              {/* PH4-O6: where this version stands in the approval
+                  lifecycle. Once published the review is history, not
+                  news, so this stops being worth a second badge. */}
+              {workflow.status === 'draft' ? (
+                <StatusTag tone={REVIEW_META[workflow.review_status].tone} dot>
+                  {REVIEW_META[workflow.review_status].label}
+                </StatusTag>
+              ) : null}
+            </span>
+          ) : null
+        }
+        meta={
+          <>
             {workflow ? (
-              <div className="flex flex-wrap items-center gap-2">
-                {(versions.data ?? []).length > 1 ? (
-                  <select
-                    aria-label="Workflow version"
-                    value={workflow.id}
-                    onChange={(e) => {
-                      setActiveId(e.target.value);
-                      setSelectedRound(null);
-                    }}
-                    className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[12.5px] text-foreground focus:border-[var(--accent)] focus:outline-none"
-                  >
-                    {(versions.data ?? []).map((v) => (
-                      <option key={v.id} value={v.id}>
-                        v{v.version} · {v.status}
-                        {v.enrolled_candidates > 0 ? ` · ${v.enrolled_candidates} inside` : ''}
-                      </option>
-                    ))}
-                  </select>
-                ) : null}
-
-                <Link
-                  to={`/hr/requisitions/${requisitionId}/decisions`}
-                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-2 text-[12.5px] text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)] hover:text-foreground"
-                >
-                  <Users className="h-3.5 w-3.5" aria-hidden="true" />
-                  Decision queue
-                </Link>
-
-                {/* PH4-O6: Discard is offered while still authoring; Publish
-                    only once a super admin has approved this exact version —
-                    the server 409s otherwise, so the header must not offer it
-                    sooner. Reopening an approved version (back to Discard's
-                    state) is an action on the ReviewPanel below, not here. */}
-                {editable ? (
-                  <button
-                    type="button"
-                    onClick={() => discardMut.mutate()}
-                    disabled={discardMut.isPending}
-                    className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-2 text-[12.5px] text-muted-foreground hover:border-[var(--ui-danger)]/40 hover:text-[var(--ui-danger)] disabled:opacity-50"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                    Discard
-                  </button>
-                ) : null}
-                {workflow.status === 'draft' && workflow.review_status === 'approved' ? (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmPublish(true)}
-                    data-testid="publish-workflow"
-                    // Same gate as the lifecycle strip's "5. Published": the
-                    // server refuses anything validate does not call
-                    // publishable, so the button should not offer it.
-                    disabled={publishMut.isPending || publishBlockedReason !== null}
-                    title={publishBlockedReason ?? undefined}
-                    className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-                  >
-                    {publishMut.isPending ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    ) : (
-                      <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                    )}
-                    Publish
-                  </button>
-                ) : null}
-                {workflow.status !== 'draft' ? (
-                  <button
-                    type="button"
-                    onClick={() => cloneMut.mutate()}
-                    data-testid="edit-as-new-version"
-                    disabled={cloneMut.isPending}
-                    className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-40"
-                  >
-                    {cloneMut.isPending ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-                    )}
-                    Edit as new version
-                  </button>
-                ) : null}
-              </div>
+              <span>
+                {workflow.rounds.length} round{workflow.rounds.length === 1 ? '' : 's'}
+              </span>
             ) : null}
-          </div>
-        </header>
-      </Reveal>
+            {req.data ? (
+              <span>
+                {req.data.total_enrolments} candidate
+                {req.data.total_enrolments === 1 ? '' : 's'}
+              </span>
+            ) : null}
+            {problemCount > 0 ? (
+              <span
+                data-testid="problem-count"
+                className="inline-flex items-center gap-1 font-medium text-[var(--ui-warn)]"
+              >
+                <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                {problemCount} problem{problemCount === 1 ? '' : 's'} to fix
+              </span>
+            ) : null}
+          </>
+        }
+        saveState={
+          !workflow || !editable
+            ? undefined
+            : busy
+              ? 'saving'
+              : mutating.isError
+                ? 'error'
+                : 'saved'
+        }
+        secondary={
+          workflow ? (
+            <>
+              {/* Discard sits first, away from the primary on the right: it
+                  fires with no confirmation, so it is a quiet ghost until it
+                  is hovered or focused. */}
+              {editable ? (
+                <button
+                  type="button"
+                  onClick={() => discardMut.mutate()}
+                  disabled={discardMut.isPending}
+                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-medium text-muted-foreground hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:bg-[var(--ui-danger-wash)] focus-visible:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
+                >
+                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  Discard
+                </button>
+              ) : null}
+              {(versions.data ?? []).length > 1 ? (
+                <select
+                  aria-label="Workflow version"
+                  value={workflow.id}
+                  onChange={(e) => {
+                    setActiveId(e.target.value);
+                    setSelectedRound(null);
+                  }}
+                  className="min-h-[40px] rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus:outline-none"
+                >
+                  {(versions.data ?? []).map((v) => (
+                    <option key={v.id} value={v.id}>
+                      v{v.version} · {v.status}
+                      {v.enrolled_candidates > 0 ? ` · ${v.enrolled_candidates} inside` : ''}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+
+              <Link
+                to={`/hr/requisitions/${requisitionId}/decisions`}
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              >
+                <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                Decision queue
+              </Link>
+            </>
+          ) : undefined
+        }
+        primary={
+          // Exactly one primary, and it is the legal next step (nextAction):
+          // dry run → submit → publish → edit as a new version. A version
+          // waiting on its reviewer has none; its quiet moves are in the sheet.
+          workflow && action === 'dry_run' ? (
+            <button
+              type="button"
+              data-primary="true"
+              data-testid="run-dry-run"
+              onClick={() => runDryRunMut.mutate()}
+              disabled={runDryRunMut.isPending}
+              className={PRIMARY_CLASS}
+            >
+              {runDryRunMut.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Play className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              Run dry run
+            </button>
+          ) : workflow && action === 'submit' ? (
+            <button
+              type="button"
+              data-primary="true"
+              data-testid="submit-review"
+              onClick={() => setSheet('submit')}
+              className={PRIMARY_CLASS}
+            >
+              <Send className="h-3.5 w-3.5" aria-hidden="true" />
+              Submit for review
+            </button>
+          ) : workflow && action === 'publish' ? (
+            <button
+              type="button"
+              data-primary="true"
+              onClick={() => setConfirmPublish(true)}
+              data-testid="publish-workflow"
+              // The server refuses anything validate does not call
+              // publishable, and 409s unless a super admin approved this exact
+              // version, so the button does not offer what cannot work.
+              disabled={publishMut.isPending || publishBlockedReason !== null}
+              title={publishBlockedReason ?? undefined}
+              className={PRIMARY_CLASS}
+            >
+              {publishMut.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              Publish
+            </button>
+          ) : workflow && action === 'edit_new_version' ? (
+            <button
+              type="button"
+              data-primary="true"
+              onClick={() => cloneMut.mutate()}
+              data-testid="edit-as-new-version"
+              disabled={cloneMut.isPending}
+              className={PRIMARY_CLASS}
+            >
+              {cloneMut.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+              )}
+              Edit as new version
+            </button>
+          ) : undefined
+        }
+      />
+
+      {workflow && trackInput ? (
+        <div className="flex flex-col gap-3">
+          <WorkflowTrack
+            status={workflow.status}
+            reviewStatus={workflow.review_status}
+            roundCount={workflow.rounds.length}
+            publishedAt={workflow.published_at}
+            publishable={trackInput.publishable}
+            simulated={simulated}
+            simulation={simulation.data}
+            review={review.data}
+            secondary={
+              workflow.status === 'draft' ? (
+                <button
+                  type="button"
+                  onClick={() => setSheet('details')}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                >
+                  Review and dry-run details
+                </button>
+              ) : undefined
+            }
+          />
+          <SubmitBlockers errors={blockers} rounds={workflow.rounds} onGoToRound={goToRound} />
+        </div>
+      ) : null}
 
       {/* Publish confirmation. Worth an extra step: publishing starts sending
           real invitations to real people. */}
       {confirmPublish && workflow ? (
-        <GlassCard className="mb-5 border-[var(--accent)]/30 p-4">
+        <Card density="compact" className="border-[var(--ui-line-strong)]">
           <div className="flex flex-wrap items-center gap-3">
             <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />
             <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-[var(--ui-soft)]">
@@ -672,41 +824,58 @@ export default function WorkflowBuilder(): JSX.Element {
                   {publishImpact(validation.data?.waiting)}
                 </strong>
               ) : null}
-              Publishing makes this version live for {req.data?.title ?? 'this opening'}.
-              New candidates start here; anyone already inside an older version finishes
-              it on the rounds they began with.
+              Publishing makes this version live for {req.data?.title ?? 'this opening'}. New
+              candidates start here; anyone already inside an older version finishes it on the
+              rounds they began with.
             </div>
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => publishMut.mutate()}
-                data-testid="confirm-publish"
-                className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground hover:opacity-90"
-              >
-                Publish version {workflow.version}
-              </button>
-              <button
-                type="button"
                 onClick={() => setConfirmPublish(false)}
-                className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground"
+                className="min-h-[40px] rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
                 Not yet
               </button>
+              <button
+                type="button"
+                onClick={() => publishMut.mutate()}
+                data-testid="confirm-publish"
+                className="min-h-[40px] rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              >
+                Publish version {workflow.version}
+              </button>
             </div>
           </div>
-        </GlassCard>
+        </Card>
       ) : null}
 
       {versions.isLoading || (workflowId && wf.isLoading) ? (
         <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading workflow…
+          <span role="status">Loading workflow…</span>
+        </div>
+      ) : versions.isError || wf.isError ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 text-[13px] text-[var(--ui-danger)]"
+        >
+          Could not load this opening&rsquo;s workflow.
+          <button
+            type="button"
+            onClick={() => {
+              void versions.refetch();
+              void wf.refetch();
+            }}
+            className="inline-flex min-h-[40px] items-center rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          >
+            Try again
+          </button>
         </div>
       ) : !workflow ? (
         // Three ways in, side by side (D4): a template, an empty canvas, or a
         // conversation. The copilot belongs most here — "design a process for
         // this role" is the question someone opening a blank builder has.
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
           <EmptyState
             busy={createMut.isPending}
             onBlank={() => createMut.mutate(null)}
@@ -738,9 +907,9 @@ export default function WorkflowBuilder(): JSX.Element {
           ))}
         </div>
       ) : (
-        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
-          {/* Canvas */}
-          <GlassCard className="p-5">
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+          {/* Canvas — the page's one raised region. */}
+          <Card emphasis="raised" density="compact">
             {/* D5: an opening taking applications with nothing live. Nobody is
                 lost — publishing attaches them — but nothing moves until then. */}
             {(() => {
@@ -755,7 +924,7 @@ export default function WorkflowBuilder(): JSX.Element {
               return warning ? (
                 <div
                   role="alert"
-                  className="mb-4 flex items-start gap-2 rounded-[12px] border border-[var(--ui-warn)]/35 bg-[var(--ui-warn)]/[0.07] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
+                  className="mb-4 flex items-start gap-2 rounded-[12px] border border-[var(--ui-warn)] bg-[var(--ui-warn-wash)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
                 >
                   <AlertTriangle
                     className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]"
@@ -766,32 +935,25 @@ export default function WorkflowBuilder(): JSX.Element {
               ) : null;
             })()}
 
-            {workflow.status === 'draft' ? (
-              <LifecycleSteps
-                status={workflow.status}
-                reviewStatus={workflow.review_status}
-                simulated={Boolean(simulation.data && !simulation.data.stale)}
-                publishable={Boolean(validation.data?.publishable)}
-                onRunDryRun={() => runDryRunMut.mutate()}
-              />
-            ) : null}
-
             <button
               type="button"
               onClick={() => setPreviewOpen((open) => !open)}
-              className="mb-4 rounded-pill border border-border px-3 py-1 text-[12px] text-[var(--ui-soft)] hover:border-[var(--accent)]"
+              className="mb-4 min-h-[40px] rounded-pill border border-border px-4 py-1.5 text-[13px] text-[var(--ui-soft)] hover:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {previewOpen ? 'Hide candidate preview' : 'Preview as a candidate'}
             </button>
 
             {previewOpen ? (
-              <div className="mb-5 rounded-[14px] border border-[var(--accent)]/25 p-4">
-                <CandidatePreview title={req.data?.title ?? 'this opening'} rounds={workflow.rounds} />
-              </div>
+              <Well className="mb-5">
+                <CandidatePreview
+                  title={req.data?.title ?? 'this opening'}
+                  rounds={workflow.rounds}
+                />
+              </Well>
             ) : null}
 
             {!editable ? (
-              <div className="mb-4 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3 text-[12.5px] leading-relaxed text-muted-foreground">
+              <Well className="mb-4 flex items-start gap-2 text-[12.5px] leading-relaxed text-muted-foreground">
                 <Eye className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
                 {workflow.status === 'published'
                   ? 'This version is live, so it is read-only. Editing creates version ' +
@@ -800,9 +962,9 @@ export default function WorkflowBuilder(): JSX.Element {
                   : workflow.status === 'archived'
                     ? 'An archived version, kept because candidates finished under it.'
                     : workflow.review_status === 'in_review'
-                      ? 'This version is waiting for review, so it is locked. Withdraw it from review below to make changes.'
-                      : 'This version has been approved, so it is locked. Reopen it below to make changes — it will need approving again.'}
-              </div>
+                      ? 'This version is waiting for review, so it is locked. Withdraw it from review (Review and dry-run details) to make changes.'
+                      : 'This version has been approved, so it is locked. Reopen it (Review and dry-run details) to make changes — it will need approving again.'}
+              </Well>
             ) : null}
 
             {/* D7 — drafts are previewed where they would land, above the
@@ -817,6 +979,9 @@ export default function WorkflowBuilder(): JSX.Element {
                   void qc.invalidateQueries({ queryKey: ['hr', 'workflow', workflow.id] });
                   void qc.invalidateQueries({
                     queryKey: ['hr', 'workflow', workflow.id, 'validate'],
+                  });
+                  void qc.invalidateQueries({
+                    queryKey: ['hr', 'workflow', workflow.id, 'simulation'],
                   });
                   void qc.invalidateQueries({ queryKey: ['hr', 'workflows', requisitionId] });
                 }}
@@ -858,27 +1023,44 @@ export default function WorkflowBuilder(): JSX.Element {
                 {MAX_ROUNDS} rounds is the maximum.
               </p>
             ) : null}
-          </GlassCard>
+          </Card>
 
-          {/* Inspector + coverage */}
-          <div className="flex flex-col gap-5">
-            <GlassCard className="p-5">
-              <div className="mb-4 flex gap-1 rounded-pill border border-border bg-secondary p-1">
-                {(
-                  [
-                    ['round', selected ? 'Round' : 'Select a round'],
-                    ['settings', 'Automation'],
-                  ] as const
-                ).map(([key, label]) => (
+          {/* Inspector — one panel at a time, chosen by tab, so the page has
+              three clear zones: the stages and canvas on the left, whatever
+              is selected on the right, and the header above both. */}
+          <div className="flex flex-col gap-6">
+            <Card density="compact">
+              <div
+                role="tablist"
+                aria-label="Inspector"
+                className="mb-4 flex gap-1 rounded-pill bg-[var(--ui-inset-strong)] p-1"
+                onKeyDown={(e) => {
+                  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+                  const i = inspectorTabs.findIndex(([key]) => key === activeTab);
+                  const next =
+                    inspectorTabs[
+                      (i + (e.key === 'ArrowRight' ? 1 : -1) + inspectorTabs.length) %
+                        inspectorTabs.length
+                    ][0];
+                  setTab(next);
+                  document.getElementById(`inspector-tab-${next}`)?.focus();
+                }}
+              >
+                {inspectorTabs.map(([key, label]) => (
                   <button
                     key={key}
+                    id={`inspector-tab-${key}`}
                     type="button"
                     onClick={() => setTab(key)}
-                    aria-selected={tab === key}
+                    aria-selected={activeTab === key}
+                    aria-controls="inspector-panel"
+                    tabIndex={activeTab === key ? 0 : -1}
                     role="tab"
                     className={cn(
-                      'flex-1 rounded-pill px-3 py-1.5 text-[12.5px] font-medium transition-colors',
-                      tab === key ? 'bg-primary text-primary-foreground' : 'text-[var(--ui-soft)] hover:text-foreground',
+                      'min-h-[40px] flex-1 rounded-pill px-2 py-1.5 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+                      activeTab === key
+                        ? 'bg-card text-foreground shadow-card'
+                        : 'text-muted-foreground hover:text-foreground',
                     )}
                   >
                     {label}
@@ -886,100 +1068,120 @@ export default function WorkflowBuilder(): JSX.Element {
                 ))}
               </div>
 
-              {tab === 'settings' ? (
-                <SettingsPanel
-                  workflow={workflow}
-                  editable={editable}
-                  onPatch={(fields) => run(() => updateSettings(workflow.id, fields))}
+              <div
+                id="inspector-panel"
+                role="tabpanel"
+                aria-labelledby={`inspector-tab-${activeTab}`}
+              >
+                {/* Mounted for the life of the page and only hidden off its tab:
+                    the conversation and any run in flight are the copilot's own
+                    state, so unmounting on a tab switch would discard them. */}
+                {copilotAvailable ? (
+                  <div
+                    className={activeTab === 'assistant' ? 'flex h-[440px] flex-col' : 'hidden'}
+                  >
+                    <WorkflowCopilot
+                      requisitionId={requisitionId}
+                      jobTitle={req.data?.title ?? 'this role'}
+                      editable={editable}
+                      hasRounds={workflow.rounds.length > 0}
+                      onProposals={(ps) => setPending(ps)}
+                    />
+                  </div>
+                ) : null}
+                {activeTab === 'settings' ? (
+                  <SettingsPanel
+                    workflow={workflow}
+                    editable={editable}
+                    onPatch={(fields) => run(() => updateSettings(workflow.id, fields))}
+                  />
+                ) : activeTab === 'assistant' && copilotAvailable ? null : selected ? (
+                  <RoundInspector
+                    key={selected.id}
+                    round={selected}
+                    allRounds={workflow.rounds}
+                    workflowId={workflow.id}
+                    roleModel={roleModel.data}
+                    editable={editable}
+                    saving={busy}
+                    roundErrors={(validation.data?.errors ?? []).filter((e) =>
+                      e.startsWith(`${selected.title}:`),
+                    )}
+                    returnTo={`/hr/requisitions/${requisitionId}/workflow`}
+                    onPatch={(fields) => run(() => updateRound(workflow.id, selected.id, fields))}
+                    onCriteria={(criteria: CriterionInput[]) =>
+                      run(() => setRoundCriteria(workflow.id, selected.id, criteria))
+                    }
+                  />
+                ) : (
+                  <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+                    Pick a round on the left to set what it asks and what score moves a candidate
+                    on.
+                  </p>
+                )}
+              </div>
+              <Section title="Coverage" className="mt-5">
+                <CoveragePanel
+                  report={validation.data}
+                  loading={validation.isFetching}
+                  blockersShownElsewhere={blockers.length > 0 && Boolean(trackInput)}
                 />
-              ) : selected ? (
-                <RoundInspector
-                  key={selected.id}
-                  round={selected}
-                  allRounds={workflow.rounds}
-                  workflowId={workflow.id}
-                  roleModel={roleModel.data}
-                  editable={editable}
-                  saving={busy}
-                  roundErrors={(validation.data?.errors ?? []).filter((e) =>
-                    e.startsWith(`${selected.title}:`),
-                  )}
-                  onPatch={(fields) => run(() => updateRound(workflow.id, selected.id, fields))}
-                  onCriteria={(criteria: CriterionInput[]) =>
-                    run(() => setRoundCriteria(workflow.id, selected.id, criteria))
-                  }
-                />
-              ) : (
-                <p className="text-[12.5px] leading-relaxed text-muted-foreground">
-                  Pick a round on the left to set what it asks and what score moves a
-                  candidate on.
-                </p>
-              )}
-            </GlassCard>
-
-            {/* PH4-O6 / O2 — where this version stands with the reviewer, and
-                whether a dry run of its routing comes back clean. Shown for
-                every draft, whatever tab the inspector is on. */}
-            {workflow.status === 'draft' ? (
-              <GlassCard className="p-5">
-                <ReviewPanel
-                  workflowId={workflow.id}
-                  onChanged={() => {
-                    void qc.invalidateQueries({ queryKey: ['hr', 'workflow', workflow.id] });
-                    void qc.invalidateQueries({ queryKey: ['hr', 'workflows', requisitionId] });
-                  }}
-                />
-              </GlassCard>
-            ) : null}
-            {workflow.status === 'draft' ? (
-              <GlassCard className="p-5">
-                <DryRunPanel workflowId={workflow.id} />
-              </GlassCard>
-            ) : null}
-
-            <GlassCard className="p-5">
-              <CoveragePanel report={validation.data} loading={validation.isFetching} />
-            </GlassCard>
-
-            {copilotAvailable ? (
-              <GlassCard className="flex h-[440px] flex-col p-5">
-                <WorkflowCopilot
-                  requisitionId={requisitionId}
-                  jobTitle={req.data?.title ?? 'this role'}
-                  editable={editable}
-                  hasRounds={workflow.rounds.length > 0}
-                  onProposals={(ps) => setPending(ps)}
-                />
-              </GlassCard>
-            ) : null}
+              </Section>
+            </Card>
           </div>
         </div>
       )}
 
-      {/* ── The posting and its questions ──
-          Not gated on `editable`. A published workflow is frozen because
-          candidates are mid-process on it; the advert and the application
-          questions are not part of anybody's assessment, and refusing to fix a
-          typo in the location would be the immutability rule applied where it
-          buys nothing. The question editor has its own, narrower freeze: a
-          question somebody has answered cannot be reworded. */}
-      {req.data ? (
-        <div className="mt-8 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-          <div>
-            <PostingEditor requisition={req.data} />
-            {/* PH3-B6. Beneath the editor rather than replacing it: the story's
-                own Task 7 asks for version information to be added to the
-                existing surface, not for a second one. */}
-            <JdVersionPanel requisition={req.data} />
-          </div>
-          <div>
-            <QuestionEditor requisitionId={requisitionId} />
-            {/* PH3-B2 + PH3-B4a. Budget, approval and go-live are one
-                decision, so they are one panel. */}
-            <GovernancePanel requisition={req.data} />
-          </div>
-        </div>
-      ) : null}
-    </div>
+      {/* The opening's own setup — budget, approval, JD and posting — lives on
+          the opening, not here: this page is the workflow and only the workflow. */}
+      <p className="text-[13px] leading-relaxed text-muted-foreground" data-testid="setup-link">
+        Budget, approval, job description and posting now live on the opening&rsquo;s{' '}
+        <Link
+          to={`/hr/requisitions/${requisitionId}?tab=setup`}
+          className="font-medium text-[var(--accent)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        >
+          Setup tab
+        </Link>
+        .
+      </p>
+
+      {/* The review and dry-run record, and the submit step. Mounted only while
+          open, so a closed sheet costs no requests. */}
+      <Sheet open={sheet !== null} onOpenChange={(open) => (open ? undefined : setSheet(null))}>
+        <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>{sheet === 'submit' ? 'Submit for review' : 'Review and dry run'}</SheetTitle>
+            <SheetDescription>
+              {sheet === 'submit'
+                ? 'A company super admin reviews this version. Nothing goes live until they approve it and you publish.'
+                : 'Where this version stands with the reviewer, and the last dry run of its routing.'}
+            </SheetDescription>
+          </SheetHeader>
+          {workflow && sheet !== null ? (
+            <div className="mt-6 flex flex-col gap-6">
+              {sheet === 'submit' ? (
+                <SubmitBlockers errors={blockers} rounds={workflow.rounds} onGoToRound={goToRound} />
+              ) : null}
+              {/* PH4-O6 / O2 — where this version stands with the reviewer, and
+                  whether a dry run of its routing comes back clean. */}
+              <ReviewPanel
+                workflowId={workflow.id}
+                submitBlockedReason={sheet === 'submit' ? submitBlockedReason : null}
+                onChanged={(state) => {
+                  void qc.invalidateQueries({ queryKey: ['hr', 'workflow', workflow.id] });
+                  void qc.invalidateQueries({ queryKey: ['hr', 'workflows', requisitionId] });
+                  if (state.review_status === 'in_review') setSheet(null);
+                }}
+              />
+              {sheet === 'details' ? (
+                <div className="border-t border-border pt-5">
+                  <DryRunPanel workflowId={workflow.id} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </SheetContent>
+      </Sheet>
+    </Page>
   );
 }

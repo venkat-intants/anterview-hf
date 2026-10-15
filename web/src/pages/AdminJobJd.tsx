@@ -28,13 +28,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  GlassCard,
-  Pill,
-  StatusTag,
-} from '@/design/components/primitives';
+import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { Plus } from '@/design/components/icons';
+import { PageHeader } from '@/design/components/page';
 import { JOB_JDS } from '@/design/data/admin';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
@@ -96,28 +93,24 @@ export default function AdminJobJd() {
 
   return (
     <div className="mx-auto max-w-[1080px] px-0 py-2 space-y-6">
-
       {/* ── Page header ──────────────────────────────────────────────────── */}
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
-            Jobs &amp; JD library
-          </h1>
-          <p className="mt-1 text-[14px] text-muted-foreground">
-            Define roles and the competencies each interview scores.
-          </p>
-        </div>
-        {/* New role — presentation only (no backend endpoint) */}
-        <Pill
-          className="px-5 py-2.5 opacity-50 cursor-not-allowed"
-          disabled
-          aria-label="New role — coming soon"
-          title="Coming soon"
-        >
-          <Plus size={16} aria-hidden="true" />
-          New role
-        </Pill>
-      </div>
+      <PageHeader
+        className="mb-0"
+        title="Jobs & JD library"
+        description="Define roles and the competencies each interview scores."
+        actions={
+          /* New role — presentation only (no backend endpoint) */
+          <Pill
+            className="cursor-not-allowed px-5 py-2.5 opacity-50"
+            disabled
+            aria-label="New role — coming soon"
+            title="Coming soon"
+          >
+            <Plus size={16} aria-hidden="true" />
+            New role
+          </Pill>
+        }
+      />
 
       {/* ══════════════════════════════════════════════════════════════════════
           SECTION 1 — FUNCTIONAL: JD PDF upload
@@ -128,7 +121,7 @@ export default function AdminJobJd() {
           {/* Section heading */}
           <div className="flex items-center gap-3">
             <span
-              className="flex h-10 w-10 flex-none items-center justify-center rounded-[12px] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--ui-info)]"
+              className="flex h-10 w-10 flex-none items-center justify-center rounded-[12px] bg-[var(--ui-info-wash)] text-[var(--ui-info)]"
               aria-hidden="true"
             >
               <Briefcase size={20} />
@@ -136,24 +129,17 @@ export default function AdminJobJd() {
             <div>
               <h2 className="text-[17px] font-semibold text-foreground">Upload Job Description</h2>
               <p className="text-[13px] text-muted-foreground">
-                PDF only — maximum 10 MB. The document will be parsed and indexed for AI
-                question generation.
+                PDF only — maximum 10 MB. The document will be parsed and indexed for AI question
+                generation.
               </p>
             </div>
           </div>
 
-          <div
-            className="h-px bg-[var(--ui-inset)]"
-            role="separator"
-            aria-hidden="true"
-          />
+          <div className="h-px bg-[var(--ui-inset)]" role="separator" aria-hidden="true" />
 
           {/* ── Job picker ──────────────────────────────────────────────── */}
           <div className="space-y-2">
-            <label
-              htmlFor="job-select"
-              className="text-[12.5px] font-medium text-[var(--ui-soft)]"
-            >
+            <label htmlFor="job-select" className="text-[12.5px] font-medium text-[var(--ui-soft)]">
               Job posting
             </label>
 
@@ -177,7 +163,7 @@ export default function AdminJobJd() {
             {jobsError && (
               <div
                 role="alert"
-                className="rounded-[16px] border border-[rgba(230,113,79,0.3)] bg-[rgba(230,113,79,0.08)] p-4 flex items-start gap-3"
+                className="rounded-[16px] border border-[var(--ui-danger)]/35 bg-[var(--ui-danger-wash)] p-4 flex items-start gap-3"
               >
                 <AlertCircle
                   className="h-5 w-5 text-[var(--ui-danger)] shrink-0 mt-0.5"
@@ -271,7 +257,7 @@ export default function AdminJobJd() {
               <GlassCard hover className="p-5">
                 <div className="flex items-start gap-3">
                   <span
-                    className="flex h-11 w-11 flex-none items-center justify-center rounded-[12px] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--ui-info)]"
+                    className="flex h-11 w-11 flex-none items-center justify-center rounded-[12px] bg-[var(--ui-info-wash)] text-[var(--ui-info)]"
                     aria-hidden="true"
                   >
                     <Briefcase size={20} aria-hidden="true" />
@@ -300,7 +286,7 @@ export default function AdminJobJd() {
                   {j.competencies.map((c) => (
                     <span
                       key={c}
-                      className="rounded-pill border border-border bg-[var(--ui-inset-soft)] px-2.5 py-1 text-[11.5px] text-[var(--ui-soft)]"
+                      className="rounded-pill border border-border bg-[var(--ui-inset-soft)] px-2.5 py-1 text-[12px] text-[var(--ui-soft)]"
                     >
                       {c}
                     </span>

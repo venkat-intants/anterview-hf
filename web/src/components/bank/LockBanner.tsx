@@ -30,7 +30,7 @@ export function LockBanner({
   return (
     <div
       role="status"
-      className="flex flex-wrap items-center gap-3 rounded-[14px] border border-[var(--ui-warn)]/30 bg-[rgba(255,183,100,0.08)] px-3.5 py-3 text-[12.5px] text-[var(--ui-soft)]"
+      className="flex flex-wrap items-center gap-3 rounded-[14px] border border-[var(--ui-warn)]/30 bg-[var(--ui-warn-wash)] px-3.5 py-3 text-[12.5px] text-[var(--ui-soft)]"
     >
       <Lock className="h-4 w-4 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
       <p className="flex-1 min-w-[220px]">{reason}</p>
@@ -42,7 +42,9 @@ export function LockBanner({
             disabled={unpublishing}
             className="inline-flex items-center gap-1.5 rounded-[9px] border border-border px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:border-[var(--ui-line-strong)] disabled:opacity-50"
           >
-            {unpublishing ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+            {unpublishing ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            ) : null}
             Unpublish
           </button>
         ) : null}

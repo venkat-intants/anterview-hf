@@ -7,7 +7,7 @@
 This is the "click a candidate to see their details" surface. Editing one's own
 profile lives in auth.py (PATCH /auth/me/profile); this router is view-only and
 never returns secrets (no password hash, no resume text). Role-based access is
-enforced by ``require_role`` — candidates cannot browse other users' profiles.
+enforced by ``require_role_password_ok`` — candidates cannot browse other users' profiles.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
-from app.dependencies import require_role
+from app.dependencies import require_role_password_ok
 
 log = structlog.get_logger(__name__)
 
@@ -33,8 +33,12 @@ router = APIRouter(prefix="/users", tags=["profiles"])
 # Who may view another user's profile. Company-scoped roles (hr_manager,
 # super_admin) only see users in THEIR OWN company (enforced in the handler);
 # the platform roles (admin, platform_owner) may view any user.
+# require_role_password_ok, not require_role: this reads another person's profile
+# (email, phone, bio), so an account still on its bootstrap password must not be
+# able to use it before it has set a real one.
 ViewerDep = Annotated[
-    User, Depends(require_role("hr_manager", "super_admin", "admin", "platform_owner"))
+    User,
+    Depends(require_role_password_ok("hr_manager", "super_admin", "admin", "platform_owner")),
 ]
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 

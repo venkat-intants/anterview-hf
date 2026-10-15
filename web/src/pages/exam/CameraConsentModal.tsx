@@ -31,7 +31,8 @@
 import { useEffect, useRef, useCallback, type KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ShieldCheck, Eye, Users, Video } from '@/design/components/icons';
-import { GlassCard, Pill } from '@/design/components/primitives';
+import { GlassCard } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
 
 interface CameraConsentModalProps {
   /** The candidate agreed. Synchronous from this component's point of view —
@@ -86,7 +87,7 @@ export default function CameraConsentModal({ onAgree, onDecline }: CameraConsent
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-midnight/90 px-4 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 px-4"
       data-testid="camera-consent-backdrop"
     >
       {/* GlassCard has a closed prop set (no arbitrary attribute pass-through),
@@ -101,12 +102,12 @@ export default function CameraConsentModal({ onAgree, onDecline }: CameraConsent
         tabIndex={-1}
         className="w-full max-w-md focus:outline-none"
       >
-        <GlassCard className="p-6">
+        <GlassCard className="max-h-[calc(100vh-2rem)] overflow-y-auto p-5 shadow-elevated sm:p-6">
           <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-[rgba(39,201,63,0.15)] text-vivid-mint">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[var(--ui-ok-wash)] text-[var(--ui-ok)]">
               <Video className="h-5 w-5" aria-hidden="true" />
             </span>
-            <h2 id={HEADING_ID} className="text-subheading font-semibold text-foreground">
+            <h2 id={HEADING_ID} className="text-[20px] font-bold leading-tight text-foreground">
               {t('publicExam.cameraConsentTitle')}
             </h2>
           </div>
@@ -117,43 +118,43 @@ export default function CameraConsentModal({ onAgree, onDecline }: CameraConsent
 
           <ul className="mt-4 space-y-3">
             <li className="flex items-start gap-2.5 text-body-sm text-muted-foreground">
-              <Eye size={16} className="mt-0.5 shrink-0 text-electric" aria-hidden="true" />
+              <Eye size={16} className="mt-0.5 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
               <span>{t('publicExam.cameraConsentDetects')}</span>
             </li>
             <li className="flex items-start gap-2.5 text-body-sm text-muted-foreground">
-              <Users size={16} className="mt-0.5 shrink-0 text-electric" aria-hidden="true" />
+              <Users size={16} className="mt-0.5 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
               <span>{t('publicExam.cameraConsentMultiple')}</span>
             </li>
             <li className="flex items-start gap-2.5 text-body-sm font-medium text-foreground">
               <ShieldCheck
                 size={16}
-                className="mt-0.5 shrink-0 text-vivid-mint"
+                className="mt-0.5 shrink-0 text-[var(--ui-ok)]"
                 aria-hidden="true"
               />
               <span>{t('publicExam.cameraConsentNoVideo')}</span>
             </li>
           </ul>
 
-          <p className="mt-4 text-caption text-fog">{t('publicExam.cameraConsentDeclineNote')}</p>
+          <p className="mt-4 text-[13px] text-[var(--ui-soft)]">{t('publicExam.cameraConsentDeclineNote')}</p>
 
           <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-            <Pill
+            <Button
               type="button"
               variant="outline"
               onClick={onDecline}
-              className="w-full sm:w-auto"
+              className="h-12 w-full sm:w-auto"
             >
               {t('publicExam.cameraConsentDecline')}
-            </Pill>
-            <Pill
+            </Button>
+            <Button
               ref={agreeRef}
               type="button"
               onClick={handleAgreeClick}
               aria-label={t('publicExam.cameraConsentAgree')}
-              className="w-full sm:w-auto"
+              className="h-12 w-full sm:w-auto"
             >
               {t('publicExam.cameraConsentAgree')}
-            </Pill>
+            </Button>
           </div>
         </GlassCard>
       </div>

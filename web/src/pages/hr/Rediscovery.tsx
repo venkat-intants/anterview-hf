@@ -39,6 +39,15 @@ import { listRequisitions } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
+import { PageHeader, Page } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   AlertTriangle,
   ChevronDown,
@@ -72,7 +81,8 @@ export default function Rediscovery(): JSX.Element {
   const [dialogRows, setDialogRows] = useState<RediscoveryResult[] | null>(null);
 
   const searchMut = useMutation({
-    mutationFn: () => searchRediscovery({ query: query.trim(), requisitionId: requisitionId || null }),
+    mutationFn: () =>
+      searchRediscovery({ query: query.trim(), requisitionId: requisitionId || null }),
     onSuccess: () => setSelected(new Set()),
     onError: (e: unknown) => toast.error(rediscoveryErrorMessage(e, 'Could not run that search')),
   });
@@ -105,13 +115,12 @@ export default function Rediscovery(): JSX.Element {
   const selectedRows = results.filter((r) => selected.has(r.applicant_id));
 
   return (
-    <div className="mx-auto max-w-[1080px] px-0 py-2 space-y-6">
-      <Reveal>
-        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Rediscovery</h1>
-        <p className="mt-1 text-[14px] text-muted-foreground">
-          Search candidates who chose to be kept in mind for future openings.
-        </p>
-      </Reveal>
+    <Page width="default">
+      <PageHeader
+        className="mb-0"
+        title="Rediscovery"
+        description="Search candidates who chose to be kept in mind for future openings."
+      />
 
       {universeQuery.isLoading ? (
         <p className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
@@ -120,7 +129,10 @@ export default function Rediscovery(): JSX.Element {
         </p>
       ) : universeQuery.isError ? (
         <p className="text-[12.5px] text-[var(--ui-danger)]">
-          {rediscoveryErrorMessage(universeQuery.error, 'Could not check how many candidates are searchable.')}
+          {rediscoveryErrorMessage(
+            universeQuery.error,
+            'Could not check how many candidates are searchable.',
+          )}
         </p>
       ) : universeQuery.data ? (
         <p role="status" className="text-[12.5px] text-muted-foreground">
@@ -132,7 +144,7 @@ export default function Rediscovery(): JSX.Element {
       {showEmptyUniverse ? (
         <Reveal delay={0.05}>
           <GlassCard className="p-8 text-center">
-            <Users className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
+            <Users className="mx-auto h-8 w-8 text-muted-foreground" aria-hidden="true" />
             <p className="mx-auto mt-4 max-w-[60ch] text-[13.5px] leading-relaxed text-muted-foreground">
               {EMPTY_UNIVERSE_TEXT}
             </p>
@@ -156,7 +168,7 @@ export default function Rediscovery(): JSX.Element {
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder="e.g. hydraulic press maintenance"
                     maxLength={500}
-                    className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                    className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   />
                 </div>
                 <div className="flex min-w-[200px] flex-col gap-1.5">
@@ -183,7 +195,7 @@ export default function Rediscovery(): JSX.Element {
                 <button
                   type="submit"
                   disabled={!query.trim() || searchMut.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 rounded-full bg-primary px-5 min-h-10 text-sm font-semibold text-primary-foreground disabled:opacity-50"
                 >
                   <Search className="h-3.5 w-3.5" aria-hidden="true" />
                   {searchMut.isPending ? 'Searching…' : 'Search'}
@@ -195,7 +207,7 @@ export default function Rediscovery(): JSX.Element {
           {searchMut.data && !searchMut.data.semantic ? (
             <div
               role="status"
-              className="flex items-center gap-2 rounded-[10px] border border-[var(--ui-warn)]/30 bg-[rgba(255,183,100,0.12)] px-3 py-2 text-[12.5px] text-[var(--ui-warn)]"
+              className="flex items-center gap-2 rounded-[10px] border border-[var(--ui-warn)]/30 bg-[var(--ui-warn-wash)] px-3 py-2 text-[12.5px] text-[var(--ui-warn)]"
             >
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               {KEYWORD_ONLY_TEXT}
@@ -208,7 +220,7 @@ export default function Rediscovery(): JSX.Element {
               <button
                 type="button"
                 onClick={() => setDialogRows(selectedRows)}
-                className="rounded-[8px] bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-foreground"
+                className="rounded-full bg-primary px-5 min-h-10 text-[12px] font-semibold text-primary-foreground"
               >
                 Add {selectedRows.length} to pool
               </button>
@@ -279,8 +291,10 @@ export default function Rediscovery(): JSX.Element {
         </>
       )}
 
-      {dialogRows ? <AddToPoolDialog rows={dialogRows} onClose={() => setDialogRows(null)} /> : null}
-    </div>
+      {dialogRows ? (
+        <AddToPoolDialog rows={dialogRows} onClose={() => setDialogRows(null)} />
+      ) : null}
+    </Page>
   );
 }
 
@@ -321,7 +335,7 @@ function ResultRow({
             >
               {row.full_name}
             </Link>
-            <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+            <p className="mt-0.5 text-[12px] text-muted-foreground">
               {[row.current_title, row.current_company].filter(Boolean).join(' · ')}
               {row.years_experience !== undefined ? ` · ${row.years_experience} yrs` : ''}
             </p>
@@ -336,7 +350,7 @@ function ResultRow({
       </div>
 
       {row.requires_review ? (
-        <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-warn)]">
+        <p className="mt-2 flex items-center gap-1.5 text-[12px] text-[var(--ui-warn)]">
           <AlertTriangle className="h-3 w-3" aria-hidden="true" />
           Needs review before acting on it
         </p>
@@ -350,7 +364,7 @@ function ResultRow({
         <button
           type="button"
           onClick={onToggle}
-          className="inline-flex items-center gap-1 text-[11.5px] text-[var(--ui-info)] hover:underline"
+          className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
         >
           {expanded ? (
             <ChevronDown className="h-3 w-3" aria-hidden="true" />
@@ -362,7 +376,7 @@ function ResultRow({
         <button
           type="button"
           onClick={onAddToPool}
-          className="rounded-[8px] border border-border px-2.5 py-1 text-[11.5px] text-foreground"
+          className="rounded-[8px] border border-border px-2.5 py-1 text-[12px] text-foreground"
         >
           Add to pool
         </button>
@@ -391,7 +405,10 @@ function AddToPoolDialog({
   onClose: () => void;
 }): JSX.Element {
   const qc = useQueryClient();
-  const poolsQuery = useQuery({ queryKey: ['hr', 'pools', 'list-for-add'], queryFn: () => listPools(false) });
+  const poolsQuery = useQuery({
+    queryKey: ['hr', 'pools', 'list-for-add'],
+    queryFn: () => listPools(false),
+  });
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const [poolId, setPoolId] = useState('');
   const [newName, setNewName] = useState('');
@@ -435,18 +452,20 @@ function AddToPoolDialog({
   const canSubmit = mode === 'existing' ? Boolean(poolId) : newName.trim().length > 0;
 
   return (
-    <div
-      role="dialog"
-      aria-label="Add to a talent pool"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-    >
-      <GlassCard className="w-full max-w-[420px] space-y-3 p-5">
-        <h3 className="text-[15px] font-semibold text-foreground">
-          Add {rows.length} candidate{rows.length === 1 ? '' : 's'} to a pool
-        </h3>
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent aria-describedby={undefined} className="max-w-[420px] space-y-3">
+        <DialogHeader>
+          <DialogTitle className="text-[17px] font-bold">
+            Add {rows.length} candidate{rows.length === 1 ? '' : 's'} to a pool
+          </DialogTitle>
+        </DialogHeader>
         <div className="flex items-center gap-4 text-[12.5px] text-foreground">
           <label className="flex items-center gap-1.5">
-            <input type="radio" checked={mode === 'existing'} onChange={() => setMode('existing')} />
+            <input
+              type="radio"
+              checked={mode === 'existing'}
+              onChange={() => setMode('existing')}
+            />
             Existing pool
           </label>
           <label className="flex items-center gap-1.5">
@@ -478,20 +497,15 @@ function AddToPoolDialog({
             className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
           />
         )}
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => mut.mutate()}
-            disabled={!canSubmit || mut.isPending}
-            className="rounded-[10px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
-          >
-            {mut.isPending ? 'Adding…' : 'Add'}
-          </button>
-          <button type="button" onClick={onClose} className="text-[13px] text-muted-foreground">
+        <DialogFooter className="flex-row items-center justify-end gap-2 sm:space-x-0">
+          <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
-          </button>
-        </div>
-      </GlassCard>
-    </div>
+          </Button>
+          <Button type="button" onClick={() => mut.mutate()} disabled={!canSubmit || mut.isPending}>
+            {mut.isPending ? 'Adding…' : 'Add'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

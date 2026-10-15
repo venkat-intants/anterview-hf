@@ -10,9 +10,9 @@ import { ConsentProvider } from './context/ConsentContext';
 import { Toaster } from './components/ui/sonner';
 import i18n from './lib/i18n';
 import App from './App';
+// Self-hosted @font-face rules — before index.css so its font stacks resolve.
+import './fonts.css';
 import './index.css';
-// Animate.css — utility entrance animations (e.g. animate__fadeIn on the hero).
-import 'animate.css';
 // AntHire landing design — fonts + scoped keyframes/animations.
 // Imported AFTER index.css so its rules win on any name overlap.
 import './landing/styles/anthire.css';

@@ -1122,6 +1122,8 @@ async def candidate_loops(db: AsyncSession, *, user_id: uuid.UUID) -> list[dict[
         sessions = await _sessions(db, r["id"])
         out.append({
             "id": str(r["id"]), "title": r["title"], "job_title": r["job_title"],
+            # The enrolment id, i.e. the id /users/me/applications returns.
+            "application_id": str(r["enrolment_id"]) if r.get("enrolment_id") else None,
             "status": r["status"], "timezone": r["candidate_timezone"],
             "self_schedule": r["self_schedule"],
             "sessions": [_candidate_session(s) for s in sessions if s["status"] != "cancelled"

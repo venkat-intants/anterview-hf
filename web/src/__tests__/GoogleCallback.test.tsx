@@ -103,16 +103,36 @@ describe('GoogleCallback page', () => {
     expect(mockComplete).not.toHaveBeenCalled();
   });
 
-  it('surfaces the server detail when the exchange fails', async () => {
+  it('explains a known server refusal in words, not as its code', async () => {
     mockComplete.mockRejectedValue(new Error('INVALID_OR_EXPIRED_STATE'));
 
     renderAt('/auth/google/callback?code=abc&state=xyz');
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(
-        'INVALID_OR_EXPIRED_STATE',
-      );
+      expect(screen.getByRole('alert')).toHaveTextContent(/sign-in attempt expired/i);
     });
+    expect(screen.getByRole('alert')).not.toHaveTextContent('INVALID_OR_EXPIRED_STATE');
+  });
+
+  it('tells a staff account to use its password instead', async () => {
+    mockComplete.mockRejectedValue(new Error('GOOGLE_SIGNIN_CANDIDATES_ONLY'));
+
+    renderAt('/auth/google/callback?code=abc&state=xyz');
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/email and password/i);
+    });
+  });
+
+  it('never shows an unrecognised machine code', async () => {
+    mockComplete.mockRejectedValue(new Error('SOME_NEW_CODE'));
+
+    renderAt('/auth/google/callback?code=abc&state=xyz');
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/google sign-in failed/i);
+    });
+    expect(screen.getByRole('alert')).not.toHaveTextContent('SOME_NEW_CODE');
   });
 
   it('shows a cancelled message when Google returns ?error', async () => {

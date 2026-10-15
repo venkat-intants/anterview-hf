@@ -29,7 +29,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { getAttemptProctoring, type ProctoringEvent } from '@/api/exams';
 import { GlassCard } from '@/design/components/primitives';
-import { Info, Loader2, ShieldCheck, VideoOff } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Info, ShieldCheck, VideoOff } from '@/design/components/icons';
+import { Collapsible } from '@/design/components/collapsible';
+import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -50,7 +54,14 @@ const EVENT_LABELS: Record<string, string> = {
 /** Display order mirrors the severity weighting in the camera-proctoring
  *  contract §2 (highest weight first), purely for a stable, predictable
  *  reading order — it plays no part in the score itself. */
-const EVENT_ORDER = ['multiple_faces', 'face_absent', 'fullscreen_exit', 'tab_blur', 'copy', 'paste'];
+const EVENT_ORDER = [
+  'multiple_faces',
+  'face_absent',
+  'fullscreen_exit',
+  'tab_blur',
+  'copy',
+  'paste',
+];
 
 function orderIndex(type: string): number {
   const i = EVENT_ORDER.indexOf(type);
@@ -81,7 +92,9 @@ function formatDuration(seconds: number): string {
 }
 
 function eventsOfType(events: ProctoringEvent[], type: string): ProctoringEvent[] {
-  return events.filter((e) => e.event_type === type).sort((a, b) => a.started_at.localeCompare(b.started_at));
+  return events
+    .filter((e) => e.event_type === type)
+    .sort((a, b) => a.started_at.localeCompare(b.started_at));
 }
 
 export default function AttemptProctoringSummary({
@@ -92,21 +105,24 @@ export default function AttemptProctoringSummary({
   attemptId: string;
 }): JSX.Element | null {
   const enabled = Boolean(examId) && Boolean(attemptId);
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['hr', 'exam', examId, 'attempt', attemptId, 'proctoring'],
     queryFn: () => getAttemptProctoring(examId, attemptId),
     enabled,
     retry: false,
   });
+  const detailsKey = useScopedPersistKey('proctoring-details');
 
   if (!enabled) return null;
 
   if (isLoading) {
     return (
       <GlassCard className="mt-5 p-5" data-testid="attempt-proctoring-summary">
-        <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading proctoring timeline…
+        <div aria-busy="true">
+          <span className="sr-only">Loading proctoring timeline…</span>
+          <Skeleton className="h-5 w-40" />
+          <Skeleton className="mt-3 h-4 w-full" />
+          <Skeleton className="mt-2 h-4 w-3/4" />
         </div>
       </GlassCard>
     );
@@ -115,9 +131,14 @@ export default function AttemptProctoringSummary({
   if (isError) {
     return (
       <GlassCard className="mt-5 p-5" data-testid="attempt-proctoring-summary">
-        <p className="text-[12.5px] text-muted-foreground">
-          {errText(error, 'Could not load proctoring data for this attempt.')}
-        </p>
+        <div role="alert" className="flex flex-wrap items-center gap-3">
+          <p className="text-[13px] text-muted-foreground">
+            {errText(error, 'Could not load proctoring data for this attempt.')}
+          </p>
+          <Button type="button" variant="outline" onClick={() => void refetch()}>
+            Try again
+          </Button>
+        </div>
       </GlassCard>
     );
   }
@@ -137,20 +158,26 @@ export default function AttemptProctoringSummary({
   // genuinely ambiguous, and the panel has to say so instead of showing what
   // reads as a clean record (review, 2026-09-30).
   const cameraSignals =
-    (data.counts.face_absent ?? 0) +
-    (data.counts.multiple_faces ?? 0) +
-    gazeCount;
+    (data.counts.face_absent ?? 0) + (data.counts.multiple_faces ?? 0) + gazeCount;
 
   const otherCounts = Object.entries(data.counts)
     .filter(([type]) => type !== 'gaze_away')
     .sort(([a], [b]) => orderIndex(a) - orderIndex(b));
   const otherEventsTotal = otherCounts.reduce((n, [, c]) => n + c, 0);
+  // For the closed disclosure's one-line summary only. gaze_away is excluded,
+  // exactly as it is from every counted list.
+  const newestEvent = data.events
+    .filter((e) => e.event_type !== 'gaze_away')
+    .reduce<ProctoringEvent | null>(
+      (n, e) => (n === null || e.started_at > n.started_at ? e : n),
+      null,
+    );
 
   return (
     <GlassCard className="mt-5 p-5" data-testid="attempt-proctoring-summary">
       <div className="flex items-center gap-1.5">
-        <ShieldCheck size={14} className="text-[var(--ui-faint)]" aria-hidden="true" />
-        <h3 className="text-[13px] font-medium text-foreground">Proctoring timeline</h3>
+        <ShieldCheck size={15} className="text-muted-foreground" aria-hidden="true" />
+        <h3 className="text-[15px] font-bold text-foreground">Proctoring timeline</h3>
       </div>
 
       {/* ── The timeline is incomplete and must say so. The client swallows a
@@ -160,13 +187,13 @@ export default function AttemptProctoringSummary({
           about the candidate — being throttled is not something they did. ── */}
       {data.events_dropped && (
         <p
-          className="mt-2.5 flex items-start gap-1.5 text-[12.5px] leading-relaxed text-muted-foreground"
+          className="mt-2.5 flex items-start gap-1.5 text-[13px] leading-relaxed text-muted-foreground"
           data-testid="proctoring-incomplete-notice"
         >
-          <Info size={13} className="mt-0.5 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+          <Info size={13} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span>
-            This timeline is incomplete — some events could not be recorded during the attempt.
-            Read what follows as a partial record, and not as evidence about the candidate.
+            This timeline is incomplete — some events could not be recorded during the attempt. Read
+            what follows as a partial record, and not as evidence about the candidate.
           </span>
         </p>
       )}
@@ -174,8 +201,12 @@ export default function AttemptProctoringSummary({
       {/* ── Camera not in use — say so, rather than rendering the camera
           signals as zero (contract §7 item 4). ── */}
       {!data.camera_in_use && (
-        <p className="mt-2.5 flex items-start gap-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
-          <VideoOff size={13} className="mt-0.5 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+        <p className="mt-2.5 flex items-start gap-1.5 text-[13px] leading-relaxed text-muted-foreground">
+          <VideoOff
+            size={13}
+            className="mt-0.5 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
           <span>
             Camera proctoring was not enabled for this attempt — presence, multiple-face and gaze
             signals were not measured.
@@ -192,10 +223,10 @@ export default function AttemptProctoringSummary({
           avoid. */}
       {data.camera_in_use && cameraSignals === 0 && (
         <p
-          className="mt-2.5 flex items-start gap-1.5 text-[12.5px] leading-relaxed text-muted-foreground"
+          className="mt-2.5 flex items-start gap-1.5 text-[13px] leading-relaxed text-muted-foreground"
           data-testid="proctoring-no-camera-signal"
         >
-          <Info size={13} className="mt-0.5 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+          <Info size={13} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span>
             This round required the camera, and no camera signal was recorded. That can mean the
             candidate was simply present throughout, or that the camera never started — permission
@@ -206,28 +237,58 @@ export default function AttemptProctoringSummary({
       )}
 
       {data.camera_in_use && otherEventsTotal === 0 && (
-        <p className="mt-2.5 text-[12.5px] text-muted-foreground">
+        <p className="mt-2.5 text-[13px] text-muted-foreground">
           No fullscreen, tab or copy/paste events were recorded for this attempt.
         </p>
       )}
 
       {/* ── The events that actually happened, grouped by kind, with times
           and durations — leads the panel; the score comes last. ── */}
+      {/* Presentation only: the occurrences sit in one disclosure (closed
+          until opened, then remembered) so the notices above and the score
+          below stay in view. Nothing inside it changed. */}
+      {(otherCounts.length > 0 || data.camera_in_use) && (
+        <Collapsible
+          className="mt-3"
+          headingLevel="h4"
+          // Open by default: what happened IS this panel's lead content
+          // (contract §7); the disclosure only lets a reviewer fold it away
+          // and remembers that.
+          defaultOpen
+          title="Event details"
+          count={otherEventsTotal}
+          noun="event"
+          latest={
+            newestEvent
+              ? `${labelFor(newestEvent.event_type)}, ${formatTime(newestEvent.started_at)}`
+              : undefined
+          }
+          persistKey={detailsKey}
+          data-testid="proctoring-details"
+        >
       {otherCounts.length > 0 && (
-        <div className="mt-3 flex flex-col gap-3" data-testid="proctoring-event-groups">
+        <div className="flex flex-col gap-3" data-testid="proctoring-event-groups">
           {otherCounts.map(([type, count]) => {
             const occurrences = eventsOfType(data.events, type);
             return (
               <div key={type}>
-                <p className="text-[12px] font-medium text-foreground">
+                <p className="text-[13px] font-semibold text-foreground">
                   {labelFor(type)} · {count} time{count === 1 ? '' : 's'}
                 </p>
                 {occurrences.length > 0 && (
-                  <ul className="mt-1 flex flex-col gap-0.5" aria-label={`${labelFor(type)} occurrences`}>
+                  <ul
+                    className="mt-1 flex flex-col gap-0.5"
+                    aria-label={`${labelFor(type)} occurrences`}
+                  >
                     {occurrences.map((e, i) => (
-                      <li key={`${type}-${i}`} className="font-mono text-[11.5px] text-muted-foreground">
+                      <li
+                        key={`${type}-${i}`}
+                        className="font-mono text-[12px] tabular-nums text-muted-foreground"
+                      >
                         {formatTime(e.started_at)}
-                        {e.duration_seconds != null ? ` — lasted ${formatDuration(e.duration_seconds)}` : ''}
+                        {e.duration_seconds != null
+                          ? ` — lasted ${formatDuration(e.duration_seconds)}`
+                          : ''}
                       </li>
                     ))}
                   </ul>
@@ -243,45 +304,49 @@ export default function AttemptProctoringSummary({
           exists to show when the camera actually ran. ── */}
       {data.camera_in_use && (
         <div
-          className="mt-3 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3"
+          className="mt-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3"
           data-testid="proctoring-gaze-line"
         >
           <div className="flex items-center gap-1.5">
-            <Info size={12} className="text-[var(--ui-faint)]" aria-hidden="true" />
-            <p className="text-[12px] font-medium text-foreground">
+            <Info size={12} className="text-muted-foreground" aria-hidden="true" />
+            <p className="text-[13px] font-semibold text-foreground">
               Looked away from the screen — informational only
             </p>
           </div>
           {gazeCount === 0 ? (
-            <p className="mt-1 text-[11.5px] text-muted-foreground">Not observed during this attempt.</p>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              Not observed during this attempt.
+            </p>
           ) : (
             <ul className="mt-1 flex flex-col gap-0.5" aria-label="Looked-away occurrences">
               {gazeEvents.map((e, i) => (
-                <li key={`gaze-${i}`} className="font-mono text-[11.5px] text-muted-foreground">
+                <li key={`gaze-${i}`} className="font-mono text-[12px] text-muted-foreground">
                   {formatTime(e.started_at)} — looked away for{' '}
                   {formatDuration(e.duration_seconds ?? 0)}
                 </li>
               ))}
             </ul>
           )}
-          <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--ui-faint)]">
+          <p className="mt-1.5 text-[12px] leading-relaxed text-muted-foreground">
             This alone never ends an exam and is the least reliable signal here — looking away has
             many innocent explanations (thinking, a motor or visual difference, assistive
             technology). It is shown for context, not as evidence.
           </p>
         </div>
       )}
+        </Collapsible>
+      )}
 
       {/* ── The score — a summary of the above, shown last and without any
           pass/fail styling (contract §7 item 3, CLAUDE.md hard constraint 9). ── */}
       <div className="mt-4 border-t border-border pt-3">
-        <p className="text-[11.5px] text-muted-foreground">
+        <p className="text-[12px] text-muted-foreground">
           {data.integrity_score !== null ? (
             <>
               Integrity score{' '}
               <span className="font-mono text-foreground">{data.integrity_score}/100</span> — a
-              weighted summary of the events above. It does not decide anything about the
-              candidate; HR reviews the timeline.
+              weighted summary of the events above. It does not decide anything about the candidate;
+              HR reviews the timeline.
             </>
           ) : (
             'No integrity score recorded for this attempt.'

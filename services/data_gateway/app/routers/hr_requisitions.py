@@ -185,7 +185,51 @@ def _not_in_the_past(v: datetime | None) -> datetime | None:
     return aware
 
 
-class RequisitionIn(PostingFields):
+class BudgetFields(BaseModel):
+    """The hiring budget — shared by create and patch, so there is ONE rule.
+
+    Money, not headcount. target_hires is the headcount constraint and neither
+    replaces the other. Never rendered on any public surface — unlike
+    salary_min/max there is no visibility flag, because there is no version of
+    a careers page that should carry a hiring budget (PH3-B2).
+    """
+
+    budget_amount: int | None = Field(default=None, ge=0, le=10**15)
+    budget_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    budget_basis: Literal["per_hire", "total"] | None = None
+    budget_period: Literal["annual", "monthly", "one_time"] | None = None
+    budget_notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("budget_currency")
+    @classmethod
+    def _currency_code(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        code = v.strip().upper()
+        if not code.isalpha():
+            raise ValueError("currency must be a 3-letter code, e.g. INR")
+        return code
+
+    @model_validator(mode="after")
+    def _budget_is_complete(self) -> BudgetFields:
+        """An amount with no currency or basis is a number nobody can act on.
+
+        Caught here as well as by the CHECK constraint so the caller gets a 422
+        naming the missing field rather than a 503 from a constraint violation.
+        """
+        if self.budget_amount is not None and (
+            self.budget_currency is None
+            or self.budget_basis is None
+            or self.budget_period is None
+        ):
+            raise ValueError(
+                "a budget needs an amount, a currency, a basis (per_hire or total)"
+                " and a period (annual, monthly or one_time)"
+            )
+        return self
+
+
+class RequisitionIn(PostingFields, BudgetFields):
     title: str = Field(min_length=2, max_length=200)
     level: str = Field(default="mid", max_length=40)
     jd_text: str | None = Field(default=None, max_length=40_000)
@@ -206,7 +250,7 @@ class RequisitionIn(PostingFields):
         return v.strip()
 
 
-class RequisitionPatch(PostingFields):
+class RequisitionPatch(PostingFields, BudgetFields):
     title: str | None = Field(default=None, min_length=2, max_length=200)
     level: str | None = Field(default=None, max_length=40)
     jd_text: str | None = Field(default=None, max_length=40_000)
@@ -219,50 +263,12 @@ class RequisitionPatch(PostingFields):
     # Whether the open web may apply. Off until someone turns it on — see the
     # note in public_apply.py on why a requisition id is not a secret.
     public_apply_enabled: bool | None = None
-    # ── Budget (PH3-B2) ────────────────────────────────────────────────
-    # Money, not headcount. target_hires above is the headcount constraint and
-    # neither replaces the other. Never rendered on any public surface — unlike
-    # salary_min/max there is no visibility flag, because there is no version
-    # of a careers page that should carry a hiring budget.
-    budget_amount: int | None = Field(default=None, ge=0, le=10**15)
-    budget_currency: str | None = Field(default=None, min_length=3, max_length=3)
-    budget_basis: Literal["per_hire", "total"] | None = None
-    budget_period: Literal["annual", "monthly", "one_time"] | None = None
-    budget_notes: str | None = Field(default=None, max_length=2000)
     # PH3-B4b. None means nobody has set one, which is the default and is NOT
     # the same as 0 — zero is "we considered this and decided there is no
     # waiting period". Three years is the ceiling: beyond that a cooldown is
     # indistinguishable from a permanent bar, which is a different decision and
     # should be taken deliberately rather than by typing a large number.
     reapply_cooldown_days: int | None = Field(default=None, ge=0, le=1095)
-
-    @field_validator("budget_currency")
-    @classmethod
-    def _currency_code(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        code = v.strip().upper()
-        if not code.isalpha():
-            raise ValueError("currency must be a 3-letter code, e.g. INR")
-        return code
-
-    @model_validator(mode="after")
-    def _budget_is_complete(self) -> RequisitionPatch:
-        """An amount with no currency or basis is a number nobody can act on.
-
-        Caught here as well as by the CHECK constraint so the caller gets a 422
-        naming the missing field rather than a 503 from a constraint violation.
-        """
-        if self.budget_amount is not None and (
-            self.budget_currency is None
-            or self.budget_basis is None
-            or self.budget_period is None
-        ):
-            raise ValueError(
-                "a budget needs an amount, a currency, a basis (per_hire or total)"
-                " and a period (annual, monthly or one_time)"
-            )
-        return self
 
 
 class FunnelStage(BaseModel):
@@ -327,6 +333,16 @@ class RequisitionOut(BaseModel):
     # honestly be made (no closing date, no target, or too new to have a rate).
     # Null is rendered as nothing rather than as "fine" — see delivery_risk.
     delivery_risk: str | None = None
+    # Setup facts, populated by the LIST endpoint only (null on single-opening
+    # reads, which carry the full JD history / dashboard instead). Optional so
+    # a client written before they existed keeps working.
+    #   has_published_jd        — a JD version is published for the opening
+    #                             (job_requisitions.published_jd_version_id is set;
+    #                             the fact JdHistory.published_version_id reports).
+    #   has_published_workflow  — a live published workflow with at least one
+    #                             round exists (the dashboard's fact).
+    has_published_jd: bool | None = None
+    has_published_workflow: bool | None = None
 
 
 class EnrolmentOut(BaseModel):
@@ -531,6 +547,14 @@ def _to_out(
         budget_period=row.get("budget_period"),
         budget_notes=row.get("budget_notes"),
         reapply_cooldown_days=row.get("reapply_cooldown_days"),
+        has_published_jd=(
+            bool(row["has_published_jd"]) if row.get("has_published_jd") is not None else None
+        ),
+        has_published_workflow=(
+            bool(row["has_published_workflow"])
+            if row.get("has_published_workflow") is not None
+            else None
+        ),
         total_enrolments=sum(counts.values()),
         hired=counts.get("hired", 0),
         awaiting_decision=awaiting,
@@ -662,7 +686,19 @@ async def list_requisitions(
                 "         WHERE u.id = approval_decided_by_user_id)"
                 "         AS approval_decided_by_name,"
                 "       budget_amount, budget_currency, budget_basis,"
-                "       budget_period, budget_notes, reapply_cooldown_days"
+                "       budget_period, budget_notes, reapply_cooldown_days,"
+                # Setup facts, in this same statement (no per-row query).
+                # The JD fact is a column on the row itself. The workflow fact
+                # is a correlated EXISTS probing uq_workflows_one_published
+                # (requisition_id, partial: published AND not deleted) and then
+                # uq_workflow_rounds_position (workflow_id, partial: not
+                # deleted) — the same predicate as the dashboard's `rounds`.
+                "       (published_jd_version_id IS NOT NULL) AS has_published_jd,"
+                "       EXISTS (SELECT 1 FROM workflows w"
+                "                 JOIN workflow_rounds wr ON wr.workflow_id = w.id"
+                "                WHERE w.requisition_id = job_requisitions.id"
+                "                  AND w.status = 'published' AND w.deleted_at IS NULL"
+                "                  AND wr.deleted_at IS NULL) AS has_published_workflow"
                 "  FROM job_requisitions"
                 " WHERE company_id = :c AND deleted_at IS NULL"
                 # CAST is required: asyncpg cannot infer the type of a
@@ -714,11 +750,14 @@ async def create_requisition(
                 " department, location, employment_type,"
                 " experience_min_years, experience_max_years,"
                 " salary_min, salary_max, salary_currency, salary_visible,"
-                " responsibilities, required_skills, nice_to_have_skills)"
+                " responsibilities, required_skills, nice_to_have_skills,"
+                " budget_amount, budget_currency, budget_basis, budget_period,"
+                " budget_notes)"
                 " VALUES (:i,:c,:t,:l,:jd,:th,:ca,:o,:cb,'open',false,:n,:n,"
                 "         :dept,:loc,:etype,:exmin,:exmax,"
                 "         :smin,:smax,:scur,:svis,"
-                "         CAST(:resp AS jsonb), CAST(:req AS jsonb), CAST(:nice AS jsonb))"
+                "         CAST(:resp AS jsonb), CAST(:req AS jsonb), CAST(:nice AS jsonb),"
+                "         :bamt,:bcur,:bbas,:bper,:bnotes)"
             ),
             {"i": req_id, "c": company_id, "t": body.title, "l": body.level,
              "jd": body.jd_text, "th": body.target_hires, "ca": body.closes_at,
@@ -733,7 +772,14 @@ async def create_requisition(
              "svis": bool(body.salary_visible),
              "resp": json.dumps(body.responsibilities or []),
              "req": json.dumps(body.required_skills or []),
-             "nice": json.dumps(body.nice_to_have_skills or [])},
+             "nice": json.dumps(body.nice_to_have_skills or []),
+             # Same row, same statement, same commit as the opening. approval_status
+             # is not named, so the column default ('draft') applies — and PATCH
+             # does not touch approval_status on a budget change either, so
+             # there is no approval effect to mirror.
+             "bamt": body.budget_amount, "bcur": body.budget_currency,
+             "bbas": body.budget_basis, "bper": body.budget_period,
+             "bnotes": body.budget_notes},
         )
         await db.commit()
     except Exception as exc:  # noqa: BLE001 — the partial unique index is the guard

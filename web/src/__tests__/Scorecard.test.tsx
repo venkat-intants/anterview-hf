@@ -84,6 +84,10 @@ vi.mock('../api/integrity', () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
+// Which roles the signed-in session carries; a test sets ['guest_candidate'] to
+// read the scorecard as someone invited by link.
+let sessionRoles: string[] = ['candidate'];
+
 function TokenSetter({ children }: { children: React.ReactNode }) {
   const { setAuth } = useAuth();
   useEffect(() => {
@@ -91,7 +95,7 @@ function TokenSetter({ children }: { children: React.ReactNode }) {
       user_id: '11111111-1111-1111-1111-111111111111',
       full_name: 'Test Candidate',
       email: 'test@intants.com',
-      roles: ['candidate'],
+      roles: sessionRoles,
     });
   }, [setAuth]);
   return <>{children}</>;
@@ -123,8 +127,29 @@ function renderScorecard(scorecardId = '00000000-0000-0000-0000-000000000001') {
 describe('Scorecard page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionRoles = ['candidate'];
     mockGetScorecard.mockResolvedValue(MOCK_SCORECARD_DATA);
     mockGetSessionIntegrity.mockResolvedValue(null);
+  });
+
+  // A number on this page is feedback on an interview, never an outcome. Said
+  // where the number is, in the reader's language.
+  it('says, under the score, that this is practice feedback and not a hiring decision', async () => {
+    renderScorecard();
+    const note = await screen.findByTestId('not-a-decision');
+    expect(note).toHaveTextContent('This is practice feedback, not a hiring decision.');
+    expect(screen.getByText('71').closest('section')).toContainElement(note);
+  });
+
+  it('does not call an invited guest’s interview “practice”, but still says it is not a decision', async () => {
+    // A guest reads the scorecard of the interview they were invited to, which
+    // is not practice. Account links stay absent, as before.
+    sessionRoles = ['guest_candidate'];
+    renderScorecard();
+    const note = await screen.findByTestId('not-a-decision');
+    expect(note).toHaveTextContent('This is feedback on your interview, not a hiring decision.');
+    expect(note).not.toHaveTextContent(/practice/i);
+    expect(screen.queryByRole('link', { name: /dashboard|history|browse/i })).not.toBeInTheDocument();
   });
 
   it('shows a loading spinner initially', () => {
@@ -328,6 +353,11 @@ describe('Scorecard page', () => {
 
     // Score badge (0–100 scale)
     expect(screen.getByTestId('integrity-score')).toHaveTextContent('87');
+
+    // The timeline is a closed disclosure with a translated one-line summary
+    // until opened (structural change: it used to be always visible).
+    expect(screen.getByTestId('collapsible-summary')).toHaveTextContent(/events?/);
+    await userEvent.click(screen.getByRole('button', { name: /event timeline/i }));
 
     // Flags list + timeline both label the event type (so 2 matches).
     expect(screen.getAllByText('Looked away from screen').length).toBe(2);

@@ -32,7 +32,7 @@ Open:
 - http://localhost:8001/              → service info
 - http://localhost:8001/docs          → OpenAPI Swagger UI
 - http://localhost:8001/health/live   → liveness ping
-- http://localhost:8001/health/deep   → checks dependencies (Postgres, Redis, S3, LLM, Sarvam)
+- http://localhost:8001/health/deep   → checks dependencies (Postgres, Redis, S3, LLM, Sarvam). Needs a `service`-role Bearer JWT (sub `interview_core`/`data_gateway`); result cached 60s because it makes paid calls
 - http://localhost:8001/api/avatars   → the 6 avatars for the picker
 
 ## Code layout

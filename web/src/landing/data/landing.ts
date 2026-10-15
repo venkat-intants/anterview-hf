@@ -1,119 +1,150 @@
+import type { Shot } from '../components/ShotFrame'
 import {
-  Globe, Zap, Repeat, Users, FileText, Shield, Headphones, Target, Mic, BarChart3,
-  Rocket, GraduationCap, Building2, Landmark, Scale, ClipboardCheck, MapPin, Trash2,
+  GraduationCap, Building2, Landmark,
+  ShieldCheck, UserCheck, Eraser, Building,
   type LucideIcon,
 } from 'lucide-react'
 
-/** Hero interview video clips.
- *  `ai`  — the platform's actual default Tavus avatar ("Anna" / replica
- *          rf4e9d9790f0), the same face the live interview uses, so the hero
- *          shows a real AI interviewer rather than a stock clip.
- *  human — a candidate-on-camera clip (Pexels, free license). */
-export const HERO_VIDEOS = {
-  ai: 'https://cdn.replica.tavus.io/39895/8c44fce6.mp4',
-  human: 'https://videos.pexels.com/video-files/8048256/8048256-hd_1920_1080_25fps.mp4',
-}
+export const CONTACT_EMAIL = 'support@intants.com'
+
+/** mailto link for the "talk to us" calls to action. */
+export const mailto = (subject: string) => `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}`
 
 export const NAV_LINKS = [
   { href: '#how', label: 'How it works' },
-  { href: '#features', label: 'Product' },
-  { href: '#audience', label: 'For Colleges' },
-  { href: '#audience', label: 'For HR' },
+  { href: '#candidates', label: 'For candidates' },
+  { href: '#audience', label: 'For institutions' },
   { href: '#languages', label: 'Languages' },
+  { href: '#faq', label: 'FAQ' },
 ]
 
-// Third-party logos and named-institution testimonials were removed on
-// 2026-09-08. Both put other organisations' names on our page as endorsements
-// we cannot substantiate — NSDC, APSSDC, IIT Hyderabad and the rest are not
-// customers, and the quotes were written copy attributed to named people at
-// named colleges. Nothing replaces them: an honest page with no logo wall is
-// better than a logo wall we would have to defend in a bid.
+// Everything below describes what the product does today (CLAUDE.md "Current
+// Phase"). Earlier versions of this page carried invented proof — third-party
+// logos and named testimonials (removed 2026-09-08), then made-up statistics,
+// "22 languages live", 24x7 proctoring, India data residency and DPDP
+// "compliance" claims (removed in the 2026 UI revamp). docs/ACCEPTED-RISKS.md
+// records that the demo tier has no India residency, so nothing here asserts
+// it. Targets that the platform has not yet run (20 lakh candidates, <2s,
+// the per-session cost) are deliberately absent: the last is an internal margin.
 
-
-export const STEPS: { no: string; icon: LucideIcon; title: string; desc: string; bg: string }[] = [
-  { no: 'STEP 01', icon: Target, title: 'Pick a role', desc: 'Choose a job role and level. AntHire loads the right questions and rubric.', bg: 'rgba(0,136,255,0.16)' },
-  { no: 'STEP 02', icon: Mic, title: 'Talk to the avatar', desc: 'Have a real, voice-first conversation. It listens and asks smart follow-ups.', bg: 'rgba(168,135,220,0.18)' },
-  { no: 'STEP 03', icon: BarChart3, title: 'Get a scorecard', desc: 'Receive a competency breakdown with strengths, gaps and transcript highlights.', bg: 'rgba(22,194,83,0.16)' },
-  { no: 'STEP 04', icon: Rocket, title: 'Share & improve', desc: 'Download the PDF, share with recruiters, retake to climb your score.', bg: 'rgba(221,85,231,0.16)' },
+export const PROOF = [
+  { value: '3', label: 'languages today: English, Hindi and Telugu' },
+  { value: '6', label: 'AI interviewers to choose from' },
+  { value: 'Voice', label: 'first: talk, don’t type' },
+  { value: 'PDF', label: 'scorecard after every interview' },
 ]
 
-export type Feature = { cols: number; rows: number; bg: string; icon: LucideIcon; big: string; title: string; desc: string }
-// Surfaces are landing-theme tokens (see landing/styles/anthire.css) so the
-// bento reads on the light grey page as well as the dark one.
-export const FEATURES: Feature[] = [
-  { cols: 3, rows: 2, bg: 'var(--lp-grad-deep)', icon: Globe, big: '22', title: 'Indian languages', desc: 'Interview in the language candidates actually think in — voice-first, end to end.' },
-  { cols: 3, rows: 1, bg: 'var(--lp-surface)', icon: Zap, big: '<2s', title: 'Real-time latency', desc: 'Conversations that feel human, not laggy.' },
-  { cols: 3, rows: 1, bg: 'var(--lp-surface)', icon: Repeat, big: '∞', title: 'Adaptive follow-ups', desc: 'It probes deeper based on your answers.' },
-  { cols: 2, rows: 1, bg: 'var(--lp-surface)', icon: Users, big: '6', title: 'Avatars', desc: '3 male, 3 female personas.' },
-  { cols: 2, rows: 1, bg: 'var(--lp-surface)', icon: FileText, big: 'PDF', title: 'Scorecards', desc: 'Shareable, structured.' },
-  { cols: 2, rows: 1, bg: 'var(--lp-surface)', icon: Shield, big: '24×7', title: 'Proctoring', desc: 'Integrity, monitored.' },
-  { cols: 6, rows: 1, bg: 'var(--lp-grad-wash)', icon: Headphones, big: 'Voice-first', title: 'No typing, no friction', desc: 'Designed for mobile-first Bharat — talk the way you would in a real room.' },
-]
-
-// `video` = the platform's REAL Tavus avatar replica clips (cdn.replica.tavus.io)
-// — the same faces the live interview uses, one per interviewer persona.
-// Real Tavus replica faces (still frames captured from the live avatar clips,
-// self-hosted under /public/avatars to keep the landing snappy — no video).
-// Names match the avatars' actual identities so faces and names line up.
-export const AVATARS = [
-  { name: 'Anna', role: 'Warm · behavioural', langs: ['EN', 'हि', 'తె'], bg: 'linear-gradient(160deg,#112d72,#a887dc)', image: '/avatars/anna.jpg' },
-  { name: 'Lucas', role: 'Sharp · technical', langs: ['EN', 'हि'], bg: 'linear-gradient(160deg,#001b33,#0088ff)', image: '/avatars/lucas.jpg' },
-  { name: 'Gloria', role: 'Calm · HR screen', langs: ['EN', 'తె'], bg: 'linear-gradient(160deg,#1a0a20,#dd55e7)', image: '/avatars/gloria_warm.jpg' },
-  { name: 'Raj', role: 'Brisk · case-based', langs: ['EN', 'हि'], bg: 'linear-gradient(160deg,#031310,#16c253)', image: '/avatars/raj.jpg' },
-  { name: 'Maya', role: 'Friendly · campus', langs: ['EN', 'हि', 'తె'], bg: 'linear-gradient(160deg,#200401,#ffb764)', image: '/avatars/gloria.jpg' },
-  { name: 'Benjamin', role: 'Direct · senior', langs: ['EN'], bg: 'linear-gradient(160deg,#030719,#4b52aa)', image: '/avatars/benjamin.jpg' },
-]
-
-const live = { tag: 'LIVE', tagBg: 'rgba(39,201,63,0.16)', tagC: '#27c93f', bg: 'var(--lp-grad-deep)', bd: 'rgba(0,136,255,0.3)' }
-const soon = { tag: '2026', tagBg: 'var(--lp-chip)', tagC: 'var(--lp-text-faint)', bg: 'var(--lp-surface)', bd: 'var(--lp-line)' }
-export const LANGUAGES = [
-  ['English', 'English', true], ['हिन्दी', 'Hindi', true], ['తెలుగు', 'Telugu', true], ['தமிழ்', 'Tamil', false],
-  ['বাংলা', 'Bengali', false], ['मराठी', 'Marathi', false], ['ગુજરાતી', 'Gujarati', false], ['ಕನ್ನಡ', 'Kannada', false],
-  ['മലയാളം', 'Malayalam', false], ['ਪੰਜਾਬੀ', 'Punjabi', false], ['ଓଡ଼ିଆ', 'Odia', false], ['অসমীয়া', 'Assamese', false],
-  ['اردو', 'Urdu', false], ['संस्कृतम्', 'Sanskrit', false], ['कोंकणी', 'Konkani', false], ['मैथिली', 'Maithili', false],
-  ['डोगरी', 'Dogri', false], ['बड़ो', 'Bodo', false], ['ᱥᱟᱱᱛᱟᱲᱤ', 'Santali', false], ['कॉशुर', 'Kashmiri', false],
-  ['नेपाली', 'Nepali', false], ['মৈতৈলোন্', 'Manipuri', false],
-].map(([native, name, isLive]) => ({ native: native as string, name: name as string, ...(isLive ? live : soon) }))
-
-export type AudienceKey = 'colleges' | 'hr' | 'gov'
-// `image` URLs are copyright-free Pexels photos (free license, hotlinkable).
-export const AUDIENCES: Record<AudienceKey, { icon: LucideIcon; label: string; title: string; sub: string; cta: string; points: string[]; image: string }> = {
-  colleges: { icon: GraduationCap, label: 'Colleges & Universities', title: 'Colleges & Universities', sub: 'Run placement-ready mock interviews for every student, score them fairly, and show recruiters verified readiness.', cta: 'Talk to placements team', points: ['Bulk mock interviews across departments', 'Branch-wise readiness analytics for the TPO', 'Recruiter-shareable verified scorecards', 'Practice in the regional language students think in'], image: 'https://images.pexels.com/photos/1438072/pexels-photo-1438072.jpeg?auto=compress&cs=tinysrgb&w=900' },
-  hr: { icon: Building2, label: 'Corporate HR', title: 'Corporate HR', sub: 'Screen thousands of applicants in days, not weeks — with structured, bias-checked AI first rounds.', cta: 'Book an HR demo', points: ['Magic-link invites, zero scheduling', 'Role-specific question banks & rubrics', 'Kanban pipeline + ATS-ready exports', 'Under ₹12 per fully-scored session'], image: 'https://images.pexels.com/photos/3182812/pexels-photo-3182812.jpeg?auto=compress&cs=tinysrgb&w=900' },
-  gov: { icon: Landmark, label: 'Government Skilling', title: 'Government Skilling', sub: 'Assess lakhs of candidates across a state in their mother tongue, with full DPDP audit trails.', cta: 'Request L1 bid pricing', points: ['22-language coverage for true reach', 'Consent ledger & right-to-erasure built in', 'India data residency, no exceptions', 'Proven at 20-lakh-candidate scale'], image: 'https://images.pexels.com/photos/7688336/pexels-photo-7688336.jpeg?auto=compress&cs=tinysrgb&w=900' },
+// Real screenshots of the app in demo mode (invented data), captured at 2x and
+// stored as WebP under /public/landing as a light and a dark twin. Sizes are the
+// files' intrinsic pixels, so the <img> reserves its space and nothing shifts.
+export const SHOTS: Record<'roles' | 'devices' | 'score' | 'history', Shot> = {
+  roles: { stem: 'roles', width: 1400, height: 447, alt: 'The practice roles page in AntHire: filters for level and language above role cards such as Junior Java Developer and Sales Associate, each with a Start Interview button.' },
+  devices: { stem: 'devices', width: 688, height: 1782, alt: 'The microphone and device check before an interview: microphone, connection and browser each marked Ready, a consent note, and the chosen role, level, language and interviewer.' },
+  score: { stem: 'score', width: 1400, height: 1150, alt: 'A scorecard: an overall score of 71 out of 100, a radar chart, a score for each competency, key strengths and areas for improvement.' },
+  history: { stem: 'history', width: 1400, height: 367, alt: 'Interview history: a table of past sessions with the role, the interview language, the status, the duration and a link to each scorecard.' },
 }
 
-export const COMPETENCIES = [
-  { name: 'Communication', score: '9.0 / 10', pct: 90 },
-  { name: 'Problem Solving', score: '8.4 / 10', pct: 84 },
-  { name: 'Role Knowledge', score: '8.8 / 10', pct: 88 },
-  { name: 'Structured Thinking', score: '7.9 / 10', pct: 79 },
-  { name: 'Confidence', score: '8.6 / 10', pct: 86 },
+export const WALKTHROUGH: { title: string; desc: string; shot: keyof typeof SHOTS; maxWidth: number }[] = [
+  {
+    title: 'Pick a role and an interviewer',
+    desc: 'Choose the job you are preparing for. AntHire builds the questions and the scoring rubric around it. Then pick one of six interviewers and the language you want to speak.',
+    shot: 'roles',
+    maxWidth: 760,
+  },
+  {
+    title: 'Talk it through',
+    desc: 'Check your microphone, give consent, then have a real conversation out loud. The interviewer listens and asks follow-up questions based on what you actually said.',
+    shot: 'devices',
+    maxWidth: 300,
+  },
+  {
+    title: 'Get your scorecard',
+    desc: 'See a breakdown by competency, with strengths and gaps, right after the interview. Save it as a PDF, then practise again and see what changes.',
+    shot: 'score',
+    maxWidth: 760,
+  },
 ]
 
-// Capability, not track record: the platform is built to these numbers, it has
-// not yet run them. "20 lakh+ sessions run" was a claim about a demo tier that
-// has run none, and the sort of line a procurement reviewer checks.
-export const METRICS = [
-  { value: '20 lakh', label: 'candidates per cycle, by design' },
-  { value: '<2s', label: 'target response latency' },
-  { value: '22', label: 'Indian languages planned' },
-  { value: '₹12', label: 'target cost per session' },
+export const CANDIDATE_POINTS = [
+  'Practise out loud, in English, Hindi or Telugu',
+  'Follow-up questions that react to what you actually said',
+  'A scorecard with strengths and gaps after every session',
+  'Practise again and compare your scorecards',
 ]
 
-
-export const COMPLIANCE: { icon: LucideIcon; title: string; desc: string }[] = [
-  { icon: Scale, title: 'DPDP Act 2023', desc: 'Consent-led data processing aligned to India’s data protection law.' },
-  { icon: ClipboardCheck, title: 'Consent ledger', desc: 'Every consent event is logged and auditable, end to end.' },
-  { icon: MapPin, title: 'India residency', desc: 'All data stored and processed within India. No exceptions.' },
-  { icon: Trash2, title: 'Right to erasure', desc: 'Candidates can self-serve delete their data anytime.' },
+// The six interviewers in services/interview_core/app/avatars.py. Names match
+// that catalogue; the images are still frames of the same faces, self-hosted
+// under /public/avatars so the page loads no video.
+export const AVATARS: { name: string; tone: string; image: string }[] = [
+  { name: 'Anna', tone: 'Female interviewer', image: '/avatars/anna.jpg' },
+  { name: 'Gloria (Warm)', tone: 'Female interviewer', image: '/avatars/gloria_warm.jpg' },
+  { name: 'Lucas', tone: 'Male interviewer', image: '/avatars/lucas.jpg' },
+  { name: 'Raj', tone: 'Male interviewer', image: '/avatars/raj.jpg' },
+  { name: 'Benjamin', tone: 'Male interviewer', image: '/avatars/benjamin.jpg' },
+  { name: 'Gloria (Greenscreen)', tone: 'Female interviewer', image: '/avatars/gloria.jpg' },
 ]
 
-export const FAQS = [
-  ['Is AntHire really conversational, or just recorded questions?', 'Fully conversational. The avatar listens to your answer, asks relevant follow-ups, and adapts difficulty in real time — averaging under 2 seconds to respond.'],
-  ['Which languages can I interview in today?', 'English, Hindi and Telugu are live right now. The remaining 19 Eighth-Schedule languages are rolling out through 2026, voice-first.'],
-  ['How is my data handled?', 'All processing happens within India. We run on a consent-led model with a full consent ledger and self-serve right-to-erasure, aligned to the DPDP Act 2023.'],
-  ['What does the scorecard actually measure?', 'A role-specific competency rubric — communication, problem solving, role knowledge and more — with strengths, gaps, and transcript highlights, exportable as PDF.'],
-  ['Can institutions run this at scale?', 'Yes. The platform is built to interview up to 20 lakh candidates per cycle at under ₹12 per session, with HR and admin consoles for management.'],
-  ['Do candidates need to install anything?', 'No. Everything runs in the browser with a quick mic check. Invites can be sent as magic links — no account required to take an interview.'],
-] as const
+export const LANGUAGES_LIVE = [
+  { native: 'English', name: 'English' },
+  { native: 'हिन्दी', name: 'Hindi' },
+  { native: 'తెలుగు', name: 'Telugu' },
+]
+
+export type AudienceKey = 'colleges' | 'hr' | 'gov'
+export const AUDIENCES: Record<AudienceKey, { icon: LucideIcon; title: string; sub: string; cta: string; subject: string; points: string[] }> = {
+  colleges: {
+    icon: GraduationCap,
+    title: 'Colleges and skill universities',
+    sub: 'Give every student a realistic first round before the real ones, in the language they are most at ease in.',
+    cta: 'Talk to us about placements',
+    subject: 'AntHire for colleges and universities',
+    points: [
+      'Voice interviews with no scheduling and no panel to book',
+      'A scorecard for every practice session',
+      'English, Hindi and Telugu today',
+      'Written exams and coding rounds that match the role',
+    ],
+  },
+  hr: {
+    icon: Building2,
+    title: 'Recruitment and L&D teams',
+    sub: 'Run a structured first round for every applicant and review the scorecards before you decide.',
+    cta: 'Book a demo',
+    subject: 'AntHire demo request',
+    points: [
+      'Role-aware questions and scoring rubrics',
+      'An HR workspace for roles, applicants and interviews',
+      'Exams and interviews that assess the same job',
+      'People make the hiring decision; scorecards inform it',
+    ],
+  },
+  gov: {
+    icon: Landmark,
+    title: 'Government skilling programmes',
+    sub: 'Assess candidates who are more comfortable speaking than typing, in their own language.',
+    cta: 'Talk to us about your programme',
+    subject: 'AntHire for skilling programmes',
+    points: [
+      'Voice-first, with nothing to install',
+      'English, Hindi and Telugu today; more Indian languages planned',
+      'Admin analytics for programme owners',
+      'Consent asked for before each interview',
+    ],
+  },
+}
+
+export const PRIVACY: { icon: LucideIcon; title: string; desc: string }[] = [
+  { icon: ShieldCheck, title: 'Consent first', desc: 'Candidates are asked for consent before an interview starts.' },
+  { icon: UserCheck, title: 'People decide', desc: 'Scorecards support a hiring decision. They never make one.' },
+  { icon: Eraser, title: 'Erasure on request', desc: 'Candidates can ask for their data to be erased.' },
+  { icon: Building, title: 'Organisations kept apart', desc: 'Staff only see the candidates of their own organisation.' },
+]
+
+export const FAQS: readonly (readonly [string, string])[] = [
+  ['Is it really a conversation, or just recorded questions?', 'It is a conversation. The avatar listens to your answer and asks follow-up questions based on what you said.'],
+  ['Which languages can I interview in?', 'English, Hindi and Telugu today. More Indian languages are planned.'],
+  ['How is my data handled?', 'You are asked for consent before an interview starts, and candidates can ask for their data to be erased. If you are evaluating AntHire for an institution, ask us where data is stored and processed and we will answer in writing.'],
+  ['What does the scorecard show?', 'The interview is scored against a rubric for the role. You see a breakdown by competency with strengths and gaps, and you can download it as a PDF.'],
+  ['Can an institution or company use this for many candidates?', 'AntHire includes an HR workspace and admin analytics for teams running interviews for many candidates. Tell us about your cohort and we will walk you through it.'],
+  ['Do I need to install anything?', 'No. It runs in your browser. You will need a microphone and to allow access when asked.'],
+]

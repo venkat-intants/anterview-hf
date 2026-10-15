@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 import app.piston_client as pc
-from app.piston_client import ExecResult, _parse, run_code
+from app.piston_client import RUNNER_UNAVAILABLE_MESSAGE, ExecResult, _parse, run_code
 
 
 # --- _parse ----------------------------------------------------------------
@@ -87,4 +87,30 @@ async def test_run_code_runtime_unavailable_returns_error(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(pc, "_load_runtimes", empty_runtimes)
     r = await run_code(language="python", source="x", stdin="")
-    assert r.error is not None and "runtime unavailable" in r.error
+    assert r.error == RUNNER_UNAVAILABLE_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_http_failure_error_carries_neither_host_nor_upstream_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The defect: `runner HTTP 502: <upstream body>` / `runner unreachable: <url>` reached candidates."""
+    async def runtimes() -> dict[str, dict[str, str]]:
+        return {"python": {"language": "python", "version": "3.10.0", "file": "main.py"}}
+
+    class _Boom:
+        async def __aenter__(self) -> _Boom:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+        async def post(self, *a: object, **k: object) -> None:
+            raise pc.httpx.ConnectError("connect to http://10.0.3.7:2000/api/v2/execute failed")
+
+    monkeypatch.setattr(pc, "_load_runtimes", runtimes)
+    monkeypatch.setattr(pc, "_BACKOFF_BASE_SECONDS", 0)
+    monkeypatch.setattr(pc.httpx, "AsyncClient", lambda *a, **k: _Boom())
+    r = await run_code(language="python", source="x", stdin="")
+    assert r.error == RUNNER_UNAVAILABLE_MESSAGE
+    assert "10.0.3.7" not in (r.error or "")

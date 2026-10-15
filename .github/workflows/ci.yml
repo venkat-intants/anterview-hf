@@ -169,7 +169,7 @@ jobs:
         # work is to empty that set, never to grow it.
         run: >-
           mypy shared/intelligence shared/agents shared/db shared/llm
-          shared/observability shared/http_observability.py
+          shared/observability shared/testing shared/http_observability.py
           shared/metrics_auth.py shared/redis_factory.py
           shared/s3.py shared/security.py
           --ignore-missing-imports

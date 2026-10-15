@@ -18,6 +18,7 @@ import { StatusTag } from '@/design/components/primitives';
 import { AlertTriangle } from '@/design/components/icons';
 import { parseBracketHighlights, type RediscoveryWhyItem } from '@/api/rediscovery';
 import { FRESHNESS_TONE, freshnessChipLabel, signalLabel } from './rediscoveryDisplay';
+import { appPath } from '@/lib/safeUrl';
 
 const SIMILARITY_LINE =
   'Their CV reads as similar to what you searched for. That is a similarity score, not a stated fact — open the CV to check.';
@@ -28,10 +29,7 @@ function Snippet({ text }: { text: string }) {
     <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
       {segments.map((seg, i) =>
         seg.highlighted ? (
-          <mark
-            key={i}
-            className="rounded-[3px] bg-[rgba(var(--accent-rgb),0.22)] px-0.5 text-foreground"
-          >
+          <mark key={i} className="rounded-[3px] bg-[var(--ui-info-wash)] px-0.5 text-foreground">
             {seg.text}
           </mark>
         ) : (
@@ -48,8 +46,8 @@ function CitationRef({ item }: { item: RediscoveryWhyItem }) {
   if (c.href) {
     return (
       <Link
-        to={c.href}
-        className="text-[11.5px] text-[var(--ui-info)] underline underline-offset-2 hover:no-underline"
+        to={appPath(c.href, '/')}
+        className="text-[12px] text-[var(--ui-info)] underline underline-offset-2 hover:no-underline"
       >
         {c.label}
       </Link>
@@ -57,13 +55,15 @@ function CitationRef({ item }: { item: RediscoveryWhyItem }) {
   }
   // A frozen snapshot's citation: named, never linked (design §6.4 — it must
   // not become a second copy of candidate prose).
-  return <span className="text-[11.5px] text-muted-foreground">{c.label}</span>;
+  return <span className="text-[12px] text-muted-foreground">{c.label}</span>;
 }
 
 function WhyItemDetail({ item }: { item: RediscoveryWhyItem }) {
   switch (item.signal) {
     case 'resume_similarity':
-      return <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">{SIMILARITY_LINE}</p>;
+      return (
+        <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">{SIMILARITY_LINE}</p>
+      );
     case 'resume_terms':
       return (
         <>
@@ -72,7 +72,7 @@ function WhyItemDetail({ item }: { item: RediscoveryWhyItem }) {
               {item.terms_matched.map((term) => (
                 <span
                   key={term}
-                  className="rounded-[6px] bg-[var(--ui-inset)] px-1.5 py-0.5 text-[11px] text-foreground"
+                  className="rounded-[6px] bg-[var(--ui-inset)] px-1.5 py-0.5 text-[12px] text-foreground"
                 >
                   {term}
                 </span>
@@ -121,9 +121,9 @@ export function RediscoveryWhyPanel({ items }: { items: RediscoveryWhyItem[] }):
   return (
     <ul className="flex flex-col gap-2.5" data-testid="rediscovery-why-panel">
       {items.map((item, i) => (
-        <li key={`${item.signal}-${i}`} className="rounded-[10px] border border-border p-2.5">
+        <li key={`${item.signal}-${i}`} className="rounded-[12px] border border-border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="text-[12.5px] font-medium text-foreground">
+            <span className="text-[13px] font-semibold text-foreground">
               {signalLabel(item.signal)}
               {item.locator ? (
                 <span className="ml-1.5 font-normal text-muted-foreground">· {item.locator}</span>
@@ -135,12 +135,14 @@ export function RediscoveryWhyPanel({ items }: { items: RediscoveryWhyItem[] }):
                   {freshnessChipLabel(item.freshness, item.freshness_reason)}
                 </StatusTag>
               ) : null}
-              <span className="text-[11px] text-muted-foreground">+{item.contribution}</span>
+              <span className="text-[12px] text-muted-foreground">+{item.contribution}</span>
             </span>
           </div>
           <WhyItemDetail item={item} />
           {!item.explainable && item.signal !== 'resume_similarity' ? (
-            <p className="mt-1 text-[11px] text-muted-foreground">Shown as context, not a reason.</p>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              Shown as context, not a reason.
+            </p>
           ) : null}
           {item.citation ? <div className="mt-1.5">{<CitationRef item={item} />}</div> : null}
         </li>

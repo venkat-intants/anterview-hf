@@ -1,20 +1,15 @@
 // AdminInterviews — filterable, sortable, paginated admin interview list.
 // Route: /admin/interviews (inside AdminRoute + AppShell)
 //
-// Sources merged:
-//   A) Layout — design/screens/admin/AdminInterviews.tsx (page header, search pill,
-//      SegTabs, GlassCard grid rows, Avatar + StatusTag treatment, ArrowRight chevron)
-//   B) Behavior — current live AdminInterviews.tsx (listInterviews query, debounced
-//      search, status/language/sort filters, exportInterviewsCsv, PER_PAGE=20
-//      pagination, row→/admin/interviews/:id + keyboard nav, columns: Name/Email/
-//      Role/Status/Language/Score/Date/Duration, all test-ids, empty/error/loading)
-//
-// No @/components/ui/* — replaced with native styled HTML throughout.
+// Layout: PageHeader (Export CSV) → the shared Toolbar of filters → a "Sessions"
+// card holding a horizontally scrollable table with a sticky header.
+// Behavior: listInterviews query, debounced search, status/language/sort filters,
+// exportInterviewsCsv, PER_PAGE=20 pagination, row → /admin/interviews/:id
+// (click or Enter/Space), skeleton / empty / error states.
 
 import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { motion, type Variants } from 'framer-motion';
 import {
   Search,
   Download,
@@ -28,12 +23,17 @@ import { listInterviews, exportInterviewsCsv } from '@/api/admin';
 import type { InterviewListItem, InterviewFilters } from '@/api/admin';
 import { toast } from '@/lib/toast';
 import { formatDate, formatDuration, statusProps, languageLabel } from '@/lib/formatters';
-import { GlassCard, SegTabs, StatusTag, Avatar } from '@/design/components/primitives';
+import { SegTabs, StatusTag, Avatar } from '@/design/components/primitives';
+import { EmptyState, PageHeader, SectionCard, Toolbar, Page } from '@/design/components/page';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const PER_PAGE = 20;
+
+const COLUMNS = ['Candidate', 'Email', 'Role', 'Status', 'Language', 'Score', 'Date', 'Duration'];
 
 function fmtScore(v: number | null): string {
   if (v === null) return '—';
@@ -42,10 +42,10 @@ function fmtScore(v: number | null): string {
 
 function scoreColorInline(score: number): string {
   const pct = score * 10;
-  if (pct >= 85) return '#27c93f';
-  if (pct >= 70) return 'var(--accent)';
-  if (pct >= 55) return '#ffb764';
-  return '#e6714f';
+  if (pct >= 85) return 'var(--ui-ok)';
+  if (pct >= 70) return 'var(--ui-info)';
+  if (pct >= 55) return 'var(--ui-warn)';
+  return 'var(--ui-danger)';
 }
 
 function statusTone(status: string): 'forest' | 'electric' | 'amber' | 'ember' | 'neutral' {
@@ -76,30 +76,18 @@ function initialsOf(name: string | null, email: string): string {
 }
 
 const GRADIENTS = [
-  'linear-gradient(135deg,var(--accent),#a887dc)',
-  'linear-gradient(135deg,#16c253,var(--accent))',
-  'linear-gradient(135deg,#dd55e7,#a887dc)',
-  'linear-gradient(135deg,#ffb764,#dd55e7)',
-  'linear-gradient(135deg,#0fb7fa,#16c253)',
-  'linear-gradient(135deg,#a887dc,var(--accent))',
+  'linear-gradient(135deg,var(--accent),var(--ui-lavender))',
+  'linear-gradient(135deg,var(--ui-ok),var(--accent))',
+  'linear-gradient(135deg,var(--ui-role-platform),var(--ui-lavender))',
+  'linear-gradient(135deg,var(--ui-warn),var(--ui-role-platform))',
+  'linear-gradient(135deg,var(--ui-info),var(--ui-ok))',
+  'linear-gradient(135deg,var(--ui-lavender),var(--accent))',
 ];
 
 function gradientFor(id: string): string {
   const seed = id.charCodeAt(0) + id.charCodeAt(id.length - 1);
   return GRADIENTS[Math.abs(seed) % GRADIENTS.length];
 }
-
-// ── Animation ──────────────────────────────────────────────────────────────────
-
-const stagger: Variants = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.06 } },
-};
-
-const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 12 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } },
-};
 
 // ── Status tabs (SegTabs) ──────────────────────────────────────────────────────
 
@@ -111,9 +99,9 @@ const STATUS_TABS = [
   { key: 'failed', label: 'Failed' },
 ];
 
-// ── Native <select> styled to the dark palette ─────────────────────────────────
+// ── Native <select> in the pill style ──────────────────────────────────────────
 
-interface DarkSelectProps {
+interface PillSelectProps {
   value: string;
   onChange: (v: string) => void;
   'aria-label': string;
@@ -121,17 +109,22 @@ interface DarkSelectProps {
   children: ReactNode;
 }
 
-function DarkSelect({ value, onChange, 'aria-label': ariaLabel, className, children }: DarkSelectProps) {
+function PillSelect({
+  value,
+  onChange,
+  'aria-label': ariaLabel,
+  className,
+  children,
+}: PillSelectProps) {
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
       aria-label={ariaLabel}
       className={cn(
-        'rounded-[9999px] border border-border bg-secondary',
-        'px-3.5 py-2 text-[13px] text-[var(--ui-soft)] focus:outline-none',
-        'focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-        'appearance-none cursor-pointer',
+        'h-10 cursor-pointer rounded-full border border-input bg-card px-4 text-[13.5px] text-foreground',
+        'transition-colors hover:border-[var(--ui-line-strong)]',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
         className,
       )}
     >
@@ -140,16 +133,14 @@ function DarkSelect({ value, onChange, 'aria-label': ariaLabel, className, child
   );
 }
 
-// ── Filter bar ─────────────────────────────────────────────────────────────────
+// ── Toolbar ────────────────────────────────────────────────────────────────────
 
 interface FilterBarProps {
   filters: InterviewFilters;
   onFiltersChange: (f: Partial<InterviewFilters>) => void;
-  onExport: () => void;
-  exporting: boolean;
 }
 
-function FilterBar({ filters, onFiltersChange, onExport, exporting }: FilterBarProps) {
+function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
   const [localQ, setLocalQ] = useState(filters.q ?? '');
 
   // Debounce 400 ms
@@ -173,10 +164,18 @@ function FilterBar({ filters, onFiltersChange, onExport, exporting }: FilterBarP
   }
 
   return (
-    <div className="flex flex-wrap gap-3 items-end">
-      {/* Search — design's dark pill input */}
-      <div className="relative min-w-[180px] flex-1 flex items-center gap-2 rounded-[9999px] border border-border bg-secondary px-3.5 py-2.5">
-        <Search size={15} className="text-[var(--ui-faint)] shrink-0" aria-hidden="true" />
+    <Toolbar
+      trailing={
+        <PillSelect value={sortValue} onChange={handleSortChange} aria-label="Sort order">
+          <option value="created_at_true">Newest first</option>
+          <option value="created_at_false">Oldest first</option>
+          <option value="composite_score_true">Score (high → low)</option>
+          <option value="composite_score_false">Score (low → high)</option>
+        </PillSelect>
+      }
+    >
+      <div className="flex h-10 min-w-[200px] flex-1 items-center gap-2 rounded-full border border-input bg-card px-4 transition-colors focus-within:border-[var(--accent)] hover:border-[var(--ui-line-strong)]">
+        <Search size={15} className="shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
         <input
           type="search"
           value={localQ}
@@ -184,65 +183,31 @@ function FilterBar({ filters, onFiltersChange, onExport, exporting }: FilterBarP
           placeholder="Search candidate…"
           aria-label="Search by candidate name or email"
           data-testid="filter-search"
-          className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
+          className="min-w-0 flex-1 bg-transparent text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
         />
       </div>
 
-      {/* Status — SegTabs (design pattern) */}
-      <SegTabs
-        tabs={STATUS_TABS}
-        active={filters.status ?? '__all__'}
-        onChange={(key) =>
-          onFiltersChange({ status: key === '__all__' ? undefined : key, page: 1 })
-        }
-      />
+      <div className="max-w-full overflow-x-auto">
+        <SegTabs
+          tabs={STATUS_TABS}
+          active={filters.status ?? '__all__'}
+          onChange={(key) =>
+            onFiltersChange({ status: key === '__all__' ? undefined : key, page: 1 })
+          }
+        />
+      </div>
 
-      {/* Language filter */}
-      <DarkSelect
+      <PillSelect
         value={filters.language ?? '__all__'}
-        onChange={(v) =>
-          onFiltersChange({ language: v === '__all__' ? undefined : v, page: 1 })
-        }
+        onChange={(v) => onFiltersChange({ language: v === '__all__' ? undefined : v, page: 1 })}
         aria-label="Filter by language"
-        className="w-[130px]"
       >
         <option value="__all__">All languages</option>
         <option value="en">English</option>
         <option value="hi">Hindi</option>
         <option value="te">Telugu</option>
-      </DarkSelect>
-
-      {/* Sort */}
-      <DarkSelect
-        value={sortValue}
-        onChange={handleSortChange}
-        aria-label="Sort order"
-        className="w-[160px]"
-      >
-        <option value="created_at_true">Newest first</option>
-        <option value="created_at_false">Oldest first</option>
-        <option value="composite_score_true">Score (high → low)</option>
-        <option value="composite_score_false">Score (low → high)</option>
-      </DarkSelect>
-
-      {/* Export CSV */}
-      <button
-        type="button"
-        onClick={onExport}
-        disabled={exporting}
-        className={cn(
-          'inline-flex items-center gap-2 rounded-[9999px] border border-[var(--ui-line-strong)] bg-[rgba(var(--accent-rgb),0.14)] px-4 py-2',
-          'text-[13px] font-semibold text-[var(--ui-info)] transition-colors',
-          'hover:bg-[rgba(var(--accent-rgb),0.22)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-        )}
-        aria-label="Export interviews as CSV"
-        data-testid="export-csv-btn"
-      >
-        <Download size={14} aria-hidden="true" />
-        {exporting ? 'Exporting…' : 'Export CSV'}
-      </button>
-    </div>
+      </PillSelect>
+    </Toolbar>
   );
 }
 
@@ -252,15 +217,13 @@ function LoadingRows() {
   return (
     <>
       {Array.from({ length: 6 }).map((_, i) => (
-        <div
-          key={i}
-          aria-hidden="true"
-          className="grid grid-cols-[1.6fr_1.2fr_1.4fr_1.2fr_0.8fr_0.9fr_1fr_0.4fr] items-center gap-3 border-b border-border px-6 py-3.5 last:border-0"
-        >
-          {Array.from({ length: 8 }).map((__, j) => (
-            <div key={j} className="h-4 rounded bg-[var(--ui-inset)] animate-pulse" />
+        <tr key={i} aria-hidden="true" className="border-b border-border last:border-0">
+          {COLUMNS.map((c) => (
+            <td key={c} className="px-4 py-3.5">
+              <Skeleton className="h-4 w-full min-w-[56px]" />
+            </td>
           ))}
-        </div>
+        </tr>
       ))}
     </>
   );
@@ -268,29 +231,26 @@ function LoadingRows() {
 
 // ── Empty state ────────────────────────────────────────────────────────────────
 
-function EmptyState({ hasFilters }: { hasFilters: boolean }) {
+function NoInterviews({ hasFilters }: { hasFilters: boolean }) {
   return (
     <div data-testid="interviews-empty-state">
-      <GlassCard className="flex flex-col items-center justify-center py-20 text-center gap-4">
-        <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[var(--ui-inset)]">
-          <ClipboardList className="h-7 w-7 text-[var(--ui-faint)]" aria-hidden="true" />
-        </div>
-        <div>
-          <p className="text-[15px] font-semibold text-foreground">
-            {hasFilters ? 'No interviews match your filters' : 'No interviews yet'}
-          </p>
-          <p className="mt-1.5 text-[13px] text-muted-foreground">
-            {hasFilters
+      <SectionCard title="Sessions">
+        <EmptyState
+          size="page"
+          icon={ClipboardList}
+          title={hasFilters ? 'No interviews match your filters' : 'No interviews yet'}
+          description={
+            hasFilters
               ? 'Try adjusting your search or filters.'
-              : 'Interview sessions will appear here once candidates start.'}
-          </p>
-        </div>
-      </GlassCard>
+              : 'Interview sessions will appear here once candidates start.'
+          }
+        />
+      </SectionCard>
     </div>
   );
 }
 
-// ── Interview row — design grid layout ────────────────────────────────────────
+// ── Interview row ──────────────────────────────────────────────────────────────
 
 interface InterviewRowProps {
   item: InterviewListItem;
@@ -302,9 +262,8 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
   const tone = statusTone(item.status);
 
   return (
-    <div
-      className="grid grid-cols-[1.6fr_1.2fr_1.4fr_1.2fr_0.8fr_0.9fr_1fr_0.4fr] items-center gap-3 border-b border-border px-6 py-3.5 last:border-0 cursor-pointer transition-colors hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:bg-[var(--ui-inset)]"
-      role="row"
+    <tr
+      className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-[var(--ui-inset-soft)] focus-visible:bg-[var(--ui-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
       tabIndex={0}
       onClick={() => onClick(item.session_id)}
       data-testid={`interview-row-${item.session_id}`}
@@ -317,70 +276,67 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
       }}
     >
       {/* Name + avatar */}
-      <div className="flex items-center gap-3 min-w-0">
-        <Avatar
-          initials={initialsOf(item.candidate_name, item.candidate_email)}
-          gradient={gradientFor(item.session_id)}
-          size={32}
-        />
-        <div className="min-w-0">
-          <div className="truncate text-[13.5px] font-medium text-foreground">
-            {item.candidate_name ?? <span className="text-[var(--ui-faint)]">—</span>}
-          </div>
-          <div className="font-mono text-[11px] text-[var(--ui-faint)] truncate">
-            {item.session_id.slice(0, 8)}…
+      <td className="px-4 py-3">
+        <div className="flex min-w-[170px] items-center gap-3">
+          <Avatar
+            initials={initialsOf(item.candidate_name, item.candidate_email)}
+            gradient={gradientFor(item.session_id)}
+            size={32}
+          />
+          <div className="min-w-0">
+            <div className="truncate text-[14px] font-medium text-foreground">
+              {item.candidate_name ?? <span className="text-muted-foreground">—</span>}
+            </div>
+            <div className="truncate font-mono text-[12px] text-muted-foreground">
+              {item.session_id.slice(0, 8)}…
+            </div>
           </div>
         </div>
-      </div>
+      </td>
 
-      {/* Email */}
-      <div className="truncate text-[12.5px] text-muted-foreground">
+      <td className="max-w-[220px] truncate px-4 py-3 text-[13px] text-muted-foreground">
         {item.candidate_email}
-      </div>
+      </td>
 
-      {/* Role */}
-      <div className="truncate text-[13px] text-[var(--ui-soft)]">
-        {item.job_title ?? <span className="text-[var(--ui-faint)]">—</span>}
-      </div>
+      <td className="max-w-[200px] truncate px-4 py-3 text-[13.5px] text-[var(--ui-soft)]">
+        {item.job_title ?? <span className="text-muted-foreground">—</span>}
+      </td>
 
-      {/* Status — design StatusTag */}
-      <div>
+      <td className="px-4 py-3">
         <StatusTag tone={tone} dot={item.status === 'in_progress'}>
           {label}
         </StatusTag>
-      </div>
+      </td>
 
-      {/* Language */}
-      <div className="text-[12.5px] text-muted-foreground whitespace-nowrap">
+      <td className="whitespace-nowrap px-4 py-3 text-[13px] text-muted-foreground">
         {languageLabel(item.language)}
-      </div>
+      </td>
 
-      {/* Score */}
-      <div
-        className="text-[14px] font-semibold tabular-nums"
+      <td
+        className="px-4 py-3 text-[14px] font-semibold tabular-nums"
         style={{
           color:
             item.composite_score === null
-              ? '#70757c'
+              ? 'var(--muted-foreground)'
               : scoreColorInline(item.composite_score),
         }}
       >
         {fmtScore(item.composite_score)}
-      </div>
+      </td>
 
-      {/* Date */}
-      <div className="text-[12.5px] text-muted-foreground whitespace-nowrap">
+      <td className="whitespace-nowrap px-4 py-3 text-[13px] text-muted-foreground">
         {formatDate(item.created_at)}
-      </div>
+      </td>
 
-      {/* Duration + arrow */}
-      <div className="flex items-center justify-between gap-1">
-        <span className="text-[12.5px] text-muted-foreground whitespace-nowrap">
-          {formatDuration(item.duration_seconds)}
-        </span>
-        <ArrowRight size={15} className="text-[var(--ui-faint)] flex-none" aria-hidden="true" />
-      </div>
-    </div>
+      <td className="px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <span className="whitespace-nowrap text-[13px] text-muted-foreground">
+            {formatDuration(item.duration_seconds)}
+          </span>
+          <ArrowRight size={15} className="flex-none text-muted-foreground" aria-hidden="true" />
+        </div>
+      </td>
+    </tr>
   );
 }
 
@@ -399,46 +355,38 @@ function PaginationBar({ page, totalPages, total, perPage, onPrev, onNext }: Pag
   const start = (page - 1) * perPage + 1;
   const end = Math.min(page * perPage, total);
   return (
-    <div className="flex items-center justify-between pt-2 flex-wrap gap-2" aria-label="Pagination">
-      <span className="text-[12.5px] text-muted-foreground tabular-nums">
+    <div className="flex flex-wrap items-center justify-between gap-2" aria-label="Pagination">
+      <span className="text-[13px] text-muted-foreground tabular-nums">
         {total > 0 ? `${start}–${end} of ${total.toLocaleString()}` : '0 results'}
       </span>
       <div className="flex items-center gap-2">
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={onPrev}
           disabled={page <= 1}
           aria-label="Previous page"
-          className={cn(
-            'inline-flex items-center gap-1.5 rounded-[9999px] border border-border',
-            'bg-transparent px-3.5 py-1.5 text-[13px] text-[var(--ui-soft)] transition-colors',
-            'hover:text-foreground hover:bg-[var(--ui-inset)]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-            'disabled:cursor-not-allowed disabled:opacity-40',
-          )}
+          className="gap-1.5"
         >
           <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           Previous
-        </button>
-        <span className="text-[12.5px] text-muted-foreground tabular-nums px-1">
+        </Button>
+        <span className="px-1 text-[13px] text-muted-foreground tabular-nums">
           {page} / {totalPages}
         </span>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={onNext}
           disabled={page >= totalPages}
           aria-label="Next page"
-          className={cn(
-            'inline-flex items-center gap-1.5 rounded-[9999px] border border-border',
-            'bg-transparent px-3.5 py-1.5 text-[13px] text-[var(--ui-soft)] transition-colors',
-            'hover:text-foreground hover:bg-[var(--ui-inset)]',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-            'disabled:cursor-not-allowed disabled:opacity-40',
-          )}
+          className="gap-1.5"
         >
           Next
           <ChevronRight className="h-4 w-4" aria-hidden="true" />
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -471,9 +419,7 @@ export default function AdminInterviews() {
 
   useEffect(() => {
     if (isError) {
-      toast.error(
-        error instanceof Error ? error.message : 'Failed to load interview list.',
-      );
+      toast.error(error instanceof Error ? error.message : 'Failed to load interview list.');
     }
   }, [isError, error]);
 
@@ -504,111 +450,105 @@ export default function AdminInterviews() {
 
   const hasFilters = Boolean(
     filters.q ||
-      filters.status ||
-      filters.language ||
-      filters.min_score !== undefined ||
-      filters.max_score !== undefined ||
-      filters.date_from ||
-      filters.date_to,
+    filters.status ||
+    filters.language ||
+    filters.min_score !== undefined ||
+    filters.max_score !== undefined ||
+    filters.date_from ||
+    filters.date_to,
   );
 
   return (
-    <motion.div initial="hidden" animate="visible" variants={stagger} className="space-y-6">
-      {/* Page heading */}
-      <motion.div variants={fadeUp}>
-        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Interviews</h1>
-        <p className="mt-1 text-[14px] text-muted-foreground">
-          All candidate interview sessions. Click a row to view full detail.
-        </p>
-      </motion.div>
+    <Page width="default">
+      <PageHeader
+        className="mb-0"
+        eyebrow="Platform"
+        title="Interviews"
+        description="All candidate interview sessions. Click a row to view full detail."
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void handleExport()}
+            disabled={exporting}
+            aria-label="Export interviews as CSV"
+            data-testid="export-csv-btn"
+            className="gap-2"
+          >
+            <Download size={14} aria-hidden="true" />
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </Button>
+        }
+      />
 
-      {/* Filters */}
-      <motion.div variants={fadeUp}>
-        <FilterBar
-          filters={filters}
-          onFiltersChange={updateFilters}
-          onExport={() => void handleExport()}
-          exporting={exporting}
-        />
-      </motion.div>
+      <FilterBar filters={filters} onFiltersChange={updateFilters} />
 
-      {/* Content area */}
-      <motion.div variants={fadeUp}>
-        {isError && !isLoading ? (
-          <div role="alert">
-            <GlassCard className="flex flex-col items-center justify-center py-16 gap-3 text-center">
-              <AlertCircle className="h-8 w-8 text-[var(--ui-danger)]" aria-hidden="true" />
-              <p className="text-[15px] font-semibold text-foreground">Failed to load interviews</p>
-              <p className="text-[13px] text-muted-foreground">
-                {error instanceof Error ? error.message : 'Unknown error'}
-              </p>
-            </GlassCard>
+      {isError && !isLoading ? (
+        <div role="alert">
+          <SectionCard title="Sessions">
+            <EmptyState
+              size="page"
+              icon={AlertCircle}
+              title="Failed to load interviews"
+              description={`${error instanceof Error ? error.message : 'Unknown error'}. Change a filter or reload the page to try again.`}
+            />
+          </SectionCard>
+        </div>
+      ) : !isLoading && items.length === 0 ? (
+        <NoInterviews hasFilters={hasFilters} />
+      ) : (
+        <SectionCard
+          title="Sessions"
+          description={
+            isLoading
+              ? 'Loading…'
+              : `${total.toLocaleString()} interview${total !== 1 ? 's' : ''} · ${items.length} shown`
+          }
+        >
+          <div
+            className="max-h-[70vh] overflow-auto rounded-[14px] border border-border"
+            aria-busy={isLoading}
+          >
+            <table className="w-full min-w-[960px] border-collapse text-left">
+              <thead>
+                <tr>
+                  {COLUMNS.map((c) => (
+                    <th
+                      key={c}
+                      scope="col"
+                      className="sticky top-0 z-10 border-b border-border bg-card px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.5px] text-muted-foreground"
+                    >
+                      {c}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {isLoading ? (
+                  <LoadingRows />
+                ) : (
+                  items.map((item) => (
+                    <InterviewRow key={item.session_id} item={item} onClick={handleRowClick} />
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
-        ) : !isLoading && items.length === 0 ? (
-          <EmptyState hasFilters={hasFilters} />
-        ) : (
-          <GlassCard className="overflow-hidden p-0">
-            {/* Card header row */}
-            <div className="flex items-center justify-between flex-wrap gap-2 border-b border-border px-6 py-4">
-              <div>
-                <p className="text-[15px] font-semibold text-foreground">Sessions</p>
-                <p className="text-[12.5px] text-muted-foreground mt-0.5">
-                  {isLoading
-                    ? 'Loading…'
-                    : `${total.toLocaleString()} interview${total !== 1 ? 's' : ''}`}
-                </p>
-              </div>
-              <span className="ml-auto text-[12.5px] text-[var(--ui-faint)]">
-                {!isLoading && `${items.length} shown`}
-              </span>
-            </div>
 
-            {/* Column headers */}
-            <div
-              role="row"
-              className="grid grid-cols-[1.6fr_1.2fr_1.4fr_1.2fr_0.8fr_0.9fr_1fr_0.4fr] gap-3 border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]"
-            >
-              <div>Candidate</div>
-              <div>Email</div>
-              <div>Role</div>
-              <div>Status</div>
-              <div>Language</div>
-              <div>Score</div>
-              <div>Date</div>
-              <div />
+          {!isLoading && totalPages > 1 && (
+            <div className="mt-4">
+              <PaginationBar
+                page={page}
+                totalPages={totalPages}
+                total={total}
+                perPage={perPage}
+                onPrev={() => updateFilters({ page: Math.max(1, page - 1) })}
+                onNext={() => updateFilters({ page: Math.min(totalPages, page + 1) })}
+              />
             </div>
-
-            {/* Rows */}
-            <div role="rowgroup">
-              {isLoading ? (
-                <LoadingRows />
-              ) : (
-                items.map((item) => (
-                  <InterviewRow
-                    key={item.session_id}
-                    item={item}
-                    onClick={handleRowClick}
-                  />
-                ))
-              )}
-            </div>
-
-            {/* Pagination */}
-            {!isLoading && totalPages > 1 && (
-              <div className="border-t border-border px-6 pb-5 pt-3">
-                <PaginationBar
-                  page={page}
-                  totalPages={totalPages}
-                  total={total}
-                  perPage={perPage}
-                  onPrev={() => updateFilters({ page: Math.max(1, page - 1) })}
-                  onNext={() => updateFilters({ page: Math.min(totalPages, page + 1) })}
-                />
-              </div>
-            )}
-          </GlassCard>
-        )}
-      </motion.div>
-    </motion.div>
+          )}
+        </SectionCard>
+      )}
+    </Page>
   );
 }

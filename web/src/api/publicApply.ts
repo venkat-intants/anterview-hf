@@ -15,6 +15,7 @@
 //    submitted would make the record a lie.
 
 import { ApiError } from './client';
+import { pathId } from './pathId';
 
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
 
@@ -113,7 +114,7 @@ export async function getPosting(requisitionId: string, src?: string | null): Pr
   // tag, because losing a real applicant to a recruiter's typo is a far worse
   // outcome than an unattributed application.
   const qs = src ? `?src=${encodeURIComponent(src)}` : '';
-  const res = await fetch(`${API_BASE}/apply/${requisitionId}${qs}`);
+  const res = await fetch(`${API_BASE}/apply/${pathId(requisitionId)}${qs}`);
   if (!res.ok) return readError(res);
   return (await res.json()) as Posting;
 }
@@ -202,7 +203,7 @@ export async function submitApplication(
   }
 
   // No Content-Type header: the browser must set the multipart boundary.
-  const res = await fetch(`${API_BASE}/apply/${requisitionId}`, {
+  const res = await fetch(`${API_BASE}/apply/${pathId(requisitionId)}`, {
     method: 'POST',
     body: form,
   });
@@ -341,7 +342,7 @@ export async function startDraft(
     src?: string | null;
   },
 ): Promise<DraftStarted> {
-  const res = await fetch(`${API_BASE}/apply/${requisitionId}/draft`, {
+  const res = await fetch(`${API_BASE}/apply/${pathId(requisitionId)}/draft`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

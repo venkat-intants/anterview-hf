@@ -459,6 +459,13 @@ export interface CandidateOffer {
   expires_at: string | null;
   responded_at: string | null;
   preboarding_completed_at: string | null;
+  /**
+   * The application (the `id` of a `MyApplication`) this offer belongs to.
+   * OPTIONAL: an older server omits it, and the offer then renders in its own
+   * section instead of on the application card. Never inferred from the job
+   * title — two openings can share one.
+   */
+  application_id?: string | null;
 }
 
 export function listMyOffers(): Promise<CandidateOffer[]> {

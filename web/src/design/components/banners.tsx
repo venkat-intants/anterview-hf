@@ -8,45 +8,50 @@
 import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { Pill } from './primitives';
 import { X, type LucideIcon } from './icons';
 
-// PromoBanner is a FIXED dark-gradient card in both modes — the same device as
-// the landing hero and the auth brand panel — so its interior contrast is fixed
-// (white on gradient) and it is deliberately NOT wired to the mode tokens.
+// PromoBanner is a FIXED-colour card in both modes — a tinted fill carrying its
+// own ink, the same device as the auth brand panel — so its interior contrast is
+// fixed and it is deliberately NOT wired to the mode tokens.
 // TrustStrip sits on the page canvas, so it IS.
 export type BannerTone = 'aurora' | 'electric' | 'forest' | 'amber';
 
-const TONE: Record<BannerTone, { bg: string; glow: string; accent: string }> = {
+// `bg` is the fill, `ink` the text on it, `chip` the icon tile. Each pair is
+// chosen together: ink on fill is at least 7:1 for all four.
+// `cta` / `ctaInk` are the button on the card. They are separate from `ink`
+// because the brand tone is a dark fill with white text, where a button made
+// from the ink colour would be white-on-white.
+interface Tone {
+  bg: string;
+  ink: string;
+  chip: string;
+  cta: string;
+  ctaInk: string;
+}
+
+const TONE: Record<BannerTone, Tone> = {
+  // The default: the fixed brand surface (see --ui-grad-brand in index.css).
   aurora: {
-    bg: 'linear-gradient(120deg,#0a0a1f 0%,#10204e 46%,#3a1a5e 100%)',
-    glow: 'rgba(var(--accent-rgb),0.55)',
-    accent: '#60a5fa',
+    bg: 'linear-gradient(140deg,#0b1f4d 0%,#1447c4 62%,#1f62d6 100%)',
+    ink: '#ffffff',
+    chip: 'rgba(255,255,255,0.14)',
+    cta: '#ffffff',
+    ctaInk: '#0b1f4d',
   },
-  electric: {
-    bg: 'linear-gradient(120deg,#00111f 0%,#012a57 100%)',
-    glow: 'rgba(var(--accent-rgb),0.45)',
-    accent: '#60a5fa',
-  },
-  forest: {
-    bg: 'linear-gradient(120deg,#02140c 0%,#063a20 100%)',
-    glow: 'rgba(39,201,63,0.4)',
-    accent: '#27c93f',
-  },
-  amber: {
-    bg: 'linear-gradient(120deg,#1c1303 0%,#3d2a06 100%)',
-    glow: 'rgba(255,183,100,0.4)',
-    accent: '#ffb764',
-  },
+  electric: { bg: '#e3ecff', ink: '#153a94', chip: 'rgba(21,58,148,0.1)', cta: '#153a94', ctaInk: '#ffffff' },
+  forest: { bg: '#cdf2d6', ink: '#06301a', chip: 'rgba(6,48,26,0.1)', cta: '#06301a', ctaInk: '#ffffff' },
+  amber: { bg: '#ffe2b8', ink: '#3a2203', chip: 'rgba(58,34,3,0.1)', cta: '#3a2203', ctaInk: '#ffffff' },
 };
 
 /* ───────────────────────────── Badge ───────────────────────────── */
 
+// On the per-mode status tokens: the old pastel hexes were chosen against a
+// black card and were unreadable on a white one.
 const BADGE_TONE: Record<string, string> = {
-  electric: 'border-[rgba(var(--accent-rgb),0.45)] bg-[rgba(var(--accent-rgb),0.16)] text-[#7cb8ff]',
-  forest: 'border-[rgba(39,201,63,0.45)] bg-[rgba(39,201,63,0.16)] text-[#56e06f]',
-  amber: 'border-[rgba(255,183,100,0.45)] bg-[rgba(255,183,100,0.16)] text-[#ffc987]',
-  lavender: 'border-[rgba(184,85,231,0.45)] bg-[rgba(184,85,231,0.16)] text-[#d4a6f0]',
+  electric: 'border-transparent bg-[var(--ui-info-wash)] text-[var(--ui-info)]',
+  forest: 'border-transparent bg-[var(--ui-ok-wash)] text-[var(--ui-ok)]',
+  amber: 'border-transparent bg-[var(--ui-warn-wash)] text-[var(--ui-warn)]',
+  lavender: 'border-transparent bg-[var(--ui-lavender-wash)] text-[var(--ui-lavender)]',
 };
 
 export function Badge({
@@ -61,7 +66,7 @@ export function Badge({
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em]',
+        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[12px] font-bold tracking-[0.01em]',
         BADGE_TONE[tone],
         className,
       )}
@@ -151,48 +156,41 @@ export function PromoBanner({
     setDismissed(true);
   };
 
+  // The CTA takes its colours from the tone, like the rest of the banner: the
+  // card is a fixed fill in both modes, so the mode's --primary is not a safe
+  // pairing for it. The link form
+  // is a styled <Link>, not a <button> inside an <a>: nesting the two is
+  // invalid HTML and gave keyboard users two tab stops for one action.
+  const ctaClass =
+    'inline-flex items-center justify-center gap-2 rounded-full px-5 py-2.5 text-[14px] font-semibold transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current focus-visible:ring-offset-2';
+  const ctaStyle = { background: t.cta, color: t.ctaInk };
   const ctaNode = cta ? (
     cta.to ? (
-      <Link to={cta.to}>
-        <Pill className="px-5 py-2.5">{cta.label}</Pill>
+      <Link to={cta.to} className={ctaClass} style={ctaStyle}>
+        {cta.label}
       </Link>
     ) : (
-      <Pill type="button" className="px-5 py-2.5" onClick={cta.onClick}>
+      <button type="button" className={ctaClass} style={ctaStyle} onClick={cta.onClick}>
         {cta.label}
-      </Pill>
+      </button>
     )
   ) : null;
 
   return (
     <div
       className={cn(
-        'relative overflow-hidden rounded-[24px] border border-white/[0.08]',
+        'relative overflow-hidden rounded-card',
         className,
       )}
-      style={{ background: t.bg }}
+      style={{ background: t.bg, color: t.ink }}
     >
-      {/* glow */}
-      <div
-        className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full opacity-50 blur-3xl"
-        style={{ background: t.glow }}
-        aria-hidden="true"
-      />
-      {/* faint dotted texture for depth */}
-      <div
-        className="pointer-events-none absolute inset-0 opacity-[0.05]"
-        style={{
-          backgroundImage: 'radial-gradient(circle at 1px 1px, #fff 1px, transparent 0)',
-          backgroundSize: '22px 22px',
-        }}
-        aria-hidden="true"
-      />
 
       {dismissId && (
         <button
           type="button"
           onClick={dismiss}
           aria-label="Dismiss"
-          className="absolute right-3 top-3 z-10 inline-flex h-7 w-7 items-center justify-center rounded-full text-white/50 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/40"
+          className="absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-full opacity-60 transition-[opacity,background-color] hover:bg-black/10 hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
         >
           <X size={15} aria-hidden="true" />
         </button>
@@ -202,22 +200,29 @@ export function PromoBanner({
         <div className="max-w-[660px]">
           {(badge || eyebrow) && (
             <div className="mb-3 flex flex-wrap items-center gap-2.5">
-              {badge && <Badge tone="electric">{badge}</Badge>}
+              {badge && (
+                <span
+                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-[0.08em]"
+                  style={{ background: t.cta, color: t.ctaInk }}
+                >
+                  {badge}
+                </span>
+              )}
               {eyebrow && (
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/55">
+                <span className="text-[11.5px] font-semibold uppercase tracking-[0.08em] opacity-70">
                   {eyebrow}
                 </span>
               )}
             </div>
           )}
           <h2
-            className="font-semibold tracking-[-0.6px] text-white"
+            className="font-bold tracking-[-0.5px]"
             style={{ fontSize: 'clamp(20px, 2.4vw, 27px)', lineHeight: 1.15 }}
           >
             {title}
           </h2>
           {subtitle && (
-            <p className="mt-2 max-w-[580px] text-[14px] leading-relaxed text-white/70">
+            <p className="mt-2 max-w-[580px] text-[14.5px] leading-relaxed opacity-80">
               {subtitle}
             </p>
           )}
@@ -226,11 +231,11 @@ export function PromoBanner({
 
         {Icon && (
           <div
-            className="hidden h-[84px] w-[84px] flex-none items-center justify-center rounded-[20px] border border-white/15 bg-white/[0.07] backdrop-blur md:flex"
-            style={{ boxShadow: `0 0 60px -12px ${t.glow}` }}
+            className="hidden h-[84px] w-[84px] flex-none items-center justify-center rounded-[22px] md:flex"
+            style={{ background: t.chip }}
             aria-hidden="true"
           >
-            <Icon size={36} style={{ color: t.accent }} />
+            <Icon size={36} />
           </div>
         )}
       </div>

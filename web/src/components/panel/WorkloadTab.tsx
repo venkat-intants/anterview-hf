@@ -43,7 +43,7 @@ function CapacityEditor({ row }: { row: WorkloadRow }) {
 
   return (
     <div className="flex flex-wrap items-end gap-2">
-      <label className="text-[11.5px] text-[var(--ui-soft)]">
+      <label className="text-[12px] text-[var(--ui-soft)]">
         Daily limit
         <input
           aria-label={`Daily limit for ${row.name}`}
@@ -53,10 +53,10 @@ function CapacityEditor({ row }: { row: WorkloadRow }) {
           value={perDay}
           onChange={(e) => setPerDay(e.target.value)}
           placeholder="company default"
-          className="mt-0.5 block w-[110px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+          className="mt-0.5 block w-[110px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         />
       </label>
-      <label className="text-[11.5px] text-[var(--ui-soft)]">
+      <label className="text-[12px] text-[var(--ui-soft)]">
         Weekly limit
         <input
           aria-label={`Weekly limit for ${row.name}`}
@@ -66,14 +66,14 @@ function CapacityEditor({ row }: { row: WorkloadRow }) {
           value={perWeek}
           onChange={(e) => setPerWeek(e.target.value)}
           placeholder="company default"
-          className="mt-0.5 block w-[110px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+          className="mt-0.5 block w-[110px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         />
       </label>
       <button
         type="button"
         disabled={saveMut.isPending}
         onClick={() => saveMut.mutate({ day: perDay, week: perWeek })}
-        className="rounded-[8px] border border-border px-3 py-1.5 text-[11.5px] font-medium text-foreground disabled:opacity-40"
+        className="rounded-[8px] border border-border px-3 py-1.5 text-[12px] font-medium text-foreground disabled:opacity-40"
       >
         {saveMut.isPending ? 'Saving…' : 'Save'}
       </button>
@@ -85,7 +85,7 @@ function CapacityEditor({ row }: { row: WorkloadRow }) {
           setPerWeek('');
           saveMut.mutate({ day: '', week: '' });
         }}
-        className="text-[11.5px] text-muted-foreground hover:text-foreground disabled:opacity-40"
+        className="text-[12px] text-muted-foreground hover:text-foreground disabled:opacity-40"
       >
         Reset to company default
       </button>
@@ -93,33 +93,43 @@ function CapacityEditor({ row }: { row: WorkloadRow }) {
   );
 }
 
-function WorkloadRowCard({ row, defaults }: { row: WorkloadRow; defaults: { max_per_day: number; max_per_week: number } }) {
+function WorkloadRowCard({
+  row,
+  defaults,
+}: {
+  row: WorkloadRow;
+  defaults: { max_per_day: number; max_per_week: number };
+}) {
   const flags = flagSentences(row);
   return (
     <GlassCard className="p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-[14px] font-medium text-foreground">{row.name}</p>
-          <p className="text-[11.5px] text-muted-foreground">{row.role.replace('_', ' ')}</p>
+          <p className="text-[12px] text-muted-foreground">{row.role.replace('_', ' ')}</p>
         </div>
-        {flags.length > 0 ? <StatusTag tone="amber">{flags.length} flag{flags.length === 1 ? '' : 's'}</StatusTag> : null}
+        {flags.length > 0 ? (
+          <StatusTag tone="amber">
+            {flags.length} flag{flags.length === 1 ? '' : 's'}
+          </StatusTag>
+        ) : null}
       </div>
 
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12.5px] sm:grid-cols-4">
         <div>
-          <dt className="text-[var(--ui-faint)]">Sessions</dt>
+          <dt className="text-muted-foreground">Sessions</dt>
           <dd className="text-foreground">{row.sessions}</dd>
         </div>
         <div>
-          <dt className="text-[var(--ui-faint)]">Hours</dt>
+          <dt className="text-muted-foreground">Hours</dt>
           <dd className="text-foreground">{row.hours}</dd>
         </div>
         <div>
-          <dt className="text-[var(--ui-faint)]">Loops</dt>
+          <dt className="text-muted-foreground">Loops</dt>
           <dd className="text-foreground">{row.loops}</dd>
         </div>
         <div>
-          <dt className="text-[var(--ui-faint)]">Open scorecards</dt>
+          <dt className="text-muted-foreground">Open scorecards</dt>
           <dd className="text-foreground">{row.open_scorecards}</dd>
         </div>
       </dl>
@@ -137,8 +147,9 @@ function WorkloadRowCard({ row, defaults }: { row: WorkloadRow; defaults: { max_
       )}
 
       <div className="mt-3 border-t border-border pt-3">
-        <p className="mb-1.5 text-[11px] text-[var(--ui-faint)]">
-          Blank uses the company default (daily {defaults.max_per_day}, weekly {defaults.max_per_week}).
+        <p className="mb-1.5 text-[12px] text-muted-foreground">
+          Blank uses the company default (daily {defaults.max_per_day}, weekly{' '}
+          {defaults.max_per_week}).
         </p>
         <CapacityEditor row={row} />
       </div>
@@ -170,7 +181,7 @@ export default function WorkloadTab(): JSX.Element {
             onClick={() => setPreset(p.key)}
             className={
               preset === p.key
-                ? 'rounded-pill bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-primary-foreground'
+                ? 'rounded-pill bg-foreground px-3.5 py-1.5 text-[12.5px] font-medium text-background'
                 : 'rounded-pill border border-border px-3.5 py-1.5 text-[12.5px] font-medium text-[var(--ui-soft)] hover:text-foreground'
             }
           >
@@ -189,7 +200,9 @@ export default function WorkloadTab(): JSX.Element {
           {errText(error, 'Could not load panel workload')}
         </p>
       ) : (data?.interviewers.length ?? 0) === 0 ? (
-        <p className="mt-4 text-[13px] text-muted-foreground">No one can be booked for interviews yet. Your super admin adds interviewers under Team.</p>
+        <p className="mt-4 text-[13px] text-muted-foreground">
+          No one can be booked for interviews yet. Your super admin adds interviewers under Team.
+        </p>
       ) : (
         <div className="mt-4 flex flex-col gap-3">
           {data?.interviewers.map((row) => (

@@ -3,7 +3,14 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import CandidatePreview from '../components/workflow/CandidatePreview';
-import { applicationsWarning, publishImpact, stepStates } from '../lib/workflowLifecycle';
+import {
+  applicationsWarning,
+  nextAction,
+  publishImpact,
+  stepStates,
+  trackStates,
+  type TrackInput,
+} from '../lib/workflowLifecycle';
 import type { Round } from '../api/workflows';
 
 describe('the applications-open warning', () => {
@@ -112,5 +119,95 @@ describe('the candidate preview', () => {
       />,
     );
     expect(screen.getByText('Nothing to do. They wait while you review.')).toBeTruthy();
+  });
+});
+
+describe('the approval track and the one next action', () => {
+  const base: TrackInput = {
+    status: 'draft',
+    reviewStatus: 'draft',
+    simulated: false,
+    publishable: true,
+    roundCount: 3,
+  };
+  const rows: {
+    name: string;
+    input: Partial<TrackInput>;
+    track: [string, string, string, string, string];
+    action: string | null;
+  }[] = [
+    {
+      name: 'rounds still invalid',
+      input: { publishable: false },
+      track: ['current', 'todo', 'todo', 'todo', 'todo'],
+      action: 'dry_run',
+    },
+    {
+      name: 'valid, no dry run',
+      input: {},
+      track: ['done', 'current', 'todo', 'todo', 'todo'],
+      action: 'dry_run',
+    },
+    {
+      name: 'valid, dry run fresh',
+      input: { simulated: true },
+      track: ['done', 'done', 'current', 'todo', 'todo'],
+      action: 'submit',
+    },
+    {
+      name: 'dry run fresh but rounds invalid',
+      input: { simulated: true, publishable: false },
+      track: ['current', 'done', 'todo', 'todo', 'todo'],
+      action: 'submit',
+    },
+    {
+      name: 'changes requested',
+      input: { simulated: true, reviewStatus: 'changes_requested' },
+      track: ['done', 'done', 'returned', 'todo', 'todo'],
+      action: 'submit',
+    },
+    {
+      name: 'in review',
+      input: { simulated: true, reviewStatus: 'in_review' },
+      track: ['done', 'done', 'done', 'current', 'todo'],
+      action: null,
+    },
+    {
+      name: 'approved',
+      input: { simulated: true, reviewStatus: 'approved' },
+      track: ['done', 'done', 'done', 'done', 'current'],
+      action: 'publish',
+    },
+    {
+      name: 'live',
+      input: { status: 'published', reviewStatus: 'approved', simulated: true },
+      track: ['done', 'done', 'done', 'done', 'done'],
+      action: 'edit_new_version',
+    },
+    {
+      name: 'live, but a draft already exists (the server refuses a second)',
+      input: { status: 'published', reviewStatus: 'approved', simulated: true, draftExists: true },
+      track: ['done', 'done', 'done', 'done', 'done'],
+      action: null,
+    },
+    {
+      name: 'archived: superseded, nothing to offer',
+      input: { status: 'archived' },
+      track: ['done', 'done', 'done', 'done', 'done'],
+      action: null,
+    },
+    {
+      name: 'empty draft',
+      input: { roundCount: 0, publishable: false },
+      track: ['current', 'todo', 'todo', 'todo', 'todo'],
+      action: null,
+    },
+  ];
+
+  it.each(rows)('$name', ({ input, track, action }) => {
+    const i = { ...base, ...input };
+    const t = trackStates(i);
+    expect([t.rounds, t.dryRun, t.submitted, t.approved, t.published]).toEqual(track);
+    expect(nextAction(i)).toBe(action);
   });
 });

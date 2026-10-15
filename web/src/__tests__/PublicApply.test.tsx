@@ -15,7 +15,7 @@
 //   • the page never claims a decision was made.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -61,6 +61,11 @@ vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
   return { ...actual, useParams: () => ({ requisitionId: 'req-1' }) };
 });
+
+// The finish states read the session (to decide whether to offer a sign-in link).
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ isAuthenticated: false, isInitializing: false, user: null }),
+}));
 
 import PublicApply from '../pages/PublicApply';
 
@@ -416,6 +421,10 @@ describe('PublicApply — afterwards', () => {
 
     expect(await screen.findByText('Application received')).toBeTruthy();
     expect(screen.getByText(/nothing is decided automatically/i)).toBeTruthy();
+    // Plainly what happens now and who acts next, with the way back to an account.
+    const next = screen.getByRole('heading', { name: 'What happens next' }).closest('section') as HTMLElement;
+    expect(within(next).getByText(/nothing is decided automatically/i)).toBeTruthy();
+    expect(within(next).getByRole('link', { name: 'Track this in My applications' })).toHaveAttribute('href', '/login');
   });
 
   it('treats a repeat application as reassurance, not an error', async () => {

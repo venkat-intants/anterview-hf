@@ -13,6 +13,7 @@ import { getCalibrationJudgements } from '@/api/scheduling';
 import { formatDate } from '@/lib/formatters';
 import { X } from '@/design/components/icons';
 import { useDialogFocus } from '@/hooks/useDialogFocus';
+import { appPath } from '@/lib/safeUrl';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -109,7 +110,7 @@ export default function CalibrationJudgementsDialog({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-[8px] p-1.5 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:text-foreground"
+            className="shrink-0 rounded-[8px] p-1.5 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <X size={16} aria-hidden="true" />
           </button>
@@ -148,21 +149,21 @@ export default function CalibrationJudgementsDialog({
                     </span>
                     <span className="text-[13px] font-semibold text-foreground">
                       {row.score}
-                      <span className="ml-1 text-[11.5px] font-normal text-[var(--ui-faint)]">
+                      <span className="ml-1 text-[12px] font-normal text-muted-foreground">
                         panel {row.panel_mean ?? '—'} ({row.panel_size})
                       </span>
                     </span>
                   </div>
-                  <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+                  <p className="mt-0.5 text-[12px] text-muted-foreground">
                     {row.requisition_title ?? 'No opening on file'} · {row.round_title} ·{' '}
                     {row.competency_name}
                   </p>
-                  <p className="mt-1 flex items-center justify-between gap-2 text-[11.5px]">
-                    <span className="text-[var(--ui-faint)]">
+                  <p className="mt-1 flex items-center justify-between gap-2 text-[12px]">
+                    <span className="text-muted-foreground">
                       Gap {signedGap(row.gap)} · submitted {formatDate(row.submitted_at)}
                     </span>
                     <Link
-                      to={row.evidence_href}
+                      to={appPath(row.evidence_href, '/')}
                       className="text-[var(--ui-info)] underline decoration-dotted underline-offset-2 hover:opacity-80"
                     >
                       Evidence trail

@@ -12,7 +12,9 @@
 // real, and it only runs from an explicit human click. Never call it
 // automatically, in a useEffect, or in a loop over `run.proposals`.
 
-import { apiGet, apiPost, apiRequest } from './client';
+import { apiGet, apiPost, apiRequest, dataGatewayBase } from './client';
+import { assertSafeProposalRequest, type ProposalMethod } from './proposalGuard';
+import { pathId } from './pathId';
 
 /**
  * PH5-E1 criteria 4/5 — the server-computed, three-way read of one block of
@@ -209,7 +211,22 @@ export function askAgent(
  */
 export function commitProposal<T = unknown>(proposal: Proposal): Promise<T> {
   const { method, path, body } = proposal.commit;
-  return apiRequest<T>(method, path, body);
+  // Refuse, before anything is sent, a path that could resolve to another
+  // origin (the backslash / tab forms the URL parser treats as a host) or
+  // another API area. A refusal is a rejected promise, so the caller's normal
+  // error handling shows it.
+  let safe: { method: ProposalMethod; path: string };
+  try {
+    safe = assertSafeProposalRequest(
+      method,
+      path,
+      dataGatewayBase(),
+      typeof window === 'undefined' ? '' : window.location.origin,
+    );
+  } catch (err) {
+    return Promise.reject(err instanceof Error ? err : new Error('Proposal refused'));
+  }
+  return apiRequest<T>(safe.method, safe.path, body);
 }
 
 // ── Assessment panel ────────────────────────────────────────────────────────
@@ -260,7 +277,7 @@ export interface PanelVerdict {
 
 /** Run the specialist panel on one candidate. */
 export function assessCandidate(applicantId: string): Promise<PanelVerdict> {
-  return apiPost<PanelVerdict>(`/agent/panel/${applicantId}`, {});
+  return apiPost<PanelVerdict>(`/agent/panel/${pathId(applicantId)}`, {});
 }
 
 /** Trigger the nightly watcher sweep now. Platform owner only. */

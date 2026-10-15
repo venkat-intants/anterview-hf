@@ -66,14 +66,10 @@ function GhostRound({ round, index }: { round: DraftedRound; index: number }) {
   const Icon = meta?.icon;
   return (
     <li className="flex flex-col">
-      {index > 0 ? (
-        <span className="ml-[26px] h-5 w-px bg-electric/30" aria-hidden="true" />
-      ) : null}
+      {index > 0 ? <span className="ml-[26px] h-5 w-px bg-electric/30" aria-hidden="true" /> : null}
       <div className="flex items-center gap-3 rounded-[16px] border border-dashed border-electric/50 bg-electric/[0.05] p-3.5">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
-          {Icon ? (
-            <Icon className="h-[18px] w-[18px] text-foreground" aria-hidden="true" />
-          ) : null}
+          {Icon ? <Icon className="h-[18px] w-[18px] text-foreground" aria-hidden="true" /> : null}
         </span>
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-2">
@@ -82,7 +78,7 @@ function GhostRound({ round, index }: { round: DraftedRound; index: number }) {
             </span>
             {meta ? <StatusTag tone={meta.tone}>{meta.label}</StatusTag> : null}
           </span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 text-[11.5px] text-[var(--ui-faint)]">
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 text-[12px] text-[var(--ui-faint)]">
             {round.pass_threshold !== null && round.pass_threshold !== undefined ? (
               <span>advance at {round.pass_threshold}%</span>
             ) : null}
@@ -151,13 +147,14 @@ export default function ProposalPreview({
   return (
     <section
       aria-label="Assistant preview"
-      className="mb-5 rounded-[18px] border border-electric/35 bg-electric/[0.04] p-4"
+      className="mb-5 rounded-card border-2 border-dashed border-[var(--accent)] bg-card p-4"
     >
       <header className="mb-3 flex flex-wrap items-center gap-2">
         <Sparkles className="h-4 w-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />
         <span className="text-[13px] font-medium text-foreground">{proposal.title}</span>
         <StatusTag tone="neutral">preview</StatusTag>
-        <span className="ml-auto text-[11.5px] text-muted-foreground">
+        <StatusTag tone="electric">Proposal from the assistant</StatusTag>
+        <span className="ml-auto text-[12px] text-muted-foreground">
           {appends ? `would be added after round ${existingRounds}` : 'nothing has changed yet'}
         </span>
       </header>
@@ -180,7 +177,7 @@ export default function ProposalPreview({
         // A shape this preview does not know how to draw. Falling back to the
         // raw request is better than rendering nothing and asking for approval
         // of something invisible.
-        <pre className="overflow-x-auto rounded-[10px] bg-[var(--ui-inset)] p-2 text-[11px] text-[var(--ui-soft)]">
+        <pre className="overflow-x-auto rounded-[10px] bg-[var(--ui-inset)] p-2 text-[12px] text-[var(--ui-soft)]">
           {proposal.commit.method} {proposal.commit.path}
           {'\n'}
           {JSON.stringify(proposal.commit.body, null, 2)}
@@ -188,9 +185,9 @@ export default function ProposalPreview({
       )}
 
       {/* The single most important sentence on this screen. */}
-      <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
-        Accepting puts this on your canvas as a draft. No candidate sees a draft — you
-        still review it and press publish yourself.
+      <p className="mt-3 text-[12px] leading-relaxed text-muted-foreground">
+        Accepting puts this on your canvas as a draft. No candidate sees a draft — you still review
+        it and press publish yourself.
       </p>
 
       {state === 'failed' ? (
@@ -199,13 +196,13 @@ export default function ProposalPreview({
         </p>
       ) : null}
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={() => void apply()}
           disabled={state === 'applying'}
           className={cn(
-            'inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground transition-opacity hover:opacity-90',
+            'inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
             state === 'applying' && 'opacity-50',
           )}
         >
@@ -219,12 +216,12 @@ export default function ProposalPreview({
         <button
           type="button"
           onClick={onDismiss}
-          className="inline-flex items-center gap-1.5 rounded-[10px] border border-border px-4 py-2 text-[12.5px] text-foreground hover:text-foreground"
+          className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           <X className="h-3.5 w-3.5" aria-hidden="true" />
           Discard
         </button>
-        <details className="ml-auto text-[11px] text-[var(--ui-faint)]">
+        <details open className="ml-auto text-[12px] text-[var(--ui-faint)]">
           <summary className="cursor-pointer select-none">What this sends</summary>
           <pre className="mt-2 max-w-[420px] overflow-x-auto rounded bg-[var(--ui-inset)] p-2">
             {proposal.commit.method} {proposal.commit.path}

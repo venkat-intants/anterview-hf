@@ -1,6 +1,6 @@
 // MetricGlossary — every definition, reachable regardless of role.
 
-import { GlassCard } from '@/design/components/primitives';
+import { SectionCard } from '@/design/components/page';
 import { metricLabel, type MetricDefinitionsResponse } from '@/api/metrics';
 import type { QueryLike } from './types';
 
@@ -18,37 +18,36 @@ export default function MetricGlossary({
   const current = definitionsQuery.data?.metrics.filter((m) => m.current) ?? [];
 
   return (
-    <GlassCard className="p-5" data-testid="metric-glossary">
-      <h2 className="text-[15px] font-semibold text-foreground">Metric glossary</h2>
+    <SectionCard title="Metric glossary" data-testid="metric-glossary">
       {definitionsQuery.isLoading ? (
-        <p className="mt-3 text-[13px] text-muted-foreground">Loading…</p>
+        <p className="text-[13px] text-muted-foreground">Loading…</p>
       ) : definitionsQuery.isError ? (
-        <p className="mt-3 text-[13px] text-[var(--ui-danger)]">
+        <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
           Could not load metric definitions just now.
         </p>
       ) : definitionsQuery.data ? (
         <>
-          <p className="mt-1 text-[11px] text-[var(--ui-faint)]">
+          <p className="text-[12px] text-muted-foreground">
             registry {definitionsQuery.data.registry_hash.slice(0, 10)}…
           </p>
           <ul className="mt-3 flex flex-col gap-2">
             {current.map((m) => (
               <li
                 key={`${m.name}@${m.version}`}
-                className="flex items-center justify-between gap-3 rounded-[10px] border border-border p-3"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-[12px] border border-border p-3"
               >
                 <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium text-foreground">
+                  <p className="truncate text-[14px] font-semibold text-foreground">
                     {metricLabel(m.name, m)}
                   </p>
-                  <p className="mt-0.5 truncate text-[11.5px] text-muted-foreground">
+                  <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
                     {m.description}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => onInfo(m.name)}
-                  className="shrink-0 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+                  className="min-h-10 shrink-0 rounded-full px-2 text-[13px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 >
                   How is this calculated?
                 </button>
@@ -57,6 +56,6 @@ export default function MetricGlossary({
           </ul>
         </>
       ) : null}
-    </GlassCard>
+    </SectionCard>
   );
 }

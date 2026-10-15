@@ -15,6 +15,7 @@ import {
 import { formatDate } from '@/lib/formatters';
 import { X } from '@/design/components/icons';
 import { useDialogFocus } from '@/hooks/useDialogFocus';
+import { appPath } from '@/lib/safeUrl';
 
 export default function MembersDrillDown({
   metricName,
@@ -63,17 +64,17 @@ export default function MembersDrillDown({
         aria-modal="true"
         aria-labelledby="members-drilldown-title"
         tabIndex={-1}
-        className="relative flex h-full w-full max-w-[480px] flex-col overflow-y-auto border-l border-border bg-card p-6 outline-none"
+        className="relative flex h-full w-full max-w-[480px] flex-col overflow-y-auto border-l border-border bg-card p-6 shadow-elevated outline-none"
       >
         <div className="flex items-start justify-between gap-3">
-          <h2 id="members-drilldown-title" className="text-[17px] font-semibold text-foreground">
+          <h2 id="members-drilldown-title" className="text-[17px] font-bold text-foreground">
             {def ? metricLabel(def.name, def) : metricName}
           </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-[8px] p-1.5 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:text-foreground"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <X size={16} aria-hidden="true" />
           </button>
@@ -82,7 +83,7 @@ export default function MembersDrillDown({
         {members.isLoading ? (
           <p className="mt-4 text-[13px] text-muted-foreground">Loading…</p>
         ) : members.isError ? (
-          <p className="mt-4 text-[13px] text-[var(--ui-danger)]">
+          <p role="alert" className="mt-4 text-[13px] text-[var(--ui-danger)]">
             Could not load these records just now.
           </p>
         ) : members.data && members.data.rows.length === 0 ? (
@@ -91,7 +92,7 @@ export default function MembersDrillDown({
           </p>
         ) : members.data ? (
           <>
-            <p className="mt-3 text-[12px] text-muted-foreground">
+            <p className="mt-3 text-[13px] text-muted-foreground">
               {members.data.truncated
                 ? `Showing 200 of ${members.data.total}`
                 : `${members.data.total} ${members.data.total === 1 ? 'person' : 'people'}`}
@@ -100,7 +101,7 @@ export default function MembersDrillDown({
               {members.data.rows.map((row) => (
                 <li
                   key={row.enrolment_id}
-                  className="rounded-[10px] border border-border bg-[var(--ui-inset-soft)]"
+                  className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)]"
                 >
                   <button
                     type="button"
@@ -110,12 +111,12 @@ export default function MembersDrillDown({
                         enrolment_id: row.enrolment_id,
                       })
                     }
-                    className="flex w-full flex-col items-start gap-0.5 rounded-[10px] p-3 text-left transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
+                    className="flex w-full flex-col items-start gap-0.5 rounded-[12px] p-3 text-left transition-colors hover:bg-[var(--ui-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   >
-                    <span className="text-[13px] font-medium text-foreground">
+                    <span className="text-[14px] font-semibold text-foreground">
                       {row.candidate_name}
                     </span>
-                    <span className="text-[11.5px] text-muted-foreground">
+                    <span className="text-[12px] text-muted-foreground">
                       {row.requisition_title ?? 'No opening on file'} ·{' '}
                       {sourceLabel(row.source, definitions)} · applied {formatDate(row.applied_at)}
                     </span>
@@ -123,15 +124,15 @@ export default function MembersDrillDown({
                     outcome-signals table); an ordinary members list never
                     shows this. */}
                     {row.interviewer_score != null ? (
-                      <span className="text-[11.5px] text-muted-foreground">
+                      <span className="text-[12px] text-muted-foreground">
                         Interviewer score {row.interviewer_score.toFixed(1)}
                       </span>
                     ) : null}
                   </button>
                   {row.evidence_href ? (
                     <Link
-                      to={row.evidence_href}
-                      className="block px-3 pb-2.5 text-[11.5px] text-[var(--ui-info)] underline decoration-dotted underline-offset-2 hover:opacity-80"
+                      to={appPath(row.evidence_href, '/')}
+                      className="block px-3 pb-2.5 text-[12px] text-[var(--ui-info)] underline decoration-dotted underline-offset-2 hover:opacity-80"
                     >
                       Evidence trail
                     </Link>

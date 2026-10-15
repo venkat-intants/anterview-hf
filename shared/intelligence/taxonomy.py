@@ -28,6 +28,7 @@ serviceable interview, not a failure state.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 
@@ -599,7 +600,10 @@ def classify(
     if best_score < _MIN_CONFIDENT_SCORE:
         log.info(
             "intelligence.classify.low_confidence",
-            job_title=job_title[:80],
+            # Length and a short non-reversible reference, not the text: the
+            # title is typed by a person and can carry a name or an employer.
+            job_title_len=len(job_title),
+            job_title_ref=hashlib.sha256(job_title.encode("utf-8")).hexdigest()[:8],
             best_family=best.id,
             score=best_score,
             chosen="generic",

@@ -28,10 +28,13 @@ different pinned dependency sets.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
+from types import MappingProxyType
 from typing import Any, Literal
+from urllib.parse import unquote
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # What a tool does to the world. There is deliberately no "write" member:
 # adding one would be the single change that breaks the guarantee above, so it
@@ -80,12 +83,19 @@ ToolDataClass = Literal[
 #     tenant health has no route to a company's applicants through a copilot.
 #   * No role appears in more than one tenancy scope. Nothing here grants a
 #     company role a cross-tenant read, or a platform role a tenant read.
-DATA_CLASS_ROLES: dict[str, frozenset[str]] = {
+#
+# A MappingProxyType, not a dict: the matrix is the second load-bearing invariant
+# of the agent layer, and a plain module-level dict can be widened by one line
+# anywhere in the process (``DATA_CLASS_ROLES["candidate_pii"] = ...``) with no
+# review and no import-time failure. The proxy raises TypeError on assignment, so
+# widening requires editing THIS literal -- the deliberate, reviewed change the
+# module docstring promises. (The values are frozensets already.)
+DATA_CLASS_ROLES: Mapping[str, frozenset[str]] = MappingProxyType({
     "candidate_pii": frozenset({"hr_manager"}),
     "company_scoped": frozenset({"hr_manager", "super_admin"}),
     "company_staff": frozenset({"super_admin"}),
     "platform_aggregate": frozenset({"platform_owner", "admin"}),
-}
+})
 
 # Roles whose reads are NOT confined to a single company. Kept next to the
 # matrix because the router uses it to decide whether a ToolContext may carry a
@@ -278,7 +288,7 @@ def citation_href_for_role(kind: str, route_id: str, *, role: str) -> str | None
 #
 # Derived from ``DATA_CLASS_ROLES`` wherever the design ties a citation kind to
 # an existing data class, rather than retyped, so the two tables cannot drift.
-CITATION_MIN_ROLES: dict[str, frozenset[str]] = {
+CITATION_MIN_ROLES: Mapping[str, frozenset[str]] = MappingProxyType({
     "applicant": DATA_CLASS_ROLES["candidate_pii"],
     "scorecard": DATA_CLASS_ROLES["candidate_pii"],
     "exam_attempt": DATA_CLASS_ROLES["candidate_pii"],
@@ -291,7 +301,7 @@ CITATION_MIN_ROLES: dict[str, frozenset[str]] = {
     "role_profile": DATA_CLASS_ROLES["company_scoped"],
     "analytics": DATA_CLASS_ROLES["company_scoped"] | DATA_CLASS_ROLES["platform_aggregate"],
     "audit": DATA_CLASS_ROLES["platform_aggregate"],
-}
+})
 
 
 # PH5-E1 criteria 4/5 — the state a block of agent-authored prose is in with
@@ -341,6 +351,35 @@ def _new_id() -> str:
     return uuid.uuid4().hex[:16]
 
 
+def _is_clean_app_path(v: str, *, allow_query: bool) -> bool:
+    """True for a same-origin path the browser's URL parser cannot re-aim.
+
+    Rejecting a leading ``//`` is not enough: the WHATWG parser treats ``\\`` as
+    ``/`` in special schemes, and strips TAB / LF / CR anywhere in the input
+    BEFORE parsing, so ``/\\evil.example/x`` and ``/<TAB>/evil.example/x`` both
+    become protocol-relative URLs to another host. So: no backslash, no control
+    character, and no ``.`` / ``..`` segment (also in percent-encoded form,
+    which the parser decodes as a dot segment) — the last one lets a path that
+    starts under an allowed prefix climb out of it (``/hr/x/../../auth/logout``).
+    ``allow_query`` is for a citation href, which legitimately carries
+    ``?enrolment=…``; a commit path never does.
+    """
+    if not v.startswith("/") or v.startswith("//"):
+        return False
+    if "\\" in v or any(ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F for ch in v):
+        return False
+    path_part = v
+    for sep in ("?", "#"):
+        if sep in v:
+            if not allow_query:
+                return False
+            path_part = path_part.split(sep, 1)[0]
+    for seg in path_part.split("/")[1:]:
+        if unquote(seg) in {".", ".."} or unquote(unquote(seg)) in {".", ".."}:
+            return False
+    return True
+
+
 class Citation(BaseModel):
     """A pointer to the record backing a claim.
 
@@ -380,7 +419,7 @@ class Citation(BaseModel):
         """
         if v is None:
             return v
-        if not v.startswith("/") or v.startswith("//"):
+        if not _is_clean_app_path(v, allow_query=True):
             raise ValueError("citation href must be a relative app path, or None")
         return v
 
@@ -391,7 +430,16 @@ class ToolSpec(BaseModel):
     ``parameters`` is a JSON Schema object passed to the model's function-calling
     API verbatim, so tool definitions live in one place instead of being
     duplicated between the prompt and the handler.
+
+    FROZEN. ``allowed_roles`` is validated against ``DATA_CLASS_ROLES`` once, at
+    construction; if the instance stayed assignable, ``spec.allowed_roles = (...)``
+    afterwards would widen a tool past the matrix with no check at all (pydantic
+    does not re-run a model validator on attribute assignment unless asked to).
+    ``ToolRegistry.register`` re-validates as well, because ``model_copy(update=...)``
+    builds an instance WITHOUT running validators.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{2,63}$")
     description: str
@@ -446,6 +494,16 @@ class ToolSpec(BaseModel):
         editing ``DATA_CLASS_ROLES`` — a visible, reviewable change, in the
         same spirit as ``ToolEffect`` having no "write" member.
         """
+        self.assert_roles_match_data_class()
+        return self
+
+    def assert_roles_match_data_class(self) -> None:
+        """Raise ValueError unless every allowed role is permitted by the data class.
+
+        The same check the construction-time validator runs, callable on its own so
+        ``ToolRegistry.register`` can repeat it at the moment a tool becomes
+        callable (a spec built by ``model_copy(update=...)`` skips validators).
+        """
         permitted = DATA_CLASS_ROLES[self.data_class]
         overreach = tuple(r for r in self.allowed_roles if r not in permitted)
         if overreach:
@@ -456,7 +514,6 @@ class ToolSpec(BaseModel):
                 f"wrong or this is a privilege widening — change "
                 f"DATA_CLASS_ROLES deliberately if the latter."
             )
-        return self
 
     def permits(self, role: str) -> bool:
         """Whether this role may see and call the tool.
@@ -503,6 +560,10 @@ class ToolResult(BaseModel):
     duration_ms: int = 0
 
 
+#: The only API area a proposal may target (mirrors proposalGuard.ts).
+COMMIT_PATH_PREFIX = "/hr/"
+
+
 class CommitSpec(BaseModel):
     """The exact request a human would fire to enact a proposal.
 
@@ -513,7 +574,12 @@ class CommitSpec(BaseModel):
     proposal fails exactly the same way.
     """
 
-    method: Literal["POST", "PATCH", "PUT", "DELETE"]
+    # Tightened 2026-10-12 (tightening direction only): DELETE is no longer
+    # expressible. Every CommitSpec constructor in
+    # services/data_gateway/app/agents/{tools,workflow_tools}.py uses
+    # POST/PATCH/PUT, and web/src/api/proposalGuard.ts already refuses DELETE.
+    # A proposal that wanted to delete something would be a new, reviewed change.
+    method: Literal["POST", "PATCH", "PUT"]
     path: str
     body: dict[str, Any] = Field(default_factory=dict)
     # Button copy, e.g. "Send 5 interview invites".
@@ -522,15 +588,23 @@ class CommitSpec(BaseModel):
     @field_validator("path")
     @classmethod
     def _must_be_relative_api_path(cls, v: str) -> str:
-        """Refuse absolute URLs.
+        """Refuse absolute URLs, and anything outside the staff ``/hr/`` API.
 
         A proposal whose path pointed at another host would turn the frontend's
         commit button into an exfiltration primitive — the user's session
         firing their own data at an attacker's server. Relative paths can only
         ever hit our own API.
+
+        The ``/hr/`` prefix matches the frontend allowlist
+        (``proposalGuard.ts`` ALLOWED_PREFIXES), so the two ends agree and a
+        proposal cannot name ``/auth/...``, ``/admin/...`` or ``/platform/...``
+        on a user's session even if a tool were mis-written. Widening it is a
+        deliberate edit here AND there.
         """
-        if not v.startswith("/") or v.startswith("//"):
+        if not _is_clean_app_path(v, allow_query=False):
             raise ValueError("commit path must be a relative API path")
+        if not v.startswith(COMMIT_PATH_PREFIX):
+            raise ValueError(f"commit path must be under {COMMIT_PATH_PREFIX}")
         return v
 
 

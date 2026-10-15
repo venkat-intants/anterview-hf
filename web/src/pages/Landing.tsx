@@ -1,11 +1,10 @@
 // Landing — public marketing page.
 //
-// Renders the AntHire landing design (src/landing/*): an aurora-lit,
-// voice-first hero with full section-by-section marketing content. The design
-// is self-contained — its root sets `data-landing-theme` (light | dark, the
-// visitor's choice, defaulting to light) and every colour resolves against the
-// tokens scoped to it — so it neither depends on nor disturbs the app's own
-// forced-dark theme.
+// Renders the AntHire landing design (src/landing/*): the same paper-and-ink
+// identity as the signed-in app, with a hero, a short proof band, benefit
+// sections and a footer. Its root sets `data-landing-theme` (light | dark),
+// which mirrors the app-wide mode, and every `--lp-*` colour is an alias of an
+// app token — so the page and the product cannot drift apart.
 //
 // Authenticated users are redirected straight to /dashboard.
 
@@ -21,7 +20,7 @@ export default function Landing() {
     return (
       <main data-landing-theme={readLandingTheme()} className="flex min-h-screen items-center justify-center bg-[var(--lp-canvas)]">
         <div
-          className="h-8 w-8 animate-spin rounded-full border-4 border-electric border-t-transparent"
+          className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--lp-accent)] border-t-transparent motion-reduce:animate-none"
           role="status"
           aria-label="Loading"
         />

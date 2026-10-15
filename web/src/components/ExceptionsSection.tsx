@@ -46,13 +46,7 @@ function openFirst(rows: StageException[]): StageException[] {
   });
 }
 
-function RaiseForm({
-  enrolmentId,
-  onRaised,
-}: {
-  enrolmentId: string;
-  onRaised: () => void;
-}) {
+function RaiseForm({ enrolmentId, onRaised }: { enrolmentId: string; onRaised: () => void }) {
   const qc = useQueryClient();
   const [reason, setReason] = useState('');
   const [ownerId, setOwnerId] = useState('');
@@ -93,7 +87,7 @@ function RaiseForm({
         onChange={(e) => setReason(e.target.value)}
         rows={2}
         placeholder={`At least ${REASON_MIN} characters`}
-        className="resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+        className="resize-y rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       />
       <div className="flex flex-wrap items-center gap-2">
         <label htmlFor="exception-owner" className="text-[12px] text-[var(--ui-soft)]">
@@ -103,7 +97,7 @@ function RaiseForm({
           id="exception-owner"
           value={ownerId}
           onChange={(e) => setOwnerId(e.target.value)}
-          className="rounded-[10px] border border-border bg-secondary px-2.5 py-1.5 text-[12.5px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+          className="rounded-[10px] border border-border bg-secondary px-2.5 py-1.5 text-[12.5px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           <option value="">You</option>
           {(owners.data ?? []).map((o) => (
@@ -115,15 +109,13 @@ function RaiseForm({
         <button
           type="submit"
           disabled={!ready || raiseMut.isPending}
-          className="ml-auto rounded-[10px] bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+          className="ml-auto rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
         >
           {raiseMut.isPending ? 'Raising…' : 'Raise exception'}
         </button>
       </div>
       {!ready && reason.length > 0 ? (
-        <p className="text-[11.5px] text-[var(--ui-warn)]">
-          Write at least {REASON_MIN} characters.
-        </p>
+        <p className="text-[12px] text-[var(--ui-warn)]">Write at least {REASON_MIN} characters.</p>
       ) : null}
     </form>
   );
@@ -164,16 +156,16 @@ function ExceptionRow({ exc }: { exc: StageException }) {
         <StatusTag tone={exc.status === 'open' ? 'amber' : 'neutral'} dot>
           {exc.status === 'open' ? 'Open' : 'Resolved'}
         </StatusTag>
-        <span className="text-[11.5px] text-muted-foreground">{exc.stage}</span>
+        <span className="text-[12px] text-muted-foreground">{exc.stage}</span>
       </div>
       <p className="mt-1.5 text-[12.5px] text-foreground">{exc.reason}</p>
-      <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+      <p className="mt-1 text-[12px] text-muted-foreground">
         Raised by {exc.raised_by_name ?? 'someone no longer with the company'} on{' '}
         {formatDate(exc.raised_at)}
         {exc.owner_name ? ` · owner: ${exc.owner_name}` : ''}
       </p>
       {exc.status === 'resolved' ? (
-        <p className="mt-1 text-[11.5px] text-muted-foreground">
+        <p className="mt-1 text-[12px] text-muted-foreground">
           Resolved by {exc.resolved_by_name ?? 'someone no longer with the company'}
           {exc.resolved_at ? ` on ${formatDate(exc.resolved_at)}` : ''}
           {exc.resolution_note ? `: ${exc.resolution_note}` : ''}
@@ -183,7 +175,7 @@ function ExceptionRow({ exc }: { exc: StageException }) {
           <div className="flex flex-wrap items-center gap-2">
             <label
               htmlFor={`reassign-${exc.exception_id}`}
-              className="text-[11.5px] text-[var(--ui-soft)]"
+              className="text-[12px] text-[var(--ui-soft)]"
             >
               Reassign to
             </label>
@@ -194,7 +186,7 @@ function ExceptionRow({ exc }: { exc: StageException }) {
                 if (e.target.value) reassignMut.mutate(e.target.value);
               }}
               disabled={reassignMut.isPending}
-              className="rounded-[9px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+              className="h-9 rounded-[10px] border border-border bg-secondary ps-2.5 text-[12px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               <option value="">Unassigned</option>
               {(owners.data ?? []).map((o) => (
@@ -211,13 +203,13 @@ function ExceptionRow({ exc }: { exc: StageException }) {
               onChange={(e) => setNote(e.target.value)}
               placeholder="Resolution note (optional)"
               aria-label={`Resolution note for ${exc.stage} exception`}
-              className="min-w-0 flex-1 rounded-[9px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+              className="min-w-0 flex-1 rounded-[9px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
             <button
               type="button"
               onClick={() => resolveMut.mutate()}
               disabled={resolveMut.isPending}
-              className="rounded-[9px] border border-[var(--ui-line-strong)] px-3 py-1 text-[11.5px] font-medium text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
+              className="rounded-[9px] border border-[var(--ui-line-strong)] px-3 py-1 text-[12px] font-medium text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
             >
               {resolveMut.isPending ? 'Resolving…' : 'Resolve'}
             </button>
@@ -239,21 +231,21 @@ export default function ExceptionsSection({ enrolmentId }: { enrolmentId: string
   const openCount = rows.filter((r) => r.status === 'open').length;
 
   return (
-    <div className="mt-5">
+    <div className="mt-6 border-t border-border pt-5">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+        <h3 className="flex items-center gap-1.5 text-[15px] font-bold text-foreground">
           <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
           Exceptions{openCount > 0 ? ` (${openCount} open)` : ''}
         </h3>
         <button
           type="button"
           onClick={() => setRaising((v) => !v)}
-          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {raising ? 'Close' : 'Raise exception'}
         </button>
       </div>
-      <p className="mt-1 text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
+      <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
         An exception records what is blocking this application for a person to act on. It never
         changes the candidate&rsquo;s status.
       </p>

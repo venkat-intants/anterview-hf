@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import httpx
 import structlog
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.admin_auth import verify_admin_role
 from app.config import settings
@@ -32,10 +32,43 @@ class ServiceHealth(BaseModel):
     detail: str | None = None
 
 
+class OperationalSwitch(BaseModel):
+    """A deliberate off-switch and its CURRENT value, so one left off is visible.
+
+    Admin-only (this whole router is). ``needs_attention`` is true whenever the
+    value differs from ``normal`` -- it does not change ``overall``, which stays
+    a statement about reachability.
+    """
+
+    name: str
+    enabled: bool
+    normal: bool
+    needs_attention: bool
+    effect: str
+
+
 class SystemHealth(BaseModel):
     overall: str  # operational | degraded
     services: list[ServiceHealth]
     checked_at: str
+    switches: list[OperationalSwitch] = Field(default_factory=list)
+
+
+def _switches() -> list[OperationalSwitch]:
+    enabled = bool(settings.erasure_executor_enabled)
+    return [
+        OperationalSwitch(
+            name="erasure_executor_enabled",
+            enabled=enabled,
+            normal=True,
+            needs_attention=not enabled,
+            effect=(
+                "Off: DPDP erasure requests are accepted and consent is revoked, but "
+                "nothing is physically purged until it is re-enabled. Must not stay "
+                "off past the retention window."
+            ),
+        )
+    ]
 
 
 _PEERS: list[tuple[str, str]] = [
@@ -91,5 +124,8 @@ async def system_health() -> SystemHealth:
     ]
     overall = "operational" if all(s.status == "operational" for s in services) else "degraded"
     return SystemHealth(
-        overall=overall, services=services, checked_at=datetime.now(tz=UTC).isoformat()
+        overall=overall,
+        services=services,
+        checked_at=datetime.now(tz=UTC).isoformat(),
+        switches=_switches(),
     )

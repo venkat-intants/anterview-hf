@@ -9,6 +9,7 @@
 // services/data_gateway/app/routers/hr_requisitions.py EXACTLY.
 
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete } from './client';
+import { pathId } from './pathId';
 
 /** Lifecycle of an opening. Closing one does NOT reject the people in it. */
 export type RequisitionStatus = 'open' | 'paused' | 'closed';
@@ -107,6 +108,13 @@ export interface Requisition extends PostingFields {
    * nothing rather than as "on track".
    */
   delivery_risk?: 'on_track' | 'at_risk' | 'off_track' | null;
+  /**
+   * OPTIONAL on the list rows of a newer backend: whether a job description /
+   * a hiring process (workflow) is published. Absent means "the server did not
+   * say" — never read it as false (lib/openingList.ts keeps "open to check").
+   */
+  has_published_jd?: boolean;
+  has_published_workflow?: boolean;
   // ── Approval (PH3-B2) ────────────────────────────────────────────────
   // A separate axis from `status`: approved does not imply open, and closing
   // an opening does not un-approve it. Openings that predate the approval gate
@@ -204,7 +212,7 @@ export function listRequisitions(
 }
 
 export function getRequisition(id: string): Promise<Requisition> {
-  return apiGet<Requisition>(`/hr/requisitions/${id}`);
+  return apiGet<Requisition>(`/hr/requisitions/${pathId(id)}`);
 }
 
 export function createRequisition(body: RequisitionInput): Promise<Requisition> {
@@ -215,7 +223,7 @@ export function updateRequisition(
   id: string,
   body: Partial<RequisitionInput>,
 ): Promise<Requisition> {
-  return apiPatch<Requisition>(`/hr/requisitions/${id}`, body);
+  return apiPatch<Requisition>(`/hr/requisitions/${pathId(id)}`, body);
 }
 
 /**
@@ -248,7 +256,7 @@ export async function setRequisitionStatus(
   opts: { reason?: string; acknowledgeUnresolved?: boolean } = {},
 ): Promise<Requisition & { unresolved?: number }> {
   try {
-    return await apiPost<Requisition & { unresolved?: number }>(`/hr/requisitions/${id}/status`, {
+    return await apiPost<Requisition & { unresolved?: number }>(`/hr/requisitions/${pathId(id)}/status`, {
       status,
       ...(opts.reason ? { reason: opts.reason } : {}),
       ...(opts.acknowledgeUnresolved ? { acknowledge_unresolved: true } : {}),
@@ -282,7 +290,7 @@ export function listEnrolments(
   if (opts.limit !== undefined) p.set('limit', String(opts.limit));
   if (opts.offset !== undefined) p.set('offset', String(opts.offset));
   const q = p.toString();
-  return apiGet<Enrolment[]>(`/hr/requisitions/${requisitionId}/enrolments${q ? `?${q}` : ''}`);
+  return apiGet<Enrolment[]>(`/hr/requisitions/${pathId(requisitionId)}/enrolments${q ? `?${q}` : ''}`);
 }
 
 /**
@@ -300,7 +308,7 @@ export function setEnrolmentStatus(
   reason?: string,
   reasonCode?: string,
 ): Promise<Enrolment> {
-  return apiPost<Enrolment>(`/hr/enrolments/${enrolmentId}/status`, {
+  return apiPost<Enrolment>(`/hr/enrolments/${pathId(enrolmentId)}/status`, {
     status,
     reason: reason?.trim() || null,
     ...(reasonCode ? { reason_code: reasonCode } : {}),
@@ -336,7 +344,7 @@ export interface StageHistoryEntry {
 }
 
 export function getEnrolmentHistory(enrolmentId: string): Promise<StageHistoryEntry[]> {
-  return apiGet<StageHistoryEntry[]>(`/hr/enrolments/${enrolmentId}/history`);
+  return apiGet<StageHistoryEntry[]>(`/hr/enrolments/${pathId(enrolmentId)}/history`);
 }
 
 export interface BackfilledRequisition {
@@ -371,7 +379,7 @@ export interface BackfillReview {
 
 /** An inferred opening is right as it is: take it out of the review queue. */
 export function confirmRequisition(requisitionId: string): Promise<Requisition> {
-  return apiPost<Requisition>(`/hr/requisitions/${requisitionId}/confirm`, {});
+  return apiPost<Requisition>(`/hr/requisitions/${pathId(requisitionId)}/confirm`, {});
 }
 
 export interface MergeRequisitionResult {
@@ -389,7 +397,7 @@ export function mergeRequisition(
   requisitionId: string,
   intoRequisitionId: string,
 ): Promise<MergeRequisitionResult> {
-  return apiPost<MergeRequisitionResult>(`/hr/requisitions/${requisitionId}/merge`, {
+  return apiPost<MergeRequisitionResult>(`/hr/requisitions/${pathId(requisitionId)}/merge`, {
     into_requisition_id: intoRequisitionId,
   });
 }
@@ -448,7 +456,7 @@ export function splitRequisition(
     level?: string | null;
   },
 ): Promise<SplitResult> {
-  return apiPost<SplitResult>(`/hr/requisitions/${requisitionId}/split`, body);
+  return apiPost<SplitResult>(`/hr/requisitions/${pathId(requisitionId)}/split`, body);
 }
 
 // ── Per-opening dashboard (E1) ──────────────────────────────────────────────
@@ -501,11 +509,13 @@ export interface DashboardScores {
 
 export interface HeldCandidate {
   enrolment_id: string;
-  applicant_id: string;
+  /** Absent on the super-admin read-only view, which strips it server-side. */
+  applicant_id?: string;
   full_name: string;
   held_reason: string | null;
   round_title: string | null;
-  ats_overall: number | null;
+  /** Absent on the super-admin read-only view. */
+  ats_overall?: number | null;
   held_days: number | null;
 }
 
@@ -564,7 +574,7 @@ export interface RequisitionDashboard {
 }
 
 export function getRequisitionDashboard(id: string): Promise<RequisitionDashboard> {
-  return apiGet<RequisitionDashboard>(`/hr/requisitions/${id}/dashboard`);
+  return apiGet<RequisitionDashboard>(`/hr/requisitions/${pathId(id)}/dashboard`);
 }
 
 // ---------------------------------------------------------------------------
@@ -599,7 +609,7 @@ export type BudgetBasis = 'per_hire' | 'total';
 export type BudgetPeriod = 'annual' | 'monthly' | 'one_time';
 
 export function submitRequisitionForApproval(id: string, note?: string): Promise<Requisition> {
-  return apiPost<Requisition>(`/hr/requisitions/${id}/approval/submit`, { note: note ?? null });
+  return apiPost<Requisition>(`/hr/requisitions/${pathId(id)}/approval/submit`, { note: note ?? null });
 }
 
 export function listPendingApprovals(): Promise<PendingApproval[]> {
@@ -607,13 +617,13 @@ export function listPendingApprovals(): Promise<PendingApproval[]> {
 }
 
 export function approveRequisition(id: string, note?: string): Promise<Requisition> {
-  return apiPost<Requisition>(`/hr/requisitions/${id}/approval/approve`, {
+  return apiPost<Requisition>(`/hr/requisitions/${pathId(id)}/approval/approve`, {
     note: note ?? null,
   });
 }
 
 export function rejectRequisition(id: string, note?: string): Promise<Requisition> {
-  return apiPost<Requisition>(`/hr/requisitions/${id}/approval/reject`, {
+  return apiPost<Requisition>(`/hr/requisitions/${pathId(id)}/approval/reject`, {
     note: note ?? null,
   });
 }
@@ -659,24 +669,24 @@ export interface JdDraftInput {
 }
 
 export function getJdHistory(requisitionId: string): Promise<JdHistory> {
-  return apiGet<JdHistory>(`/hr/requisitions/${requisitionId}/jd/versions`);
+  return apiGet<JdHistory>(`/hr/requisitions/${pathId(requisitionId)}/jd/versions`);
 }
 
 export function getJdDraft(requisitionId: string): Promise<JdVersion | null> {
-  return apiGet<JdVersion | null>(`/hr/requisitions/${requisitionId}/jd/draft`);
+  return apiGet<JdVersion | null>(`/hr/requisitions/${pathId(requisitionId)}/jd/draft`);
 }
 
 export function saveJdDraft(requisitionId: string, input: JdDraftInput): Promise<JdVersion> {
-  return apiPut<JdVersion>(`/hr/requisitions/${requisitionId}/jd/draft`, input);
+  return apiPut<JdVersion>(`/hr/requisitions/${pathId(requisitionId)}/jd/draft`, input);
 }
 
 export function discardJdDraft(requisitionId: string): Promise<void> {
-  return apiDelete<void>(`/hr/requisitions/${requisitionId}/jd/draft`);
+  return apiDelete<void>(`/hr/requisitions/${pathId(requisitionId)}/jd/draft`);
 }
 
 export function publishJdVersion(requisitionId: string, versionId: string): Promise<JdVersion> {
   return apiPost<JdVersion>(
-    `/hr/requisitions/${requisitionId}/jd/versions/${versionId}/publish`,
+    `/hr/requisitions/${pathId(requisitionId)}/jd/versions/${pathId(versionId)}/publish`,
     {},
   );
 }
@@ -701,18 +711,18 @@ export interface PublishSchedule {
 }
 
 export function getPublishSchedule(requisitionId: string): Promise<PublishSchedule> {
-  return apiGet<PublishSchedule>(`/hr/requisitions/${requisitionId}/publish-schedule`);
+  return apiGet<PublishSchedule>(`/hr/requisitions/${pathId(requisitionId)}/publish-schedule`);
 }
 
 export function setPublishSchedule(
   requisitionId: string,
   publishAt: string,
 ): Promise<PublishSchedule> {
-  return apiPut<PublishSchedule>(`/hr/requisitions/${requisitionId}/publish-schedule`, {
+  return apiPut<PublishSchedule>(`/hr/requisitions/${pathId(requisitionId)}/publish-schedule`, {
     publish_at: publishAt,
   });
 }
 
 export function cancelPublishSchedule(requisitionId: string): Promise<PublishSchedule> {
-  return apiDelete<PublishSchedule>(`/hr/requisitions/${requisitionId}/publish-schedule`);
+  return apiDelete<PublishSchedule>(`/hr/requisitions/${pathId(requisitionId)}/publish-schedule`);
 }

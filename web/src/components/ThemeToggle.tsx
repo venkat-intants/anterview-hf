@@ -1,5 +1,5 @@
-// ThemeToggle — picks the app's signal-accent theme (Black / Black+Purple /
-// Black+Blue). All three keep the midnight surfaces; only the accent changes.
+// ThemeToggle — picks the signal accent (Blue / Violet / Graphite). Surfaces and
+// text belong to the light/dark mode (ModeSwitch); only the accent changes here.
 //
 // The choice is written to <html data-theme> (CSS vars in index.css recolour
 // the whole UI) and persisted to localStorage. A pre-paint script in index.html
@@ -9,23 +9,32 @@
 // Rendered in the app TopBar next to LanguageSwitcher — visible on all pages.
 
 import { useState } from 'react';
-import { Palette, Check } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Palette } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { THEME_CHANGE_EVENT } from '@/lib/useAccentColor';
 
-type ThemeId = 'blue' | 'purple' | 'black';
+// 'black' keeps its stored id (renaming it would drop a visitor's saved choice);
+// it is shown as Graphite.
+type ThemeId = 'blue' | 'violet' | 'black';
 
 const THEME_KEY = 'intants:theme';
 
 const THEMES: { id: ThemeId; label: string; swatch: string }[] = [
-  { id: 'black', label: 'Black', swatch: 'linear-gradient(135deg,#2a2b2f,#0a0a0b)' },
-  { id: 'purple', label: 'Black + Purple', swatch: 'linear-gradient(135deg,#a855f7,#0a0a0b)' },
-  { id: 'blue', label: 'Black + Blue', swatch: 'linear-gradient(135deg,#0088ff,#0a0a0b)' },
+  { id: 'blue', label: 'Blue', swatch: 'linear-gradient(135deg,#6ea0ff,#1d4ed8)' },
+  { id: 'violet', label: 'Violet', swatch: 'linear-gradient(135deg,#9d8cff,#5b38f0)' },
+  { id: 'black', label: 'Graphite', swatch: 'linear-gradient(135deg,#a8b0c0,#3b4557)' },
 ];
 
 function readTheme(): ThemeId {
   const t = document.documentElement.getAttribute('data-theme');
-  return t === 'purple' || t === 'black' ? t : 'blue';
+  return t === 'violet' || t === 'black' ? t : 'blue';
 }
 
 function applyTheme(id: ThemeId): void {
@@ -40,71 +49,47 @@ function applyTheme(id: ThemeId): void {
 }
 
 export default function ThemeToggle() {
-  const [open, setOpen] = useState(false);
   const [theme, setTheme] = useState<ThemeId>(() => readTheme());
 
-  const active = THEMES.find((t) => t.id === theme) ?? THEMES[2];
+  const active = THEMES.find((t) => t.id === theme) ?? THEMES[0];
 
   function choose(id: ThemeId) {
     applyTheme(id);
     setTheme(id);
-    setOpen(false);
   }
 
   return (
-    <div className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Theme"
-        title="Theme"
-        className="flex items-center gap-1.5 rounded-[10px] border border-border bg-[var(--ui-inset)] px-3 py-2 text-[13px] text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] transition-colors"
-      >
-        <Palette size={15} aria-hidden="true" />
-        <span
-          className="h-3.5 w-3.5 rounded-full ring-1 ring-white/20"
-          style={{ background: active.swatch }}
-          aria-hidden="true"
-        />
-      </button>
-
-      {open && (
-        <>
-          {/* Backdrop to dismiss */}
-          <div className="fixed inset-0 z-30" aria-hidden="true" onClick={() => setOpen(false)} />
-          <div
-            role="menu"
-            className="absolute right-0 top-[calc(100%+8px)] z-40 w-48 overflow-hidden rounded-[12px] border border-border bg-card p-1 shadow-2xl"
-          >
-            {THEMES.map(({ id, label, swatch }) => {
-              const isActive = theme === id;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={isActive}
-                  onClick={() => choose(id)}
-                  className={cn(
-                    'flex w-full items-center gap-2.5 rounded-[8px] px-3 py-2 text-left text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] transition-colors',
-                    isActive ? 'bg-[var(--ui-inset)] text-foreground' : 'text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground',
-                  )}
-                >
-                  <span
-                    className="h-4 w-4 flex-none rounded-full ring-1 ring-white/20"
-                    style={{ background: swatch }}
-                    aria-hidden="true"
-                  />
-                  <span className="flex-1 truncate">{label}</span>
-                  {isActive && <Check size={14} aria-hidden="true" className="flex-none text-[var(--accent)]" />}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Theme"
+          title="Theme"
+          className="flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-[13px] text-[var(--ui-soft)] transition-colors hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] data-[state=open]:bg-[var(--ui-inset)] data-[state=open]:text-foreground"
+        >
+          <Palette size={15} aria-hidden="true" />
+          <span
+            className="h-3.5 w-3.5 rounded-full"
+            style={{ background: active.swatch }}
+            aria-hidden="true"
+          />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" sideOffset={8} className="w-48 min-w-0">
+        <DropdownMenuLabel>Accent</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={theme} onValueChange={(id) => choose(id as ThemeId)}>
+          {THEMES.map(({ id, label, swatch }) => (
+            <DropdownMenuRadioItem key={id} value={id} className="gap-2.5">
+              <span
+                className="h-4 w-4 flex-none rounded-full"
+                style={{ background: swatch }}
+                aria-hidden="true"
+              />
+              <span className="flex-1 truncate">{label}</span>
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

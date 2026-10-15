@@ -49,11 +49,11 @@ export default function RoleRoute({ roles }: RoleRouteProps) {
   if (isInitializing) {
     return (
       <main
-        className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-violet-50"
+        className="min-h-screen flex items-center justify-center bg-background"
         aria-label="Loading"
       >
         <div
-          className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent"
+          className="h-10 w-10 animate-spin rounded-full border-4 border-[var(--accent)] border-t-transparent"
           role="status"
           aria-label="Checking session"
         />

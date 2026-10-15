@@ -18,12 +18,12 @@ import {
 import { toast } from '@/lib/toast';
 import { GlassCard } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
-import { Reveal } from '@/design/components/Reveal';
+import { Page, PageHeader, Toolbar } from '@/design/components/page';
 import { Loader2 } from '@/design/components/icons';
 
 const inputCls =
   'mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
+  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
 const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ['full_time', 'part_time', 'contract', 'internship'];
@@ -289,7 +289,7 @@ function TemplateRow({ template }: { template: OfferTemplate }) {
           <button
             type="button"
             onClick={() => setEditing((v) => !v)}
-            className="text-[12px] text-[var(--ui-info)] hover:underline"
+            className="min-h-[40px] rounded-full px-3 text-[13px] font-medium text-[var(--ui-info)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             {editing ? 'Close' : 'Edit'}
           </button>
@@ -328,6 +328,7 @@ function TemplateRow({ template }: { template: OfferTemplate }) {
 export default function OfferTemplates() {
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
+  const [search, setSearch] = useState('');
 
   const list = useQuery({ queryKey: ['hr', 'offer-templates'], queryFn: listOfferTemplates });
 
@@ -341,30 +342,46 @@ export default function OfferTemplates() {
     onError: (e: unknown) => toast.error(errText(e, 'Could not create this template')),
   });
 
-  const rows = list.data ?? [];
+  const needle = search.trim().toLowerCase();
+  const rows = (list.data ?? []).filter((t) => !needle || t.name.toLowerCase().includes(needle));
 
   return (
-    <div className="mx-auto w-full max-w-[720px] px-4 py-8">
-      <Reveal>
-        <h1 className="text-[24px] font-semibold tracking-[-0.6px] text-foreground">
-          Offer templates
-        </h1>
-        <p className="mt-1 text-[13px] text-muted-foreground">
-          Reusable starting points for an offer. Compensation is never part of a template — every
-          offer sets its own base salary.
-        </p>
-      </Reveal>
+    <Page width="form">
+      <PageHeader
+        title="Offer templates"
+        description="Reusable starting points for an offer. Compensation is never part of a template — every offer sets its own base salary."
+      />
 
-      <div className="mt-5">
-        <button
-          type="button"
-          onClick={() => setCreating((v) => !v)}
-          className="text-[12.5px] text-[var(--ui-info)] hover:underline"
-        >
-          {creating ? 'Close' : 'New template'}
-        </button>
-        {creating ? (
-          <GlassCard className="mt-3 p-4">
+      <Toolbar
+        trailing={
+          <>
+            {list.data ? (
+              <span className="text-[13px] tabular-nums text-muted-foreground" role="status">
+                {rows.length} of {list.data.length} template{list.data.length === 1 ? '' : 's'}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setCreating((v) => !v)}
+              className="min-h-[40px] rounded-full border border-[var(--ui-line-strong)] px-4 py-1.5 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            >
+              {creating ? 'Close' : 'New template'}
+            </button>
+          </>
+        }
+      >
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search templates"
+          aria-label="Search templates"
+          className="min-h-[40px] w-full min-w-[200px] rounded-[10px] border border-border bg-secondary px-3 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] sm:max-w-[320px]"
+        />
+      </Toolbar>
+
+      {creating ? (
+          <GlassCard className="p-4">
             <TemplateForm
               initial={EMPTY}
               onSave={(body) => createMut.mutate(body)}
@@ -372,25 +389,28 @@ export default function OfferTemplates() {
               submitLabel="Create template"
             />
           </GlassCard>
-        ) : null}
-      </div>
+      ) : null}
 
       {list.isLoading ? (
-        <p className="mt-6 flex items-center gap-2 text-[13px] text-muted-foreground">
+        <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
           Loading…
         </p>
       ) : list.isError ? (
-        <p className="mt-6 text-[13px] text-[var(--ui-danger)]">Could not load templates.</p>
+        <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
+          Could not load templates.
+        </p>
       ) : rows.length === 0 ? (
-        <p className="mt-6 text-[13px] text-muted-foreground">No templates yet.</p>
+        <p className="text-[13px] text-muted-foreground">
+          {list.data && list.data.length > 0 ? 'No templates match.' : 'No templates yet.'}
+        </p>
       ) : (
-        <div className="mt-6 flex flex-col gap-3">
+        <div className="flex flex-col gap-3">
           {rows.map((t) => (
             <TemplateRow key={t.id} template={t} />
           ))}
         </div>
       )}
-    </div>
+    </Page>
   );
 }

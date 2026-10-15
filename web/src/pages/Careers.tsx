@@ -29,7 +29,9 @@ import { useQuery } from '@tanstack/react-query';
 import { getCareersBoard, type BoardQuery, type JobCard } from '@/api/careers';
 import { ApiError } from '@/api/client';
 import { Briefcase, MapPin, Search, X } from '@/design/components/icons';
-import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
+import { EmptyState } from '@/design/components/page';
 
 // Employment types are a closed server vocabulary, so they are looked up by
 // key. An unknown value falls back to the raw string rather than rendering a
@@ -40,11 +42,11 @@ function employmentLabel(t: TFunction, value: string): string {
   return label === key ? value : label;
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, company }: { children: React.ReactNode; company?: string }) {
   return (
-    <div className="min-h-screen bg-card px-4 py-10">
-      <div className="mx-auto w-full max-w-[860px]">{children}</div>
-    </div>
+    <PublicFrame company={company} width="wide">
+      {children}
+    </PublicFrame>
   );
 }
 
@@ -104,15 +106,15 @@ function Card({ job }: { job: JobCard }) {
       // build a tracked link by hand, which is the attribution they would
       // otherwise never get — and the one they most often want.
       to={`/apply/${job.requisition_id}?src=careers_site`}
-      className="block rounded-[16px] border border-border bg-card p-5 transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
+      className="block rounded-card border border-border bg-card p-5 shadow-card transition-shadow hover:shadow-elevated focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-[17px] font-semibold text-foreground">{job.title}</h2>
+          <h2 className="text-[17px] font-bold text-foreground">{job.title}</h2>
           {meta ? <p className="mt-1 text-[13.5px] text-[var(--ui-soft)]">{meta}</p> : null}
         </div>
         {salary ? (
-          <span className="shrink-0 rounded-[10px] border border-border bg-[var(--ui-inset)] px-2.5 py-1 text-[12.5px] font-medium text-foreground">
+          <span className="shrink-0 rounded-full border border-border bg-[var(--ui-inset)] px-3 py-1 text-[12.5px] font-medium text-foreground">
             {salary}
           </span>
         ) : null}
@@ -131,7 +133,7 @@ function Card({ job }: { job: JobCard }) {
         </div>
       ) : null}
 
-      <p className="mt-3 text-[12.5px] text-[var(--ui-faint)]">
+      <p className="mt-3 text-[12.5px] text-[var(--ui-soft)]">
         {t('careers.levelLine', { level: job.level })}
         {experience ? ` · ${experience}` : ''} · {postedLine(t, job.posted_at)}
       </p>
@@ -140,7 +142,7 @@ function Card({ job }: { job: JobCard }) {
 }
 
 const SELECT_CLASS =
-  'rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none';
+  'h-11 max-w-full rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20';
 
 /**
  * Salary rungs for the filter, in rupees.
@@ -208,15 +210,18 @@ export default function Careers() {
     const missing = board.error instanceof ApiError && board.error.status === 404;
     return (
       <Shell>
-        <div className="rounded-[20px] border border-border bg-card p-8 text-center">
-          <Briefcase className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
-          <h1 className="mt-4 text-[20px] font-semibold text-foreground">
-            {missing ? t('careers.notFoundTitle') : t('careers.errorTitle')}
-          </h1>
-          <p className="mx-auto mt-2 max-w-[48ch] text-[13.5px] leading-relaxed text-muted-foreground">
-            {missing ? t('careers.notFoundDesc') : t('careers.errorDesc')}
-          </p>
-        </div>
+        <PublicNotice
+          icon={<Briefcase size={22} aria-hidden="true" />}
+          title={missing ? t('careers.notFoundTitle') : t('careers.errorTitle')}
+          description={missing ? t('careers.notFoundDesc') : t('careers.errorDesc')}
+          action={
+            missing ? undefined : (
+              <Button type="button" variant="outline" onClick={() => void board.refetch()}>
+                {t('careers.retry')}
+              </Button>
+            )
+          }
+        />
       </Shell>
     );
   }
@@ -232,12 +237,9 @@ export default function Careers() {
   ].filter((k) => params.get(k)).length;
 
   return (
-    <Shell>
+    <Shell company={data?.company_name}>
       <header className="mb-6">
-        <div className="text-[12.5px] uppercase tracking-[1.2px] text-[var(--ui-faint)]">
-          {data?.company_name ?? ' '}
-        </div>
-        <h1 className="mt-1 text-[30px] font-semibold tracking-[-0.9px] text-foreground">
+        <h1 className="text-[28px] font-bold leading-[1.15] tracking-[-0.6px] text-foreground sm:text-[32px]">
           {t('careers.openRoles')}
         </h1>
       </header>
@@ -246,7 +248,7 @@ export default function Careers() {
         <label className="relative block">
           <span className="sr-only">{t('careers.searchLabel')}</span>
           <Search
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ui-faint)]"
+            className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ui-soft)]"
             aria-hidden="true"
           />
           <input
@@ -257,7 +259,7 @@ export default function Careers() {
               if (e.key === 'Enter') setFilter('q', e.currentTarget.value.trim());
             }}
             onBlur={(e) => setFilter('q', e.currentTarget.value.trim())}
-            className="w-full rounded-[12px] border border-border bg-secondary py-2.5 pl-9 pr-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+            className="h-11 w-full rounded-full border border-input bg-card pl-10 pr-4 text-base text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm"
           />
         </label>
 
@@ -348,19 +350,20 @@ export default function Careers() {
           ) : null}
 
           {activeCount > 0 ? (
-            <button
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => setParams(new URLSearchParams(), { replace: true })}
-              className="inline-flex items-center gap-1 rounded-[10px] border border-border px-2.5 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground focus:outline-none focus-visible:border-[var(--accent)]"
+              className="h-11"
             >
-              <X size={13} aria-hidden="true" />
+              <X size={14} aria-hidden="true" />
               {t('careers.clearFilters')}
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
 
-      <p className="mb-3 text-[13px] text-muted-foreground" aria-live="polite">
+      <p className="mb-3 text-[13.5px] text-muted-foreground" aria-live="polite">
         {board.isLoading
           ? t('careers.loadingRoles')
           : t('careers.positions', { count: data?.total ?? 0 })}
@@ -369,23 +372,32 @@ export default function Careers() {
       <div className="flex flex-col gap-3">
         {board.isLoading ? (
           <>
-            <div className="h-[118px] animate-pulse rounded-[16px] border border-border bg-card" />
-            <div className="h-[118px] animate-pulse rounded-[16px] border border-border bg-card" />
+            <div className="h-[118px] animate-pulse rounded-card border border-border bg-[var(--ui-inset-soft)]" />
+            <div className="h-[118px] animate-pulse rounded-card border border-border bg-[var(--ui-inset-soft)]" />
           </>
         ) : null}
 
         {!board.isLoading && data && data.items.length === 0 ? (
-          <div className="rounded-[16px] border border-border bg-card p-8 text-center">
-            <MapPin className="mx-auto h-7 w-7 text-[var(--ui-faint)]" aria-hidden="true" />
-            <h2 className="mt-3 text-[16px] font-semibold text-foreground">
-              {activeCount > 0 ? t('careers.noMatchTitle') : t('careers.noRolesTitle')}
-            </h2>
-            <p className="mx-auto mt-2 max-w-[44ch] text-[13.5px] leading-relaxed text-muted-foreground">
-              {activeCount > 0
+          <EmptyState
+            icon={MapPin}
+            title={activeCount > 0 ? t('careers.noMatchTitle') : t('careers.noRolesTitle')}
+            description={
+              activeCount > 0
                 ? t('careers.noMatchDesc')
-                : t('careers.noRolesDesc', { company: data.company_name })}
-            </p>
-          </div>
+                : t('careers.noRolesDesc', { company: data.company_name })
+            }
+            action={
+              activeCount > 0 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setParams(new URLSearchParams(), { replace: true })}
+                >
+                  {t('careers.clearFilters')}
+                </Button>
+              ) : undefined
+            }
+          />
         ) : null}
 
         {data?.items.map((job) => (
@@ -395,36 +407,30 @@ export default function Careers() {
 
       {data && data.total > data.per_page ? (
         <div className="mt-6 flex items-center justify-between">
-          <button
+          <Button
             type="button"
+            variant="outline"
+            className="h-11"
             disabled={data.page <= 1}
             onClick={() => goToPage(data.page - 1)}
-            className={cn(
-              'rounded-[10px] border border-border px-3 py-2 text-[13px] text-[var(--ui-soft)]',
-              data.page <= 1 ? 'opacity-40' : 'hover:text-foreground',
-            )}
           >
             {t('careers.previous')}
-          </button>
-          <span className="text-[12.5px] text-[var(--ui-faint)]">
+          </Button>
+          <span className="text-[13px] text-muted-foreground">
             {t('careers.pageOf', {
               page: data.page,
               total: Math.ceil(data.total / data.per_page),
             })}
           </span>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            className="h-11"
             disabled={data.page >= Math.ceil(data.total / data.per_page)}
             onClick={() => goToPage(data.page + 1)}
-            className={cn(
-              'rounded-[10px] border border-border px-3 py-2 text-[13px] text-[var(--ui-soft)]',
-              data.page >= Math.ceil(data.total / data.per_page)
-                ? 'opacity-40'
-                : 'hover:text-foreground',
-            )}
           >
             {t('careers.next')}
-          </button>
+          </Button>
         </div>
       ) : null}
     </Shell>

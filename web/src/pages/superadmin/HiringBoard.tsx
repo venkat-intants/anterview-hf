@@ -14,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, Loader2 } from '@/design/components/icons';
 import { GlassCard } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
+import { EmptyState, PageHeader, Toolbar } from '@/design/components/page';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
 import { getHiringBoard, type BoardOpening, type HealthBand } from '@/api/companyBoard';
@@ -49,35 +49,37 @@ export default function HiringBoard(): JSX.Element {
 
   return (
     <div className="mx-auto w-full max-w-[1200px] px-4 py-8">
-      <Reveal>
-        <header className="mb-6">
-          <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Hiring board</h1>
-          <p className="mt-1 max-w-[72ch] text-[13.5px] leading-relaxed text-muted-foreground">
-            Every open opening in the company. Health is worked out from how candidates have
-            actually moved through each workflow — nobody types it in. Read-only: the hiring
-            decisions stay with your HR managers.
-          </p>
-        </header>
-      </Reveal>
+      <PageHeader
+        title="Hiring board"
+        description="Every open opening in the company. Health is worked out from how candidates have actually moved through each workflow — nobody types it in. Read-only: the hiring decisions stay with your HR managers."
+      />
 
       {board.data ? (
-        <div className="mb-5 flex flex-wrap gap-2" role="group" aria-label="Filter by health">
-          {ORDER.map((band) => (
-            <button
-              key={band}
-              type="button"
-              aria-pressed={filter === band}
-              onClick={() => setFilter(filter === band ? null : band)}
-              className={cn(
-                'rounded-full border px-3 py-1 text-[12.5px] tabular-nums',
-                BAND[band].chip,
-                filter === band ? 'bg-[var(--ui-inset)]' : 'bg-transparent',
-              )}
-            >
-              {BAND[band].label} · {board.data.summary[band] ?? 0}
-            </button>
-          ))}
-        </div>
+        <Toolbar
+          trailing={
+            <span className="text-[13px] tabular-nums text-muted-foreground">
+              {openings.length} {openings.length === 1 ? 'opening' : 'openings'}
+            </span>
+          }
+        >
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Filter by health">
+            {ORDER.map((band) => (
+              <button
+                key={band}
+                type="button"
+                aria-pressed={filter === band}
+                onClick={() => setFilter(filter === band ? null : band)}
+                className={cn(
+                  'min-h-10 rounded-full border px-4 py-1 text-[13px] tabular-nums focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+                  BAND[band].chip,
+                  filter === band ? 'bg-[var(--ui-inset)] font-semibold' : 'bg-transparent',
+                )}
+              >
+                {BAND[band].label} · {board.data.summary[band] ?? 0}
+              </button>
+            ))}
+          </div>
+        </Toolbar>
       ) : null}
 
       {board.isLoading ? (
@@ -91,15 +93,17 @@ export default function HiringBoard(): JSX.Element {
           Could not load the hiring board.
         </GlassCard>
       ) : openings.length === 0 ? (
-        <GlassCard className="p-10 text-center text-[13.5px] text-muted-foreground">
-          {filter ? 'No openings in this state.' : 'There are no open openings.'}
+        <GlassCard className="p-4">
+          <EmptyState
+            title={filter ? 'No openings in this state.' : 'There are no open openings.'}
+          />
         </GlassCard>
       ) : (
         <GlassCard className="p-0">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] text-left text-[13px]">
               <thead>
-                <tr className="border-b border-border text-[11.5px] uppercase tracking-wide text-[var(--ui-faint)]">
+                <tr className="sticky top-0 border-b border-border bg-[var(--ui-inset-soft)] text-[12px] uppercase tracking-wide text-muted-foreground">
                   <th className="px-4 py-3 font-medium">Opening</th>
                   <th className="px-3 py-3 font-medium">Status</th>
                   <th className="px-3 py-3 font-medium">Workflow</th>
@@ -114,7 +118,7 @@ export default function HiringBoard(): JSX.Element {
                 {openings.map((o) => (
                   <tr
                     key={o.requisition_id}
-                    className="border-b border-border/60 align-top last:border-b-0"
+                    className="border-b border-border/60 align-top last:border-b-0 hover:bg-[var(--ui-inset-soft)]"
                     data-testid={`board-row-${o.requisition_id}`}
                   >
                     <td className="px-4 py-3">
@@ -139,7 +143,7 @@ export default function HiringBoard(): JSX.Element {
                     <td className="max-w-[340px] px-4 py-3">
                       <span
                         className={cn(
-                          'inline-block rounded-full border px-2 py-0.5 text-[11.5px] font-medium',
+                          'inline-block rounded-full border px-2 py-0.5 text-[12px] font-medium',
                           BAND[o.health.band].chip,
                         )}
                       >

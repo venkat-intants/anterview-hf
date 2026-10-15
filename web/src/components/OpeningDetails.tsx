@@ -13,11 +13,12 @@ import {
   updateRequisition,
   type Requisition,
 } from '@/api/requisitions';
-import { GlassCard } from '@/design/components/primitives';
+import { SectionCard } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
 import { toast } from '@/lib/toast';
 
 const field =
-  'w-full rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none';
+  'h-10 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 export default function OpeningDetails({ requisition: req }: { requisition: Requisition }) {
   const qc = useQueryClient();
@@ -55,10 +56,9 @@ export default function OpeningDetails({ requisition: req }: { requisition: Requ
   });
 
   return (
-    <GlassCard className="mb-5 p-5">
-      <h2 className="text-[15px] font-semibold text-foreground">Opening details</h2>
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-        <label className="block text-[12px] font-medium text-[var(--ui-soft)]">
+    <SectionCard title="Opening details">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label className="block text-[13px] font-semibold text-foreground">
           Owner
           <select
             className={`mt-1.5 ${field}`}
@@ -74,7 +74,7 @@ export default function OpeningDetails({ requisition: req }: { requisition: Requ
             ))}
           </select>
         </label>
-        <label className="block text-[12px] font-medium text-[var(--ui-soft)]">
+        <label className="block text-[13px] font-semibold text-foreground">
           Hires wanted
           <input
             className={`mt-1.5 ${field}`}
@@ -87,7 +87,7 @@ export default function OpeningDetails({ requisition: req }: { requisition: Requ
             aria-label="Hires wanted"
           />
         </label>
-        <label className="block text-[12px] font-medium text-[var(--ui-soft)]">
+        <label className="block text-[13px] font-semibold text-foreground">
           Closes on
           <input
             className={`mt-1.5 ${field}`}
@@ -100,15 +100,15 @@ export default function OpeningDetails({ requisition: req }: { requisition: Requ
         </label>
       </div>
       <div className="mt-3 flex justify-end">
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={() => save.mutate()}
           disabled={!dirty || save.isPending}
-          className="rounded-[12px] bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
         >
           Save
-        </button>
+        </Button>
       </div>
-    </GlassCard>
+    </SectionCard>
   );
 }

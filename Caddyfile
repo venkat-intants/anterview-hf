@@ -62,21 +62,57 @@
 	# them first (longest-path-wins).
 	# ==================================================================
 	handle /admin/analytics/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy admin_ops:8004
 	}
 	handle /admin/interviews* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy admin_ops:8004
 	}
 	handle /admin/overview* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy admin_ops:8004
 	}
 	handle /admin/status* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy admin_ops:8004
 	}
 	handle /admin/system/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy admin_ops:8004
 	}
 	handle /users/*/dpdp/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy admin_ops:8004
 	}
 
@@ -85,6 +121,12 @@
 	# /api/scorecards* is more specific than interview_core's /api/* below.
 	# ==================================================================
 	handle /api/scorecards* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy feedback_billing:8003
 	}
 
@@ -93,9 +135,21 @@
 	# Serves /api/me, /api/avatars, /api/sessions*, /api/rooms/*.
 	# ==================================================================
 	handle /api/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 1MB
+		}
 		reverse_proxy interview_core:8001
 	}
 	handle /ws/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy interview_core:8001
 	}
 
@@ -150,6 +204,12 @@
 		reverse_proxy data_gateway:8002
 	}
 	handle /consent* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy data_gateway:8002
 	}
 	handle /exam* {
@@ -165,6 +225,12 @@
 		reverse_proxy data_gateway:8002
 	}
 	handle /agent/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy data_gateway:8002
 	}
 	# /interviewer/* — PH4-A1's interviewer console API. Browser navigation to
@@ -263,9 +329,21 @@
 		reverse_proxy data_gateway:8002
 	}
 	handle /notifications* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy data_gateway:8002
 	}
 	handle /admin/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy data_gateway:8002
 	}
 	handle /users/* {

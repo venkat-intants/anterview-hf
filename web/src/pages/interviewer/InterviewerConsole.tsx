@@ -12,6 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Loader2, Users } from '@/design/components/icons';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
+import { EmptyState, PageHeader, Page } from '@/design/components/page';
 import { LIVE_POLL_MS } from '@/lib/polling';
 import {
   listAssignments,
@@ -47,7 +48,7 @@ function AssignmentRow({ a }: { a: InterviewerAssignment }) {
   return (
     <Link
       to={`/interviewer/scorecards/${a.scorecard_id}`}
-      className="block rounded-[24px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+      className="block rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       aria-label={`Open scorecard for ${a.candidate_name} — ${a.round_title}`}
     >
       <GlassCard hover className="p-5">
@@ -94,20 +95,13 @@ export default function InterviewerConsole(): JSX.Element {
   const rows = data ?? [];
 
   return (
-    <div className="mx-auto w-full max-w-[900px] px-4 py-8">
+    <Page width="form">
       <Reveal>
-        <header className="mb-6">
-          <h1
-            data-testid="page-title"
-            className="text-[26px] font-semibold tracking-[-0.8px] text-foreground"
-          >
-            My interviews
-          </h1>
-          <p className="mt-1.5 max-w-[70ch] text-[13.5px] leading-relaxed text-muted-foreground">
-            Interviews assigned to you. Your scorecard is yours alone — nobody else&rsquo;s
-            assessment is visible here, and nothing here decides an outcome.
-          </p>
-        </header>
+        <PageHeader
+          className="mb-0"
+          title={<span data-testid="page-title">My interviews</span>}
+          description="Interviews assigned to you. Your scorecard is yours alone — nobody else’s assessment is visible here, and nothing here decides an outcome."
+        />
       </Reveal>
 
       {isLoading ? (
@@ -116,16 +110,16 @@ export default function InterviewerConsole(): JSX.Element {
           Loading your interviews…
         </div>
       ) : isError ? (
-        <GlassCard className="p-6 text-[13.5px] text-[var(--ui-danger)]">
-          {errText(error, 'Could not load your interviews')}
+        <GlassCard className="p-6 text-[14px] text-[var(--ui-danger)]">
+          <span role="alert">{errText(error, 'Could not load your interviews')}</span>
         </GlassCard>
       ) : rows.length === 0 ? (
-        <GlassCard className="p-10 text-center">
-          <Users className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
-          <div className="mt-3 text-[15px] font-medium text-foreground">Nothing assigned yet</div>
-          <p className="mx-auto mt-1.5 max-w-[46ch] text-[13px] text-muted-foreground">
-            Interviews HR assigns to you will show up here.
-          </p>
+        <GlassCard className="p-4">
+          <EmptyState
+            icon={Users}
+            title="Nothing assigned yet"
+            description="Interviews HR assigns to you will show up here."
+          />
         </GlassCard>
       ) : (
         <Stagger className="flex flex-col gap-3">
@@ -139,6 +133,6 @@ export default function InterviewerConsole(): JSX.Element {
 
       <UpcomingInterviews />
       <MyAvailability />
-    </div>
+    </Page>
   );
 }

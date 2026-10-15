@@ -5,6 +5,11 @@
 // are resolved server-side from the caller's account — this page never sends
 // a company id.
 //
+// Creating someone happens in a dialog opened from the page header (HR manager)
+// or the interviewers card. The "set-password link was emailed" outcome is a
+// toast plus a hint that stays on the page, so it is not lost when the dialog
+// closes.
+//
 // Shell: bare content — AppShell is provided by the router (no double-wrap).
 
 import { useState } from 'react';
@@ -16,6 +21,8 @@ import {
   KeyRound,
   Building2,
   ClipboardCheck,
+  Search,
+  type LucideIcon,
 } from '@/design/components/icons';
 import { getMe } from '@/api/auth';
 import CareersLinkCard from '@/components/hr/CareersLinkCard';
@@ -32,18 +39,28 @@ import { toast } from '@/lib/toast';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
-import { GlassCard, Avatar, Pill } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
+import { AccountDialog } from '@/components/superadmin/CreateDialogs';
+import { Avatar } from '@/design/components/primitives';
+import { EmptyState, Page, PageHeader } from '@/design/components/page';
+import { Card } from '@/design/components/card';
+import { Row, RowList, Section } from '@/design/components/rows';
+import { Stat, StatGroup } from '@/design/components/stat-group';
 import { gradientFor, initialsOf } from '@/design/data/shared';
+import { listPendingApprovals } from '@/api/requisitions';
+import { listPendingWorkflowReviews } from '@/api/workflowReview';
+import { listOfferApprovals } from '@/api/offers';
+import { listAdminQuestionReviews } from '@/api/questionBanks';
 
 /**
- * One roster (HR managers, or interviewers) — the create form plus the list.
+ * One roster (HR managers, or interviewers) — the list plus its create dialog.
  * Both rosters share the exact same server-row shape (HrManager), so this is
  * the single implementation the page renders twice rather than two near-
  * identical 150-line blocks that would drift apart the first time one of them
  * changed.
+ *
+ * The dialog's open state is owned by the page, because the HR manager roster
+ * is opened from the page header as well.
  */
 function StaffRoster({
   idPrefix,
@@ -52,6 +69,8 @@ function StaffRoster({
   createTitle,
   createBlurb,
   addLabel,
+  openLabel,
+  showOpenButton,
   emptyText,
   listLabel,
   companyName,
@@ -60,13 +79,20 @@ function StaffRoster({
   listFn,
   createFn,
   deleteFn,
+  createOpen,
+  onCreateOpenChange,
 }: {
   idPrefix: string;
-  icon: React.ReactNode;
+  icon: LucideIcon;
   heading: string;
   createTitle: string;
   createBlurb: (companyName: string) => string;
+  /** The dialog's submit button. */
   addLabel: string;
+  /** The button that opens the dialog. */
+  openLabel: string;
+  /** False when the page header already carries the opening button. */
+  showOpenButton: boolean;
   emptyText: string;
   listLabel: string;
   companyName: string;
@@ -76,23 +102,37 @@ function StaffRoster({
   listFn: () => Promise<HrManager[]>;
   createFn: (body: { email: string; full_name: string }) => Promise<HrManager>;
   deleteFn: (userId: string) => Promise<void>;
+  createOpen: boolean;
+  onCreateOpenChange: (open: boolean) => void;
 }) {
   const qc = useQueryClient();
-  const [email, setEmail] = useState('');
-  const [fullName, setFullName] = useState('');
 
   const { data: rows, isLoading } = useQuery({ queryKey: [queryKey], queryFn: listFn });
+  const [filter, setFilter] = useState('');
+  const needle = filter.trim().toLowerCase();
+  const shown = (rows ?? []).filter(
+    (r) =>
+      !needle ||
+      r.full_name.toLowerCase().includes(needle) ||
+      r.email.toLowerCase().includes(needle),
+  );
 
   const createMut = useMutation({
-    mutationFn: () => createFn({ email: email.trim(), full_name: fullName.trim() }),
-    onSuccess: () => {
-      toast.success(`${heading.replace(/s$/, '')} ${email} created — a set-password link was emailed.`);
-      setEmail('');
-      setFullName('');
+    mutationFn: (v: { email: string; fullName: string }) =>
+      createFn({ email: v.email.trim(), full_name: v.fullName.trim() }),
+    onSuccess: (_created, v) => {
+      toast.success(
+        `${heading.replace(/s$/, '')} ${v.email} created — a set-password link was emailed.`,
+      );
+      onCreateOpenChange(false);
       void qc.invalidateQueries({ queryKey: [queryKey] });
     },
     onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : `Could not create this ${heading.toLowerCase().replace(/s$/, '')}.`),
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : `Could not create this ${heading.toLowerCase().replace(/s$/, '')}.`,
+      ),
   });
 
   const deleteMut = useMutation({
@@ -102,120 +142,100 @@ function StaffRoster({
       void qc.invalidateQueries({ queryKey: [queryKey] });
     },
     onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : `Could not remove this ${heading.toLowerCase().replace(/s$/, '')}.`),
+      toast.error(
+        err instanceof Error
+          ? err.message
+          : `Could not remove this ${heading.toLowerCase().replace(/s$/, '')}.`,
+      ),
   });
 
   return (
-    <>
-      <Reveal delay={0.05}>
-        <GlassCard className="p-5 space-y-4">
-          <div className="flex items-center gap-2">
-            <span
-              className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[rgba(var(--accent-rgb),0.12)] text-[var(--ui-info)]"
-              aria-hidden="true"
-            >
-              {icon}
+    <Card
+      as="section"
+      title={heading}
+      description={createBlurb(companyName)}
+      actions={
+        showOpenButton ? (
+          <Button type="button" variant="outline" onClick={() => onCreateOpenChange(true)} className="gap-1.5">
+            <UserPlus className="h-4 w-4" aria-hidden="true" />
+            {openLabel}
+          </Button>
+        ) : undefined
+      }
+    >
+      <AccountDialog
+        open={createOpen}
+        onOpenChange={(next) => {
+          if (next) createMut.reset();
+          onCreateOpenChange(next);
+        }}
+        idPrefix={idPrefix}
+        title={createTitle}
+        description={createBlurb(companyName)}
+        submitLabel={addLabel}
+        emailPlaceholder="name@company.com"
+        namePlaceholder="Full name"
+        pending={createMut.isPending}
+        error={createMut.isError ? createMut.error : null}
+        onSubmit={(v) => createMut.mutate(v)}
+      />
+
+      {isLoading ? (
+        <div className="space-y-2" aria-busy="true">
+          <Skeleton className="h-14 w-full rounded-[14px]" />
+          <Skeleton className="h-14 w-full rounded-[14px]" />
+        </div>
+      ) : !rows || rows.length === 0 ? (
+        <EmptyState icon={icon} title={emptyText} bordered={false} />
+      ) : (
+        <>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+            <div className="relative w-full max-w-[320px]">
+              <Search
+                size={15}
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ui-faint)]"
+                aria-hidden="true"
+              />
+              <input
+                type="search"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                aria-label={`Search ${listLabel.toLowerCase()}`}
+                placeholder="Search by name or email"
+                className="min-h-10 w-full rounded-[10px] border border-input bg-card pl-9 pr-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              />
+            </div>
+            <span className="text-[13px] tabular-nums text-muted-foreground">
+              {needle ? `${shown.length} of ${rows.length}` : rows.length}{' '}
+              {rows.length === 1 ? 'person' : 'people'}
             </span>
-            <div>
-              <h3 className="text-[15px] font-semibold text-foreground">{createTitle}</h3>
-              <p className="text-[12px] text-muted-foreground">{createBlurb(companyName)}</p>
-            </div>
           </div>
-
-          <form
-            className="grid gap-2 sm:grid-cols-[1fr_1fr_auto] items-end"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!email.trim() || !fullName.trim()) {
-                toast.error('Email and name are required.');
-                return;
-              }
-              createMut.mutate();
-            }}
-          >
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor={`${idPrefix}-email`} className="text-[12px] font-medium text-[var(--ui-soft)]">
-                Email
-              </label>
-              <Input
-                id={`${idPrefix}-email`}
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="name@company.com"
-                aria-required="true"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor={`${idPrefix}-name`} className="text-[12px] font-medium text-[var(--ui-soft)]">
-                Full name
-              </label>
-              <Input
-                id={`${idPrefix}-name`}
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                placeholder="Full name"
-                aria-required="true"
-              />
-            </div>
-            <Button
-              type="submit"
-              disabled={createMut.isPending}
-              className="gap-1.5"
-              aria-busy={createMut.isPending}
-            >
-              <UserPlus className="h-4 w-4" aria-hidden="true" />
-              {createMut.isPending ? 'Adding…' : addLabel}
-            </Button>
-          </form>
-
-          <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-            <KeyRound className="h-3 w-3 text-[var(--ui-info)]" aria-hidden="true" />
-            A secure “set your password” link is emailed to them — no password is
-            shared here.
-          </p>
-        </GlassCard>
-      </Reveal>
-
-      <Reveal delay={0.08}>
-        <GlassCard className="p-5">
-          <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-            {icon}
-            {heading}
-          </h3>
-
-          {isLoading ? (
-            <Skeleton className="h-16 w-full rounded-[12px] bg-[var(--ui-inset)]" />
-          ) : !rows || rows.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-muted-foreground">{emptyText}</p>
-          ) : (
-            <div role="list" aria-label={listLabel}>
-              {rows.map((row) => (
-                <div
-                  key={row.user_id}
-                  role="listitem"
-                  className="flex items-center justify-between rounded-[14px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 mb-2 last:mb-0"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <Avatar
-                      initials={initialsOf(row.full_name)}
-                      gradient={gradientFor(row.user_id.charCodeAt(0))}
-                      size={30}
-                    />
-                    <div className="min-w-0">
-                      <p className="text-[13.5px] font-medium text-foreground truncate">
-                        {row.full_name}
-                      </p>
-                      <p className="text-[12px] text-muted-foreground truncate">{row.email}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
+          {shown.length === 0 ? (
+            <p className="py-6 text-center text-[13.5px] text-muted-foreground">
+              No one matches “{filter.trim()}”.
+            </p>
+          ) : null}
+          <RowList aria-label={listLabel}>
+            {shown.map((row) => (
+              <Row
+                key={row.user_id}
+                leading={
+                  <Avatar
+                    initials={initialsOf(row.full_name)}
+                    gradient={gradientFor(row.user_id.charCodeAt(0))}
+                    size={32}
+                  />
+                }
+                title={<span className="block truncate">{row.full_name}</span>}
+                meta={<span className="block truncate">{row.email}</span>}
+                trailing={
+                  <>
                     {row.must_change_password ? (
                       <Badge variant="outline" className="text-xs">
                         pending first login
                       </Badge>
                     ) : (
-                      <Badge variant="success" className="text-xs gap-1">
+                      <Badge variant="success" className="gap-1 text-xs">
                         <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
                         active
                       </Badge>
@@ -225,76 +245,151 @@ function StaffRoster({
                       pending={deleteMut.isPending && deleteMut.variables === row.user_id}
                       onConfirm={() => deleteMut.mutate(row.user_id)}
                     />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-          {removalNote ? (
-            <p className="mt-3 text-[11.5px] text-muted-foreground">{removalNote}</p>
-          ) : null}
-        </GlassCard>
-      </Reveal>
-    </>
+                  </>
+                }
+              />
+            ))}
+          </RowList>
+        </>
+      )}
+
+      <p className="mt-4 flex items-center gap-1.5 text-[13px] text-muted-foreground">
+        <KeyRound className="h-3.5 w-3.5 text-[var(--ui-info)]" aria-hidden="true" />A secure “set
+        your password” link is emailed to them — no password is shared here.
+      </p>
+      {removalNote ? (
+        <p className="mt-2 text-[12.5px] text-muted-foreground">{removalNote}</p>
+      ) : null}
+    </Card>
+  );
+}
+
+/**
+ * One cell of "Waiting on you": the length of a queue, or null when it could not
+ * be fetched. A failed or still-loading queue must never read as 0 — that is
+ * the one wrong answer, because it is also the good news. The query keys and
+ * functions are the ones the queue pages themselves use, so the cache serves
+ * both and nothing here polls.
+ */
+function useQueueCount(queryKey: readonly string[], queryFn: () => Promise<unknown[]>): {
+  count: number | null;
+  failed: boolean;
+} {
+  const q = useQuery({ queryKey, queryFn, retry: false });
+  return { count: q.isSuccess ? q.data.length : null, failed: q.isError };
+}
+
+function WaitingOnYou(): JSX.Element {
+  const openings = useQueueCount(['pending-approvals'], listPendingApprovals);
+  const workflows = useQueueCount(['admin', 'workflow-reviews'], listPendingWorkflowReviews);
+  const offers = useQueueCount(['admin', 'offer-approvals'], listOfferApprovals);
+  const questions = useQueueCount(['admin', 'bank-review-queue'], listAdminQuestionReviews);
+  const allFailed = [openings, workflows, offers, questions].every((q) => q.failed);
+
+  return (
+    <Section
+      title="Waiting on you"
+      description="Items your HR managers have submitted for a decision. Each opens its queue."
+      data-testid="waiting-on-you"
+    >
+      {allFailed ? (
+        <p role="alert" className="text-[13.5px] text-muted-foreground">
+          Could not load the approval queues just now. Refresh to try again.
+        </p>
+      ) : (
+        <StatGroup aria-label="Waiting on you" missingLabel="Count unavailable">
+          <Stat
+            label="Openings"
+            value={openings.count}
+            to="/superadmin/approvals"
+            data-testid="waiting-openings"
+          />
+          <Stat
+            label="Workflows"
+            value={workflows.count}
+            to="/superadmin/workflow-reviews"
+            data-testid="waiting-workflows"
+          />
+          <Stat
+            label="Offers"
+            value={offers.count}
+            to="/superadmin/offer-approvals"
+            data-testid="waiting-offers"
+          />
+          <Stat
+            label="Questions"
+            value={questions.count}
+            to="/superadmin/question-reviews"
+            data-testid="waiting-questions"
+          />
+        </StatGroup>
+      )}
+    </Section>
   );
 }
 
 export default function CompanyAdminConsole() {
   const { data: me } = useQuery({ queryKey: ['me'], queryFn: () => getMe() });
   const companyName = me?.company_name ?? 'your company';
+  const { data: hrRows } = useQuery({ queryKey: ['my-hr-managers'], queryFn: listMyHrManagers });
+  const { data: ivRows } = useQuery({ queryKey: ['my-interviewers'], queryFn: listMyInterviewers });
+  const [hrOpen, setHrOpen] = useState(false);
+  const [interviewerOpen, setInterviewerOpen] = useState(false);
 
   return (
-    <div className="mx-auto max-w-[960px] px-0 py-2 space-y-6">
+    <Page width="default">
       {/* ── Page header ──────────────────────────────────────────────────── */}
-      <Reveal>
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1
-              data-testid="page-title"
-              className="text-[28px] font-semibold tracking-[-1px] text-foreground"
-            >
-              Super Admin
-            </h1>
-            <p className="mt-1 flex items-center gap-1.5 text-[14px] text-muted-foreground">
-              <Building2 size={14} className="text-[var(--ui-info)]" aria-hidden="true" />
-              HR managers for {companyName}.
-            </p>
-          </div>
-          <Pill
-            variant="primary"
-            className="px-5 py-2.5"
-            type="button"
-            onClick={() =>
-              setTimeout(
-                () =>
-                  (document.getElementById('hr-email') as HTMLInputElement | null)?.focus(),
-                50,
-              )
-            }
-            aria-label="Add an HR manager"
-          >
-            <UserPlus size={16} aria-hidden="true" />
-            Add HR
-          </Pill>
-        </div>
-      </Reveal>
+      <PageHeader
+        title={<span data-testid="page-title">Super Admin</span>}
+        description={
+          <span className="flex items-center gap-1.5">
+            <Building2 size={14} className="text-[var(--ui-info)]" aria-hidden="true" />
+            HR managers for {companyName}.
+          </span>
+        }
+        actions={
+          <Button type="button" onClick={() => setHrOpen(true)}>
+            <UserPlus aria-hidden="true" />
+            New HR manager
+          </Button>
+        }
+      />
+
+      {/* The first thing a super admin needs: what is waiting for a decision. */}
+      <WaitingOnYou />
 
       {/* The company's public careers board address. The slug is per-COMPANY, so
           this console is its other natural owner alongside /hr — and it has to be
           its own instance rather than a shared link, because HRRoute admits only
           hr_manager and SuperAdminRoute only super_admin. Same pattern the repo
           already uses for /superadmin/library. */}
-      <Reveal>
-        <CareersLinkCard slug={me?.company_slug} companyName={me?.company_name} />
-      </Reveal>
+      <CareersLinkCard slug={me?.company_slug} companyName={me?.company_name} />
+
+      {/* Headcounts come from the two roster queries below (same keys, so the
+          cache serves both — no extra requests). A roster still loading is
+          unknown, not zero. */}
+      <StatGroup aria-label="Team summary">
+        <Stat label="HR managers" value={hrRows?.length} />
+        <Stat label="Interviewers" value={ivRows?.length} />
+        <Stat
+          label="Awaiting first login"
+          value={
+            hrRows && ivRows
+              ? [...hrRows, ...ivRows].filter((r) => r.must_change_password).length
+              : undefined
+          }
+        />
+      </StatGroup>
 
       <StaffRoster
         idPrefix="hr"
-        icon={<Users size={17} aria-hidden="true" />}
+        icon={Users}
         heading="HR managers"
         createTitle="Create an HR manager"
         createBlurb={(name) => `They log in, reset the password, then run hiring for ${name}.`}
         addLabel="Add HR"
+        openLabel="New HR manager"
+        showOpenButton={false}
         emptyText="No HR managers yet — add your first one above."
         listLabel="HR managers"
         companyName={companyName}
@@ -302,16 +397,20 @@ export default function CompanyAdminConsole() {
         listFn={listMyHrManagers}
         createFn={createMyHrManager}
         deleteFn={deleteMyHrManager}
+        createOpen={hrOpen}
+        onCreateOpenChange={setHrOpen}
       />
 
       {/* ── Interviewers (D4-1) ──────────────────────────────────────────── */}
       <StaffRoster
         idPrefix="interviewer"
-        icon={<ClipboardCheck size={17} aria-hidden="true" />}
+        icon={ClipboardCheck}
         heading="Interviewers"
         createTitle="Create an interviewer"
         createBlurb={(name) => `They see only the interviews assigned to them at ${name}.`}
         addLabel="Add interviewer"
+        openLabel="New interviewer"
+        showOpenButton
         emptyText="No interviewers yet — add your first one above."
         listLabel="Interviewers"
         companyName={companyName}
@@ -322,7 +421,9 @@ export default function CompanyAdminConsole() {
         listFn={listMyInterviewers}
         createFn={createMyInterviewer}
         deleteFn={deleteMyInterviewer}
+        createOpen={interviewerOpen}
+        onCreateOpenChange={setInterviewerOpen}
       />
-    </div>
+    </Page>
   );
 }

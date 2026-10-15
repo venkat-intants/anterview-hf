@@ -109,21 +109,24 @@ function RoundNode({
     <div
       {...dragProps}
       className={cn(
-        'group relative flex w-full items-center gap-3 rounded-[16px] border bg-card p-3.5 text-left transition-colors',
+        'group relative flex w-full flex-wrap items-center gap-x-3 gap-y-2 rounded-[16px] border p-3.5 text-left transition-colors sm:flex-nowrap',
+        !selected && 'bg-card',
+        // The highlight tint plus a visible "Selected" label below — the
+        // colour is never the only signal that this node is the open one.
         selected
-          ? 'border-[var(--accent)] shadow-[0_0_0_1px_var(--accent)]'
+          ? 'border-[var(--accent)] bg-highlight text-highlight-foreground ring-1 ring-[var(--accent)]'
           : 'border-border hover:border-[var(--ui-line-strong)]',
       )}
     >
       {editable ? (
         <span
-          className="cursor-grab text-[var(--ui-faint)] group-hover:text-muted-foreground"
+          className="hidden cursor-grab text-[var(--ui-faint)] group-hover:text-muted-foreground sm:block"
           aria-hidden="true"
         >
           <GripVertical className="h-4 w-4" />
         </span>
       ) : (
-        <span className="w-4" aria-hidden="true" />
+        <span className="hidden w-4 sm:block" aria-hidden="true" />
       )}
 
       <button
@@ -132,16 +135,29 @@ function RoundNode({
         aria-pressed={selected}
         className="flex min-w-0 flex-1 items-center gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
+        <span
+          aria-hidden="true"
+          className="hidden h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[var(--ui-line-strong)] bg-card font-mono text-[12px] font-semibold text-foreground sm:flex"
+        >
+          {index + 1}
+        </span>
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
           <Icon className="h-[18px] w-[18px] text-foreground" aria-hidden="true" />
         </span>
         <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <span className="truncate text-[14px] font-medium text-foreground">{round.title}</span>
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 break-words text-[14px] font-medium text-foreground">
+              {round.title}
+            </span>
+            {selected ? (
+              <span className="rounded-pill border border-[var(--accent)] bg-card px-2 py-px text-[12px] font-semibold text-foreground">
+                Selected
+              </span>
+            ) : null}
             <StatusTag tone={meta.tone}>{meta.label}</StatusTag>
             <span
               className={cn(
-                'rounded-pill border px-1.5 py-px text-[10.5px]',
+                'rounded-pill border px-1.5 py-px text-[12px]',
                 meta.decidedBy === 'person'
                   ? 'border-[var(--ui-warn)] text-[var(--ui-warn)]'
                   : 'border-[var(--ui-line-strong)] text-muted-foreground',
@@ -150,11 +166,9 @@ function RoundNode({
               {meta.decidedBy === 'person' ? 'A person decides' : 'Automated'}
             </span>
           </span>
-          <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11.5px] text-[var(--ui-faint)]">
+          <span className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[12px] text-muted-foreground">
             <span>Step {index + 1}</span>
-            {round.pass_threshold !== null ? (
-              <span>advance at {round.pass_threshold}%</span>
-            ) : null}
+            {round.pass_threshold !== null ? <span>advance at {round.pass_threshold}%</span> : null}
             {round.criteria.length > 0 ? (
               <span>
                 {round.criteria.length} competenc
@@ -164,7 +178,7 @@ function RoundNode({
             <span>{round.deadline_days}d to complete</span>
           </span>
           {gap ? (
-            <span className="mt-1 flex items-center gap-1 text-[11.5px] text-[var(--ui-warn)]">
+            <span className="mt-1 flex items-center gap-1 text-[12px] text-[var(--ui-warn)]">
               <AlertTriangle className="h-3 w-3" aria-hidden="true" />
               {gap}
             </span>
@@ -175,7 +189,7 @@ function RoundNode({
           {edges.fail || edges.fastTrack ? (
             <span className="mt-1.5 flex flex-col gap-1 border-t border-dashed border-[var(--ui-line-strong)] pt-1.5">
               {edges.fail ? (
-                <span className="flex items-center gap-1.5 text-[11px] text-[var(--ui-warn)]">
+                <span className="flex items-center gap-1.5 text-[12px] text-[var(--ui-warn)]">
                   <span
                     aria-hidden="true"
                     className="inline-block h-0 w-4 border-t-2 border-dashed border-[var(--ui-warn)]"
@@ -184,7 +198,7 @@ function RoundNode({
                 </span>
               ) : null}
               {edges.fastTrack ? (
-                <span className="flex items-center gap-1.5 text-[11px] text-[var(--accent)]">
+                <span className="flex items-center gap-1.5 text-[12px] text-[var(--accent)]">
                   <span
                     aria-hidden="true"
                     className="inline-block h-0 w-4 border-t-2 border-dotted border-[var(--accent)]"
@@ -198,13 +212,13 @@ function RoundNode({
       </button>
 
       {editable ? (
-        <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100">
+        <span className="flex w-full shrink-0 items-center justify-end gap-0.5 border-t border-border pt-2 transition-opacity sm:w-auto sm:border-t-0 sm:pt-0 sm:opacity-0 sm:focus-within:opacity-100 sm:group-hover:opacity-100">
           <button
             type="button"
             onClick={() => onMove(index - 1)}
             disabled={index === 0}
             aria-label={`Move ${round.title} earlier`}
-            className="rounded-[8px] p-1.5 text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground disabled:opacity-25"
+            className="rounded-[8px] p-2.5 text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground disabled:opacity-25 sm:p-1.5"
           >
             <ChevronDown className="h-4 w-4 rotate-180" aria-hidden="true" />
           </button>
@@ -213,7 +227,7 @@ function RoundNode({
             onClick={() => onMove(index + 1)}
             disabled={index === total - 1}
             aria-label={`Move ${round.title} later`}
-            className="rounded-[8px] p-1.5 text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground disabled:opacity-25"
+            className="rounded-[8px] p-2.5 text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground disabled:opacity-25 sm:p-1.5"
           >
             <ChevronDown className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -221,7 +235,7 @@ function RoundNode({
             type="button"
             onClick={onRemove}
             aria-label={`Remove ${round.title}`}
-            className="rounded-[8px] p-1.5 text-muted-foreground hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]"
+            className="ml-2 rounded-[8px] p-2.5 text-muted-foreground sm:p-2 hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:bg-[var(--ui-danger-wash)] focus-visible:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <Trash2 className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -286,18 +300,27 @@ export default function WorkflowCanvas({
         <ul
           aria-label="Edge legend"
           data-testid="branch-legend"
-          className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-muted-foreground"
+          className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[12px] text-muted-foreground"
         >
           <li className="flex items-center gap-1.5">
-            <span aria-hidden="true" className="inline-block h-0 w-4 border-t-2 border-[var(--ui-line-strong)]" />
+            <span
+              aria-hidden="true"
+              className="inline-block h-0 w-4 border-t-2 border-[var(--ui-line-strong)]"
+            />
             pass — the order below
           </li>
           <li className="flex items-center gap-1.5 text-[var(--ui-warn)]">
-            <span aria-hidden="true" className="inline-block h-0 w-4 border-t-2 border-dashed border-[var(--ui-warn)]" />
+            <span
+              aria-hidden="true"
+              className="inline-block h-0 w-4 border-t-2 border-dashed border-[var(--ui-warn)]"
+            />
             below threshold
           </li>
           <li className="flex items-center gap-1.5 text-[var(--accent)]">
-            <span aria-hidden="true" className="inline-block h-0 w-4 border-t-2 border-dotted border-[var(--accent)]" />
+            <span
+              aria-hidden="true"
+              className="inline-block h-0 w-4 border-t-2 border-dotted border-[var(--accent)]"
+            />
             fast-track
           </li>
         </ul>
@@ -358,12 +381,15 @@ export default function WorkflowCanvas({
               threshold ends up in the same queue. Nothing ends a candidacy
               automatically (D-05). */}
           <div
-            className="ml-[34px] mt-1.5 flex items-start gap-1.5 border-l border-dashed border-[var(--ui-warn)] pl-3 text-[11.5px] leading-snug text-muted-foreground"
+            className="ml-[34px] mt-1.5 flex items-start gap-1.5 border-l border-dashed border-[var(--ui-warn)] pl-3 text-[12px] leading-snug text-muted-foreground"
             data-testid="hold-path"
           >
-            <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
-            So does anyone held below a round&rsquo;s threshold, from any round. Nobody is
-            rejected automatically — every candidate reaches a person.
+            <AlertTriangle
+              className="mt-0.5 h-3 w-3 shrink-0 text-[var(--ui-warn)]"
+              aria-hidden="true"
+            />
+            So does anyone held below a round&rsquo;s threshold, from any round. Nobody is rejected
+            automatically — every candidate reaches a person.
           </div>
         </>
       ) : null}
@@ -394,7 +420,7 @@ export default function WorkflowCanvas({
                         onAdd(kind);
                         setAdding(false);
                       }}
-                      className="flex items-start gap-2.5 rounded-[12px] border border-border p-3 text-left hover:border-electric/50 hover:bg-[var(--ui-inset-soft)]"
+                      className="flex items-start gap-2.5 rounded-[12px] border border-border p-3 text-left hover:border-[var(--accent)] hover:bg-[var(--ui-inset-soft)]"
                     >
                       <Icon
                         className="mt-0.5 h-4 w-4 shrink-0 text-foreground"
@@ -404,7 +430,7 @@ export default function WorkflowCanvas({
                         <span className="block text-[13px] font-medium text-foreground">
                           {meta.label}
                         </span>
-                        <span className="mt-0.5 block text-[11.5px] leading-snug text-muted-foreground">
+                        <span className="mt-0.5 block text-[12px] leading-snug text-muted-foreground">
                           {meta.blurb}
                         </span>
                       </span>
@@ -417,7 +443,7 @@ export default function WorkflowCanvas({
             <button
               type="button"
               onClick={() => setAdding(true)}
-              className="flex w-full items-center justify-center gap-1.5 rounded-[16px] border border-dashed border-[var(--ui-line-strong)] py-3 text-[13px] text-muted-foreground hover:border-electric/50 hover:text-foreground"
+              className="flex w-full items-center justify-center gap-1.5 rounded-[16px] border border-dashed border-[var(--ui-line-strong)] py-3 text-[13px] text-muted-foreground hover:border-[var(--accent)] hover:text-foreground"
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
               Add a round

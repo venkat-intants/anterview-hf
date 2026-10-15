@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db_session
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, reject_role
 from app.models import Job
 from app.schemas.jobs import (
     JobCreateCustom,
@@ -34,7 +34,15 @@ from app.schemas.jobs import (
 
 log = structlog.get_logger(__name__)
 
-router = APIRouter(prefix="/jobs", tags=["jobs"])
+# Router-wide: a guest interview token (sub = the applicant's real account id)
+# must not browse jobs or create practice jobs as that account. The guest flow
+# never calls /jobs. "service" is refused for the same reason as on the
+# candidate router (see dependencies.reject_role).
+router = APIRouter(
+    prefix="/jobs",
+    tags=["jobs"],
+    dependencies=[Depends(reject_role("guest_candidate", "service"))],
+)
 
 # ---------------------------------------------------------------------------
 # Dependency shortcuts

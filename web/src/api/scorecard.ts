@@ -3,6 +3,7 @@
 
 import { simulateDelay, mockScorecardsResponse } from './mock';
 import { feedbackGet } from './client';
+import { pathId } from './pathId';
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
 
@@ -154,7 +155,7 @@ export async function getScorecard(
     await simulateDelay(500);
     return { ...MOCK_SCORECARD, scorecard_id: scorecardId };
   }
-  return feedbackGet<ScorecardData>(`/api/scorecards/${scorecardId}`);
+  return feedbackGet<ScorecardData>(`/api/scorecards/${pathId(scorecardId)}`);
 }
 
 // ---------------------------------------------------------------------------

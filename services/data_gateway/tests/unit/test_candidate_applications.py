@@ -169,6 +169,65 @@ def _to_out_of(status: str) -> dict:
     return _to_out(_row(status=status))
 
 
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [
+        ("new", "received"),
+        ("shortlisted", "shortlisted"),
+        ("interviewed", "interview_complete"),
+        ("held", "under_review"),
+        ("hired", "selected"),
+        ("rejected", "not_progressing"),
+    ],
+)
+def test_each_status_maps_to_a_candidate_facing_stage_code(status: str, code: str) -> None:
+    out = _to_out_of(status)
+    assert out["stage_code"] == code
+
+
+def test_stage_code_never_exposes_a_raw_internal_status() -> None:
+    """``held`` must read ``under_review``; the code vocabulary is closed and
+    one-to-one with the labels, and an unknown status yields no code at all."""
+    from app.routers.candidate_applications import _STAGE_CODES, _STAGE_LABELS, _STAGES
+
+    assert _to_out_of("held")["stage_code"] == "under_review"
+    codes = set(_STAGE_CODES.values())
+    assert codes == {
+        "received", "shortlisted", "interview_complete",
+        "under_review", "selected", "not_progressing",
+    }
+    assert len(codes) == len(_STAGE_LABELS), "one code per label"
+    # A raw status may coincide with a code only where it is also the stage
+    # (shortlisted); the mapping for every other status must differ.
+    for raw, code in _STAGE_CODES.items():
+        if raw != "shortlisted":
+            assert raw != code
+    assert set(_STAGE_CODES) == set(_STAGE_LABELS) == set(_STAGES)
+    assert _to_out_of("quantum_superposition")["stage_code"] is None
+
+
+def test_label_and_code_come_from_the_same_table() -> None:
+    from app.routers.candidate_applications import _STAGE_CODES, _STAGE_LABELS, _STAGES
+
+    for raw, (code, label) in _STAGES.items():
+        assert _STAGE_CODES[raw] == code
+        assert _STAGE_LABELS[raw] == label
+
+
+@pytest.mark.asyncio
+async def test_history_items_carry_the_stage_code() -> None:
+    from app.routers.candidate_applications import get_my_application
+
+    eid = uuid.uuid4()
+    db = _db([_row(id=eid, status="held")], [_event("new"), _event("held")])
+    out = await get_my_application(eid, _user(), db)
+    assert [(e.stage, e.stage_code) for e in out.history] == [
+        ("Application received", "received"),
+        ("Under review", "under_review"),
+    ]
+    assert out.stage_code == "under_review"
+
+
 def test_every_internal_status_is_covered() -> None:
     """No status may reach a candidate untranslated.
 

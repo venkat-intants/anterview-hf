@@ -1,75 +1,68 @@
 // Dashboard — candidate home page.
-// Layout: two-column hero + 4-up stats + two-column recent/next-steps.
-// Data: wired 100% to the 4 live react-query feeds — no mock data rendered.
+//
+// ORDER: greeting (no button) → the ONE next step → where the applications
+// stand (only when there are any) → the practice plan and recent practice, with
+// the resume beside them in the aside.
+//
+// The next step comes from the candidate's action queue (lib/candidateActions):
+// an assessment under way, then anything waiting on them soonest first, then
+// "with the hiring team", and only when there is no open application at all, the
+// practice step. It never mints a link on render — the button asks for one when
+// pressed. There is exactly one practice call-to-action in the body: the next
+// step's own when practice is the next step, otherwise the plan card's.
+//
+// Data: wired 100% to live react-query feeds — no mock data rendered.
 // Shell: bare content; AppShell is provided by the router (no double-wrap).
 
 import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useLocation, Link, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 
 import { getMe, logout } from '@/api/auth';
-import {
-  getOnboardingStatus,
-  getPracticePlan,
-  type OnboardingGoal,
-} from '@/api/onboarding';
+import { getOnboardingStatus, getPracticePlan, type OnboardingGoal } from '@/api/onboarding';
 import { listSessions } from '@/api/sessions';
 import { listScorecards } from '@/api/scorecard';
 import { getCurrentResume, uploadResume } from '@/api/resume';
+import type { MyApplication } from '@/api/applications';
 import { useAuth } from '@/context/AuthContext';
+import { useCandidateActions } from '@/hooks/useCandidateActions';
+import { actionsForApplication, isWaitingOnYou, turnOf } from '@/lib/candidateActions';
+import { stageText } from '@/lib/applicationStage';
 import { toast } from '@/lib/toast';
 import { formatDate, formatDuration, statusProps } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 
-import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
-import {
-  GlassCard,
-  StatCard,
-  ScoreRing,
-  Pill,
-  StatusTag,
-  Avatar,
-} from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Page, PageBody, PageHeader, EmptyState } from '@/design/components/page';
+import { Card } from '@/design/components/card';
+import { Row, RowList } from '@/design/components/rows';
+import { Stat, StatGroup } from '@/design/components/stat-group';
+import { NextStep, TurnBadge } from '@/design/components/next-step';
+import { StatusTag } from '@/design/components/primitives';
 import FileUploadZone from '@/components/FileUploadZone';
 import PracticePlanCard from '@/components/practice/PracticePlanCard';
-import { PromoBanner, TrustStrip } from '@/design/components/banners';
+import CandidateNextStep from '@/components/candidate/CandidateNextStep';
 import {
-  ArrowRight,
-  Mic,
-  Briefcase,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
   FileText,
   ListChecks,
-  CheckCircle2,
-  AlertTriangle,
-  Clock,
-  ExternalLink,
-  Sparkles,
-  Target,
-  Flame,
   ChevronRight,
-  Languages,
-  ShieldCheck,
 } from '@/design/components/icons';
 
-import { gradientFor, initialsOf } from '@/design/data/shared';
+import { initialsOf } from '@/design/data/shared';
 import type { TagTone } from '@/design/components/primitives';
-
-// ── Inline skeleton — avoids @/components/ui/* shadcn dep ────────────────────
-
-function Sk({ className }: { className?: string }) {
-  return (
-    <div
-      className={cn('animate-pulse rounded-md bg-[var(--ui-inset)]', className)}
-      aria-hidden="true"
-    />
-  );
-}
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
 const RESUME_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 const RECENT_COUNT = 3;
+/** Application rows shown on the dashboard; the rest are one "View all" away. */
+const APPLICATION_ROWS = 5;
 
 /** How many sessions the aggregate widgets are computed over.
  *
@@ -82,22 +75,6 @@ const RECENT_COUNT = 3;
  * right direction to be wrong in.
  */
 const STATS_COUNT = 100;
-
-// ── Nudge tone → icon mapping ─────────────────────────────────────────────────
-
-const NUDGE_ICON = {
-  electric: Sparkles,
-  amber: Target,
-  forest: Flame,
-} as const;
-
-type NudgeTone = keyof typeof NUDGE_ICON;
-
-const NUDGE_COLOR: Record<NudgeTone, string> = {
-  electric: 'text-[var(--ui-info)]',
-  amber: 'text-[var(--ui-warn)]',
-  forest: 'text-[var(--ui-ok)]',
-};
 
 // ── Status → StatusTag tone ────────────────────────────────────────────────────
 
@@ -116,10 +93,6 @@ function sessionTagTone(status: string): TagTone {
   }
 }
 
-// ── Days-of-week labels ───────────────────────────────────────────────────────
-
-const DOW_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as const;
-
 // ── Goal → hero copy ──────────────────────────────────────────────────────────
 // The wizard asks why they're practising; this is where that answer earns its
 // keep. "Campus placement in three weeks" and "just getting comfortable" want
@@ -133,6 +106,11 @@ const GOAL_LINE_KEY: Record<OnboardingGoal, string> = {
   general_practice: 'dashboard.goalGeneralPractice',
 };
 
+// ── Small shared pieces ───────────────────────────────────────────────────────
+
+const TEXT_LINK =
+  'rounded text-[13px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+
 // ── Loading gate ──────────────────────────────────────────────────────────────
 // Shown until we know whether this account still owes onboarding. Rendering the
 // real dashboard first and redirecting after would flash a generic, empty page
@@ -141,21 +119,24 @@ const GOAL_LINE_KEY: Record<OnboardingGoal, string> = {
 
 function DashboardSkeleton() {
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-8 lg:px-8 space-y-5" aria-busy="true">
-      <Sk className="h-[132px] w-full rounded-[16px]" />
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.4fr_1fr]">
-        <Sk className="h-[200px] w-full rounded-[16px]" />
-        <Sk className="h-[200px] w-full rounded-[16px]" />
-      </div>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Sk className="h-[92px] rounded-[16px]" />
-        <Sk className="h-[92px] rounded-[16px]" />
-        <Sk className="h-[92px] rounded-[16px]" />
-        <Sk className="h-[92px] rounded-[16px]" />
-      </div>
-    </div>
+    <Page data-testid="dashboard-skeleton">
+      <Skeleton aria-busy="true" className="h-[88px] w-full max-w-[560px] rounded-[16px]" />
+      <Skeleton className="h-[84px] w-full rounded-card" />
+      <Skeleton className="h-[200px] w-full rounded-card" />
+    </Page>
   );
 }
+
+/** "Round 2 of 4" when the server has told us, otherwise the stage in the reader's language. */
+function applicationMeta(app: MyApplication, t: TFunction): string {
+  const where =
+    app.round_number && app.total_rounds
+      ? t('track.roundOf', { n: app.round_number, total: app.total_rounds })
+      : stageText(t, app);
+  return `${app.company_name} · ${where}`;
+}
+
+const TURN_RANK = { you: 0, them: 1, closed: 2 } as const;
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
@@ -198,8 +179,8 @@ export default function Dashboard() {
   // ── Query: practice plan ────────────────────────────────────────────────────
   // Same key PracticePlanCard uses, so this is one request served twice from
   // cache — not a second round-trip. Read here to personalize the hero and to
-  // decide whether the acquisition banner still has a job to do.
-  const { data: plan } = useQuery({
+  // decide what the practice step says.
+  const { data: plan, isLoading: planLoading } = useQuery({
     queryKey: ['practice-plan'],
     queryFn: getPracticePlan,
     staleTime: 60_000,
@@ -233,6 +214,19 @@ export default function Dashboard() {
     throwOnError: false,
   });
 
+  // ── The action queue: applications, interviews, offers ──────────────────────
+  // Loops and offers are fetched only when there is an application; no polling.
+  const interviewsTaken = sessionsData?.total ?? 0;
+  const planReady = plan?.ready === true;
+  const queue = useCandidateActions({
+    enabled: accessToken !== null,
+    practice: {
+      planReady,
+      focusCompetency: plan?.focus_competency_name ?? null,
+      interviewsTaken,
+    },
+  });
+
   // ── Logout mutation ─────────────────────────────────────────────────────────
   const logoutMutation = useMutation({
     mutationFn: () => logout(),
@@ -264,11 +258,10 @@ export default function Dashboard() {
   const isLoading = meLoading;
   const statsLoading = sessionsLoading || scorecardsLoading || resumeLoading;
 
-  const interviewsTaken = sessionsData?.total ?? 0;
   const allSessions = sessionsData?.items ?? [];
   const recentSessions = allSessions.slice(0, RECENT_COUNT);
 
-  // avg composite from scorecards (backend: 0–10) — multiply ×10 for ScoreRing (0–100)
+  // avg composite from scorecards (backend: 0–10) — multiply ×10 for the 0–100 scale
   const avgScore0to100 = (() => {
     const items = scorecardsData?.items ?? [];
     const valid = items.filter((s) => s.composite_score !== null);
@@ -286,13 +279,7 @@ export default function Dashboard() {
   })();
 
   // Total practice time (sum of duration_seconds) over the whole fetched history
-  const totalPracticeSeconds = allSessions.reduce(
-    (acc, s) => acc + (s.duration_seconds ?? 0),
-    0,
-  );
-  const practiceTimeLabel = totalPracticeSeconds > 0
-    ? formatDuration(totalPracticeSeconds)
-    : '—';
+  const totalPracticeSeconds = allSessions.reduce((acc, s) => acc + (s.duration_seconds ?? 0), 0);
 
   // Distinct languages practised in
   const distinctLanguages = new Set(allSessions.map((s) => s.language)).size;
@@ -304,14 +291,11 @@ export default function Dashboard() {
   // ── Personalization ─────────────────────────────────────────────────────────
   // `planReady` means they told us a target role, so the page can speak about
   // that job instead of pitching the product at them.
-  const planReady = plan?.ready === true;
   const goalLine = onboarding?.goal ? t(GOAL_LINE_KEY[onboarding.goal]) : null;
 
   const heroSubtitle = (() => {
     if (!planReady || !plan) {
-      return interviewsTaken > 0
-        ? t('dashboard.heroMomentum')
-        : t('dashboard.heroFirstRun');
+      return interviewsTaken > 0 ? t('dashboard.heroMomentum') : t('dashboard.heroFirstRun');
     }
     // plan.interviews_completed, not interviewsTaken: the sessions feed counts
     // every session, the plan counts the ones that produced a scorecard. A
@@ -335,7 +319,7 @@ export default function Dashboard() {
   // Weekly streak — derived from the full session history, not the 3-row feed:
   // three rows can light at most three of the seven days, which silently
   // under-rewards exactly the behaviour the strip exists to reinforce.
-  // DOW_LABELS maps index 0→Mon … 6→Sun (JS: getDay 0=Sun,1=Mon…6=Sat)
+  // Index 0→Mon … 6→Sun (JS: getDay 0=Sun,1=Mon…6=Sat)
   const todayMidnight = (() => {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
@@ -359,605 +343,327 @@ export default function Dashboard() {
   // on both complete AND skip, so this fires exactly once per account and
   // never for a privileged user.
   //
-  // The gate below is what makes the redirect invisible: without it the whole
-  // generic dashboard paints first and is then yanked away.
+  // An account that already has applications is NOT sent there: someone who
+  // activated to follow an application should land on it, not be asked what
+  // job they are practising for. The redirect therefore waits for the
+  // applications answer — painting the dashboard first and yanking it away, or
+  // redirecting before knowing, are the two ways to get this wrong.
   if (onboardingLoading) {
     return <DashboardSkeleton />;
   }
   if (onboarding && onboarding.applicable && !onboarding.seen) {
-    return <Navigate to="/onboarding" replace />;
+    if (queue.isLoading) return <DashboardSkeleton />;
+    // A FAILED applications call is "unknown", not "none": a real applicant must
+    // not be sent into the practice wizard because a request failed.
+    if (queue.applications.length === 0 && !queue.isError) {
+      return <Navigate to="/onboarding" replace />;
+    }
   }
 
   // ── Full-page error state ───────────────────────────────────────────────────
   if (isError) {
     return (
-      <div role="alert" className="flex flex-col items-center justify-center py-24 gap-4">
-        <AlertTriangle className="h-10 w-10 text-[var(--ui-danger)]" aria-hidden="true" />
-        <p className="text-[14px] text-muted-foreground">
-          {error instanceof Error ? error.message : t('dashboard.failedToLoadProfile')}
-        </p>
-        <Pill
-          variant="danger"
-          type="button"
-          onClick={() => logoutMutation.mutate()}
+      <Page width="form">
+        <div
+          role="alert"
+          className="flex max-w-[480px] flex-col items-center justify-center gap-4 py-16 text-center"
         >
-          {t('dashboard.returnToLogin')}
-        </Pill>
-      </div>
+          <AlertTriangle className="h-10 w-10 text-[var(--ui-danger)]" aria-hidden="true" />
+          <p className="text-[15px] text-muted-foreground">
+            {error instanceof Error ? error.message : t('dashboard.failedToLoadProfile')}
+          </p>
+          <Button type="button" variant="outline" onClick={() => logoutMutation.mutate()}>
+            {t('dashboard.returnToLogin')}
+          </Button>
+        </div>
+      </Page>
     );
   }
 
+  // ── The next step ───────────────────────────────────────────────────────────
+  const top = queue.actions[0];
+  const waitingCount = queue.actions.filter(isWaitingOnYou).length;
+  // A practice step depends on the plan and the session count; wait for both so
+  // it does not read "start your first interview" and then change its mind.
+  // A failed request is not an empty queue. When anything failed and nothing
+  // known is waiting on the candidate, the strip says so and offers a retry
+  // rather than falling through to "start practising" / "nothing needed".
+  const checkFailed = queue.anyFailed && !(top && isWaitingOnYou(top));
+  const nextStepReady =
+    !queue.isLoading &&
+    (checkFailed || !top?.kind.startsWith('practice') || (!planLoading && !sessionsLoading));
+  const practiceOwnsCta = !checkFailed && (top?.kind.startsWith('practice') ?? false);
+
+  // ── Application rows (only when there are any) ──────────────────────────────
+  const appRows = queue.applications
+    .map((app) => ({
+      app,
+      turn: turnOf(app, actionsForApplication(queue.actions, app.id)),
+    }))
+    .sort((a, b) => TURN_RANK[a.turn] - TURN_RANK[b.turn])
+    .slice(0, APPLICATION_ROWS);
+
   // ── Page ────────────────────────────────────────────────────────────────────
   return (
-    <div className="mx-auto max-w-[1200px] px-6 py-8 lg:px-8 space-y-5">
+    <Page width="default">
+      {/* Greeting. No button: the page's one primary is the next step below. */}
+      {isLoading ? (
+        <div className="space-y-3" aria-busy="true">
+          <Skeleton className="h-9 w-72 max-w-full rounded-lg" />
+          <Skeleton className="h-4 w-80 max-w-full rounded" />
+        </div>
+      ) : (
+        <PageHeader
+          eyebrow={planReady && plan?.domain_label ? plan.domain_label : t('dashboard.heroEyebrow')}
+          title={
+            firstName
+              ? t('dashboard.heroGreetingNamed', { name: firstName })
+              : t('dashboard.heroGreeting')
+          }
+          description={
+            <>
+              {heroSubtitle}
+              {goalLine ? (
+                <span className="mt-1.5 block text-[13.5px] text-[var(--ui-soft)]">{goalLine}</span>
+              ) : null}
+            </>
+          }
+          actions={
+            isAdmin ? (
+              <Button type="button" variant="outline" onClick={() => void navigate('/admin/jd')}>
+                {t('dashboard.adminJdUpload')}
+              </Button>
+            ) : undefined
+          }
+        />
+      )}
 
-      {/* ── Row 0: arrival from onboarding ── */}
+      {/* Arrival from onboarding */}
       {justOnboarded && (
-        <Reveal>
-          <div className="flex items-center gap-2.5 rounded-[12px] border border-[rgba(39,201,63,0.25)] bg-[rgba(39,201,63,0.06)] px-4 py-3">
-            <CheckCircle2 size={16} className="shrink-0 text-[var(--ui-ok)]" aria-hidden="true" />
-            <p className="text-[13px]">
-              <span className="font-medium">
-                {firstName
-                  ? t('dashboard.onboardedTitleNamed', { name: firstName })
-                  : t('dashboard.onboardedTitle')}
-              </span>{' '}
-              <span className="text-[var(--ui-soft)]">{t('dashboard.onboardedBody')}</span>
-            </p>
-          </div>
-        </Reveal>
+        <div className="flex items-center gap-2.5 rounded-[12px] bg-[var(--ui-ok-wash)] px-4 py-3">
+          <CheckCircle2 size={16} className="shrink-0 text-[var(--ui-ok)]" aria-hidden="true" />
+          <p className="text-[13.5px] text-foreground">
+            <span className="font-semibold">
+              {firstName
+                ? t('dashboard.onboardedTitleNamed', { name: firstName })
+                : t('dashboard.onboardedTitle')}
+            </span>{' '}
+            <span className="text-[var(--ui-soft)]">{t('dashboard.onboardedBody')}</span>
+          </p>
+        </div>
       )}
 
-      {/* ── Row 0.5: personal practice plan (self-serve users) ──
-          Above the fold once it exists: a plan built from THEIR role outranks
-          a banner pitching a product they have already bought into. */}
-      <Reveal>
-        <PracticePlanCard />
-      </Reveal>
-
-      {/* ── Row 1: Brand promo banner — only while there is nothing personal to
-          show. Once a plan exists this is the least useful thing on the page. ── */}
-      {!planReady && (
-        <Reveal>
-          <PromoBanner
-            tone="aurora"
-            badge="Voice-first"
-            eyebrow="AI Interview Studio"
-            title="Practice like it's real. Walk in ready."
-            subtitle="Talk to a lifelike AI interviewer in your language, then get a competency scorecard in minutes — not days. The more you practise, the higher your readiness climbs."
-            cta={{ label: 'Start a mock interview', to: '/start' }}
-            icon={Mic}
-            dismissId="candidate-hero-v1"
-          />
-        </Reveal>
+      {/* The one next step. */}
+      {nextStepReady && checkFailed ? (
+        <NextStep
+          data-testid="next-step"
+          tone="warn"
+          eyebrow={t('nextStep.eyebrow')}
+          title={t('nextStep.checkFailedTitle')}
+          context={t('nextStep.checkFailedContext')}
+          action={
+            <Button type="button" variant="outline" onClick={() => queue.refetchFailed()}>
+              {t('nextStep.checkFailedRetry')}
+            </Button>
+          }
+        />
+      ) : nextStepReady && top ? (
+        <CandidateNextStep action={top} waitingCount={waitingCount} />
+      ) : (
+        <Skeleton className="h-[84px] w-full rounded-card" aria-busy="true" />
       )}
-      <TrustStrip
-        className="px-0.5"
-        items={[
-          { icon: Mic, label: 'Voice-first' },
-          { icon: Languages, label: '22 Indian languages' },
-          { icon: Sparkles, label: 'Instant AI scorecard' },
-          { icon: ShieldCheck, label: 'DPDP-compliant' },
-        ]}
-      />
 
-      {/* ── Row 1: Hero + Readiness (2-col) ── */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.4fr_1fr]">
-
-        {/* LEFT: Hero GlassCard — electric gradient */}
-        <Reveal dir="left">
-          <GlassCard
-            feature
-            className="flex h-full flex-col justify-between gap-6 min-h-[200px]"
+      <PageBody
+        asideLabel={t('dashboard.resumeCardTitle')}
+        aside={
+          <Card
+            as="section"
+            titleAs="h2"
+            title={t('dashboard.resumeCardTitle')}
+            description={t('dashboard.resumeCardDesc')}
+            actions={
+              <Link to="/resume" className={cn(TEXT_LINK, 'inline-flex items-center gap-1')}>
+                {t('nav.resume')}
+                <ChevronRight size={14} aria-hidden="true" />
+              </Link>
+            }
           >
-            <div>
-              <p className="text-[12px] font-semibold uppercase tracking-[0.1em] text-[var(--ui-info)] mb-2">
-                {planReady && plan?.domain_label
-                  ? plan.domain_label
-                  : t('dashboard.heroEyebrow')}
-              </p>
-              {isLoading ? (
-                <>
-                  <Sk className="h-9 w-72 rounded-lg mb-2" />
-                  <Sk className="h-4 w-80 rounded" />
-                </>
-              ) : (
-                <>
-                  <h1
-                    className="font-semibold tracking-[-1px] text-foreground"
-                    style={{ fontSize: 'clamp(28px, 4vw, 40px)' }}
-                  >
-                    {firstName
-                      ? t('dashboard.heroGreetingNamed', { name: firstName })
-                      : t('dashboard.heroGreeting')}
-                  </h1>
-                  <p className="mt-2 text-[14px] text-[var(--ui-soft)] max-w-[480px]">
-                    {heroSubtitle}
-                  </p>
-                  {goalLine && (
-                    <p className="mt-1.5 text-[12.5px] text-[var(--ui-faint)] max-w-[480px]">
-                      {goalLine}
-                    </p>
-                  )}
-                </>
-              )}
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Pill type="button" onClick={() => void navigate('/start')}>
-                {t('dashboard.startInterview')}
-              </Pill>
-              <Pill
-                variant="ghost"
-                type="button"
-                onClick={() => void navigate('/jobs')}
+            {/* Resume status row */}
+            {!resumeLoading && !meLoading && (
+              <div
+                className={cn(
+                  'mb-4 flex items-center gap-2.5 rounded-[12px] p-3',
+                  hasResume ? 'bg-[var(--ui-ok-wash)]' : 'bg-[var(--ui-inset-soft)]',
+                )}
               >
-                {t('dashboard.browseJobs')}
-              </Pill>
-              {isAdmin && (
-                <Pill
-                  variant="outline"
-                  type="button"
-                  onClick={() => void navigate('/admin/jd')}
-                >
-                  {t('dashboard.adminJdUpload')}
-                </Pill>
-              )}
-            </div>
-          </GlassCard>
-        </Reveal>
-
-        {/* RIGHT: Average-score card.
-            Named for what it is — the unweighted mean of scored composites.
-            The practice plan card above shows the server's competency-weighted
-            `readiness`; calling both "readiness" put two different numbers
-            under one word 200px apart. */}
-        <Reveal dir="right">
-          <GlassCard className="flex h-full flex-col gap-4">
-            <h3 className="text-[15px] font-semibold">
-              {t('dashboard.avgScoreTitle')}
-            </h3>
-
-            <div className="flex items-center gap-5 flex-1">
-              {/* Ring */}
-              <div className="shrink-0">
-                {statsLoading ? (
-                  <Sk className="h-[120px] w-[120px] rounded-full" />
-                ) : avgScore0to100 === null ? (
-                  // No scored interview yet. A ring at 0 is not "no data", it
-                  // is a failing grade — say nothing instead of saying zero.
-                  <div
-                    className="flex h-[120px] w-[120px] flex-col items-center justify-center rounded-full border border-border"
-                    aria-label={t('dashboard.readinessDescNoData')}
-                  >
-                    <span className="text-[28px] font-semibold tracking-[-1px] text-[var(--ui-faint)]">
-                      —
-                    </span>
-                    <span className="text-[10px] uppercase tracking-[1px] text-[var(--ui-faint)]">
-                      {t('dashboard.avgScoreRingLabel')}
-                    </span>
-                  </div>
+                {hasResume ? (
+                  <CheckCircle2
+                    size={18}
+                    className="shrink-0 text-[var(--ui-ok)]"
+                    aria-hidden="true"
+                  />
                 ) : (
-                  <ScoreRing
-                    score={avgScore0to100}
-                    size={120}
-                    label={t('dashboard.avgScoreRingLabel')}
+                  <FileText
+                    size={18}
+                    className="shrink-0 text-muted-foreground"
+                    aria-hidden="true"
                   />
                 )}
-              </div>
-
-              {/* Right of ring */}
-              <div className="flex flex-col gap-2 min-w-0">
-                <p className="text-[12.5px] text-[var(--ui-soft)]">
-                  {statsLoading
-                    ? t('app.loading')
-                    : interviewsTaken > 0
-                      ? t('dashboard.readinessDesc', { count: interviewsTaken })
-                      : t('dashboard.readinessDescNoData')}
-                </p>
-                <Link
-                  to="/resume"
-                  className="inline-flex items-center gap-1 text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded w-fit"
-                >
-                  {t('dashboard.improveResume')} →
-                </Link>
-                <Link
-                  to="/history"
-                  className="inline-flex items-center gap-1 text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded w-fit"
-                >
-                  {t('dashboard.seeBreakdown')}
-                  <ArrowRight size={13} aria-hidden="true" />
-                </Link>
-              </div>
-            </div>
-          </GlassCard>
-        </Reveal>
-      </div>
-
-      {/* ── Row 2: 4-up StatCards ── */}
-      <Stagger className="grid grid-cols-2 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* 1 — Interviews taken */}
-        <StaggerItem>
-          <StatCard
-            label={t('dashboard.statInterviews')}
-            value={statsLoading ? '—' : String(interviewsTaken)}
-            trend="flat"
-            className="h-full"
-          />
-        </StaggerItem>
-
-        {/* 2 — Best score */}
-        <StaggerItem>
-          <StatCard
-            label={t('dashboard.statBestScore')}
-            value={
-              statsLoading
-                ? '—'
-                : bestScore0to100 !== null
-                  ? `${bestScore0to100}`
-                  : '—'
-            }
-            delta={bestScore0to100 !== null ? '/ 100' : undefined}
-            trend={
-              bestScore0to100 !== null && bestScore0to100 >= 70 ? 'up' : 'flat'
-            }
-            className="h-full"
-          />
-        </StaggerItem>
-
-        {/* 3 — Practice time */}
-        <StaggerItem>
-          <StatCard
-            label={t('dashboard.statPracticeTime')}
-            value={statsLoading ? '—' : practiceTimeLabel}
-            trend="flat"
-            className="h-full"
-          />
-        </StaggerItem>
-
-        {/* 4 — Languages used */}
-        <StaggerItem>
-          <StatCard
-            label={t('dashboard.statLanguagesUsed')}
-            value={statsLoading ? '—' : String(distinctLanguages)}
-            trend="flat"
-            className="h-full"
-          />
-        </StaggerItem>
-      </Stagger>
-
-      {/* ── Row 3: Recent interviews + Next steps/Resume (2-col) ── */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.6fr_1fr]">
-
-        {/* LEFT: Recent interviews */}
-        <Reveal dir="left">
-          <GlassCard className="p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-[15px] font-semibold">
-                {t('dashboard.recentInterviewsTitle')}
-              </h3>
-              <Link
-                to="/history"
-                className="text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
-              >
-                {t('dashboard.viewAllHistory')} →
-              </Link>
-            </div>
-
-            {sessionsLoading ? (
-              <div className="flex flex-col gap-2.5">
-                <Sk className="h-16 w-full rounded-[12px]" />
-                <Sk className="h-16 w-full rounded-[12px]" />
-                <Sk className="h-16 w-full rounded-[12px]" />
-              </div>
-            ) : recentSessions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-10 text-center gap-3">
-                <ListChecks className="h-8 w-8 text-muted-foreground/40" aria-hidden="true" />
-                <p className="text-[13.5px] text-muted-foreground">
-                  {t('dashboard.recentInterviewsEmpty')}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void navigate('/start')}
-                  className="inline-flex items-center gap-1.5 text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
-                >
-                  <Mic size={13} aria-hidden="true" />
-                  {t('dashboard.startInterview')}
-                </button>
-              </div>
-            ) : (
-              <ul
-                className="flex flex-col gap-2.5"
-                aria-label={t('dashboard.recentInterviewsTitle')}
-              >
-                {recentSessions.map((session) => {
-                  const { label } = statusProps(session.status);
-                  const tone = sessionTagTone(session.status);
-                  const initials = initialsOf(session.job_title);
-                  const seedNum =
-                    session.session_id.charCodeAt(0) +
-                    session.session_id.charCodeAt(1);
-                  const gradient = gradientFor(seedNum);
-
-                  return (
-                    <li
-                      key={session.session_id}
-                      data-testid={`recent-session-${session.session_id}`}
-                    >
-                      {session.scorecard_id ? (
-                        <Link
-                          to={`/scorecard/${session.scorecard_id}`}
-                          className="flex items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                        >
-                          <Avatar
-                            initials={initials}
-                            gradient={gradient}
-                            size={36}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[13.5px] font-medium">
-                              {session.job_title}
-                            </div>
-                            <div className="mt-0.5 flex items-center gap-2 flex-wrap">
-                              <StatusTag tone={tone} dot className="mt-0.5">
-                                {label}
-                              </StatusTag>
-                              <span className="flex items-center gap-1 text-[12px] text-muted-foreground">
-                                <Clock size={11} aria-hidden="true" />
-                                {formatDuration(session.duration_seconds)}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="text-right shrink-0">
-                            {/* Neutral, like the unscored row below: this is a
-                                date, and the semantic score palette here used
-                                to paint every scored session the same "good"
-                                accent off a hardcoded 72. */}
-                            <div className="text-[13px] font-semibold text-muted-foreground">
-                              {formatDate(session.created_at)}
-                            </div>
-                            <ExternalLink
-                              size={13}
-                              className="ml-auto mt-0.5 text-[var(--ui-faint)]"
-                              aria-hidden="true"
-                            />
-                          </div>
-                        </Link>
-                      ) : (
-                        <div className="flex items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
-                          <Avatar
-                            initials={initials}
-                            gradient={gradient}
-                            size={36}
-                          />
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-[13.5px] font-medium">
-                              {session.job_title}
-                            </div>
-                            <div className="mt-0.5 flex items-center gap-2 flex-wrap">
-                              <StatusTag tone={tone} dot className="mt-0.5">
-                                {label}
-                              </StatusTag>
-                              <span className="flex items-center gap-1 text-[12px] text-muted-foreground">
-                                <Clock size={11} aria-hidden="true" />
-                                {formatDuration(session.duration_seconds)}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="shrink-0 text-[12px] text-muted-foreground">
-                            {formatDate(session.created_at)}
-                          </div>
-                        </div>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </GlassCard>
-        </Reveal>
-
-        {/* RIGHT: Next steps + Resume stacked */}
-        <div className="flex flex-col gap-5">
-
-          {/* Next steps (nudges) */}
-          <Reveal dir="right">
-            <GlassCard className="p-5">
-              <h3 className="mb-3 text-[15px] font-semibold">
-                {t('dashboard.nextStepsTitle')}
-              </h3>
-
-              {/* Weekly streak strip */}
-              <div className="mb-4">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--ui-faint)] mb-2">
-                  {t('dashboard.thisWeekTitle')}
-                </p>
-                <div className="flex items-center gap-1.5" aria-hidden="true">
-                  {DOW_LABELS.map((lbl, i) => (
-                    <div key={i} className="flex flex-col items-center gap-1">
-                      <span
-                        className={cn(
-                          'h-7 w-7 rounded-[8px] flex items-center justify-center text-[10px] font-semibold transition-colors',
-                          weekDaysHit.has(i)
-                            ? 'bg-[rgba(var(--accent-rgb),0.22)] text-[var(--ui-info)] border border-[rgba(var(--accent-rgb),0.4)]'
-                            : 'bg-[var(--ui-inset)] text-[var(--ui-faint)] border border-border',
-                        )}
-                      >
-                        {lbl}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-2.5">
-                {/* Resume nudge — only when no resume on file */}
-                {!statsLoading && !hasResume && (() => {
-                  const Icon = NUDGE_ICON.amber;
-                  return (
-                    <div className="flex items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
-                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
-                        <Icon size={16} className={NUDGE_COLOR.amber} aria-hidden="true" />
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-[13.5px] font-medium">
-                          {t('dashboard.nudgeResumeTitle')}
-                        </div>
-                        <div className="text-[12.5px] text-muted-foreground">
-                          {t('dashboard.nudgeResumeBody')}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Practice nudge — shown when interviews > 0 */}
-                {!statsLoading && interviewsTaken > 0 && (() => {
-                  const tone: NudgeTone =
-                    avgScore0to100 !== null && avgScore0to100 >= 70 ? 'forest' : 'electric';
-                  const Icon = NUDGE_ICON[tone];
-                  return (
-                    <div className="flex items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
-                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
-                        <Icon size={16} className={NUDGE_COLOR[tone]} aria-hidden="true" />
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-[13.5px] font-medium">
-                          {t('dashboard.nudgePracticeTitle')}
-                        </div>
-                        <div className="text-[12.5px] text-muted-foreground">
-                          {t('dashboard.nudgePracticeBody')}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* First interview nudge — when no interviews yet */}
-                {!statsLoading && interviewsTaken === 0 && (() => {
-                  const Icon = NUDGE_ICON.electric;
-                  return (
-                    <div className="flex items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
-                      <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
-                        <Icon size={16} className={NUDGE_COLOR.electric} aria-hidden="true" />
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-[13.5px] font-medium">
-                          {t('dashboard.nudgeFirstTitle')}
-                        </div>
-                        <div className="text-[12.5px] text-muted-foreground">
-                          {t('dashboard.nudgeFirstBody')}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-
-                {/* Jobs CTA — always visible */}
-                <div className="flex items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
-                  <span className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-inset)]">
-                    <Briefcase size={16} className="text-muted-foreground" aria-hidden="true" />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="text-[13.5px] font-medium">
-                      {t('dashboard.nudgeJobsTitle')}
-                    </div>
-                    <div className="text-[12.5px] text-muted-foreground">
-                      <Link
-                        to="/jobs"
-                        className="text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
-                      >
-                        {t('dashboard.browseJobs')}
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </GlassCard>
-          </Reveal>
-
-          {/* Resume card */}
-          <Reveal dir="right" delay={0.08}>
-            <GlassCard className="p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <h3 className="text-[15px] font-semibold">
-                    {t('dashboard.resumeCardTitle')}
-                  </h3>
-                  <p className="mt-0.5 text-[12.5px] text-muted-foreground">
-                    {t('dashboard.resumeCardDesc')}
-                  </p>
-                </div>
-                <Link
-                  to="/resume"
-                  className="inline-flex items-center gap-1 text-[12.5px] text-[var(--ui-info)] hover:underline shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
-                >
-                  {t('nav.resume')}
-                  <ChevronRight size={13} aria-hidden="true" />
-                </Link>
-              </div>
-
-              {/* Resume status row */}
-              {!resumeLoading && !meLoading && (
-                <div
-                  className={cn(
-                    'mb-4 flex items-center gap-2.5 rounded-[12px] border p-3',
-                    hasResume
-                      ? 'border-[rgba(39,201,63,0.25)] bg-[rgba(39,201,63,0.06)]'
-                      : 'border-border bg-[var(--ui-inset-soft)]',
-                  )}
-                >
-                  {hasResume ? (
-                    <CheckCircle2
-                      size={18}
-                      className="shrink-0 text-[var(--ui-ok)]"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <FileText
-                      size={18}
-                      className="shrink-0 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                  )}
-                  <div className="min-w-0">
-                    <div className="text-[13px] font-medium">
-                      {hasResume
-                        ? (currentResume?.filename ?? t('dashboard.resumeOnFile'))
-                        : t('dashboard.noResumeYet')}
-                    </div>
-                    {hasResume && currentResume?.uploaded_at && (
-                      <div className="text-[11.5px] text-muted-foreground">
-                        {t('dashboard.uploadedOn', {
-                          date: formatDate(currentResume.uploaded_at),
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {(resumeLoading || meLoading) && (
-                <Sk className="mb-4 h-14 w-full rounded-[12px]" />
-              )}
-
-              {!resumeLoading && !meLoading && (
-                <FileUploadZone
-                  label={t('dashboard.resumeCardTitle')}
-                  accept="application/pdf"
-                  maxBytes={RESUME_MAX_BYTES}
-                  onUpload={handleResumeUpload}
-                  existingFileLabel={
-                    hasResume
+                <div className="min-w-0">
+                  <div className="truncate text-[13.5px] font-semibold text-foreground">
+                    {hasResume
                       ? (currentResume?.filename ?? t('dashboard.resumeOnFile'))
-                      : undefined
-                  }
+                      : t('dashboard.noResumeYet')}
+                  </div>
+                  {hasResume && currentResume?.uploaded_at && (
+                    <div className="text-[12px] text-muted-foreground">
+                      {t('dashboard.uploadedOn', {
+                        date: formatDate(currentResume.uploaded_at),
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {(resumeLoading || meLoading) && (
+              <Skeleton className="mb-4 h-14 w-full rounded-[12px]" />
+            )}
+
+            {!resumeLoading && !meLoading && (
+              <FileUploadZone
+                label={t('dashboard.resumeCardTitle')}
+                accept="application/pdf"
+                maxBytes={RESUME_MAX_BYTES}
+                onUpload={handleResumeUpload}
+                /* No existingFileLabel: the status well above already names the
+                   resume on file (and its upload date); passing it here printed
+                   the same filename a second time directly underneath. */
+              />
+            )}
+          </Card>
+        }
+      >
+        {/* Where each application stands: one row each, whose move it is. */}
+        {appRows.length > 0 && (
+          <Card
+            as="section"
+            titleAs="h2"
+            data-testid="dashboard-applications"
+            title={t('track.yourApplications')}
+            actions={
+              <Link to="/applications" className={TEXT_LINK}>
+                {t('track.viewAll')} →
+              </Link>
+            }
+          >
+            <RowList className="-my-3">
+              {appRows.map(({ app, turn }) => (
+                <Row
+                  key={app.id}
+                  to="/applications"
+                  title={app.job_title}
+                  meta={applicationMeta(app, t)}
+                  trailing={<TurnBadge turn={turn} label={t(`turn.${turn}`)} />}
                 />
-              )}
-            </GlassCard>
-          </Reveal>
-        </div>
-      </div>
-    </div>
+              ))}
+            </RowList>
+          </Card>
+        )}
+
+        {/* The practice plan, built from THEIR role: the work to do next. */}
+        <PracticePlanCard
+          hideStart={practiceOwnsCta}
+          hidePersonalize={top?.kind === 'practice_target'}
+          thisWeek={weekDaysHit}
+        />
+
+        {/* The numbers, once, next to the interviews they summarise. Not drawn
+            at all until there is something to count. */}
+        {!statsLoading && (
+          <StatGroup
+            aria-label={t('practice.summaryAria')}
+            missingLabel={t('practice.notAvailable')}
+            data-testid="practice-stats"
+          >
+            <Stat
+              label={t('dashboard.statInterviews')}
+              value={interviewsTaken > 0 ? interviewsTaken : null}
+            />
+            <Stat label={t('dashboard.statAvgScore')} value={avgScore0to100} unit="/ 100" />
+            <Stat label={t('dashboard.statBestScore')} value={bestScore0to100} unit="/ 100" />
+            <Stat
+              label={t('dashboard.statPracticeTime')}
+              value={totalPracticeSeconds > 0 ? formatDuration(totalPracticeSeconds) : null}
+            />
+            <Stat
+              label={t('dashboard.statLanguagesUsed')}
+              value={distinctLanguages > 0 ? distinctLanguages : null}
+            />
+          </StatGroup>
+        )}
+
+        <Card
+          as="section"
+          titleAs="h2"
+          emphasis="raised"
+          title={t('dashboard.recentInterviewsTitle')}
+          actions={
+            <Link to="/history" className={TEXT_LINK}>
+              {t('dashboard.viewAllHistory')} →
+            </Link>
+          }
+        >
+          {sessionsLoading ? (
+            <div className="flex flex-col gap-2.5" aria-busy="true">
+              <Skeleton className="h-14 w-full rounded-[12px]" />
+              <Skeleton className="h-14 w-full rounded-[12px]" />
+              <Skeleton className="h-14 w-full rounded-[12px]" />
+            </div>
+          ) : recentSessions.length === 0 ? (
+            // No button here: the page already has its one practice call to action.
+            <EmptyState bordered={false} icon={ListChecks} title={t('practice.recentEmpty')} />
+          ) : (
+            <RowList className="-my-3" aria-label={t('dashboard.recentInterviewsTitle')}>
+              {recentSessions.map((session) => {
+                const { label } = statusProps(session.status);
+                return (
+                  <Row
+                    key={session.session_id}
+                    data-testid={`recent-session-${session.session_id}`}
+                    to={session.scorecard_id ? `/scorecard/${session.scorecard_id}` : undefined}
+                    leading={
+                      <span
+                        className="flex h-10 w-10 flex-none items-center justify-center rounded-full border border-border bg-[var(--ui-inset)] text-[13px] font-bold text-[var(--ui-soft)]"
+                        aria-hidden="true"
+                      >
+                        {initialsOf(session.job_title)}
+                      </span>
+                    }
+                    title={session.job_title}
+                    meta={
+                      <span className="flex flex-wrap items-center gap-2">
+                        <StatusTag tone={sessionTagTone(session.status)} dot>
+                          {label}
+                        </StatusTag>
+                        <span className="flex items-center gap-1">
+                          <Clock size={12} aria-hidden="true" />
+                          {formatDuration(session.duration_seconds)}
+                        </span>
+                      </span>
+                    }
+                    trailing={
+                      <span className="text-[12.5px] text-muted-foreground">
+                        {formatDate(session.created_at)}
+                      </span>
+                    }
+                  />
+                );
+              })}
+            </RowList>
+          )}
+        </Card>
+      </PageBody>
+    </Page>
   );
 }

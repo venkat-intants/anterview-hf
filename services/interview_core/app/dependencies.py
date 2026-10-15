@@ -87,18 +87,25 @@ CurrentUserDep = Annotated[dict[str, Any], Depends(get_current_user)]
 
 
 async def get_non_guest_user(current_user: CurrentUserDep) -> dict[str, Any]:
-    """Reject a token whose ONLY role is ``guest_candidate`` (Phase 3, B7).
+    """Reject any token carrying ``guest_candidate`` (Phase 3, B7).
 
     A magic-link interview guest is bound to exactly one pre-created session; it
-    must never be able to self-mint or list sessions (which would let a leaked
-    guest token amplify cost / enumerate other sessions). Any token carrying a
-    real role alongside guest_candidate (shouldn't happen) still passes.
+    must never be able to self-mint sessions (which would let a leaked guest
+    token amplify cost). A token carrying a real role ALONGSIDE guest_candidate
+    is still a guest token and is refused: this is the same predicate as
+    ``get_guest_bound_user``, so no path treats the mixed-role token as an
+    unrestricted account.
+
+    Listing is no longer guarded by this dependency: ``GET /api/sessions``
+    narrows a guest to its one bound session instead of refusing it, because
+    that is how a guest finds their own scorecard (see
+    ``routers.sessions._guest_bound_session_id``).
     """
     roles = current_user.get("roles") or []
-    if "guest_candidate" in roles and not (set(roles) - {"guest_candidate"}):
+    if "guest_candidate" in roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Guest interview tokens cannot create or list sessions.",
+            detail="Guest interview tokens cannot create sessions.",
         )
     return current_user
 
@@ -148,3 +155,57 @@ async def get_guest_bound_user(
 
 
 GuestBoundUserDep = Annotated[dict[str, Any], Depends(get_guest_bound_user)]
+
+
+# ---------------------------------------------------------------------------
+# Service-to-service callers (ops probes, the other services)
+# ---------------------------------------------------------------------------
+_FORBIDDEN_SERVICE = HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN,
+    detail="Service role required for internal endpoints.",
+)
+
+# Same credential shape feedback_billing's _require_service_jwt enforces on
+# /internal/*: a token signed with the shared secret, roles containing "service",
+# and a sub drawn from a short allowlist of SERVICE identities (never a user
+# UUID). Adding a subject here is a trust decision — it can trigger paid calls.
+_ALLOWED_SERVICE_SUBS = frozenset({"interview_core", "data_gateway"})
+
+
+async def require_service_jwt(
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Depends(_bearer_scheme),
+    ],
+) -> dict[str, Any]:
+    """Verify a Bearer JWT carrying the ``service`` role and an allowed service sub.
+
+    Guards endpoints that spend money or reveal dependency state
+    (``/health/deep``). 401 for an absent/invalid token, 403 for a valid token
+    that is not a service identity.
+    """
+    if credentials is None:
+        raise _UNAUTHORIZED
+    try:
+        raw = verify_access_token(
+            credentials.credentials,
+            build_verification_keys(settings),
+            algorithm="HS256",
+            expected_issuer=settings.jwt_issuer,
+            expected_audience=settings.jwt_audience,
+        )
+    except JWTError as exc:
+        log.warning("auth.service_jwt_verification_failed", error_type=type(exc).__name__)
+        raise _UNAUTHORIZED from exc
+    payload: dict[str, Any] = cast(dict[str, Any], raw)
+    sub = payload.get("sub")
+    roles = payload.get("roles") or []
+    if not sub:
+        raise _UNAUTHORIZED
+    if "service" not in roles or sub not in _ALLOWED_SERVICE_SUBS:
+        log.warning("auth.service_jwt_rejected", sub=sub, roles=roles)
+        raise _FORBIDDEN_SERVICE
+    return payload
+
+
+ServiceUserDep = Annotated[dict[str, Any], Depends(require_service_jwt)]

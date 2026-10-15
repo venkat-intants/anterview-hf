@@ -1,6 +1,13 @@
-// QuestionBankDetail — PH4-D1. A bank's filterable question list, an editor
-// that is only actually editable while the selected question is a draft, and
-// its version history.
+// QuestionBankDetail — PH4-D1. A question is read first and edited on purpose;
+// the editor is only actually editable while it is a draft; version history and
+// the withdraw rule are unchanged.
+//
+// STRUCTURAL CHANGE (2026-10-13): the page is now a five-stage flow, so each
+// state lives on the stage that owns it - drafts on ?stage=check, in-review on
+// ?stage=send, approved and retired on ?stage=approved - and a draft is opened
+// with Edit instead of being an always-open form. The assertions are the same
+// ones as before; only the route to reach each state moved. The flow itself is
+// covered by QuestionBankFlow.test.tsx.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
@@ -20,7 +27,11 @@ const withdrawBankQuestion = vi.fn();
 const retireBankQuestion = vi.fn();
 const newBankQuestionVersion = vi.fn();
 const listBankCompetencies = vi.fn();
-vi.mock('../api/questionBanks', () => ({
+vi.mock('../api/questionBanks', async (importActual) => ({
+  // Everything the page's tree imports that is not under test stays real
+  // (isReferenceUnverified and the constants); only the network calls are
+  // replaced.
+  ...(await importActual<typeof import('../api/questionBanks')>()),
   listQuestionBanks: (...a: unknown[]) => listQuestionBanks(...a) as unknown,
   listBankQuestions: (...a: unknown[]) => listBankQuestions(...a) as unknown,
   getBankQuestion: (...a: unknown[]) => getBankQuestion(...a) as unknown,
@@ -32,18 +43,8 @@ vi.mock('../api/questionBanks', () => ({
   retireBankQuestion: (...a: unknown[]) => retireBankQuestion(...a) as unknown,
   newBankQuestionVersion: (...a: unknown[]) => newBankQuestionVersion(...a) as unknown,
   listBankCompetencies: (...a: unknown[]) => listBankCompetencies(...a) as unknown,
-  // The page now renders BankFillPanel, which imports the AI / import / bulk
-  // calls from this same module. This factory lists the module's surface by
-  // hand, so anything the page's TREE imports has to appear here or vitest
-  // throws "No export is defined on the mock". These are stubs: what they do
-  // is BankFillPanel.test.tsx's subject, not this file's.
-  generateBankQuestions: vi.fn(() => Promise.resolve({ questions: [] })),
-  createBankQuestionsBulk: vi.fn(() => Promise.resolve([])),
-  importBankQuestions: vi.fn(() => Promise.resolve({ added: 0, errors: [], questions: [] })),
-  downloadBankQuestionTemplate: vi.fn(() => Promise.resolve()),
-  submitAllBankQuestions: vi.fn(() => Promise.resolve({ acted: 0, skipped: [] })),
-  approveAllBankQuestions: vi.fn(() => Promise.resolve({ acted: 0, skipped: [] })),
 }));
+
 
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
@@ -69,11 +70,11 @@ vi.mock('../context/AuthContext', () => ({ useAuth: () => mockUseAuth() as unkno
 
 import QuestionBankDetail from '../pages/hr/QuestionBankDetail';
 
-function renderPage() {
+function renderPage(stage: 'check' | 'send' | 'approved' = 'check') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[`/hr/question-banks/bank-1?stage=${stage}`]}>
         <QuestionBankDetail />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -84,7 +85,7 @@ const BANK: BankOut = {
   id: 'bank-1',
   name: 'Backend Core',
   description: null,
-  counts: { draft: 1, approved: 1 },
+  counts: { draft: 1, approved: 1, retired: 1 },
   used_in_exams: 1,
   created_at: '2026-09-01T00:00:00.000Z',
   updated_at: '2026-09-01T00:00:00.000Z',
@@ -147,32 +148,35 @@ beforeEach(() => {
   vi.clearAllMocks();
   listQuestionBanks.mockResolvedValue([BANK]);
   listBankCompetencies.mockResolvedValue([]);
-  listBankQuestions.mockResolvedValue([DRAFT_Q, APPROVED_V2]);
+  listBankQuestions.mockResolvedValue([DRAFT_Q, APPROVED_V2, RETIRED_V1]);
 });
 
 describe('QuestionBankDetail — the editor is draft-only', () => {
-  it('is fully editable for a draft question', async () => {
+  it('shows a draft read-only first, and is fully editable once Edit is chosen', async () => {
     const user = userEvent.setup();
     const detail: BankQuestionDetail = { question: DRAFT_Q, versions: [DRAFT_Q], used_in_exams: [] };
     getBankQuestion.mockResolvedValue(detail);
-    renderPage();
+    renderPage('check');
 
-    await user.click(await screen.findByText('What is a closure?'));
-    expect(await screen.findByDisplayValue('What is a closure?')).toBeEnabled();
+    // The first draft is open already (wide screens), read as a reader sees it.
+    expect(await screen.findByTestId('mcq-read-view')).toHaveTextContent('What is a closure?');
+    expect(screen.queryByDisplayValue('What is a closure?')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Submit for review' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(await screen.findByDisplayValue('What is a closure?')).toBeEnabled();
   });
 
   it('renders an approved question read-only, and offers New version as the way to change it', async () => {
-    const user = userEvent.setup();
     const detail: BankQuestionDetail = {
       question: APPROVED_V2,
       versions: [RETIRED_V1, APPROVED_V2],
       used_in_exams: [{ exam_id: 'exam-1', exam_title: 'Backend Engineer — Round 1' }],
     };
     getBankQuestion.mockResolvedValue(detail);
-    renderPage();
+    renderPage('approved');
 
-    await user.click(await screen.findByText('What is a monad? (v2)'));
     expect(
       await screen.findByText(/only a draft can be edited/),
     ).toBeInTheDocument();
@@ -194,10 +198,9 @@ describe('QuestionBankDetail — the editor is draft-only', () => {
       versions: [RETIRED_V1, APPROVED_V2],
       used_in_exams: [],
     });
-    newBankQuestionVersion.mockResolvedValue({ id: 'q-approved-v3' });
-    renderPage();
+    newBankQuestionVersion.mockResolvedValue({ id: 'q-approved-v3', version: 3 });
+    renderPage('approved');
 
-    await user.click(await screen.findByText('What is a monad? (v2)'));
     await user.click(await screen.findByRole('button', { name: 'New version' }));
 
     // Pre-filled with the current content, and now editable.
@@ -211,7 +214,6 @@ describe('QuestionBankDetail — the editor is draft-only', () => {
   });
 
   it('offers Withdraw only to the person who submitted the question', async () => {
-    const user = userEvent.setup();
     // Submitted by someone else: the server would 403, so the control is not
     // offered at all.
     const theirs = question({
@@ -222,9 +224,8 @@ describe('QuestionBankDetail — the editor is draft-only', () => {
     });
     getBankQuestion.mockResolvedValue({ question: theirs, versions: [theirs], used_in_exams: [] });
     listBankQuestions.mockResolvedValue([theirs]);
-    const view = renderPage();
+    const view = renderPage('send');
 
-    await user.click(await screen.findByText('Whose question is this?'));
     // Wait for the detail panel itself: an in_review question renders
     // read-only, so its banner is the signal the action bar has rendered.
     await screen.findByText(/only a draft can be edited/);
@@ -235,9 +236,8 @@ describe('QuestionBankDetail — the editor is draft-only', () => {
     const mine = question({ ...theirs, submitted_by_user_id: 'u-1' });
     getBankQuestion.mockResolvedValue({ question: mine, versions: [mine], used_in_exams: [] });
     listBankQuestions.mockResolvedValue([mine]);
-    renderPage();
+    renderPage('send');
 
-    await user.click(await screen.findByText('Whose question is this?'));
     expect(await screen.findByRole('button', { name: 'Withdraw' })).toBeInTheDocument();
   });
 });
@@ -251,9 +251,8 @@ describe('QuestionBankDetail — version history and usage', () => {
       used_in_exams: [{ exam_id: 'exam-1', exam_title: 'Backend Engineer — Round 1' }],
     };
     getBankQuestion.mockResolvedValue({ ...detail, question: APPROVED_V2 });
-    renderPage();
+    renderPage('approved');
 
-    await user.click(await screen.findByText('What is a monad? (v2)'));
     await screen.findByText('Version history');
 
     const history = screen.getByText('Version history').closest('div') as HTMLElement;

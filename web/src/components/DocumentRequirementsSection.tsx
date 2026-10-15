@@ -17,13 +17,19 @@ import {
   type DocumentRequirement,
 } from '@/api/offers';
 import { toast } from '@/lib/toast';
-import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { StatusTag } from '@/design/components/primitives';
+import { EmptyState, SectionCard } from '@/design/components/page';
+import { queryKeys } from '@/lib/queryKeys';
+import { FileText } from '@/design/components/icons';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 
-const inputCls =
-  'mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
-const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
+const labelCls = 'text-[13px] font-semibold text-foreground';
+const selectCls =
+  'mt-1.5 h-11 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
+const checkLabelCls = 'flex min-h-10 items-center gap-2.5 text-[14px] text-foreground';
 
 const DOC_TYPES: DocType[] = [
   'identity',
@@ -71,7 +77,7 @@ function AddRequirementForm({
     onSuccess: () => {
       toast.success('Document requirement added');
       void qc.invalidateQueries({
-        queryKey: ['hr', 'requisition', requisitionId, 'document-requirements'],
+        queryKey: queryKeys.requisitionDocumentRequirements(requisitionId),
       });
       onDone();
     },
@@ -79,77 +85,76 @@ function AddRequirementForm({
   });
 
   return (
-    <div className="mt-3 flex flex-col gap-2.5 rounded-[10px] border border-border p-3">
+    <div className="mb-4 flex flex-col gap-4 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
       <div>
         <label htmlFor={`${uid}-name`} className={labelCls}>
           Name
         </label>
-        <input
+        <Input
           id={`${uid}-name`}
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="e.g. PAN card"
-          className={inputCls}
+          className="mt-1.5"
         />
       </div>
-      <div className="grid grid-cols-2 gap-2.5">
-        <div>
-          <label htmlFor={`${uid}-type`} className={labelCls}>
-            Kind
-          </label>
-          <select
-            id={`${uid}-type`}
-            value={docType}
-            onChange={(e) => setDocType(e.target.value as DocType)}
-            className={inputCls}
-          >
-            {DOC_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="flex flex-col justify-end gap-1.5 pb-0.5">
-          <label className="flex items-center gap-2 text-[12.5px] text-foreground">
-            <input
-              type="checkbox"
-              checked={mandatory}
-              onChange={(e) => setMandatory(e.target.checked)}
-              className="h-4 w-4 accent-[var(--accent)]"
-            />
-            Mandatory
-          </label>
-          <label className="flex items-center gap-2 text-[12.5px] text-foreground">
-            <input
-              type="checkbox"
-              checked={requiresExpiry}
-              onChange={(e) => setRequiresExpiry(e.target.checked)}
-              className="h-4 w-4 accent-[var(--accent)]"
-            />
-            Needs an expiry date
-          </label>
-        </div>
+      <div>
+        <label htmlFor={`${uid}-type`} className={labelCls}>
+          Kind
+        </label>
+        <select
+          id={`${uid}-type`}
+          value={docType}
+          onChange={(e) => setDocType(e.target.value as DocType)}
+          className={selectCls}
+        >
+          {DOC_TYPES.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
       </div>
       <div>
         <label htmlFor={`${uid}-desc`} className={labelCls}>
           Description candidates see (optional)
         </label>
-        <input
+        <Input
           id={`${uid}-desc`}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          className={inputCls}
+          className="mt-1.5"
         />
       </div>
-      <button
+      <fieldset>
+        <legend className="sr-only">Requirement settings</legend>
+        <label className={checkLabelCls}>
+          <input
+            type="checkbox"
+            checked={mandatory}
+            onChange={(e) => setMandatory(e.target.checked)}
+            className="h-4 w-4 accent-[var(--accent)]"
+          />
+          Mandatory
+        </label>
+        <label className={checkLabelCls}>
+          <input
+            type="checkbox"
+            checked={requiresExpiry}
+            onChange={(e) => setRequiresExpiry(e.target.checked)}
+            className="h-4 w-4 accent-[var(--accent)]"
+          />
+          Needs an expiry date
+        </label>
+      </fieldset>
+      <Button
         type="button"
         disabled={!name.trim() || addMut.isPending}
         onClick={() => addMut.mutate()}
-        className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+        className="self-start"
       >
         {addMut.isPending ? 'Adding…' : 'Add requirement'}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -164,7 +169,7 @@ function RequirementRow({
   const qc = useQueryClient();
   const invalidate = () =>
     qc.invalidateQueries({
-      queryKey: ['hr', 'requisition', requisitionId, 'document-requirements'],
+      queryKey: queryKeys.requisitionDocumentRequirements(requisitionId),
     });
 
   const toggleMut = useMutation({
@@ -184,10 +189,10 @@ function RequirementRow({
   });
 
   return (
-    <li className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-border p-3">
-      <div className="min-w-0">
-        <p className="truncate text-[13px] font-medium text-foreground">{requirement.name}</p>
-        <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+    <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-[16px] border border-border p-3.5">
+      <div className="min-w-0 flex-1 basis-48">
+        <p className="break-words text-[14px] font-semibold text-foreground">{requirement.name}</p>
+        <p className="mt-0.5 break-words text-[13px] text-muted-foreground">
           {requirement.doc_type}
           {requirement.description ? ` · ${requirement.description}` : ''}
         </p>
@@ -197,14 +202,14 @@ function RequirementRow({
           {requirement.mandatory ? 'Mandatory' : 'Optional'}
         </StatusTag>
         {requirement.requires_expiry ? <StatusTag tone="lavender">Needs expiry</StatusTag> : null}
-        <button
+        <Button
           type="button"
+          variant="outline"
           onClick={() => toggleMut.mutate({ mandatory: !requirement.mandatory })}
           disabled={toggleMut.isPending}
-          className="text-[12px] text-[var(--ui-info)] hover:underline disabled:opacity-40"
         >
           Make {requirement.mandatory ? 'optional' : 'mandatory'}
-        </button>
+        </Button>
         <ConfirmDeleteButton
           title={`Remove ${requirement.name}`}
           pending={removeMut.isPending}
@@ -215,40 +220,26 @@ function RequirementRow({
   );
 }
 
-export default function DocumentRequirementsSection({
-  requisitionId,
-}: {
-  requisitionId: string;
-}) {
+export default function DocumentRequirementsSection({ requisitionId }: { requisitionId: string }) {
   const [adding, setAdding] = useState(false);
 
   const list = useQuery({
-    queryKey: ['hr', 'requisition', requisitionId, 'document-requirements'],
+    queryKey: queryKeys.requisitionDocumentRequirements(requisitionId),
     queryFn: () => listDocumentRequirements(requisitionId),
   });
 
   const rows = list.data ?? [];
 
   return (
-    <GlassCard className="mb-5 p-5">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <h2 className="text-[15px] font-semibold text-foreground">
-            Preboarding documents{rows.length > 0 ? ` (${rows.length})` : ''}
-          </h2>
-          <p className="mt-1 text-[12px] text-muted-foreground">
-            What a candidate who accepts an offer for this opening must upload.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setAdding((v) => !v)}
-          className="text-[12.5px] text-[var(--ui-info)] hover:underline"
-        >
+    <SectionCard
+      title={`Preboarding documents${rows.length > 0 ? ` (${rows.length})` : ''}`}
+      description="What a candidate who accepts an offer for this opening must upload."
+      action={
+        <Button type="button" variant="outline" onClick={() => setAdding((v) => !v)}>
           {adding ? 'Close' : 'Add requirement'}
-        </button>
-      </div>
-
+        </Button>
+      }
+    >
       {adding ? (
         <AddRequirementForm
           requisitionId={requisitionId}
@@ -258,22 +249,33 @@ export default function DocumentRequirementsSection({
       ) : null}
 
       {list.isLoading ? (
-        <p className="mt-3 text-[12.5px] text-muted-foreground">Loading…</p>
+        <div className="flex flex-col gap-2" aria-busy="true">
+          <span className="sr-only">Loading…</span>
+          <Skeleton className="h-16 rounded-[16px]" />
+          <Skeleton className="h-16 rounded-[16px]" />
+        </div>
       ) : list.isError ? (
-        <p className="mt-3 text-[12.5px] text-muted-foreground">
-          Could not load this opening&apos;s document requirements.
-        </p>
+        <div role="alert" className="flex flex-wrap items-center gap-3">
+          <p className="text-[13.5px] text-muted-foreground">
+            Could not load this opening&apos;s document requirements.
+          </p>
+          <Button type="button" variant="outline" onClick={() => void list.refetch()}>
+            Try again
+          </Button>
+        </div>
       ) : rows.length === 0 ? (
-        <p className="mt-3 text-[12.5px] text-muted-foreground">
-          No documents required yet — candidates who accept an offer will see nothing to upload.
-        </p>
+        <EmptyState
+          icon={FileText}
+          title="No documents required yet — candidates who accept an offer will see nothing to upload."
+          description="Add the documents you need, such as an ID or a degree certificate."
+        />
       ) : (
-        <ul className="mt-3 flex flex-col gap-2">
+        <ul className="flex flex-col gap-2">
           {rows.map((r) => (
             <RequirementRow key={r.id} requisitionId={requisitionId} requirement={r} />
           ))}
         </ul>
       )}
-    </GlassCard>
+    </SectionCard>
   );
 }

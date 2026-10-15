@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { RequisitionDashboard } from '../api/requisitions';
@@ -26,6 +27,17 @@ const mocks = vi.hoisted(() => {
   }
   return {
     getRequisitionDashboard: vi.fn(),
+    // The Setup tab reads these; the Pipeline tests never reach them.
+    getRequisition: vi.fn(),
+    getJdHistory: vi.fn(() =>
+      Promise.resolve({ requisition_id: 'req-1', published_version_id: null, versions: [] }),
+    ),
+    getPublishSchedule: vi.fn(() =>
+      Promise.resolve({
+        requisition_id: 'req-1', publish_at: null, published_at: null,
+        public_apply_enabled: true, tolerance: '',
+      }),
+    ),
     setRequisitionStatus: vi.fn(),
     updateRequisition: vi.fn(),
     listTeam: vi.fn(() => Promise.resolve([])),
@@ -33,7 +45,21 @@ const mocks = vi.hoisted(() => {
     UnresolvedCandidatesError,
   };
 });
-vi.mock('../api/requisitions', () => mocks);
+// The Setup tab mounts real panels that use the module's pure helpers, so only
+// the network calls are replaced.
+vi.mock('../api/requisitions', async () => ({
+  ...(await vi.importActual<typeof import('../api/requisitions')>('../api/requisitions')),
+  ...mocks,
+}));
+vi.mock('../api/workflows', () => ({
+  listWorkflows: vi.fn(() => Promise.resolve([])),
+  getWorkflow: vi.fn(),
+  validateWorkflow: vi.fn(),
+}));
+vi.mock('../api/workflowReview', () => ({ getSimulation: vi.fn() }));
+vi.mock('../api/offers', () => ({
+  listDocumentRequirements: vi.fn(() => Promise.resolve([])),
+}));
 const getCompanyRequisitionDashboard = vi.fn();
 vi.mock('../api/companyBoard', () => ({
   getCompanyRequisitionDashboard: (...a: unknown[]) =>
@@ -107,11 +133,11 @@ function dash(over: Partial<RequisitionDashboard> = {}): RequisitionDashboard {
   };
 }
 
-function renderPage(readOnly = false) {
+function renderPage(readOnly = false, search = '') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={['/hr/requisitions/req-1']}>
+      <MemoryRouter initialEntries={[`/hr/requisitions/req-1${search}`]}>
         <Routes>
           <Route
             path="/hr/requisitions/:requisitionId"
@@ -124,6 +150,7 @@ function renderPage(readOnly = false) {
 }
 
 beforeEach(() => {
+  localStorage.clear();
   vi.clearAllMocks();
   mocks.getRequisitionDashboard.mockResolvedValue(dash());
 });
@@ -196,6 +223,11 @@ describe('the per-opening dashboard (E1)', () => {
   it('tells automated activity apart from what a person did, and when', async () => {
     renderPage();
     const activity = await screen.findByTestId('activity');
+    // Activity is a record: closed by default, under a summary of the newest line.
+    const toggle = within(activity).getByRole('button', { name: /Activity/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(within(activity).getByTestId('collapsible-summary').textContent).toMatch(/events? · latest: /);
+    await userEvent.click(toggle);
     expect(within(activity).getByText('Ravi K moved to AI Interview')).toBeTruthy();
     expect(within(activity).getByText('Automated')).toBeTruthy();
     expect(within(activity).getByText('Meera HR')).toBeTruthy();
@@ -257,7 +289,9 @@ describe('the per-opening dashboard (E1)', () => {
     mocks.getRequisitionDashboard.mockResolvedValue(
       dash({ has_published_workflow: false, rounds: [] }),
     );
-    renderPage();
+    // The apply switch now lives in the Go live stage of the Setup tab.
+    renderPage(false, '?tab=setup');
+    await userEvent.click(await screen.findByRole('button', { name: /Go live/ }));
     expect((await screen.findByTestId('apply-needs-workflow')).textContent).toMatch(
       /until a workflow is published/,
     );

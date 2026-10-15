@@ -55,7 +55,7 @@ test.describe('what a candidate sees about themselves', () => {
     // They fail the round, which holds them: internally 'held', and a person
     // has yet to decide anything.
     expect(await sitTheExam(candidatePage, candidate, { answerCorrectly: false }))
-      .toContain('Not this time');
+      .toContain('Assessment submitted');
     await expect
       .poll(async () => (await enrolmentFor(api, opening.id, candidate.name)).status)
       .toBe('held');

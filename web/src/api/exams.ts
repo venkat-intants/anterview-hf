@@ -13,6 +13,7 @@ import {
   fetchBlobWithAuth,
   uploadWithProgress,
 } from './client';
+import { pathId } from './pathId';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -193,7 +194,7 @@ export function listExams(status?: ExamStatus): Promise<ExamSummary[]> {
 }
 
 export function getExam(id: string): Promise<ExamDetail> {
-  return apiGet<ExamDetail>(`/hr/exams/${id}`);
+  return apiGet<ExamDetail>(`/hr/exams/${pathId(id)}`);
 }
 
 export function createExam(input: ExamCreateInput): Promise<Exam> {
@@ -201,7 +202,7 @@ export function createExam(input: ExamCreateInput): Promise<Exam> {
 }
 
 export function updateExam(id: string, patch: ExamUpdateInput): Promise<Exam> {
-  return clientFetch<Exam>(`${API_BASE}/hr/exams/${id}`, {
+  return clientFetch<Exam>(`${API_BASE}/hr/exams/${pathId(id)}`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
@@ -209,7 +210,7 @@ export function updateExam(id: string, patch: ExamUpdateInput): Promise<Exam> {
 
 // ── Questions ────────────────────────────────────────────────────────────────
 export function addQuestion(examId: string, q: QuestionInput): Promise<ExamQuestion> {
-  return apiPost<ExamQuestion>(`/hr/exams/${examId}/questions`, q);
+  return apiPost<ExamQuestion>(`/hr/exams/${pathId(examId)}/questions`, q);
 }
 
 export function updateQuestion(
@@ -217,14 +218,14 @@ export function updateQuestion(
   qid: string,
   q: Partial<QuestionInput>,
 ): Promise<ExamQuestion> {
-  return clientFetch<ExamQuestion>(`${API_BASE}/hr/exams/${examId}/questions/${qid}`, {
+  return clientFetch<ExamQuestion>(`${API_BASE}/hr/exams/${pathId(examId)}/questions/${pathId(qid)}`, {
     method: 'PATCH',
     body: JSON.stringify(q),
   });
 }
 
 export function deleteQuestion(examId: string, qid: string): Promise<void> {
-  return apiDelete<void>(`/hr/exams/${examId}/questions/${qid}`);
+  return apiDelete<void>(`/hr/exams/${pathId(examId)}/questions/${pathId(qid)}`);
 }
 
 // ── Bulk add / AI generate / Excel import ────────────────────────────────────
@@ -262,7 +263,7 @@ export function generateQuestions(
   params: GenerateParams,
 ): Promise<{ questions: GeneratedQuestion[] }> {
   return apiPost<{ questions: GeneratedQuestion[] }>(
-    `/hr/exams/${examId}/questions/generate`,
+    `/hr/exams/${pathId(examId)}/questions/generate`,
     params,
   );
 }
@@ -272,7 +273,7 @@ export function bulkAddQuestions(
   examId: string,
   questions: QuestionInput[],
 ): Promise<ExamQuestion[]> {
-  return apiPost<ExamQuestion[]>(`/hr/exams/${examId}/questions/bulk`, { questions });
+  return apiPost<ExamQuestion[]>(`/hr/exams/${pathId(examId)}/questions/bulk`, { questions });
 }
 
 /** Upload an .xlsx/.csv in the template layout; backend parses + inserts valid rows. */
@@ -280,7 +281,7 @@ export function importQuestions(examId: string, file: File): Promise<ImportResul
   const fd = new FormData();
   fd.append('file', file);
   return uploadWithProgress<ImportResult>(
-    `${API_BASE}/hr/exams/${examId}/questions/import`,
+    `${API_BASE}/hr/exams/${pathId(examId)}/questions/import`,
     fd,
   );
 }
@@ -303,7 +304,7 @@ export async function downloadQuestionTemplate(): Promise<void> {
 }
 
 export function reorderQuestions(examId: string, questionIds: string[]): Promise<ExamQuestion[]> {
-  return apiPut<ExamQuestion[]>(`/hr/exams/${examId}/questions/order`, {
+  return apiPut<ExamQuestion[]>(`/hr/exams/${pathId(examId)}/questions/order`, {
     question_ids: questionIds,
   });
 }
@@ -335,6 +336,8 @@ export interface CodingQuestion {
   // PH4-D1 provenance — see the matching note on ExamQuestion above.
   source_bank_root_id?: string | null;
   source_bank_version?: number | null;
+  /** The bank question this was copied from; null for one written here. */
+  source_bank_question_id?: string | null;
 }
 
 export interface CodingQuestionInput {
@@ -372,17 +375,17 @@ export function generateCodingQuestions(
   params: GenerateCodingParams,
 ): Promise<{ questions: GeneratedCodingQuestion[] }> {
   return apiPost<{ questions: GeneratedCodingQuestion[] }>(
-    `/hr/exams/${examId}/coding-questions/generate`,
+    `/hr/exams/${pathId(examId)}/coding-questions/generate`,
     params,
   );
 }
 
 export function listCodingQuestions(examId: string): Promise<CodingQuestion[]> {
-  return apiGet<CodingQuestion[]>(`/hr/exams/${examId}/coding-questions`);
+  return apiGet<CodingQuestion[]>(`/hr/exams/${pathId(examId)}/coding-questions`);
 }
 
 export function addCodingQuestion(examId: string, q: CodingQuestionInput): Promise<CodingQuestion> {
-  return apiPost<CodingQuestion>(`/hr/exams/${examId}/coding-questions`, q);
+  return apiPost<CodingQuestion>(`/hr/exams/${pathId(examId)}/coding-questions`, q);
 }
 
 export function updateCodingQuestion(
@@ -390,23 +393,23 @@ export function updateCodingQuestion(
   qid: string,
   q: Partial<CodingQuestionInput>,
 ): Promise<CodingQuestion> {
-  return clientFetch<CodingQuestion>(`${API_BASE}/hr/exams/${examId}/coding-questions/${qid}`, {
+  return clientFetch<CodingQuestion>(`${API_BASE}/hr/exams/${pathId(examId)}/coding-questions/${pathId(qid)}`, {
     method: 'PATCH',
     body: JSON.stringify(q),
   });
 }
 
 export function deleteCodingQuestion(examId: string, qid: string): Promise<void> {
-  return apiDelete<void>(`/hr/exams/${examId}/coding-questions/${qid}`);
+  return apiDelete<void>(`/hr/exams/${pathId(examId)}/coding-questions/${pathId(qid)}`);
 }
 
 // ── Rounds ────────────────────────────────────────────────────────────────────
 export function getStructure(examId: string): Promise<ExamStructure> {
-  return apiGet<ExamStructure>(`/hr/exams/${examId}/structure`);
+  return apiGet<ExamStructure>(`/hr/exams/${pathId(examId)}/structure`);
 }
 
 export function createRound(examId: string, input: RoundCreateInput): Promise<Round> {
-  return apiPost<Round>(`/hr/exams/${examId}/rounds`, input);
+  return apiPost<Round>(`/hr/exams/${pathId(examId)}/rounds`, input);
 }
 
 export function updateRound(
@@ -414,15 +417,15 @@ export function updateRound(
   roundId: string,
   patch: RoundUpdateInput,
 ): Promise<Round> {
-  return apiPatch<Round>(`/hr/exams/${examId}/rounds/${roundId}`, patch);
+  return apiPatch<Round>(`/hr/exams/${pathId(examId)}/rounds/${pathId(roundId)}`, patch);
 }
 
 export function deleteRound(examId: string, roundId: string): Promise<void> {
-  return apiDelete<void>(`/hr/exams/${examId}/rounds/${roundId}`);
+  return apiDelete<void>(`/hr/exams/${pathId(examId)}/rounds/${pathId(roundId)}`);
 }
 
 export function reorderRounds(examId: string, ids: string[]): Promise<Round[]> {
-  return apiPut<Round[]>(`/hr/exams/${examId}/rounds/order`, { ids });
+  return apiPut<Round[]>(`/hr/exams/${pathId(examId)}/rounds/order`, { ids });
 }
 
 /** PH4-D1 — the way forward once a round is locked (published, or taken):
@@ -430,7 +433,7 @@ export function reorderRounds(examId: string, ids: string[]): Promise<Round[]> {
  *  Deliberately does not carry bank provenance onto the copies — see the
  *  server-side comment on `duplicate_round` in hr_rounds.py. */
 export function duplicateRound(examId: string, roundId: string): Promise<Round> {
-  return apiPost<Round>(`/hr/exams/${examId}/rounds/${roundId}/duplicate`, {});
+  return apiPost<Round>(`/hr/exams/${pathId(examId)}/rounds/${pathId(roundId)}/duplicate`, {});
 }
 
 // ── Sections ──────────────────────────────────────────────────────────────────
@@ -439,7 +442,7 @@ export function createSection(
   roundId: string,
   input: SectionCreateInput,
 ): Promise<Section> {
-  return apiPost<Section>(`/hr/exams/${examId}/rounds/${roundId}/sections`, input);
+  return apiPost<Section>(`/hr/exams/${pathId(examId)}/rounds/${pathId(roundId)}/sections`, input);
 }
 
 export function updateSection(
@@ -449,7 +452,7 @@ export function updateSection(
   patch: SectionUpdateInput,
 ): Promise<Section> {
   return apiPatch<Section>(
-    `/hr/exams/${examId}/rounds/${roundId}/sections/${sectionId}`,
+    `/hr/exams/${pathId(examId)}/rounds/${pathId(roundId)}/sections/${pathId(sectionId)}`,
     patch,
   );
 }
@@ -459,7 +462,7 @@ export function deleteSection(
   roundId: string,
   sectionId: string,
 ): Promise<void> {
-  return apiDelete<void>(`/hr/exams/${examId}/rounds/${roundId}/sections/${sectionId}`);
+  return apiDelete<void>(`/hr/exams/${pathId(examId)}/rounds/${pathId(roundId)}/sections/${pathId(sectionId)}`);
 }
 
 // ── Section questions (MCQ) ───────────────────────────────────────────────────
@@ -467,7 +470,7 @@ export function listSectionQuestions(
   examId: string,
   sectionId: string,
 ): Promise<ExamQuestion[]> {
-  return apiGet<ExamQuestion[]>(`/hr/exams/${examId}/sections/${sectionId}/questions`);
+  return apiGet<ExamQuestion[]>(`/hr/exams/${pathId(examId)}/sections/${pathId(sectionId)}/questions`);
 }
 
 export function addSectionQuestion(
@@ -475,7 +478,7 @@ export function addSectionQuestion(
   sectionId: string,
   q: QuestionInput,
 ): Promise<ExamQuestion> {
-  return apiPost<ExamQuestion>(`/hr/exams/${examId}/sections/${sectionId}/questions`, q);
+  return apiPost<ExamQuestion>(`/hr/exams/${pathId(examId)}/sections/${pathId(sectionId)}/questions`, q);
 }
 
 // ── Section coding questions ──────────────────────────────────────────────────
@@ -484,7 +487,7 @@ export function listSectionCodingQuestions(
   sectionId: string,
 ): Promise<CodingQuestion[]> {
   return apiGet<CodingQuestion[]>(
-    `/hr/exams/${examId}/sections/${sectionId}/coding-questions`,
+    `/hr/exams/${pathId(examId)}/sections/${pathId(sectionId)}/coding-questions`,
   );
 }
 
@@ -494,7 +497,7 @@ export function addSectionCodingQuestion(
   q: CodingQuestionInput,
 ): Promise<CodingQuestion> {
   return apiPost<CodingQuestion>(
-    `/hr/exams/${examId}/sections/${sectionId}/coding-questions`,
+    `/hr/exams/${pathId(examId)}/sections/${pathId(sectionId)}/coding-questions`,
     q,
   );
 }
@@ -504,7 +507,7 @@ export function deleteSectionQuestion(
   sectionId: string,
   qid: string,
 ): Promise<void> {
-  return apiDelete<void>(`/hr/exams/${examId}/sections/${sectionId}/questions/${qid}`);
+  return apiDelete<void>(`/hr/exams/${pathId(examId)}/sections/${pathId(sectionId)}/questions/${pathId(qid)}`);
 }
 
 export function deleteSectionCodingQuestion(
@@ -513,13 +516,13 @@ export function deleteSectionCodingQuestion(
   qid: string,
 ): Promise<void> {
   return apiDelete<void>(
-    `/hr/exams/${examId}/sections/${sectionId}/coding-questions/${qid}`,
+    `/hr/exams/${pathId(examId)}/sections/${pathId(sectionId)}/coding-questions/${pathId(qid)}`,
   );
 }
 
 // ── Assignments (magic links) ────────────────────────────────────────────────
 export function listAssignments(examId: string): Promise<Assignment[]> {
-  return apiGet<Assignment[]>(`/hr/exams/${examId}/assignments`);
+  return apiGet<Assignment[]>(`/hr/exams/${pathId(examId)}/assignments`);
 }
 
 export function assignExam(
@@ -532,7 +535,7 @@ export function assignExam(
    *  `applicantIds` are attributed by the server when that can be known. */
   enrolmentIds: string[] = [],
 ): Promise<AssignResult[]> {
-  return apiPost<AssignResult[]>(`/hr/exams/${examId}/assignments`, {
+  return apiPost<AssignResult[]>(`/hr/exams/${pathId(examId)}/assignments`, {
     applicant_ids: applicantIds,
     ...(enrolmentIds.length > 0 ? { enrolment_ids: enrolmentIds } : {}),
     ttl_hours: ttlHours,
@@ -542,12 +545,12 @@ export function assignExam(
 }
 
 export function revokeAssignment(examId: string, aid: string): Promise<Assignment> {
-  return apiPost<Assignment>(`/hr/exams/${examId}/assignments/${aid}/revoke`, {});
+  return apiPost<Assignment>(`/hr/exams/${pathId(examId)}/assignments/${pathId(aid)}/revoke`, {});
 }
 
 // ── Results ──────────────────────────────────────────────────────────────────
 export function listAttempts(examId: string): Promise<AttemptResult[]> {
-  return apiGet<AttemptResult[]>(`/hr/exams/${examId}/attempts`);
+  return apiGet<AttemptResult[]>(`/hr/exams/${pathId(examId)}/attempts`);
 }
 
 /** One graded coding question, from the frozen graded_snapshot (HR-only). */
@@ -595,7 +598,7 @@ export function getAttemptBreakdown(
   examId: string,
   attemptId: string,
 ): Promise<AttemptBreakdown> {
-  return apiGet<AttemptBreakdown>(`/hr/exams/${examId}/attempts/${attemptId}/breakdown`);
+  return apiGet<AttemptBreakdown>(`/hr/exams/${pathId(examId)}/attempts/${pathId(attemptId)}/breakdown`);
 }
 
 // ── Camera proctoring (exam-camera-proctoring contract §7) ───────────────────
@@ -632,5 +635,5 @@ export function getAttemptProctoring(
   examId: string,
   attemptId: string,
 ): Promise<AttemptProctoring> {
-  return apiGet<AttemptProctoring>(`/hr/exams/${examId}/attempts/${attemptId}/proctoring`);
+  return apiGet<AttemptProctoring>(`/hr/exams/${pathId(examId)}/attempts/${pathId(attemptId)}/proctoring`);
 }

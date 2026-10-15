@@ -664,6 +664,38 @@ async def _email_candidate(db: AsyncSession, offer: dict[str, Any], template: st
     )
 
 
+async def _tell_candidate(db: AsyncSession, offer: dict[str, Any], title: str,
+                          dedupe_key: str) -> None:
+    """Tell a signed-in candidate, in the app, that their offer changed.
+
+    The same producer the interview loop uses for the candidate
+    (create_notification, see interview_scheduling._tell_candidate_loop), with
+    its own kind ``candidate_offer`` — ``offer_update`` is HR's, and reusing
+    ``interview_schedule`` would make the app refresh the wrong views. No
+    migration: ``notifications.kind`` is an opaque Text column with no CHECK.
+    Text is English-only, as the loop's is. It carries the job title and
+    nothing of the terms, and links to the in-app list, never the tokenised
+    offer URL. The recipient is the applicant row's own account; an applicant
+    with no account gets the email only.
+
+    Unlike the loop notification this runs in a SAVEPOINT and swallows its own
+    failure: the offer send/withdraw/expiry is the business event, and a bell
+    row must never fail or roll it back.
+    """
+    user_id = offer.get("candidate_user_id")
+    if user_id is None:
+        return
+    try:
+        async with db.begin_nested():
+            await create_notification(
+                db, user_id=uuid.UUID(str(user_id)), kind="candidate_offer",
+                title=title, body=offer.get("job_title") or None, link="/applications",
+                dedupe_key=dedupe_key,
+            )
+    except Exception:  # noqa: BLE001 — a notification must not undo the offer
+        log.warning("offers.candidate_notification_failed", offer_id=str(offer.get("id")))
+
+
 def offer_link(raw_token: str) -> str:
     return f"{settings.app_base_url.rstrip('/')}/offer#{raw_token}"
 
@@ -707,7 +739,16 @@ async def send(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
         {"company": offer["company_name"], "offer_url": offer_link(raw),
          "expires": expires.strftime("%d %b %Y"), "resent": again,
          "accepted": offer["status"] == "accepted"},
-        key=f"offer:{offer_id}:{'resent:' + now.strftime('%Y%m%d%H%M%S') if again else 'sent'}",
+        # A resend is keyed on the link it carries, not on the clock: a
+        # one-second timestamp collapsed two resends in the same second into one
+        # email (the dedupe key is UNIQUE) while the token had been rotated twice,
+        # so the only link that worked was the one never delivered. The hash
+        # prefix is unique per rotation and, being an HMAC, reveals nothing usable.
+        key=f"offer:{offer_id}:{'resent:' + hash_offer_token(raw)[:16] if again else 'sent'}",
+    )
+    await _tell_candidate(
+        db, offer, "Your offer was updated" if again else "You have an offer",
+        dedupe_key=f"offer:{offer_id}:{'resent:' + hash_offer_token(raw)[:16] if again else 'sent'}",
     )
     return offer_out(await _load(db, company_id=company_id, offer_id=offer_id))
 
@@ -742,6 +783,8 @@ async def withdraw(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UU
         await _email_candidate(db, offer, "offer_update",
                                {"company": offer["company_name"], "kind": "withdrawn"},
                                key=f"offer:{offer_id}:withdrawn")
+        await _tell_candidate(db, offer, "Your offer was withdrawn",
+                              dedupe_key=f"offer:{offer_id}:withdrawn")
     return offer_out(await _load(db, company_id=company_id, offer_id=offer_id))
 
 
@@ -1043,6 +1086,8 @@ async def _expire(db: AsyncSession, offer: dict[str, Any]) -> None:
     await _record(db, offer=offer, action="expired", actor=None, meta=RequestMeta(),
                   actor_type="system")
     await _tell_hr(db, offer, "Offer expired")
+    await _tell_candidate(db, offer, "Your offer has expired",
+                          dedupe_key=f"offer:{offer['id']}:expired")
 
 
 _DUE_SQL = """
@@ -1081,7 +1126,17 @@ async def candidate_offers(db: AsyncSession, *, user_id: uuid.UUID) -> list[dict
             {"u": user_id},
         )
     ).mappings().all()
-    return [{"id": str(r["id"]), **candidate_out(dict(r), r["company_name"])} for r in rows]
+    # `application_id` joins an offer to the id /users/me/applications returns
+    # (the enrolment id). Added here, not in the shared candidate_out, which
+    # also serves the unauthenticated token page.
+    return [
+        {
+            "id": str(r["id"]),
+            "application_id": str(r["enrolment_id"]) if r.get("enrolment_id") else None,
+            **candidate_out(dict(r), r["company_name"]),
+        }
+        for r in rows
+    ]
 
 
 async def candidate_link(db: AsyncSession, *, user_id: uuid.UUID, offer_id: uuid.UUID,

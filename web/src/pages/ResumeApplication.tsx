@@ -35,12 +35,15 @@ import {
   type ApplicationDraft,
   type DraftFields,
 } from '@/api/publicApply';
-import { GlassCard, Pill } from '@/design/components/primitives';
+import { PageHeader, SectionCard } from '@/design/components/page';
 import { AlertCircle, CheckCircle2, Loader2, Upload } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
+import { PublicNext } from '@/components/PublicNext';
+import { useFragmentToken } from '@/hooks/useFragmentToken';
 
-const INPUT =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[14px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none';
-const LABEL = 'mb-1.5 block text-[12.5px] font-medium text-[#b8babf]';
+const LABEL = 'mb-1.5 block text-[13px] font-medium text-foreground';
 const MAX_BYTES = 5 * 1024 * 1024;
 
 function errText(e: unknown, fallback: string): string {
@@ -57,7 +60,7 @@ export default function ResumeApplication(): JSX.Element {
   // A fragment is never sent to a server, so the credential stays out of access
   // logs, edge logs and any cross-origin Referer. Same rule PublicExam and
   // InterviewInvite follow; read once so a later navigation cannot swap it.
-  const [token] = useState(() => window.location.hash.replace(/^#/, '').trim());
+  const token = useFragmentToken();
   const { t } = useTranslation();
   const client = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -183,11 +186,12 @@ export default function ResumeApplication(): JSX.Element {
     upload.mutate(file);
   }
 
+
   // ── States before the form ───────────────────────────────────────────
   if (draft.isLoading) {
     return (
       <Shell>
-        <p className="flex items-center gap-2 text-[14px] text-[#888b91]">
+        <p role="status" className="flex items-center gap-2 text-[14px] text-muted-foreground">
           <Loader2 size={15} aria-hidden="true" className="animate-spin" />
           {t('resumeApply.loading')}
         </p>
@@ -200,303 +204,294 @@ export default function ResumeApplication(): JSX.Element {
     // them apart would be a free oracle on a page anyone can reach.
     return (
       <Shell>
-        <GlassCard className="p-6">
-          <h1 className="text-[17px] font-semibold text-white">
-            {t('resumeApply.deadLinkTitle')}
-          </h1>
-          <p className="mt-2 text-[13.5px] text-[#b8babf]">{t('resumeApply.deadLinkDesc')}</p>
-        </GlassCard>
+        <PublicNotice
+          title={t('resumeApply.deadLinkTitle')}
+          description={t('resumeApply.deadLinkDesc')}
+          hint={t('publicFrame.requestNew')}
+        />
       </Shell>
     );
   }
 
   if (discarded) {
     return (
-      <Shell>
-        <GlassCard className="p-6 text-center">
-          <CheckCircle2 size={28} aria-hidden="true" className="mx-auto text-[#6fbf8d]" />
-          <h1 className="mt-3 text-[18px] font-semibold text-white">
-            {t('resumeApply.deletedTitle')}
-          </h1>
-          <p className="mt-2 text-[14px] text-[#b8babf]">{t('resumeApply.deletedDesc')}</p>
-        </GlassCard>
+      <Shell company={draft.data.company_name}>
+        <PublicNotice
+          tone="ok"
+          title={t('resumeApply.deletedTitle')}
+          description={t('resumeApply.deletedDesc')}
+        />
       </Shell>
     );
   }
 
   if (submitted) {
     return (
-      <Shell>
-        <GlassCard className="p-6 text-center">
-          <CheckCircle2 size={28} aria-hidden="true" className="mx-auto text-[#6fbf8d]" />
-          <h1 className="mt-3 text-[18px] font-semibold text-white">
-            {draft.data.title}
-          </h1>
-          <p className="mt-2 text-[14px] text-[#b8babf]">{submitted}</p>
-        </GlassCard>
+      <Shell company={draft.data.company_name}>
+        <PublicNotice tone="ok" title={draft.data.title} description={submitted} />
+        <PublicNext className="mt-6">
+          {t('public.resumeNext', {
+            company: draft.data.company_name,
+            email: draft.data.email,
+          })}
+        </PublicNext>
       </Shell>
     );
   }
 
   const d = draft.data;
   const expires = new Date(d.expires_at);
+  const optional = (
+    <span className="font-normal text-[var(--ui-soft)]">{t('resumeApply.optional')}</span>
+  );
 
   return (
-    <Shell>
-      <header className="mb-5">
-        <h1 className="text-[20px] font-semibold text-white">{d.title}</h1>
-        <p className="mt-0.5 text-[13.5px] text-[#888b91]">
-          {t('resumeApply.applyingAs', { company: d.company_name, email: d.email })}
-        </p>
-        <p className="mt-2 text-[12px] text-[#6f7379]">
-          {t('resumeApply.progressSaved', {
-            date: Number.isNaN(expires.getTime())
-              ? t('resumeApply.itExpires')
-              : expires.toLocaleDateString(),
-          })}
-        </p>
-      </header>
+    <Shell company={d.company_name} step={t('public.step.resume')}>
+      <PageHeader
+        title={d.title}
+        description={t('resumeApply.applyingAs', { company: d.company_name, email: d.email })}
+        className="mb-2"
+      />
+      <p className="mb-5 text-[13px] text-[var(--ui-soft)]">
+        {t('resumeApply.progressSaved', {
+          date: Number.isNaN(expires.getTime())
+            ? t('resumeApply.itExpires')
+            : expires.toLocaleDateString(),
+        })}
+      </p>
 
-      {/* ── CV ─────────────────────────────────────────────────────── */}
-      <GlassCard className="p-5">
-        <h2 className="text-[15px] font-semibold text-white">{t('resumeApply.cvTitle')}</h2>
-        {d.has_resume ? (
-          <p className="mt-2 flex items-center gap-2 text-[13.5px] text-[#b8babf]">
-            <CheckCircle2 size={14} aria-hidden="true" className="text-[#6fbf8d]" />
-            {d.resume_filename ?? t('resumeApply.cvUploaded')}
-          </p>
-        ) : (
-          <p className="mt-2 text-[13.5px] text-[#888b91]">{t('resumeApply.cvPrompt')}</p>
-        )}
-        <input
-          ref={fileInput}
-          type="file"
-          accept="application/pdf"
-          className="sr-only"
-          aria-label={t('resumeApply.cvUploadAria')}
-          onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
-        />
-        <button
-          type="button"
-          onClick={() => fileInput.current?.click()}
-          disabled={upload.isPending}
-          className="mt-3 flex items-center gap-2 rounded-[10px] border border-white/[0.1] px-3 py-2 text-[13px] text-[#b8babf] hover:text-white disabled:opacity-40"
+      <div className="flex flex-col gap-4">
+        {/* ── CV ─────────────────────────────────────────────────────── */}
+        <SectionCard title={t('resumeApply.cvTitle')}>
+          {d.has_resume ? (
+            <p className="flex items-center gap-2 text-[14px] text-foreground">
+              <CheckCircle2 size={16} aria-hidden="true" className="flex-none text-[var(--ui-ok)]" />
+              <span className="min-w-0 break-words">
+                {d.resume_filename ?? t('resumeApply.cvUploaded')}
+              </span>
+            </p>
+          ) : (
+            <p className="text-[14px] text-muted-foreground">{t('resumeApply.cvPrompt')}</p>
+          )}
+          <input
+            ref={fileInput}
+            type="file"
+            accept="application/pdf"
+            className="sr-only"
+            aria-label={t('resumeApply.cvUploadAria')}
+            onChange={(e) => pickFile(e.target.files?.[0] ?? null)}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => fileInput.current?.click()}
+            disabled={upload.isPending}
+            className="mt-3 h-11 w-full sm:w-auto"
+          >
+            {upload.isPending ? (
+              <Loader2 aria-hidden="true" className="animate-spin" />
+            ) : (
+              <Upload aria-hidden="true" />
+            )}
+            {upload.isPending
+              ? t('resumeApply.cvReading')
+              : d.has_resume
+                ? t('resumeApply.cvReplace')
+                : t('resumeApply.cvUpload')}
+          </Button>
+          {d.has_resume ? (
+            <p className="mt-2 text-[12.5px] text-[var(--ui-soft)]">{t('resumeApply.cvReplaceNote')}</p>
+          ) : null}
+          {fileError ? (
+            <p role="alert" className="mt-2 flex items-start gap-1.5 text-[13px] text-[var(--ui-danger)]">
+              <AlertCircle size={14} aria-hidden="true" className="mt-0.5 flex-none" />
+              {fileError}
+            </p>
+          ) : null}
+        </SectionCard>
+
+        {/* ── PH3-B5: check what we read ─────────────────────────────── */}
+        <SectionCard
+          title={t('resumeApply.checkTitle')}
+          description={
+            d.has_resume && parsedAnything(d)
+              ? t('resumeApply.checkFromCv')
+              : t('resumeApply.checkFillIn')
+          }
         >
-          <Upload size={14} aria-hidden="true" />
-          {upload.isPending
-            ? t('resumeApply.cvReading')
-            : d.has_resume
-              ? t('resumeApply.cvReplace')
-              : t('resumeApply.cvUpload')}
-        </button>
-        {d.has_resume ? (
-          <p className="mt-2 text-[11.5px] text-[#6f7379]">{t('resumeApply.cvReplaceNote')}</p>
-        ) : null}
-        {fileError ? (
-          <p className="mt-2 flex items-center gap-1.5 text-[12px] text-[#e6714f]">
-            <AlertCircle size={12} aria-hidden="true" />
-            {fileError}
-          </p>
-        ) : null}
-      </GlassCard>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="sm:col-span-2">
+              <label htmlFor="c-name" className={LABEL}>
+                {t('resumeApply.fullName')}
+              </label>
+              <Input
+                id="c-name"
+                value={form.full_name ?? ''}
+                onChange={(e) => set('full_name', e.target.value)}
+              />
+              {d.parsed.full_name && d.parsed.full_name !== (form.full_name ?? '') ? (
+                <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">
+                  {t('resumeApply.cvSays', { value: d.parsed.full_name })}
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <label htmlFor="c-phone" className={LABEL}>
+                {t('resumeApply.phone')} {optional}
+              </label>
+              <Input
+                id="c-phone"
+                value={form.phone ?? ''}
+                onChange={(e) => set('phone', e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="c-years" className={LABEL}>
+                {t('resumeApply.years')} {optional}
+              </label>
+              <Input
+                id="c-years"
+                type="number"
+                min={0}
+                max={60}
+                value={form.years_experience ?? ''}
+                onChange={(e) =>
+                  set('years_experience', e.target.value === '' ? null : Number(e.target.value))
+                }
+              />
+            </div>
+            <div>
+              <label htmlFor="c-company" className={LABEL}>
+                {t('resumeApply.employer')} {optional}
+              </label>
+              <Input
+                id="c-company"
+                value={form.current_company ?? ''}
+                onChange={(e) => set('current_company', e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="c-title" className={LABEL}>
+                {t('resumeApply.role')} {optional}
+              </label>
+              <Input
+                id="c-title"
+                value={form.current_title ?? ''}
+                onChange={(e) => set('current_title', e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="c-linkedin" className={LABEL}>
+                {t('resumeApply.linkedin')} {optional}
+              </label>
+              <Input
+                id="c-linkedin"
+                value={form.linkedin_url ?? ''}
+                onChange={(e) => set('linkedin_url', e.target.value)}
+              />
+            </div>
+            <div>
+              <label htmlFor="c-github" className={LABEL}>
+                {t('resumeApply.github')} {optional}
+              </label>
+              <Input
+                id="c-github"
+                value={form.github_url ?? ''}
+                onChange={(e) => set('github_url', e.target.value)}
+              />
+            </div>
+          </div>
 
-      {/* ── PH3-B5: check what we read ─────────────────────────────── */}
-      <GlassCard className="mt-4 p-5">
-        <h2 className="text-[15px] font-semibold text-white">{t('resumeApply.checkTitle')}</h2>
-        <p className="mt-1 text-[13px] text-[#888b91]">
-          {d.has_resume && parsedAnything(d)
-            ? t('resumeApply.checkFromCv')
-            : t('resumeApply.checkFillIn')}
-        </p>
-
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div className="sm:col-span-2">
-            <label htmlFor="c-name" className={LABEL}>
-              {t('resumeApply.fullName')}
-            </label>
-            <input
-              id="c-name"
-              value={form.full_name ?? ''}
-              onChange={(e) => set('full_name', e.target.value)}
-              className={INPUT}
-            />
-            {d.parsed.full_name && d.parsed.full_name !== (form.full_name ?? '') ? (
-              <p className="mt-1 text-[11.5px] text-[#6f7379]">
-                {t('resumeApply.cvSays', { value: d.parsed.full_name })}
-              </p>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => save.mutate()}
+              disabled={save.isPending}
+              className="h-11"
+            >
+              {save.isPending ? t('resumeApply.saving') : t('resumeApply.saveLater')}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => confirm.mutate()}
+              disabled={confirm.isPending || !(form.full_name ?? '').trim()}
+              className="h-11"
+            >
+              {confirm.isPending
+                ? t('resumeApply.confirming')
+                : d.confirmed
+                  ? t('resumeApply.confirmedUpdate')
+                  : t('resumeApply.detailsCorrect')}
+            </Button>
+            {d.confirmed ? (
+              <span className="flex items-center gap-1.5 text-[13px] font-medium text-[var(--ui-ok)]">
+                <CheckCircle2 size={14} aria-hidden="true" />
+                {t('resumeApply.confirmed')}
+              </span>
             ) : null}
           </div>
-          <div>
-            <label htmlFor="c-phone" className={LABEL}>
-              {t('resumeApply.phone')}{' '}
-              <span className="text-[#5a5f66]">{t('resumeApply.optional')}</span>
-            </label>
-            <input
-              id="c-phone"
-              value={form.phone ?? ''}
-              onChange={(e) => set('phone', e.target.value)}
-              className={INPUT}
-            />
-          </div>
-          <div>
-            <label htmlFor="c-years" className={LABEL}>
-              {t('resumeApply.years')}{' '}
-              <span className="text-[#5a5f66]">{t('resumeApply.optional')}</span>
-            </label>
-            <input
-              id="c-years"
-              type="number"
-              min={0}
-              max={60}
-              value={form.years_experience ?? ''}
-              onChange={(e) =>
-                set('years_experience', e.target.value === '' ? null : Number(e.target.value))
-              }
-              className={INPUT}
-            />
-          </div>
-          <div>
-            <label htmlFor="c-company" className={LABEL}>
-              {t('resumeApply.employer')}{' '}
-              <span className="text-[#5a5f66]">{t('resumeApply.optional')}</span>
-            </label>
-            <input
-              id="c-company"
-              value={form.current_company ?? ''}
-              onChange={(e) => set('current_company', e.target.value)}
-              className={INPUT}
-            />
-          </div>
-          <div>
-            <label htmlFor="c-title" className={LABEL}>
-              {t('resumeApply.role')}{' '}
-              <span className="text-[#5a5f66]">{t('resumeApply.optional')}</span>
-            </label>
-            <input
-              id="c-title"
-              value={form.current_title ?? ''}
-              onChange={(e) => set('current_title', e.target.value)}
-              className={INPUT}
-            />
-          </div>
-          <div>
-            <label htmlFor="c-linkedin" className={LABEL}>
-              {t('resumeApply.linkedin')}{' '}
-              <span className="text-[#5a5f66]">{t('resumeApply.optional')}</span>
-            </label>
-            <input
-              id="c-linkedin"
-              value={form.linkedin_url ?? ''}
-              onChange={(e) => set('linkedin_url', e.target.value)}
-              className={INPUT}
-            />
-          </div>
-          <div>
-            <label htmlFor="c-github" className={LABEL}>
-              {t('resumeApply.github')}{' '}
-              <span className="text-[#5a5f66]">{t('resumeApply.optional')}</span>
-            </label>
-            <input
-              id="c-github"
-              value={form.github_url ?? ''}
-              onChange={(e) => set('github_url', e.target.value)}
-              className={INPUT}
-            />
-          </div>
-        </div>
-
-        <div className="mt-5 flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => save.mutate()}
-            disabled={save.isPending}
-            className="rounded-[10px] border border-white/[0.1] px-3.5 py-2 text-[13px] text-[#b8babf] hover:text-white disabled:opacity-40"
-          >
-            {save.isPending ? t('resumeApply.saving') : t('resumeApply.saveLater')}
-          </button>
-          <Pill
-            onClick={() => confirm.mutate()}
-            disabled={confirm.isPending || !(form.full_name ?? '').trim()}
-            className="px-4 py-2"
-          >
-            {confirm.isPending
-              ? t('resumeApply.confirming')
-              : d.confirmed
-                ? t('resumeApply.confirmedUpdate')
-                : t('resumeApply.detailsCorrect')}
-          </Pill>
-          {d.confirmed ? (
-            <span className="flex items-center gap-1.5 text-[12.5px] text-[#6fbf8d]">
-              <CheckCircle2 size={13} aria-hidden="true" />
-              {t('resumeApply.confirmed')}
-            </span>
+          {confirm.isError ? (
+            <p role="alert" className="mt-3 text-[13px] text-[var(--ui-danger)]">
+              {errText(confirm.error, t('resumeApply.errConfirm'))}
+            </p>
           ) : null}
-        </div>
-        {confirm.isError ? (
-          <p className="mt-2 text-[12px] text-[#e6714f]">
-            {errText(confirm.error, t('resumeApply.errConfirm'))}
-          </p>
-        ) : null}
-      </GlassCard>
+        </SectionCard>
 
-      {/* ── Submit ─────────────────────────────────────────────────── */}
-      <GlassCard className="mt-4 p-5">
-        <h2 className="text-[15px] font-semibold text-white">{t('resumeApply.sendTitle')}</h2>
-        <ul className="mt-3 flex flex-col gap-1.5 text-[13px]">
-          <Requirement met={d.has_resume} label={t('resumeApply.reqCv')} />
-          <Requirement met={d.confirmed} label={t('resumeApply.reqDetails')} />
-        </ul>
-        <div className="mt-4">
-          <Pill
-            onClick={() => send.mutate()}
-            disabled={send.isPending || !d.has_resume || !d.confirmed}
-            className="px-5 py-2.5"
-          >
-            {send.isPending ? t('resumeApply.sending') : t('resumeApply.submit')}
-          </Pill>
-        </div>
-        {send.isError ? (
-          <p className="mt-2 flex items-start gap-1.5 text-[12.5px] text-[#e6714f]">
-            <AlertCircle size={13} aria-hidden="true" className="mt-0.5 shrink-0" />
-            {errText(send.error, t('resumeApply.errSend'))}
-          </p>
-        ) : null}
-      </GlassCard>
-
-      {/* Erasure, exercised by the person themselves. Two steps, because it
-          destroys their work and cannot be undone — not to discourage it. */}
-      <GlassCard className="mt-4 p-5">
-        <h2 className="text-[15px] font-semibold text-white">{t('resumeApply.deleteTitle')}</h2>
-        <p className="mt-1 text-[13px] text-[#888b91]">{t('resumeApply.deleteDesc')}</p>
-        <div className="mt-3 flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => (discarding ? discard.mutate() : setDiscarding(true))}
-            disabled={discard.isPending}
-            className="rounded-[10px] border border-[#e6714f]/40 px-3.5 py-2 text-[13px] text-[#e6714f] hover:bg-[#e6714f]/[0.08] disabled:opacity-40"
-          >
-            {discard.isPending
-              ? t('resumeApply.deleting')
-              : discarding
-                ? t('resumeApply.deleteConfirm')
-                : t('resumeApply.deleteCta')}
-          </button>
-          {discarding && !discard.isPending ? (
-            <button
+        {/* ── Submit ─────────────────────────────────────────────────── */}
+        <SectionCard title={t('resumeApply.sendTitle')}>
+          <ul className="flex flex-col gap-2 text-[14px]">
+            <Requirement met={d.has_resume} label={t('resumeApply.reqCv')} />
+            <Requirement met={d.confirmed} label={t('resumeApply.reqDetails')} />
+          </ul>
+          <div className="mt-4">
+            <Button
               type="button"
-              onClick={() => setDiscarding(false)}
-              className="text-[12.5px] text-[#6f7379] hover:text-[#b8babf]"
+              onClick={() => send.mutate()}
+              disabled={send.isPending || !d.has_resume || !d.confirmed}
+              className="h-11 w-full px-6 sm:w-auto"
             >
-              {t('resumeApply.keepIt')}
-            </button>
+              {send.isPending ? t('resumeApply.sending') : t('resumeApply.submit')}
+            </Button>
+          </div>
+          {send.isError ? (
+            <p role="alert" className="mt-3 flex items-start gap-1.5 text-[13px] text-[var(--ui-danger)]">
+              <AlertCircle size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
+              {errText(send.error, t('resumeApply.errSend'))}
+            </p>
           ) : null}
-        </div>
-        {discard.isError ? (
-          <p className="mt-2 text-[12px] text-[#e6714f]">
-            {errText(discard.error, t('resumeApply.errDelete'))}
-          </p>
-        ) : null}
-      </GlassCard>
+        </SectionCard>
+
+        {/* Erasure, exercised by the person themselves. Two steps, because it
+            destroys their work and cannot be undone — not to discourage it. */}
+        <SectionCard title={t('resumeApply.deleteTitle')} description={t('resumeApply.deleteDesc')}>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => (discarding ? discard.mutate() : setDiscarding(true))}
+              disabled={discard.isPending}
+              className="h-11 border-[var(--ui-danger)] text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]"
+            >
+              {discard.isPending
+                ? t('resumeApply.deleting')
+                : discarding
+                  ? t('resumeApply.deleteConfirm')
+                  : t('resumeApply.deleteCta')}
+            </Button>
+            {discarding && !discard.isPending ? (
+              <Button type="button" variant="ghost" onClick={() => setDiscarding(false)} className="h-11">
+                {t('resumeApply.keepIt')}
+              </Button>
+            ) : null}
+          </div>
+          {discard.isError ? (
+            <p role="alert" className="mt-3 text-[13px] text-[var(--ui-danger)]">
+              {errText(discard.error, t('resumeApply.errDelete'))}
+            </p>
+          ) : null}
+        </SectionCard>
+      </div>
     </Shell>
   );
 }
@@ -506,12 +501,12 @@ function Requirement({ met, label }: { met: boolean; label: string }): JSX.Eleme
   return (
     <li className="flex items-center gap-2">
       {met ? (
-        <CheckCircle2 size={14} aria-hidden="true" className="text-[#6fbf8d]" />
+        <CheckCircle2 size={16} aria-hidden="true" className="flex-none text-[var(--ui-ok)]" />
       ) : (
-        <AlertCircle size={14} aria-hidden="true" className="text-[#d6a23d]" />
+        <AlertCircle size={16} aria-hidden="true" className="flex-none text-[var(--ui-warn)]" />
       )}
       {/* Never colour alone — the words say which it is. */}
-      <span className={met ? 'text-[#b8babf]' : 'text-[#d6a23d]'}>
+      <span className={met ? 'text-muted-foreground' : 'font-medium text-foreground'}>
         {label}
         {met ? '' : t('resumeApply.stillNeeded')}
       </span>
@@ -519,6 +514,18 @@ function Requirement({ met, label }: { met: boolean; label: string }): JSX.Eleme
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }): JSX.Element {
-  return <div className="mx-auto w-full max-w-[720px] px-4 py-8">{children}</div>;
+function Shell({
+  children,
+  company,
+  step,
+}: {
+  children: React.ReactNode;
+  company?: string | null;
+  step?: React.ReactNode;
+}): JSX.Element {
+  return (
+    <PublicFrame company={company} step={step} privateLink>
+      {children}
+    </PublicFrame>
+  );
 }

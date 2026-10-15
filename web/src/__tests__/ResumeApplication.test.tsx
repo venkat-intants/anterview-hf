@@ -10,7 +10,7 @@
 import { readFileSync } from 'node:fs';
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -38,6 +38,11 @@ vi.mock('../api/publicApply', async () => {
     deleteDraft: (...a: unknown[]) => deleteDraft(...a) as unknown,
   };
 });
+
+// The finish states read the session (to decide whether to offer a sign-in link).
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ isAuthenticated: false, isInitializing: false, user: null }),
+}));
 
 import ResumeApplication from '../pages/ResumeApplication';
 
@@ -257,6 +262,10 @@ describe('submitting', () => {
     );
     await userEvent.click(screen.getByRole('button', { name: /Submit application/ }));
     expect(await screen.findByText(/your application is in/)).toBeInTheDocument();
+    // The finish state says what happens next and who acts, and offers the sign-in route.
+    const next = screen.getByRole('heading', { name: 'What happens next' }).closest("section") as HTMLElement;
+    expect(next).toHaveTextContent('will read your application');
+    expect(within(next).getByRole("link", { name: 'Track this in My applications' })).toHaveAttribute('href', '/login');
   });
 
   it('surfaces a refusal rather than failing silently', async () => {

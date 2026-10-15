@@ -9,6 +9,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getAgentStatus } from '@/api/agent';
+import { Sparkles } from '@/design/components/icons';
 import CopilotPanel from './CopilotPanel';
 
 interface CopilotLauncherProps {
@@ -32,14 +33,18 @@ export default function CopilotLauncher({ onCommitted }: CopilotLauncherProps): 
 
   return (
     <>
+      {/* A floating control over page content, so it is the one primary
+          element on the layer above the page: 48px, the primary fill, tucked
+          into the corner (icon-only below `sm` so it does not cover page
+          actions on a phone; the label returns from `sm` up). */}
       <button
         type="button"
         onClick={() => setOpen(true)}
         aria-label="Open assistant"
-        className="fixed bottom-6 right-6 z-40 px-4 py-3 rounded-full shadow-lg font-medium text-sm transition hover:scale-105"
-        style={{ background: 'var(--accent)', color: '#08131f' }}
+        className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-40 inline-flex h-12 min-w-12 items-center justify-center gap-2 rounded-full bg-primary px-3.5 text-sm font-semibold text-primary-foreground shadow-elevated transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:bottom-6 sm:right-6 sm:px-5"
       >
-        Ask assistant
+        <Sparkles size={18} aria-hidden="true" />
+        <span className="hidden sm:inline">Ask assistant</span>
       </button>
       <CopilotPanel open={open} onClose={() => setOpen(false)} onCommitted={onCommitted} />
     </>

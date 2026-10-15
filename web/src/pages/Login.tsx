@@ -1,5 +1,6 @@
 // Login page — email + password form → POST /auth/login → redirect to /dashboard
-// Design: AuthSplit skin (dark canvas, conic-G Google badge, Naipunyam disabled).
+// Design: AuthLayout split shell. Password sign-in leads; the consent-gated
+//         SSO options (conic-G Google badge, Naipunyam disabled) follow it.
 // Logic: RHF + zodResolver, login()→getMe()→setAuth, role-aware redirect,
 //        must_change_password guard, isPending/aria-busy, toast errors, all t() keys.
 
@@ -16,7 +17,7 @@ import { useAuth } from '@/context/AuthContext';
 import { homePathFor } from '@/components/layout/navSections';
 import { toast } from '@/lib/toast';
 import type { AuthUser } from '@/types/auth';
-import AuthLayout from '@/components/layout/AuthLayout';
+import AuthLayout, { FormError, PasswordField } from '@/components/layout/AuthLayout';
 import { Field, Pill } from '@/design/components/primitives';
 import { Mail, Lock } from '@/design/components/icons';
 
@@ -46,8 +47,7 @@ function NaipunyamBadge() {
   return (
     <span
       aria-hidden="true"
-      className="flex h-5 w-5 items-center justify-center rounded-[6px] text-[11px] font-bold text-foreground"
-      style={{ background: 'linear-gradient(135deg,#16c253,var(--accent))' }}
+      className="flex h-5 w-5 items-center justify-center rounded-[6px] bg-[var(--ui-ok-wash)] text-[12px] font-bold text-[var(--ui-ok)]"
     >
       न
     </span>
@@ -56,7 +56,7 @@ function NaipunyamBadge() {
 
 // ── Base button classes reused across SSO buttons ─────────────────────────────
 const ssoBase =
-  'flex w-full items-center justify-center gap-2.5 rounded-[12px] px-4 py-3 text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+  'flex min-h-11 w-full items-center justify-center gap-2.5 rounded-full px-5 py-3 text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -118,35 +118,86 @@ export default function Login() {
 
   return (
     <AuthLayout>
-      {/* Mobile compact logo (hidden on desktop where the brand panel shows) */}
-      <Link
-        to="/"
-        className="mb-8 flex items-center gap-2.5 lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded-lg"
-        aria-label="AntHire home"
-      >
-        <span
-          className="flex h-8 w-8 items-center justify-center rounded-[9px]"
-          style={{ background: 'linear-gradient(135deg,#112d72,#a887dc)' }}
-        >
-          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-        </span>
-        <span className="text-[15px] font-semibold text-foreground">AntHire</span>
-      </Link>
-
       {/* Heading */}
-      <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
+      <h1 className="text-[30px] font-bold leading-tight tracking-[-0.8px] text-foreground">
         {t('auth.welcomeBack')}
       </h1>
-      <p className="mt-1.5 text-[14px] text-muted-foreground">{t('auth.signInSubtitle')}</p>
+      <p className="mt-2 text-[15px] text-muted-foreground">{t('auth.signInSubtitle')}</p>
+
+      {/* Email + password form — RHF + Zod + inline FormMessage */}
+      <form
+        onSubmit={(e) => void handleSubmit(onSubmit)(e)}
+        noValidate
+        aria-label="Login form"
+        className="mt-8 flex flex-col gap-2"
+      >
+        <div>
+          <Field
+            label={t('auth.email')}
+            type="email"
+            autoComplete="email"
+            placeholder="you@email.com"
+            data-testid="login-email"
+            icon={<Mail size={15} aria-hidden="true" />}
+            aria-invalid={errors.email ? true : undefined}
+            aria-describedby={errors.email ? 'login-email-error' : undefined}
+            {...register('email')}
+          />
+          <FormError id="login-email-error">{errors.email?.message}</FormError>
+        </div>
+
+        <div>
+          <PasswordField
+            label={t('auth.password')}
+            autoComplete="current-password"
+            placeholder="••••••••"
+            data-testid="login-password"
+            icon={<Lock size={15} aria-hidden="true" />}
+            invalid={Boolean(errors.password)}
+            aria-describedby={errors.password ? 'login-password-error' : undefined}
+            {...register('password')}
+          />
+          <FormError id="login-password-error">{errors.password?.message}</FormError>
+        </div>
+
+        {/* Forgot password link */}
+        <div className="flex justify-end">
+          <Link
+            to="/forgot-password"
+            className="inline-flex min-h-10 items-center rounded text-[13px] font-medium text-[var(--ui-info)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          >
+            {t('auth.forgotPassword')}
+          </Link>
+        </div>
+
+        {/* Submit */}
+        <Pill
+          type="submit"
+          data-testid="login-submit"
+          disabled={mutation.isPending}
+          aria-busy={mutation.isPending}
+          className="min-h-11 w-full py-3"
+        >
+          {mutation.isPending ? t('auth.signingIn') : t('auth.signIn')}
+        </Pill>
+      </form>
+
+      {/* Divider */}
+      <div className="my-6 flex items-center gap-3 text-[13px] text-muted-foreground">
+        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
+        {t('auth.orContinueWith')}
+        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
+      </div>
 
       {/* DPDP consent — gates the account-creating Google sign-in (DPDP §7). */}
-      <label className="mt-8 flex cursor-pointer items-start gap-2.5 text-[12.5px] text-muted-foreground">
+      <label className="flex cursor-pointer items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 text-[13px] leading-relaxed text-muted-foreground">
         <input
           type="checkbox"
           checked={agreedToDpdp}
           onChange={(e) => { setAgreedToDpdp(e.target.checked); }}
-          className="mt-0.5 h-4 w-4 flex-none cursor-pointer accent-[var(--accent)]"
+          className="mt-0.5 h-4 w-4 flex-none cursor-pointer accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           aria-label="I agree to the Terms and DPDP-compliant Privacy Policy"
+          aria-describedby={agreedToDpdp ? undefined : 'login-consent-help'}
         />
         <span>
           I agree to the Terms and the DPDP-compliant Privacy Policy, including
@@ -154,14 +205,21 @@ export default function Login() {
         </span>
       </label>
 
+      {!agreedToDpdp && (
+        <p id="login-consent-help" className="mt-2 text-[12.5px] text-muted-foreground">
+          {t('auth.consentNeededGoogle')}
+        </p>
+      )}
+
       {/* SSO buttons */}
-      <div className="mt-4 flex flex-col gap-2.5">
+      <div className="mt-3 flex flex-col gap-2.5">
         {/* Google — gated on DPDP consent; passes the consent signal through. */}
         <button
           type="button"
           disabled={!agreedToDpdp}
           aria-disabled={!agreedToDpdp}
-          className={`${ssoBase} bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50`}
+          aria-describedby={agreedToDpdp ? undefined : 'login-consent-help'}
+          className={`${ssoBase} border border-[var(--ui-line-strong)] bg-card text-foreground hover:bg-[var(--ui-inset)] disabled:cursor-not-allowed disabled:opacity-50`}
           onClick={() => { window.location.assign(googleLoginUrl('/dashboard', agreedToDpdp, 1)); }}
         >
           <GoogleBadge />
@@ -180,82 +238,12 @@ export default function Login() {
         </button>
       </div>
 
-      {/* Divider */}
-      <div className="my-6 flex items-center gap-3 text-[12px] text-[var(--ui-faint)]">
-        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
-        {t('auth.orContinueWith')}
-        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
-      </div>
-
-      {/* Email + password form — RHF + Zod + inline FormMessage */}
-      <form
-        onSubmit={(e) => void handleSubmit(onSubmit)(e)}
-        noValidate
-        aria-label="Login form"
-        className="flex flex-col gap-4"
-      >
-        <div className="flex flex-col gap-1">
-          <Field
-            label={t('auth.email')}
-            type="email"
-            autoComplete="email"
-            placeholder="you@email.com"
-            data-testid="login-email"
-            icon={<Mail size={15} aria-hidden="true" />}
-            {...register('email')}
-          />
-          {errors.email && (
-            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
-              {errors.email.message}
-            </span>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <Field
-            label={t('auth.password')}
-            type="password"
-            autoComplete="current-password"
-            placeholder="••••••••"
-            data-testid="login-password"
-            icon={<Lock size={15} aria-hidden="true" />}
-            {...register('password')}
-          />
-          {errors.password && (
-            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
-              {errors.password.message}
-            </span>
-          )}
-        </div>
-
-        {/* Forgot password link */}
-        <div className="flex justify-end">
-          <Link
-            to="/forgot-password"
-            className="text-[12.5px] text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:underline underline-offset-4"
-          >
-            {t('auth.forgotPassword')}
-          </Link>
-        </div>
-
-        {/* Submit */}
-        <Pill
-          type="submit"
-          data-testid="login-submit"
-          disabled={mutation.isPending}
-          aria-busy={mutation.isPending}
-          className="w-full py-3"
-        >
-          {mutation.isPending ? t('auth.signingIn') : t('auth.signIn')}
-        </Pill>
-      </form>
-
       {/* Footer link */}
       <p className="mt-6 text-center text-[13px] text-muted-foreground">
         {t('auth.noAccount')}{' '}
         <Link
           to="/register"
-          className="font-medium text-foreground hover:underline focus:outline-none focus:underline underline-offset-4"
+          className="inline-flex min-h-10 items-center rounded font-semibold text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {t('auth.createOne')}
         </Link>

@@ -6,7 +6,7 @@
 //
 // English-only by design (CLAUDE.md — staff consoles are not translated).
 
-import { Reveal } from '@/design/components/Reveal';
+import { Page, PageHeader } from '@/design/components/page';
 import { QuestionReviewQueue } from '@/components/bank/QuestionReviewQueue';
 import {
   approveBankQuestionAdmin,
@@ -16,13 +16,11 @@ import {
 
 export default function QuestionReviews(): JSX.Element {
   return (
-    <div className="mx-auto w-full max-w-[860px] px-4 py-8">
-      <Reveal>
-        <h1 className="text-[22px] font-semibold text-foreground">Question reviews</h1>
-        <p className="mt-1 text-[13px] text-muted-foreground">
-          Bank questions your HR managers have submitted for review. Oldest submission first.
-        </p>
-      </Reveal>
+    <Page width="form">
+      <PageHeader
+        title="Question reviews"
+        description="Bank questions your HR managers have submitted for review. Oldest submission first."
+      />
 
       <QuestionReviewQueue
         queryKey={['admin', 'bank-review-queue']}
@@ -31,6 +29,6 @@ export default function QuestionReviews(): JSX.Element {
         requestChanges={requestBankQuestionChangesAdmin}
         emptyHint="A question your HR managers submit for review appears here."
       />
-    </div>
+    </Page>
   );
 }

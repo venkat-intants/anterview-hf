@@ -162,24 +162,33 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     init_redis()
     log.info("service.start", service=settings.service_name, env=settings.app_env)
 
-    # Start the DPDP erasure executor as a background task.
-    # It runs every settings.erasure_poll_interval_seconds (default 300 s).
-    erasure_task = asyncio.create_task(
-        _instrumented_erasure_task(),
-        name="dpdp_erasure_executor",
-    )
+    # Start the DPDP erasure executor as a background task, unless
+    # ERASURE_EXECUTOR_ENABLED=false. It runs every
+    # settings.erasure_poll_interval_seconds (default 900 s; see config.py).
+    erasure_task: asyncio.Task[None] | None = None
+    if settings.erasure_executor_enabled:
+        erasure_task = asyncio.create_task(
+            _instrumented_erasure_task(),
+            name="dpdp_erasure_executor",
+        )
+        log.info(
+            "erasure.executor.task_created",
+            poll_interval_seconds=settings.erasure_poll_interval_seconds,
+        )
+    else:
+        log.warning(
+            "erasure.executor.disabled",
+            detail="ERASURE_EXECUTOR_ENABLED=false: requests will not be purged until re-enabled",
+        )
     application.state.erasure_task = erasure_task
-    log.info(
-        "erasure.executor.task_created",
-        poll_interval_seconds=settings.erasure_poll_interval_seconds,
-    )
 
     yield
 
     # Cancel the background task gracefully on shutdown.
-    erasure_task.cancel()
-    with suppress(TimeoutError, asyncio.CancelledError):
-        await asyncio.wait_for(asyncio.shield(erasure_task), timeout=5.0)
+    if erasure_task is not None:
+        erasure_task.cancel()
+        with suppress(TimeoutError, asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(erasure_task), timeout=5.0)
 
     await dispose_engine()
     await close_redis()

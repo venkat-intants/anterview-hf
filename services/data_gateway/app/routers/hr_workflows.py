@@ -54,6 +54,7 @@ from app.workflows import (
     MAX_ROUNDS,
     ROUND_KINDS,
     TASK_KINDS,
+    RoundNotFoundError,
     WorkflowError,
     add_round,
     attach_waiting_candidates,
@@ -514,7 +515,7 @@ async def get_workflow(
     _hr_uid, company_id = ctx
     wf = await _owned_workflow(db, company_id, workflow_id)
     rounds = await load_rounds(db, workflow_id)
-    criteria = await load_criteria(db, [r["id"] for r in rounds])
+    criteria = await load_criteria(db, [r["id"] for r in rounds], company_id=company_id)
     return {
         "id": str(wf["id"]),
         "requisition_id": str(wf["requisition_id"]),
@@ -730,10 +731,14 @@ async def put_criteria(
     await _owned_workflow(db, company_id, workflow_id)
     try:
         await set_round_criteria(
-            db, company_id=company_id, round_id=round_id,
+            db, company_id=company_id, round_id=round_id, workflow_id=workflow_id,
             criteria=[c.model_dump() for c in body.criteria],
         )
         await db.commit()
+    except RoundNotFoundError as exc:
+        # Unknown, deleted, in another workflow or ANOTHER COMPANY's: one answer.
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Round not found.") from exc
     except WorkflowError as exc:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc

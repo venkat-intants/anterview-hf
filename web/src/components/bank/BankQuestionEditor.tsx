@@ -22,34 +22,58 @@
 // form (content_hash then gets computed from, and PATCHes, the wrong row).
 
 import { Suspense, lazy, useEffect, useState } from 'react';
+import { CODING_LANGUAGES, type CodingTestCase, type ExamLanguage } from '@/api/exams';
 import {
-  CODING_LANGUAGES,
-  type CodingTestCase,
-  type ExamLanguage,
-} from '@/api/exams';
-import type {
-  BankDifficulty,
+  REFERENCE_UNVERIFIED_TAG,
+  UNVERIFIED_EXPLANATION,
+  isReferenceUnverified,
+  type BankDifficulty,
   BankQuestion,
   BankQuestionInput,
   BankQuestionKind,
   Competency,
 } from '@/api/questionBanks';
 import { CompetencyTagger } from './CompetencyTagger';
-import { Loader2, Plus, Trash2 } from '@/design/components/icons';
+import { Loader2, Lock, Plus, Trash2 } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 const CodeEditor = lazy(() => import('@/components/CodeEditor'));
 
 const LANG_LABEL: Record<string, string> = {
-  python: 'Python', javascript: 'JavaScript', typescript: 'TypeScript', java: 'Java',
-  cpp: 'C++', c: 'C', go: 'Go', csharp: 'C#', ruby: 'Ruby', rust: 'Rust',
+  python: 'Python',
+  javascript: 'JavaScript',
+  typescript: 'TypeScript',
+  java: 'Java',
+  cpp: 'C++',
+  c: 'C',
+  go: 'Go',
+  csharp: 'C#',
+  ruby: 'Ruby',
+  rust: 'Rust',
 };
 
+// Native <select>/<textarea> carry the same look as the shared Input; the
+// shadcn Select is a popover, which would change how these are driven.
 const inputCls =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] ' +
-  'focus:outline-none disabled:opacity-60';
-const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
+  'w-full rounded-[10px] border border-input bg-card px-3.5 py-2.5 text-[14px] ' +
+  'text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] ' +
+  'focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 ' +
+  'focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
+const selectCls = cn(inputCls, 'h-10 py-0');
+const labelCls = 'mb-1.5 block text-[13px] font-semibold text-foreground';
+const helpCls = 'mt-1.5 text-[12.5px] text-muted-foreground';
+const GROUP = 'flex flex-col gap-4 border-t border-border pt-5';
+const GROUP_TITLE = 'text-[15px] font-bold text-foreground';
+const ICON_BTN =
+  'flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+const CHIP =
+  'inline-flex min-h-10 items-center rounded-full border px-4 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+const CHIP_ON =
+  'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]';
+const CHIP_OFF = 'border-border text-muted-foreground hover:text-foreground';
 
 const emptyTest = (): CodingTestCase => ({
   stdin: '',
@@ -83,15 +107,19 @@ function stateFrom(q: BankQuestion | null | undefined): FormState {
     difficulty: q?.difficulty ?? 'medium',
     language: q?.language ?? 'en',
     competencies: q?.competencies ?? [],
-    tags: (q?.tags ?? []).join(', '),
+    // The server's unverified marker is shown as a locked chip, not as text
+    // the author could delete (the server would only put it back).
+    tags: (q?.tags ?? []).filter((t) => t !== REFERENCE_UNVERIFIED_TAG).join(', '),
     options: q?.options && q.options.length > 0 ? q.options : ['', '', '', ''],
     correctIndex: q?.correct_index ?? 0,
     starterCode: q?.starter_code ?? '',
     referenceSolution: q?.reference_solution ?? '',
-    allowedLanguages: q?.allowed_languages && q.allowed_languages.length > 0
-      ? q.allowed_languages
-      : ['python'],
-    testCases: q?.test_cases && q.test_cases.length > 0 ? q.test_cases : [{ ...emptyTest(), is_sample: true }],
+    allowedLanguages:
+      q?.allowed_languages && q.allowed_languages.length > 0 ? q.allowed_languages : ['python'],
+    testCases:
+      q?.test_cases && q.test_cases.length > 0
+        ? q.test_cases
+        : [{ ...emptyTest(), is_sample: true }],
     timeLimitMs: String(q?.time_limit_ms ?? 5000),
   };
 }
@@ -100,15 +128,16 @@ function stateFrom(q: BankQuestion | null | undefined): FormState {
 const MAX_TAGS = 20;
 const MAX_PROMPT_LENGTH = 20000;
 
-function parseTags(raw: string): string[] {
-  return raw
+function parseTags(raw: string, locked: boolean): string[] {
+  const typed = raw
     .split(',')
     .map((t) => t.trim().toLowerCase())
-    .filter(Boolean)
-    .slice(0, MAX_TAGS);
+    // Never taken from the text box: it is locked-in or it is absent.
+    .filter((t) => Boolean(t) && t !== REFERENCE_UNVERIFIED_TAG);
+  return (locked ? [REFERENCE_UNVERIFIED_TAG, ...typed] : typed).slice(0, MAX_TAGS);
 }
 
-function formToBankQuestionInput(f: FormState): BankQuestionInput {
+function formToBankQuestionInput(f: FormState, lockedUnverified: boolean): BankQuestionInput {
   const base: BankQuestionInput = {
     kind: f.kind,
     prompt: f.prompt.trim(),
@@ -116,7 +145,7 @@ function formToBankQuestionInput(f: FormState): BankQuestionInput {
     difficulty: f.difficulty,
     language: f.language,
     competencies: f.competencies,
-    tags: parseTags(f.tags),
+    tags: parseTags(f.tags, lockedUnverified),
   };
   if (f.kind === 'mcq') {
     return {
@@ -154,6 +183,12 @@ export interface BankQuestionEditorProps {
    * `updateBankQuestion` (see QuestionBankDetail.tsx).
    */
   forceEditable?: boolean;
+  /**
+   * Reports whether the form holds edits that are not saved. Reported `false`
+   * again when the editor goes away, so a page that listens never keeps a
+   * stale "unsaved" flag for a form that no longer exists.
+   */
+  onDirtyChange?: (dirty: boolean) => void;
 }
 
 export function BankQuestionEditor({
@@ -162,10 +197,18 @@ export function BankQuestionEditor({
   onSave,
   onCancel,
   forceEditable = false,
+  onDirtyChange,
 }: BankQuestionEditorProps): JSX.Element {
   const [form, setForm] = useState<FormState>(() => stateFrom(question));
   const [error, setError] = useState<string | null>(null);
   const editable = !question || question.status === 'draft' || forceEditable;
+  const unverifiedLocked = isReferenceUnverified({ tags: question?.tags });
+
+  const dirty = editable && JSON.stringify(form) !== JSON.stringify(stateFrom(question));
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   // Re-seed the form when the QUESTION IDENTITY changes (a different id) —
   // never on every render, and never on a background refetch of the same id
@@ -216,27 +259,34 @@ export function BankQuestionEditor({
       return;
     }
     setError(null);
-    onSave(formToBankQuestionInput(form));
+    onSave(formToBankQuestionInput(form, unverifiedLocked));
   }
 
   if (!editable) {
     return (
-      <div className="space-y-3 text-[13px]">
-        <p className="rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[12.5px] text-muted-foreground">
-          This question is {question?.status.replace('_', ' ')} — only a draft can be edited.
-          {question?.status === 'approved' || question?.status === 'retired'
-            ? ' Start a new version to change it.'
-            : ''}
+      <div className="space-y-3 text-[14px]">
+        <p className="flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-3 text-[13px] text-muted-foreground">
+          <Lock size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <span>
+            This question is {question?.status.replace('_', ' ')} — only a draft can be edited.
+            {question?.status === 'approved' || question?.status === 'retired'
+              ? ' Start a new version to change it.'
+              : ''}
+          </span>
         </p>
-        <p className="whitespace-pre-wrap font-medium text-foreground">{question?.prompt}</p>
+        <p className="whitespace-pre-wrap break-words font-medium text-foreground">
+          {question?.prompt}
+        </p>
         {question?.kind === 'mcq' ? (
           <ul className="space-y-1">
             {(question.options ?? []).map((o, i) => (
               <li
                 key={i}
                 className={cn(
-                  'text-[12.5px]',
-                  i === question.correct_index ? 'font-medium text-[var(--ui-ok)]' : 'text-muted-foreground',
+                  'break-words text-[13px]',
+                  i === question.correct_index
+                    ? 'font-medium text-[var(--ui-ok)]'
+                    : 'text-muted-foreground',
                 )}
               >
                 {o}
@@ -244,7 +294,7 @@ export function BankQuestionEditor({
             ))}
           </ul>
         ) : (
-          <p className="text-[12.5px] text-muted-foreground">
+          <p className="text-[13px] text-muted-foreground">
             {(question?.test_cases ?? []).length} test case
             {(question?.test_cases ?? []).length === 1 ? '' : 's'} ·{' '}
             {(question?.allowed_languages ?? []).join(', ')}
@@ -255,150 +305,177 @@ export function BankQuestionEditor({
   }
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-3" aria-label="Bank question">
-      {!question ? (
-        <div className="flex gap-1.5">
-          {(['mcq', 'coding'] as const).map((k) => (
-            <button
-              key={k}
-              type="button"
-              onClick={() => set('kind', k)}
-              aria-pressed={form.kind === k}
-              className={cn(
-                'rounded-[9px] border px-3 py-1.5 text-[12px] font-medium transition-colors',
-                form.kind === k
-                  ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
-                  : 'border-border text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {k === 'mcq' ? 'MCQ' : 'Coding'}
-            </button>
-          ))}
-        </div>
-      ) : null}
+    <form onSubmit={submit} className="flex flex-col gap-5" aria-label="Bank question">
+      <div className="flex flex-col gap-4">
+        <h3 className={GROUP_TITLE}>Question</h3>
+        {!question ? (
+          <div className="flex flex-wrap gap-2">
+            {(['mcq', 'coding'] as const).map((k) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => set('kind', k)}
+                aria-pressed={form.kind === k}
+                className={cn(CHIP, form.kind === k ? CHIP_ON : CHIP_OFF)}
+              >
+                {k === 'mcq' ? 'MCQ' : 'Coding'}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
-      <label className="block">
-        <span className={labelCls}>Prompt</span>
-        <textarea
-          value={form.prompt}
-          onChange={(e) => set('prompt', e.target.value)}
-          rows={3}
-          maxLength={MAX_PROMPT_LENGTH}
-          className={cn(inputCls, 'resize-y')}
-          aria-label="Prompt"
-        />
-      </label>
-
-      <div className="grid gap-3 sm:grid-cols-3">
         <label className="block">
-          <span className={labelCls}>Difficulty</span>
-          <select
-            value={form.difficulty}
-            onChange={(e) => set('difficulty', e.target.value as BankDifficulty)}
-            className={inputCls}
-          >
-            <option value="easy">Easy</option>
-            <option value="medium">Medium</option>
-            <option value="hard">Hard</option>
-          </select>
-        </label>
-        <label className="block">
-          <span className={labelCls}>Language</span>
-          <select
-            value={form.language}
-            onChange={(e) => set('language', e.target.value as ExamLanguage)}
-            className={inputCls}
-          >
-            <option value="en">English</option>
-            <option value="hi">हिन्दी</option>
-            <option value="te">తెలుగు</option>
-          </select>
-        </label>
-        <label className="block">
-          <span className={labelCls}>Points</span>
-          <input
-            type="number"
-            min={1}
-            value={form.points}
-            onChange={(e) => set('points', e.target.value)}
-            className={inputCls}
-            aria-label="Points"
+          <span className={labelCls}>Prompt</span>
+          <textarea
+            value={form.prompt}
+            onChange={(e) => set('prompt', e.target.value)}
+            rows={3}
+            maxLength={MAX_PROMPT_LENGTH}
+            className={cn(inputCls, 'resize-y')}
+            aria-label="Prompt"
           />
         </label>
+
+        <div className="grid gap-4 sm:grid-cols-3">
+          <label className="block">
+            <span className={labelCls}>Difficulty</span>
+            <select
+              value={form.difficulty}
+              onChange={(e) => set('difficulty', e.target.value as BankDifficulty)}
+              className={selectCls}
+            >
+              <option value="easy">Easy</option>
+              <option value="medium">Medium</option>
+              <option value="hard">Hard</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className={labelCls}>Language</span>
+            <select
+              value={form.language}
+              onChange={(e) => set('language', e.target.value as ExamLanguage)}
+              className={selectCls}
+            >
+              <option value="en">English</option>
+              <option value="hi">हिन्दी</option>
+              <option value="te">తెలుగు</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className={labelCls}>Points</span>
+            <Input
+              type="number"
+              min={1}
+              value={form.points}
+              onChange={(e) => set('points', e.target.value)}
+              aria-label="Points"
+              className="h-10 rounded-[10px]"
+            />
+          </label>
+        </div>
       </div>
 
-      <CompetencyTagger
-        value={form.competencies}
-        onChange={(next) => set('competencies', next)}
-      />
-
-      <label className="block">
-        <span className={labelCls}>Tags (comma-separated)</span>
-        <input
-          value={form.tags}
-          onChange={(e) => set('tags', e.target.value)}
-          placeholder="e.g. sql, arrays"
-          className={inputCls}
+      <div className={GROUP}>
+        <h3 className={GROUP_TITLE}>Competencies and tags</h3>
+        <CompetencyTagger
+          value={form.competencies}
+          onChange={(next) => set('competencies', next)}
         />
-      </label>
+
+        <label className="block">
+          <span className={labelCls}>Tags (comma-separated)</span>
+          <Input
+            value={form.tags}
+            onChange={(e) => set('tags', e.target.value)}
+            placeholder="e.g. sql, arrays"
+          />
+        </label>
+        {unverifiedLocked ? (
+          <div data-testid="locked-unverified-tag">
+            <span
+              className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-border bg-[var(--ui-inset-soft)] px-3 text-[12.5px] font-medium text-foreground"
+              title={UNVERIFIED_EXPLANATION}
+            >
+              <Lock size={12} aria-hidden="true" />
+              {REFERENCE_UNVERIFIED_TAG}
+            </span>
+            <p className={helpCls}>
+              This tag is added by the system and cannot be removed. {UNVERIFIED_EXPLANATION} It
+              clears when a version is approved.
+            </p>
+          </div>
+        ) : null}
+      </div>
 
       {form.kind === 'mcq' ? (
-        <div className="space-y-1.5">
-          <span className={labelCls}>Options</span>
-          {form.options.map((opt, oi) => (
-            <div key={oi} className="flex items-center gap-2">
-              <input
-                type="radio"
-                name="bank-question-correct"
-                checked={form.correctIndex === oi}
-                onChange={() => set('correctIndex', oi)}
-                aria-label={`Mark option ${oi + 1} correct`}
-                className="h-3.5 w-3.5 accent-[var(--accent)]"
-              />
-              <input
-                value={opt}
-                onChange={(e) =>
-                  set(
-                    'options',
-                    form.options.map((o, j) => (j === oi ? e.target.value : o)),
-                  )
-                }
-                placeholder={`Option ${oi + 1}`}
-                aria-label={`Option ${oi + 1}`}
-                className={inputCls}
-              />
-              {form.options.length > 2 ? (
-                <button
-                  type="button"
-                  aria-label={`Remove option ${oi + 1}`}
-                  onClick={() =>
-                    set(
-                      'options',
-                      form.options.filter((_, j) => j !== oi),
-                    )
-                  }
-                  className="shrink-0 text-muted-foreground hover:text-[var(--ui-danger)]"
-                >
-                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              ) : null}
+        <div className={GROUP}>
+          <h3 className={GROUP_TITLE}>Answer options</h3>
+          <div>
+            <span className={labelCls}>Options</span>
+            <div className="space-y-1">
+              {form.options.map((opt, oi) => (
+                <div key={oi} className="flex items-center gap-1">
+                  <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full focus-within:ring-2 focus-within:ring-[var(--accent)]">
+                    <input
+                      type="radio"
+                      name="bank-question-correct"
+                      checked={form.correctIndex === oi}
+                      onChange={() => set('correctIndex', oi)}
+                      aria-label={`Mark option ${oi + 1} correct`}
+                      className="h-4 w-4 accent-[var(--accent)]"
+                    />
+                  </label>
+                  <Input
+                    value={opt}
+                    onChange={(e) =>
+                      set(
+                        'options',
+                        form.options.map((o, j) => (j === oi ? e.target.value : o)),
+                      )
+                    }
+                    placeholder={`Option ${oi + 1}`}
+                    aria-label={`Option ${oi + 1}`}
+                    className="min-w-0 flex-1"
+                  />
+                  {form.options.length > 2 ? (
+                    <button
+                      type="button"
+                      aria-label={`Remove option ${oi + 1}`}
+                      onClick={() =>
+                        set(
+                          'options',
+                          form.options.filter((_, j) => j !== oi),
+                        )
+                      }
+                      className={ICON_BTN}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  ) : (
+                    <span className="h-10 w-10 shrink-0" aria-hidden="true" />
+                  )}
+                </div>
+              ))}
             </div>
-          ))}
+            <p className={helpCls}>Select the radio next to the correct answer.</p>
+          </div>
           {form.options.length < 6 ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => set('options', [...form.options, ''])}
-              className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
+              className="self-start"
             >
-              <Plus className="h-3 w-3" aria-hidden="true" /> Add option
-            </button>
+              <Plus aria-hidden="true" /> Add option
+            </Button>
           ) : null}
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className={GROUP}>
+          <h3 className={GROUP_TITLE}>Coding setup</h3>
           <div>
             <span className={labelCls}>Allowed languages</span>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-2">
               {CODING_LANGUAGES.map((slug) => {
                 const on = form.allowedLanguages.includes(slug);
                 return (
@@ -406,12 +483,8 @@ export function BankQuestionEditor({
                     key={slug}
                     type="button"
                     onClick={() => toggleAllowedLang(slug, !on)}
-                    className={cn(
-                      'rounded-full border px-2.5 py-0.5 text-[11.5px] transition-colors',
-                      on
-                        ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]'
-                        : 'border-border text-muted-foreground hover:text-foreground',
-                    )}
+                    aria-pressed={on}
+                    className={cn(CHIP, on ? CHIP_ON : CHIP_OFF)}
                   >
                     {LANG_LABEL[slug] ?? slug}
                   </button>
@@ -422,13 +495,7 @@ export function BankQuestionEditor({
 
           <div>
             <span className={labelCls}>Starter code (optional)</span>
-            <Suspense
-              fallback={
-                <div className="flex h-24 items-center justify-center rounded-[10px] border border-border bg-card">
-                  <Loader2 className="h-4 w-4 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
-                </div>
-              }
-            >
+            <Suspense fallback={<Skeleton className="h-24 rounded-[12px]" />}>
               <CodeEditor
                 language={form.allowedLanguages[0] ?? 'python'}
                 value={form.starterCode}
@@ -442,13 +509,7 @@ export function BankQuestionEditor({
 
           <div>
             <span className={labelCls}>Reference solution (optional)</span>
-            <Suspense
-              fallback={
-                <div className="flex h-24 items-center justify-center rounded-[10px] border border-border bg-card">
-                  <Loader2 className="h-4 w-4 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
-                </div>
-              }
-            >
+            <Suspense fallback={<Skeleton className="h-24 rounded-[12px]" />}>
               <CodeEditor
                 language={form.allowedLanguages[0] ?? 'python'}
                 value={form.referenceSolution}
@@ -460,31 +521,33 @@ export function BankQuestionEditor({
           </div>
 
           <div>
-            <div className="flex items-center justify-between">
-              <span className={labelCls}>Test cases</span>
-              <button
+            <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[13px] font-semibold text-foreground">Test cases</span>
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => set('testCases', [...form.testCases, emptyTest()])}
-                className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
               >
-                <Plus className="h-3 w-3" aria-hidden="true" /> Add test
-              </button>
+                <Plus aria-hidden="true" /> Add test
+              </Button>
             </div>
-            <div className="mt-1.5 space-y-2">
+            <div className="space-y-3">
               {form.testCases.map((tc, ti) => (
-                <div key={ti} className="rounded-[10px] border border-border p-2.5">
-                  <div className="grid gap-2 sm:grid-cols-2">
+                <div key={ti} className="rounded-[16px] border border-border p-3">
+                  <div className="grid gap-3 sm:grid-cols-2">
                     <textarea
                       value={tc.stdin}
                       onChange={(e) =>
                         set(
                           'testCases',
-                          form.testCases.map((t, j) => (j === ti ? { ...t, stdin: e.target.value } : t)),
+                          form.testCases.map((t, j) =>
+                            j === ti ? { ...t, stdin: e.target.value } : t,
+                          ),
                         )
                       }
                       placeholder="stdin"
                       aria-label={`Test ${ti + 1} input`}
-                      className={cn(inputCls, 'min-h-[44px] resize-y font-mono text-[12px]')}
+                      className={cn(inputCls, 'min-h-[44px] resize-y font-mono text-[13px]')}
                     />
                     <textarea
                       value={tc.expected_output}
@@ -498,11 +561,11 @@ export function BankQuestionEditor({
                       }
                       placeholder="expected stdout"
                       aria-label={`Test ${ti + 1} expected output`}
-                      className={cn(inputCls, 'min-h-[44px] resize-y font-mono text-[12px]')}
+                      className={cn(inputCls, 'min-h-[44px] resize-y font-mono text-[13px]')}
                     />
                   </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2.5 text-[11.5px] text-muted-foreground">
-                    <label className="flex items-center gap-1.5">
+                  <div className="mt-1 flex flex-wrap items-center gap-2.5 text-[13px] text-muted-foreground">
+                    <label className="flex min-h-10 items-center gap-2">
                       <input
                         type="checkbox"
                         checked={tc.is_sample}
@@ -514,7 +577,7 @@ export function BankQuestionEditor({
                             ),
                           )
                         }
-                        className="h-3.5 w-3.5 accent-[var(--accent)]"
+                        className="h-4 w-4 accent-[var(--accent)]"
                       />
                       Sample
                     </label>
@@ -528,9 +591,9 @@ export function BankQuestionEditor({
                             form.testCases.filter((_, j) => j !== ti),
                           )
                         }
-                        className="ml-auto text-muted-foreground hover:text-[var(--ui-danger)]"
+                        className={cn(ICON_BTN, 'ml-auto')}
                       >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
                       </button>
                     ) : null}
                   </div>
@@ -539,39 +602,38 @@ export function BankQuestionEditor({
             </div>
           </div>
 
-          <label className="block max-w-[180px]">
+          <label className="block max-w-[200px]">
             <span className={labelCls}>Time limit (ms)</span>
-            <input
+            <Input
               type="number"
               min={100}
               value={form.timeLimitMs}
               onChange={(e) => set('timeLimitMs', e.target.value)}
-              className={inputCls}
             />
           </label>
         </div>
       )}
 
-      {error ? <p className="text-[12px] text-[var(--ui-danger)]">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-[13px] font-medium text-[var(--ui-danger)]">
+          {error}
+        </p>
+      ) : null}
 
-      <div className="flex justify-end gap-2">
+      <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-5">
         {onCancel ? (
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground"
-          >
+          <Button type="button" variant="outline" onClick={onCancel}>
             Cancel
-          </button>
+          </Button>
         ) : null}
-        <button
-          type="submit"
-          disabled={saving}
-          className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
-        >
-          {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
-          {!question ? 'Create question' : question.status !== 'draft' ? 'Save as new version' : 'Save changes'}
-        </button>
+        <Button type="submit" disabled={saving}>
+          {saving ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+          {!question
+            ? 'Create question'
+            : question.status !== 'draft'
+              ? 'Save as new version'
+              : 'Save changes'}
+        </Button>
       </div>
     </form>
   );

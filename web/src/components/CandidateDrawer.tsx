@@ -19,7 +19,7 @@
 // enrolment endpoint, which records who moved them and why; a shortcut on a
 // read surface is how that ledger acquires gaps.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { getApplicant, listApplications } from '@/api/applicants';
@@ -47,8 +47,21 @@ import InterviewLoopsSection from '@/components/InterviewLoopsSection';
 import OfferSection from '@/components/OfferSection';
 import CheckinSection from '@/components/hr/CheckinSection';
 import { getMetricDefinitions, sourceLabel } from '@/api/metrics';
-import { AlertTriangle, ExternalLink, Info, User, X } from '@/design/components/icons';
+import { AlertTriangle, ExternalLink, Info } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { DataList } from '@/design/components/page';
+import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
+import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+
+// Each block of the drawer is a titled section divided from the last by a
+// hairline — the drawer is a long read, so the rhythm does the grouping.
+const SECTION = 'mt-6 border-t border-border pt-5 outline-none';
+const SECTION_TITLE = 'text-[15px] font-bold text-foreground';
+const CONTROL =
+  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 export interface DrawerCandidate {
   applicant_id: string;
@@ -119,9 +132,9 @@ function RoundScores({
 
   if (isLoading) {
     return (
-      <div id="round-results" tabIndex={-1} className="mt-5 outline-none">
-        <h3 className="text-[13px] font-medium text-foreground">Assessment</h3>
-        <div className="mt-2 h-16 animate-pulse rounded-[10px] bg-[var(--ui-inset)]" />
+      <div id="round-results" tabIndex={-1} className={SECTION}>
+        <h3 className={SECTION_TITLE}>Assessment</h3>
+        <Skeleton className="mt-2 h-16 rounded-[12px]" />
       </div>
     );
   }
@@ -129,9 +142,9 @@ function RoundScores({
   // one of them would mislead a decision.
   if (isError) {
     return (
-      <div id="round-results" tabIndex={-1} className="mt-5 outline-none">
-        <h3 className="text-[13px] font-medium text-foreground">Assessment</h3>
-        <p className="mt-1.5 text-[12.5px] text-muted-foreground">
+      <div id="round-results" tabIndex={-1} className={SECTION}>
+        <h3 className={SECTION_TITLE}>Assessment</h3>
+        <p role="alert" className="mt-1.5 text-[13px] text-muted-foreground">
           Scores could not be loaded. Reopen to retry.
         </p>
       </div>
@@ -140,11 +153,11 @@ function RoundScores({
   if (!data?.length) return null;
 
   return (
-    <div id="round-results" tabIndex={-1} className="mt-5 outline-none">
-      <h3 className="text-[13px] font-medium text-foreground">Assessment</h3>
+    <div id="round-results" tabIndex={-1} className={SECTION}>
+      <h3 className={SECTION_TITLE}>Assessment</h3>
       <ul className="mt-2 flex flex-col gap-3">
         {data.map((r: RoundResult) => (
-          <li key={r.round_id} className="rounded-[10px] border border-border p-3">
+          <li key={r.round_id} className="rounded-[16px] border border-border p-3.5">
             <div className="flex items-baseline justify-between gap-3">
               <span className="min-w-0 truncate text-[12.5px] text-foreground">
                 {r.position + 1}. {r.round_title}
@@ -154,7 +167,7 @@ function RoundScores({
               </span>
             </div>
 
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-[11.5px] text-[var(--ui-faint)]">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
               <span>
                 {r.graded_by === 'ai'
                   ? 'AI-graded'
@@ -182,7 +195,7 @@ function RoundScores({
                       </span>
                     </div>
                     {c.evidence ? (
-                      <p className="mt-0.5 text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
+                      <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
                         {c.evidence}
                       </p>
                     ) : null}
@@ -193,12 +206,12 @@ function RoundScores({
 
             {Object.keys(r.axes).length ? (
               <div className="mt-2.5 border-t border-border pt-2">
-                <p className="text-[11px] uppercase tracking-wide text-[var(--ui-faint)]">
+                <p className="text-[12px] uppercase tracking-wide text-muted-foreground">
                   Comparable axes
                 </p>
                 <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
                   {Object.entries(r.axes).map(([axis, v]) => (
-                    <span key={axis} className="text-[11.5px] text-muted-foreground">
+                    <span key={axis} className="text-[12px] text-muted-foreground">
                       {axis} <span className="text-[var(--ui-soft)]">{Math.round(v)}</span>
                     </span>
                   ))}
@@ -268,16 +281,16 @@ function AssignInterviewersForm({
   });
 
   return (
-    <div className="mt-3 flex flex-col gap-2.5 rounded-[12px] border border-border p-3">
+    <div className="mt-3 flex flex-col gap-3 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
       <div>
-        <label htmlFor="assign-round" className="text-[12px] font-medium text-[var(--ui-soft)]">
+        <label htmlFor="assign-round" className="text-[13px] font-semibold text-foreground">
           Round
         </label>
         <select
           id="assign-round"
           value={roundId}
           onChange={(e) => setRoundId(e.target.value)}
-          className="mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+          className={cn(CONTROL, 'mt-1')}
         >
           <option value="">Choose a round…</option>
           {rounds.map((r) => (
@@ -289,7 +302,7 @@ function AssignInterviewersForm({
       </div>
 
       <fieldset className="flex flex-col gap-1.5">
-        <legend className="text-[12px] font-medium text-[var(--ui-soft)]">Interviewers</legend>
+        <legend className="text-[13px] font-semibold text-foreground">Interviewers</legend>
         {interviewers.isLoading ? (
           <span className="text-[12px] text-muted-foreground">Loading…</span>
         ) : (interviewers.data ?? []).length === 0 ? (
@@ -312,14 +325,14 @@ function AssignInterviewersForm({
                 }
                 className="h-4 w-4 accent-[var(--accent)]"
               />
-              {iv.full_name} <span className="text-[var(--ui-faint)]">({iv.email})</span>
+              {iv.full_name} <span className="text-muted-foreground">({iv.email})</span>
             </label>
           ))
         )}
       </fieldset>
 
       <div>
-        <label htmlFor="assign-due" className="text-[12px] font-medium text-[var(--ui-soft)]">
+        <label htmlFor="assign-due" className="text-[13px] font-semibold text-foreground">
           Due date (optional)
         </label>
         <input
@@ -327,18 +340,19 @@ function AssignInterviewersForm({
           type="datetime-local"
           value={dueAt}
           onChange={(e) => setDueAt(e.target.value)}
-          className="mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+          className={cn(CONTROL, 'mt-1')}
         />
       </div>
 
-      <button
+      <Button
         type="button"
+        size="sm"
         disabled={!roundId || selected.length === 0 || assignMut.isPending}
         onClick={() => assignMut.mutate()}
-        className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+        className="self-start"
       >
         {assignMut.isPending ? 'Assigning…' : 'Assign'}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -413,20 +427,21 @@ function HumanInterviewSection({
   const rounds = scorecards.data?.rounds ?? [];
 
   return (
-    <div id="human-interview" tabIndex={-1} className="mt-5 outline-none">
+    <div id="human-interview" tabIndex={-1} className={SECTION}>
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-[13px] font-medium text-foreground">Human interview</h3>
-        <button
+        <h3 className={SECTION_TITLE}>Human interview</h3>
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => setAssigning((v) => !v)}
           disabled={!assigning && (roundsLoading || assignBlocked !== null)}
-          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline disabled:cursor-not-allowed disabled:text-[var(--ui-faint)] disabled:no-underline"
         >
           {assigning ? 'Close' : 'Assign interviewers'}
-        </button>
+        </Button>
       </div>
       {assignBlocked ? (
-        <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">{assignBlocked}</p>
+        <p className="mt-1 text-[12px] text-muted-foreground">{assignBlocked}</p>
       ) : null}
 
       {assigning && assignBlocked === null ? (
@@ -456,47 +471,50 @@ function HumanInterviewSection({
             const live = round.scorecards.filter((s) => !s.superseded);
             const superseded = round.scorecards.filter((s) => s.superseded);
             return (
-              <div key={round.round_id} className="rounded-[12px] border border-border p-3">
+              <div key={round.round_id} className="rounded-[16px] border border-border p-3.5">
                 <p className="text-[12.5px] font-medium text-foreground">{round.round_title}</p>
                 {round.hidden_until_you_submit ? (
-                  <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+                  <p className="mt-1 text-[12px] text-muted-foreground">
                     Hidden until you submit your own scorecard.
                   </p>
                 ) : null}
                 <ul className="mt-2 flex flex-col gap-2">
                   {live.map((sc) => (
-                    <li key={sc.scorecard_id} className="rounded-[10px] border border-border p-2.5">
+                    <li
+                      key={sc.scorecard_id}
+                      className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3"
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-[12.5px] text-foreground">{sc.interviewer_name}</span>
                         <StatusTag tone={SCORECARD_TONE[sc.state]}>{sc.state}</StatusTag>
                       </div>
                       {sc.submitted_at ? (
-                        <p className="mt-0.5 text-[11px] text-[var(--ui-faint)]">
+                        <p className="mt-0.5 text-[12px] text-muted-foreground">
                           Submitted {formatDate(sc.submitted_at)}
                         </p>
                       ) : sc.due_at && sc.state !== 'withdrawn' ? (
-                        <p className="mt-0.5 text-[11px] text-[var(--ui-faint)]">
+                        <p className="mt-0.5 text-[12px] text-muted-foreground">
                           Due {formatDate(sc.due_at)}
                         </p>
                       ) : null}
                       {sc.is_correction && sc.correction_reason ? (
-                        <p className="mt-1 text-[11.5px] text-[var(--ui-lavender)]">
+                        <p className="mt-1 text-[12px] text-[var(--ui-lavender)]">
                           Corrected: {sc.correction_reason}
                         </p>
                       ) : null}
                       {sc.is_correction && sc.corrected_after_peers_visible ? (
-                        <p className="mt-1 flex items-center gap-1 text-[11px] text-[var(--ui-faint)]">
+                        <p className="mt-1 flex items-center gap-1 text-[12px] text-muted-foreground">
                           <Info size={11} aria-hidden="true" />
                           Corrected after other scorecards were visible
                         </p>
                       ) : null}
                       {sc.withdrawn_reason ? (
-                        <p className="mt-1 text-[11.5px] text-muted-foreground">
+                        <p className="mt-1 text-[12px] text-muted-foreground">
                           Withdrawn: {sc.withdrawn_reason}
                         </p>
                       ) : null}
                       {sc.redacted ? (
-                        <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+                        <p className="mt-1 text-[12px] text-muted-foreground">
                           Written evidence removed after a data-erasure request. The scores are
                           kept.
                         </p>
@@ -509,7 +527,7 @@ function HumanInterviewSection({
                             return (
                               <div
                                 key={c.competency_id}
-                                className="flex items-baseline justify-between gap-2 text-[11.5px]"
+                                className="flex items-baseline justify-between gap-2 text-[12px]"
                               >
                                 <span className="text-[var(--ui-soft)]">{c.competency_name}</span>
                                 <span className="text-foreground">
@@ -525,7 +543,7 @@ function HumanInterviewSection({
                                 .map((c) => (
                                   <li
                                     key={c.competency_id}
-                                    className="text-[11px] text-[var(--ui-faint)]"
+                                    className="text-[12px] text-muted-foreground"
                                   >
                                     {c.competency_name}: {sc.scores?.[c.competency_id]?.evidence}
                                   </li>
@@ -533,7 +551,7 @@ function HumanInterviewSection({
                             </ul>
                           ) : null}
                           {sc.summary ? (
-                            <p className="mt-1 text-[11.5px] leading-relaxed text-muted-foreground">
+                            <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
                               {sc.summary}
                             </p>
                           ) : null}
@@ -542,15 +560,13 @@ function HumanInterviewSection({
                         // Submitted, but not readable by this viewer yet: they owe
                         // their own scorecard for the round. Saying "not submitted"
                         // here would be false.
-                        <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+                        <p className="mt-1 text-[12px] text-muted-foreground">
                           {round.hidden_until_you_submit
                             ? 'Hidden until you submit your own scorecard.'
                             : 'Submitted.'}
                         </p>
                       ) : sc.state !== 'withdrawn' ? (
-                        <p className="mt-1 text-[11.5px] text-muted-foreground">
-                          Not submitted yet.
-                        </p>
+                        <p className="mt-1 text-[12px] text-muted-foreground">Not submitted yet.</p>
                       ) : null}
                       {/* Not on an open correction: the server refuses, because it would
                           leave that interviewer with no current scorecard. */}
@@ -567,7 +583,7 @@ function HumanInterviewSection({
                             }
                             placeholder="Reason (optional)"
                             aria-label={`Withdraw reason for ${sc.interviewer_name}`}
-                            className="w-full max-w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+                            className="h-9 w-full max-w-[220px] rounded-[10px] border border-input bg-card px-3 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
                           />
                           <ConfirmDeleteButton
                             label="Withdraw"
@@ -588,13 +604,13 @@ function HumanInterviewSection({
                 </ul>
                 {superseded.length > 0 ? (
                   <details className="mt-2">
-                    <summary className="cursor-pointer text-[11.5px] text-muted-foreground">
+                    <summary className="cursor-pointer text-[12px] text-muted-foreground">
                       {superseded.length} corrected{' '}
                       {superseded.length === 1 ? 'scorecard' : 'scorecards'}
                     </summary>
                     <ul className="mt-1.5 flex flex-col gap-1.5 pl-2">
                       {superseded.map((sc) => (
-                        <li key={sc.scorecard_id} className="text-[11.5px] text-[var(--ui-faint)]">
+                        <li key={sc.scorecard_id} className="text-[12px] text-muted-foreground">
                           {sc.interviewer_name} — corrected
                           {sc.correction_reason ? `: ${sc.correction_reason}` : ''}
                         </li>
@@ -619,16 +635,6 @@ const STATUS_TONE: Record<string, TagTone> = {
   hired: 'forest',
   rejected: 'ember',
 };
-
-function Row({ label, value }: { label: string; value: string | null | undefined }) {
-  if (!value) return null;
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-border py-1.5 last:border-b-0">
-      <span className="text-[12px] text-muted-foreground">{label}</span>
-      <span className="text-right text-[13px] text-[var(--ui-soft)]">{value}</span>
-    </div>
-  );
-}
 
 function answerText(a: ApplicationAnswer): string {
   if (Array.isArray(a.answer)) return a.answer.join(', ');
@@ -661,8 +667,6 @@ export default function CandidateDrawer({
    */
   focusSection?: 'checkin';
 }) {
-  const closeRef = useRef<HTMLButtonElement>(null);
-
   const detail = useQuery({
     queryKey: ['applicant', applicantId],
     queryFn: () => getApplicant(applicantId as string),
@@ -697,23 +701,9 @@ export default function CandidateDrawer({
         }
       : person;
 
-  // Escape closes it, and focus lands somewhere inside rather than staying on
-  // whatever row opened it — a panel a keyboard user cannot leave is worse than
-  // no panel.
-  useEffect(() => {
-    if (!applicantId) return undefined;
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [applicantId, onClose]);
-
   // PH5 wave-1 follow-up (A2) — land on the check-in section instead of the
   // top of the drawer, once it has actually mounted (status hired). Runs
-  // after the effect above, so it wins the final focus placement over the
-  // close button's default. A no-op — the section simply never mounts — if
+  // after the sheet's own focus placement, so it wins over the close button. A no-op — the section simply never mounts — if
   // this application turns out not to be hired.
   useEffect(() => {
     if (focusSection !== 'checkin' || !enrolmentId || candidate?.status !== 'hired') return;
@@ -742,6 +732,12 @@ export default function CandidateDrawer({
     throwOnError: false,
   });
 
+  const historyKey = useScopedPersistKey('candidate-history');
+  // The newest move, by time, for the one-line summary under the closed header.
+  const newestMove = (history.data ?? []).reduce<
+    NonNullable<typeof history.data>[number] | undefined
+  >((n, h) => (n === undefined || h.occurred_at > n.occurred_at ? h : n), undefined);
+
   // Same query key the analytics page uses for the source vocabulary — one
   // shared cache entry, not a second fetch, wherever both mount.
   const definitions = useQuery({
@@ -757,309 +753,324 @@ export default function CandidateDrawer({
     Boolean(candidate?.parsed_full_name) && candidate?.parsed_full_name !== candidate?.full_name;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <button
-        type="button"
-        aria-label="Close candidate details"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/50"
-      />
-      <aside
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="drawer-name"
-        className="relative flex h-full w-full max-w-[440px] flex-col overflow-y-auto border-l border-border bg-card p-6"
+    <Sheet open onOpenChange={(open) => !open && onClose()}>
+      {/* Radix supplies the focus trap, Escape, the overlay click and the Close
+          button; focus lands on that button on open, as the old close ref did. */}
+      <SheetContent
+        side="right"
+        aria-describedby={undefined}
+        className="flex w-full flex-col gap-0 overflow-hidden bg-card p-0 shadow-elevated sm:max-w-[520px]"
       >
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h2 id="drawer-name" className="text-[20px] font-semibold text-foreground">
-              {candidate?.full_name ?? 'Loading…'}
-            </h2>
-            <p className="mt-0.5 text-[13px] text-muted-foreground">
-              {[candidate?.target_job_title, candidate?.email].filter(Boolean).join(' · ')}
-            </p>
-          </div>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 rounded-[8px] p-1.5 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:text-foreground"
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </div>
-
-        {detail.isError ? (
-          <p className="mt-4 text-[13px] text-muted-foreground">
-            Could not load this candidate. Close and try again.
+        {/* Pinned header: who this is and where they stand, always in view. */}
+        <SheetHeader className="shrink-0 space-y-0 border-b border-border px-6 py-5 pr-14 text-left">
+          <SheetTitle className="truncate text-[20px] font-bold tracking-[-0.4px]">
+            {candidate?.full_name ?? 'Loading…'}
+          </SheetTitle>
+          <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
+            {[candidate?.target_job_title, candidate?.email].filter(Boolean).join(' · ')}
           </p>
-        ) : null}
-
-        {candidate ? (
-          <>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
+          {candidate && (candidate.status || candidate.current_round_title) ? (
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {candidate.status ? (
                 <StatusTag tone={STATUS_TONE[candidate.status] ?? 'neutral'} dot>
                   {candidate.status}
                 </StatusTag>
               ) : null}
               {candidate.current_round_title ? (
-                <span className="text-[12px] text-muted-foreground">
+                <span className="text-[13px] text-muted-foreground">
                   on {candidate.current_round_title}
                 </span>
               ) : null}
             </div>
+          ) : null}
+        </SheetHeader>
 
-            {/* The discrepancy nobody else can see. Stated plainly rather than as a
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 pt-1">
+          {detail.isError ? (
+            <p role="alert" className="mt-4 text-[13px] text-muted-foreground">
+              Could not load this candidate. Close and try again.
+            </p>
+          ) : null}
+
+          {candidate ? (
+            <>
+              {/* The discrepancy nobody else can see. Stated plainly rather than as a
             warning: neither name is wrong, they simply disagree, and only a
             person can decide which the candidate meant. */}
-            {nameDiffers ? (
-              <p className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3 text-[12px] leading-relaxed text-[var(--ui-soft)]">
-                <Info
-                  size={13}
-                  className="mt-0.5 shrink-0 text-[var(--ui-info)]"
-                  aria-hidden="true"
-                />
-                <span>
-                  Their CV reads{' '}
-                  <span className="text-foreground">{candidate.parsed_full_name}</span>. The name
-                  above is what
-                  {candidate.full_name_source === 'candidate' ? ' they typed' : ' is on file'}.
-                </span>
-              </p>
-            ) : null}
-
-            {candidate.ats_overall != null ? (
-              <div id="screening" tabIndex={-1} className="mt-5 outline-none">
-                <div className="flex items-baseline justify-between">
-                  <h3 className="text-[13px] font-medium text-foreground">Resume match</h3>
-                  <span className="text-[20px] font-semibold text-foreground">
-                    {candidate.ats_overall}
-                    <span className="text-[13px] text-[var(--ui-faint)]">/100</span>
+              {nameDiffers ? (
+                <p className="mt-5 flex items-start gap-2 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-3.5 text-[13px] leading-relaxed text-[var(--ui-soft)]">
+                  <Info
+                    size={13}
+                    className="mt-0.5 shrink-0 text-[var(--ui-info)]"
+                    aria-hidden="true"
+                  />
+                  <span>
+                    Their CV reads{' '}
+                    <span className="text-foreground">{candidate.parsed_full_name}</span>. The name
+                    above is what
+                    {candidate.full_name_source === 'candidate' ? ' they typed' : ' is on file'}.
                   </span>
-                </div>
-                {candidate.ats_summary ? (
-                  <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground">
-                    {candidate.ats_summary}
-                  </p>
-                ) : null}
-                {candidate.ats_strengths?.length ? (
-                  <ul className="mt-2 flex flex-col gap-1">
-                    {candidate.ats_strengths.map((s) => (
-                      <li key={s} className="text-[12.5px] text-[var(--ui-soft)]">
-                        ✓ {s}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-                {candidate.ats_concerns?.length ? (
-                  <ul className="mt-1.5 flex flex-col gap-1">
-                    {candidate.ats_concerns.map((c) => (
-                      <li
-                        key={c}
-                        className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-soft)]"
-                      >
-                        <AlertTriangle
-                          size={12}
-                          className="mt-0.5 shrink-0 text-[var(--ui-warn)]"
-                          aria-hidden="true"
-                        />
-                        {c}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            ) : null}
+                </p>
+              ) : null}
 
-            {/* The prop, not candidate.applicant_id: GET /hr/applicants/{id} returns
+              {candidate.ats_overall != null ? (
+                <div id="screening" tabIndex={-1} className={cn(SECTION, 'mt-5 border-t-0 pt-0')}>
+                  <div className="flex items-baseline justify-between">
+                    <h3 className={SECTION_TITLE}>Resume match</h3>
+                    <span className="font-display text-[22px] font-bold text-foreground">
+                      {candidate.ats_overall}
+                      <span className="text-[13px] text-muted-foreground">/100</span>
+                    </span>
+                  </div>
+                  {candidate.ats_summary ? (
+                    <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
+                      {candidate.ats_summary}
+                    </p>
+                  ) : null}
+                  {candidate.ats_strengths?.length ? (
+                    <ul className="mt-2 flex flex-col gap-1">
+                      {candidate.ats_strengths.map((s) => (
+                        <li key={s} className="text-[12.5px] text-[var(--ui-soft)]">
+                          ✓ {s}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {candidate.ats_concerns?.length ? (
+                    <ul className="mt-1.5 flex flex-col gap-1">
+                      {candidate.ats_concerns.map((c) => (
+                        <li
+                          key={c}
+                          className="flex items-start gap-1.5 text-[12.5px] text-[var(--ui-soft)]"
+                        >
+                          <AlertTriangle
+                            size={12}
+                            className="mt-0.5 shrink-0 text-[var(--ui-warn)]"
+                            aria-hidden="true"
+                          />
+                          {c}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* The prop, not candidate.applicant_id: GET /hr/applicants/{id} returns
             the id as `id`, so that field was always undefined and the round
             scores never loaded. */}
-            <RoundScores applicantId={applicantId} enrolmentId={enrolmentId} />
+              <RoundScores applicantId={applicantId} enrolmentId={enrolmentId} />
 
-            {/* PH4-D2 — recorded adjustments to how this applicant is assessed.
+              {/* PH4-D2 — recorded adjustments to how this applicant is assessed.
             Scoped to the applicant, so shown regardless of whether the drawer
             was opened from a specific application. */}
-            <AccommodationsSection
-              applicantId={applicantId}
-              enrolmentId={enrolmentId}
-              requisitionId={app?.requisition_id ?? null}
-            />
-
-            {enrolmentId ? (
-              <HumanInterviewSection
+              <AccommodationsSection
+                applicantId={applicantId}
                 enrolmentId={enrolmentId}
                 requisitionId={app?.requisition_id ?? null}
               />
-            ) : null}
 
-            {/* PH4-D4 — a job simulation or portfolio round's own submission(s):
+              {enrolmentId ? (
+                <HumanInterviewSection
+                  enrolmentId={enrolmentId}
+                  requisitionId={app?.requisition_id ?? null}
+                />
+              ) : null}
+
+              {/* PH4-D4 — a job simulation or portfolio round's own submission(s):
             lifecycle, re-issue and withdraw. Reviewers for these rounds are
             assigned in "Human interview" above, through the same scorecard
             machinery; the pass/hold verdict is recorded on the decision
             queue, through the existing round-review action — nothing here
             does either. */}
-            {enrolmentId ? (
-              <div id="tasks" tabIndex={-1} className="outline-none">
-                <TaskSubmissionSection enrolmentId={enrolmentId} />
-              </div>
-            ) : null}
+              {enrolmentId ? (
+                <div id="tasks" tabIndex={-1} className="outline-none">
+                  <TaskSubmissionSection enrolmentId={enrolmentId} />
+                </div>
+              ) : null}
 
-            {/* PH4-D3 -- counts only; the evidence is on the exam attempt. */}
-            {enrolmentId ? <CodeEvidenceCounts enrolmentId={enrolmentId} /> : null}
+              {/* PH4-D3 -- counts only; the evidence is on the exam attempt. */}
+              {enrolmentId ? <CodeEvidenceCounts enrolmentId={enrolmentId} /> : null}
 
-            {/* PH4-A2 — scheduling the human interview(s) above: the loop(s), each
+              {/* PH4-A2 — scheduling the human interview(s) above: the loop(s), each
             session's time in both zones, and the controls to create, send,
             move and close them out. */}
-            {enrolmentId ? (
-              <InterviewLoopsSection
-                enrolmentId={enrolmentId}
-                requisitionId={app?.requisition_id ?? null}
-              />
-            ) : null}
+              {enrolmentId ? (
+                <InterviewLoopsSection
+                  enrolmentId={enrolmentId}
+                  requisitionId={app?.requisition_id ?? null}
+                />
+              ) : null}
 
-            {/* PH4-O1 — what is blocking this application, for a person to see and
+              {/* PH4-O1 — what is blocking this application, for a person to see and
             act on. Scoped to this enrolment/application, same as the rest of
             the drawer. */}
-            {enrolmentId ? <ExceptionsSection enrolmentId={enrolmentId} /> : null}
+              {enrolmentId ? <ExceptionsSection enrolmentId={enrolmentId} /> : null}
 
-            {/* PH4-A3 — the offer, once this application is a hire. */}
-            {enrolmentId ? (
-              <div id="offers" tabIndex={-1} className="outline-none">
-                <OfferSection
-                  enrolmentId={enrolmentId}
-                  jobTitle={candidate.target_job_title}
-                  applicationStatus={candidate.status}
-                />
-              </div>
-            ) : null}
+              {/* PH4-A3 — the offer, once this application is a hire. */}
+              {enrolmentId ? (
+                <div id="offers" tabIndex={-1} className="outline-none">
+                  <OfferSection
+                    enrolmentId={enrolmentId}
+                    jobTitle={candidate.target_job_title}
+                    applicationStatus={candidate.status}
+                  />
+                </div>
+              ) : null}
 
-            {/* PH5 wave-1 follow-up A1 — the 90-day check-in, once this
+              {/* PH5 wave-1 follow-up A1 — the 90-day check-in, once this
             application has actually resulted in a hire. Nothing here can
             move it back off "hired" or otherwise change a decision (D-05). */}
-            {enrolmentId && candidate.status === 'hired' ? (
-              <CheckinSection enrolmentId={enrolmentId} />
-            ) : null}
+              {enrolmentId && candidate.status === 'hired' ? (
+                <CheckinSection enrolmentId={enrolmentId} />
+              ) : null}
 
-            <div className="mt-5">
-              <h3 className="mb-1.5 flex items-center gap-1.5 text-[13px] font-medium text-foreground">
-                <User size={13} aria-hidden="true" />
-                Details
-              </h3>
-              <Row
-                label="Source"
-                value={candidate.source ? sourceLabel(candidate.source, definitions.data) : null}
-              />
-              <Row label="Phone" value={candidate.phone} />
-              <Row
-                label="Experience"
-                value={
-                  candidate.years_experience != null ? `${candidate.years_experience} years` : null
-                }
-              />
-              <Row label="Current company" value={candidate.current_company} />
-              <Row label="Current role" value={candidate.current_title} />
-              <Row label="LinkedIn" value={candidate.linkedin_url} />
-              <Row label="GitHub" value={candidate.github_url} />
-            </div>
+              <div className={SECTION}>
+                <h3 className={cn(SECTION_TITLE, 'mb-3')}>Details</h3>
+                {/* Only the facts that exist: a blank row is noise in a drawer. */}
+                <DataList
+                  columns={1}
+                  items={[
+                    {
+                      label: 'Source',
+                      value: candidate.source
+                        ? sourceLabel(candidate.source, definitions.data)
+                        : null,
+                    },
+                    { label: 'Phone', value: candidate.phone },
+                    {
+                      label: 'Experience',
+                      value:
+                        candidate.years_experience != null
+                          ? `${candidate.years_experience} years`
+                          : null,
+                    },
+                    { label: 'Current company', value: candidate.current_company },
+                    { label: 'Current role', value: candidate.current_title },
+                    { label: 'LinkedIn', value: candidate.linkedin_url },
+                    { label: 'GitHub', value: candidate.github_url },
+                  ].filter((i) => Boolean(i.value))}
+                />
+              </div>
 
-            {/* Otherwise write-only: candidates fill these in and nobody reads them. */}
-            {enrolmentId ? (
-              <div id="answers" tabIndex={-1} className="mt-5 outline-none">
-                <h3 className="mb-2 text-[13px] font-medium text-foreground">
-                  Application answers
-                </h3>
-                {answers.isLoading ? (
-                  <p className="text-[12.5px] text-muted-foreground">Loading…</p>
-                ) : null}
-                {!answers.isLoading && (answers.data?.length ?? 0) === 0 ? (
-                  <p className="text-[12.5px] text-muted-foreground">
-                    This opening did not ask any questions.
-                  </p>
-                ) : null}
-                <div className="flex flex-col gap-3">
-                  {answers.data?.map((a) => (
-                    <div key={a.question_id}>
-                      <p
-                        className={cn(
-                          'text-[12px]',
-                          a.retired ? 'text-[var(--ui-faint)]' : 'text-muted-foreground',
-                        )}
-                      >
-                        {a.prompt}
-                        {/* An answer to a question no longer asked still counts —
+              {/* Otherwise write-only: candidates fill these in and nobody reads them. */}
+              {enrolmentId ? (
+                <div id="answers" tabIndex={-1} className={SECTION}>
+                  <h3 className={cn(SECTION_TITLE, 'mb-2')}>Application answers</h3>
+                  {answers.isLoading ? (
+                    <p className="text-[12.5px] text-muted-foreground">Loading…</p>
+                  ) : null}
+                  {!answers.isLoading && (answers.data?.length ?? 0) === 0 ? (
+                    <p className="text-[12.5px] text-muted-foreground">
+                      This opening did not ask any questions.
+                    </p>
+                  ) : null}
+                  <div className="flex flex-col gap-3">
+                    {answers.data?.map((a) => (
+                      <div key={a.question_id}>
+                        <p
+                          className={cn(
+                            'text-[12px]',
+                            a.retired ? 'text-muted-foreground' : 'text-muted-foreground',
+                          )}
+                        >
+                          {a.prompt}
+                          {/* An answer to a question no longer asked still counts —
                         hiding it would leave a decision partly based on
                         something nobody can see. */}
-                        {a.retired ? (
-                          <span className="ml-1.5 text-[11px] italic">no longer asked</span>
-                        ) : null}
-                      </p>
-                      <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-[var(--ui-soft)]">
-                        {answerText(a)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {enrolmentId && (history.data?.length ?? 0) > 0 ? (
-              <div id="history" tabIndex={-1} className="mt-5 outline-none">
-                <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-[13px] font-medium text-foreground">History</h3>
-                  {/* PH5-E5 — the full evidence trail behind this application:
-                  what existed when a decision was recorded, and what came
-                  after. Opens without preselecting a decision; the trail
-                  page's own picker handles more than one. */}
-                  <Link
-                    to={`/hr/enrolments/${enrolmentId}/evidence`}
-                    className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
-                  >
-                    <ExternalLink size={11} aria-hidden="true" />
-                    Evidence trail
-                  </Link>
-                </div>
-                <ol className="mt-2 flex flex-col gap-2 border-l border-border pl-3">
-                  {history.data?.map((h, i) => {
-                    // A decision row (the ledger's single writer for a hire/
-                    // reject, never automated) also gets its own "Why?" —
-                    // `h.id` (the stage_transitions row's own id, PH5-E5) IS
-                    // the decision_id GET /hr/decisions/{id}/trace takes, so
-                    // this deep-links straight to that decision rather than
-                    // opening the trail's picker.
-                    const isDecision =
-                      !h.automated && (h.to_status === 'hired' || h.to_status === 'rejected');
-                    return (
-                      <li key={`${h.occurred_at}-${i}`} className="text-[12.5px]">
-                        <p className="flex items-center gap-2 text-[var(--ui-soft)]">
-                          {describeMove(h)}
-                          {isDecision ? (
-                            <Link
-                              to={`/hr/enrolments/${enrolmentId}/evidence?decision=${h.id}`}
-                              className="text-[11.5px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
-                            >
-                              Why?
-                            </Link>
+                          {a.retired ? (
+                            <span className="ml-1.5 text-[12px] italic">no longer asked</span>
                           ) : null}
                         </p>
-                        <p className="text-[11.5px] text-[var(--ui-faint)]">
-                          {new Date(h.occurred_at).toLocaleString()}
-                          {/* O4: the structured reason label, when this move recorded
-                          one, alongside the free-text reason. Historical rows
-                          have neither and render exactly as before. */}
-                          {h.reason_label ? ` — ${h.reason_label}` : ''}
-                          {h.reason ? `${h.reason_label ? ': ' : ' — '}${h.reason}` : ''}
+                        <p className="mt-0.5 whitespace-pre-wrap text-[13px] text-[var(--ui-soft)]">
+                          {answerText(a)}
                         </p>
-                      </li>
-                    );
-                  })}
-                </ol>
-              </div>
-            ) : null}
-          </>
-        ) : null}
-      </aside>
-    </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {enrolmentId && (history.data?.length ?? 0) > 0 ? (
+                <div id="history" tabIndex={-1} className={SECTION}>
+                  <Collapsible
+                    title="History"
+                    headingLevel="h3"
+                    count={history.data?.length ?? 0}
+                    noun="move"
+                    latest={
+                      newestMove
+                        ? `${describeMove(newestMove)}, ${new Date(newestMove.occurred_at).toLocaleDateString()}`
+                        : undefined
+                    }
+                    persistKey={historyKey}
+                    data-testid="candidate-history"
+                    // PH5-E5 — the full evidence trail behind this application:
+                    // what existed when a decision was recorded, and what came
+                    // after. Opens without preselecting a decision; the trail
+                    // page's own picker handles more than one.
+                    actions={
+                      <Link
+                        to={`/hr/enrolments/${enrolmentId}/evidence`}
+                        className="inline-flex min-h-10 items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                      >
+                        <ExternalLink size={11} aria-hidden="true" />
+                        Evidence trail
+                      </Link>
+                    }
+                  >
+                    <ProgressiveList
+                      as="ol"
+                      items={history.data ?? []}
+                      initial={5}
+                      noun="moves"
+                      getKey={(h, i) => `${h.occurred_at}-${i}`}
+                      className="mt-1 flex flex-col gap-3.5 border-l border-border pl-4"
+                      renderItem={(h) => {
+                        // A decision row (the ledger's single writer for a hire/
+                        // reject, never automated) also gets its own "Why?" —
+                        // `h.id` (the stage_transitions row's own id, PH5-E5) IS
+                        // the decision_id GET /hr/decisions/{id}/trace takes, so
+                        // this deep-links straight to that decision rather than
+                        // opening the trail's picker.
+                        const isDecision =
+                          !h.automated && (h.to_status === 'hired' || h.to_status === 'rejected');
+                        return (
+                          <li className="relative text-[12.5px]">
+                            <span
+                              className="absolute -left-[21px] top-1 h-2.5 w-2.5 rounded-full border-2 border-card bg-[var(--ui-info)]"
+                              aria-hidden="true"
+                            />
+                            <p className="flex items-center gap-2 text-[var(--ui-soft)]">
+                              {describeMove(h)}
+                              {isDecision ? (
+                                <Link
+                                  to={`/hr/enrolments/${enrolmentId}/evidence?decision=${h.id}`}
+                                  className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                                >
+                                  Why?
+                                </Link>
+                              ) : null}
+                            </p>
+                            <p className="text-[12px] text-muted-foreground">
+                              {new Date(h.occurred_at).toLocaleString()}
+                              {/* O4: the structured reason label, when this move recorded
+                                  one, alongside the free-text reason. Historical rows
+                                  have neither and render exactly as before. */}
+                              {h.reason_label ? ` — ${h.reason_label}` : ''}
+                              {h.reason ? `${h.reason_label ? ': ' : ' — '}${h.reason}` : ''}
+                            </p>
+                          </li>
+                        );
+                      }}
+                    />
+                  </Collapsible>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

@@ -19,7 +19,8 @@ import {
   type MetricPart,
   type OutcomeCohort,
 } from '@/api/metrics';
-import { GlassCard, SegTabs } from '@/design/components/primitives';
+import { SegTabs } from '@/design/components/primitives';
+import { SectionCard } from '@/design/components/page';
 import { Info } from '@/design/components/icons';
 import MetricCell from './MetricCell';
 import MetricInfoDialog from './MetricInfoDialog';
@@ -72,13 +73,13 @@ export default function OutcomeSignalsSection({
   const bandGroups = (signals.data?.groups ?? []).filter((g) => g.key !== null);
 
   return (
-    <GlassCard className="border-[rgba(var(--accent-rgb),0.22)] p-5" data-testid="outcome-signals">
-      <h2 className="text-[15px] font-semibold text-foreground">
-        Interview scores and later outcomes (signals)
-      </h2>
-      <div className="mt-3 flex items-start gap-2.5 rounded-[12px] border border-[rgba(var(--accent-rgb),0.3)] bg-[rgba(var(--accent-rgb),0.06)] p-3.5">
+    <SectionCard
+      title="Interview scores and later outcomes (signals)"
+      data-testid="outcome-signals"
+    >
+      <div className="flex items-start gap-2.5 rounded-[12px] border border-[var(--ui-info)]/30 bg-[var(--ui-info-wash)] p-3.5">
         <Info size={15} className="mt-0.5 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
-        <p className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
+        <p className="text-[13px] leading-relaxed text-foreground">
           Signals about past hires. They never change any candidate&apos;s status or scores. Only
           human interviewer scores are used; AI interview scores are deleted after 90 days and are
           never compared with outcomes.
@@ -97,23 +98,23 @@ export default function OutcomeSignalsSection({
         {signals.isLoading ? (
           <p className="text-[13px] text-muted-foreground">Loading…</p>
         ) : signals.isError ? (
-          <p className="text-[13px] text-[var(--ui-danger)]">
+          <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
             Could not load outcome signals just now.
           </p>
         ) : bandGroups.length === 0 ? (
           <p className="text-[13px] text-muted-foreground">No data for this period.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] border-collapse text-left text-[12.5px]">
-              <thead>
+            <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
+              <thead className="sticky top-0 z-10 bg-card">
                 <tr className="border-b border-border">
-                  <th className="py-2 pr-3 font-medium text-[var(--ui-faint)]">
+                  <th className="py-2 pr-3 font-semibold text-muted-foreground">
                     Interviewer score
                   </th>
                   {names.map((name) => {
                     const def = findDefinition(definitions, name);
                     return (
-                      <th key={name} className="py-2 pr-3 font-medium text-[var(--ui-faint)]">
+                      <th key={name} className="py-2 pr-3 font-semibold text-muted-foreground">
                         {metricLabel(name, def)}
                       </th>
                     );
@@ -122,7 +123,10 @@ export default function OutcomeSignalsSection({
               </thead>
               <tbody>
                 {bandGroups.map((g) => (
-                  <tr key={g.key} className="border-b border-border last:border-0">
+                  <tr
+                    key={g.key}
+                    className="border-b border-border last:border-0 hover:bg-[var(--ui-inset-soft)]"
+                  >
                     <td className="py-2 pr-3 font-medium text-foreground">{g.label}</td>
                     {names.map((name) => {
                       const result = g.metrics[name];
@@ -174,6 +178,6 @@ export default function OutcomeSignalsSection({
           onOpenCandidate={onOpenCandidate}
         />
       ) : null}
-    </GlassCard>
+    </SectionCard>
   );
 }

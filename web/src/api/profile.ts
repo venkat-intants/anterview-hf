@@ -3,6 +3,7 @@
 
 import { apiGet, apiPatch } from './client';
 import type { MeResponse, ProfileUpdate, PublicProfile } from '@/types/auth';
+import { pathId } from './pathId';
 
 /** Update the signed-in user's profile. Empty string clears a field. */
 export function updateProfile(body: ProfileUpdate): Promise<MeResponse> {
@@ -11,7 +12,7 @@ export function updateProfile(body: ProfileUpdate): Promise<MeResponse> {
 
 /** View another user's public profile (HR / admin / super-admin only). */
 export function getUserProfile(userId: string): Promise<PublicProfile> {
-  return apiGet<PublicProfile>(`/users/${userId}/profile`);
+  return apiGet<PublicProfile>(`/users/${pathId(userId)}/profile`);
 }
 
 /**

@@ -367,12 +367,17 @@ async def redeem_invite(
         await db.execute(
             text(
                 "INSERT INTO sessions (id, user_id, job_id, language, status, started_at, "
-                'metadata, presenter_id, created_at, updated_at) VALUES '
-                "(:id, :uid, :jid, :lang, 'created', :now, CAST(:meta AS jsonb), :pid, :now, :now)"
+                'metadata, presenter_id, avatar_mode, created_at, updated_at) VALUES '
+                "(:id, :uid, :jid, :lang, 'created', :now, CAST(:meta AS jsonb), :pid, "
+                ":amode, :now, :now)"
             ),
             {
                 "id": session_id, "uid": guest_user_id, "jid": inv.job_id,
                 "lang": inv.language, "now": now, "pid": avatar,
+                # Copied, not referenced: the session keeps the mode it STARTED
+                # under, so changing the invite afterwards cannot alter an
+                # interview already in flight. The worker reads this column.
+                "amode": inv.avatar_mode,
                 "meta": json.dumps(
                     {"source": "hr_invite", "applicant_id": str(applicant.id),
                      "company_id": str(inv.company_id)}

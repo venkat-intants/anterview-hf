@@ -30,25 +30,10 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useAccentColor } from '@/lib/useAccentColor';
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  ResponsiveContainer,
-  Cell,
-  PieChart,
-  Pie,
-  LineChart,
-  Line,
-  Tooltip,
-  CartesianGrid,
-} from 'recharts';
 import { getHrAnalytics, type HrAnalytics } from '@/api/pipeline';
-import { Reveal } from '@/design/components/Reveal';
-import { GlassCard, SegTabs } from '@/design/components/primitives';
-import { TOOLTIP_STYLE } from '@/lib/chartTheme';
+import { SegTabs } from '@/design/components/primitives';
+import { PageHeader, SectionCard, Page } from '@/design/components/page';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/context/AuthContext';
 import { ApiError, isTransientApiError } from '@/api/client';
 import { listRequisitions, type Requisition } from '@/api/requisitions';
@@ -77,13 +62,6 @@ import OutcomeSignalsSection from '@/components/hr/analytics/OutcomeSignalsSecti
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function scoreColor(v: number): string {
-  if (v >= 85) return '#27c93f';
-  if (v >= 70) return '#0088ff';
-  if (v >= 55) return '#ffb764';
-  return '#e6714f';
-}
-
 /**
  * A governed conversion rate, rendered exactly as `GET /hr/analytics` sent
  * it — this file never divides two of its own numbers to build one. Null
@@ -97,22 +75,12 @@ function ConversionRate({ value }: { value: number | null }): JSX.Element {
     return (
       <span className="inline-flex items-center gap-1">
         <span className="text-[var(--ui-soft)]">—</span>
-        <span className="text-[var(--ui-faint)]">(not enough data yet)</span>
+        <span className="text-muted-foreground">(not enough data yet)</span>
       </span>
     );
   }
   return <span className="text-[var(--ui-soft)]">{value.toFixed(1)}%</span>;
 }
-
-// ── Static chart data (language-mix + score-dist + trend).
-//    These have no backing API yet; they render as empty states until
-//    the analytics endpoint expands. When the API ships, replace these
-//    with derived data from getHrAnalytics. ────────────────────────────────────
-const LANG_MIX_STATIC: { label: string; value: number; color: string }[] = [];
-
-const SCORE_DIST_STATIC: { label: string; value: number }[] = [];
-
-const HR_TREND_STATIC: { day: string; interviews: number; avg: number }[] = [];
 
 // ── FunnelBars — horizontal bar chart using real funnel data ─────────────────
 /** Applications, which every other funnel count is a count of (B5). People
@@ -147,11 +115,11 @@ function FunnelBars({ f }: { f: HrAnalytics['funnel'] }) {
         const pct = Math.round((row.value / max) * 100);
         return (
           <div key={row.label} className="flex items-center gap-3.5">
-            <div className="w-[84px] text-[13px] text-[var(--ui-soft)]">{row.label}</div>
-            <div className="h-7 flex-1 overflow-hidden rounded-[8px] bg-[var(--ui-inset)]">
+            <div className="w-[84px] shrink-0 text-[13px] text-[var(--ui-soft)]">{row.label}</div>
+            <div className="h-7 flex-1 overflow-hidden rounded-[8px] bg-[var(--ui-inset-strong)]">
               {pct > 0 && (
                 <div
-                  className="flex h-full items-center rounded-[8px] bg-[linear-gradient(90deg,var(--accent),#a887dc)] pl-3 text-[12px] font-semibold"
+                  className="flex h-full items-center rounded-[8px] bg-[var(--accent)] pl-3 text-[12px] font-semibold text-primary-foreground"
                   style={{ width: `${pct}%` }}
                 >
                   {row.value.toLocaleString('en-IN')}
@@ -176,190 +144,50 @@ export default function HRAnalytics() {
   const avg = data?.averages;
   const conv = data?.conversion;
 
-  const distData = SCORE_DIST_STATIC.map((d) => ({
-    ...d,
-    color: scoreColor(parseInt(d.label, 10) + 5),
-  }));
-  const accent = useAccentColor();
-
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+      <div>
         {/* Hiring funnel — real data */}
-        <Reveal dir="left" className="lg:col-span-2">
-          <GlassCard className="p-5">
-            <h3 className="mb-5 text-[16px] font-semibold">Hiring funnel</h3>
-            {isLoading ? (
-              <div className="space-y-2.5">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <div key={i} className="h-7 animate-pulse rounded-[8px] bg-[var(--ui-inset)]" />
-                ))}
-              </div>
-            ) : f ? (
-              <FunnelBars f={f} />
-            ) : null}
-            {/* Conversion rates subtitle — the governed `conversion.pct_*`
-                fields from this same response (PH5-C2), each a share of
-                applications. Never derived from `f` here: a client-side
-                hires ÷ interviews (etc.) is a second, conflicting definition
-                of the same number and can read over 100%. */}
-            {f && avg && conv && (
-              <div className="mt-4 flex flex-wrap gap-4 text-[12px] text-[var(--ui-faint)]">
-                <span>
-                  Shortlist rate: <ConversionRate value={conv.pct_shortlisted} />
-                </span>
-                <span>
-                  Sat exam rate: <ConversionRate value={conv.pct_sat_exam} />
-                </span>
-                <span>
-                  Interviewed rate: <ConversionRate value={conv.pct_interviewed} />
-                </span>
-                <span>
-                  Hire rate: <ConversionRate value={conv.pct_hired} />
-                </span>
-              </div>
-            )}
-          </GlassCard>
-        </Reveal>
-
-        {/* Language mix donut */}
-        <Reveal dir="right">
-          <GlassCard className="h-full p-5">
-            <h3 className="mb-3 text-[16px] font-semibold">Language mix</h3>
-            {LANG_MIX_STATIC.length > 0 ? (
-              <>
-                <div className="h-[180px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={LANG_MIX_STATIC}
-                        dataKey="value"
-                        nameKey="label"
-                        innerRadius={48}
-                        outerRadius={70}
-                        paddingAngle={2}
-                        stroke="none"
-                      >
-                        {LANG_MIX_STATIC.map((s) => (
-                          <Cell key={s.label} fill={s.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="mt-2 flex flex-col gap-2">
-                  {LANG_MIX_STATIC.map((s) => (
-                    <div key={s.label} className="flex items-center gap-2 text-[13px]">
-                      <span className="h-2.5 w-2.5 rounded-[3px]" style={{ background: s.color }} />
-                      {s.label}
-                      <span className="ml-auto text-[var(--ui-faint)]">{s.value}%</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="flex h-[180px] items-center justify-center">
-                <p className="text-[13px] text-muted-foreground">No language data yet.</p>
-              </div>
-            )}
-          </GlassCard>
-        </Reveal>
-      </div>
-
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        {/* Score distribution */}
-        <Reveal dir="left">
-          <GlassCard className="p-5">
-            <h3 className="mb-4 text-[16px] font-semibold">Score distribution</h3>
-            {distData.length > 0 ? (
-              <div className="h-[220px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={distData}>
-                    <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
-                    <XAxis
-                      dataKey="label"
-                      tick={{ fill: '#70757c', fontSize: 11 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fill: '#70757c', fontSize: 11 }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={28}
-                    />
-                    <Tooltip
-                      cursor={{ fill: 'rgba(255,255,255,0.04)' }}
-                      contentStyle={TOOLTIP_STYLE}
-                    />
-                    <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                      {distData.map((d) => (
-                        <Cell key={d.label} fill={d.color} />
-                      ))}
-                    </Bar>
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="flex h-[220px] items-center justify-center">
-                <p className="text-[13px] text-muted-foreground">No score data yet.</p>
-              </div>
-            )}
-          </GlassCard>
-        </Reveal>
-
-        {/* Interviews & avg score trend */}
-        <Reveal dir="right">
-          <GlassCard className="p-5">
-            <h3 className="mb-4 text-[16px] font-semibold">Interviews &amp; avg score</h3>
-            {HR_TREND_STATIC.length > 0 ? (
-              <div className="h-[220px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={HR_TREND_STATIC}>
-                    <CartesianGrid vertical={false} stroke="rgba(255,255,255,0.05)" />
-                    <XAxis
-                      dataKey="day"
-                      tick={{ fill: '#70757c', fontSize: 11 }}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fill: '#70757c', fontSize: 11 }}
-                      axisLine={false}
-                      tickLine={false}
-                      width={28}
-                    />
-                    <Tooltip contentStyle={TOOLTIP_STYLE} />
-                    <Line
-                      type="monotone"
-                      dataKey="interviews"
-                      stroke={accent}
-                      strokeWidth={2.5}
-                      dot={false}
-                    />
-                    <Line
-                      type="monotone"
-                      dataKey="avg"
-                      stroke="#a887dc"
-                      strokeWidth={2.5}
-                      dot={false}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (
-              <div className="flex h-[220px] items-center justify-center">
-                <p className="text-[13px] text-muted-foreground">No trend data yet.</p>
-              </div>
-            )}
-          </GlassCard>
-        </Reveal>
+        <SectionCard
+          title="Hiring funnel"
+          description="Applications at each stage, from applied to hired."
+        >
+          {isLoading ? (
+            <div className="space-y-2.5">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <Skeleton key={i} className="h-7 rounded-[8px]" />
+              ))}
+            </div>
+          ) : f ? (
+            <FunnelBars f={f} />
+          ) : null}
+          {/* Conversion rates subtitle — the governed `conversion.pct_*`
+              fields from this same response (PH5-C2), each a share of
+              applications. Never derived from `f` here: a client-side
+              hires ÷ interviews (etc.) is a second, conflicting definition
+              of the same number and can read over 100%. */}
+          {f && avg && conv && (
+            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 text-[13px] text-muted-foreground">
+              <span>
+                Shortlist rate: <ConversionRate value={conv.pct_shortlisted} />
+              </span>
+              <span>
+                Sat exam rate: <ConversionRate value={conv.pct_sat_exam} />
+              </span>
+              <span>
+                Interviewed rate: <ConversionRate value={conv.pct_interviewed} />
+              </span>
+              <span>
+                Hire rate: <ConversionRate value={conv.pct_hired} />
+              </span>
+            </div>
+          )}
+        </SectionCard>
       </div>
 
       {/* Averages summary row (only when data loaded) */}
       {avg && (
-        <Reveal>
+        <div>
           <div className="flex flex-wrap gap-6 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] px-5 py-4 text-[13px] text-muted-foreground">
             {avg.avg_ats !== null && (
               <span>
@@ -384,7 +212,7 @@ export default function HRAnalytics() {
               </span>
             )}
           </div>
-        </Reveal>
+        </div>
       )}
     </div>
   );
@@ -403,7 +231,7 @@ export default function HRAnalytics() {
 // header comment.
 
 const FIELD_CLS =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none';
+  'h-10 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 const COHORT_TABS = [
   { key: 'application', label: 'Application' },
@@ -456,23 +284,22 @@ function CohortControls({
   sourceOptions: { value: string; label: string }[];
 }): JSX.Element {
   return (
-    <GlassCard className="p-5">
-      <h2 className="text-[15px] font-semibold text-foreground">Cohort</h2>
-      <div className="mt-3">
+    <SectionCard title="Cohort">
+      <div>
         <SegTabs
           tabs={COHORT_TABS}
           active={filters.cohort}
           onChange={(k) => onChange({ cohort: k as CohortBasis })}
         />
-        <p className="mt-2 text-[12px] text-muted-foreground">{COHORT_HELP[filters.cohort]}</p>
+        <p className="mt-2 text-[13px] text-muted-foreground">{COHORT_HELP[filters.cohort]}</p>
         {filters.cohort === 'application' ? (
-          <p className="mt-1 text-[12px] text-[var(--ui-info)]">
+          <p className="mt-1 text-[13px] text-[var(--ui-info)]">
             Comparing outcomes (hire rates)? Applications still in progress make this cohort read
             low —{' '}
             <button
               type="button"
               onClick={() => onChange({ cohort: 'decision' })}
-              className="underline underline-offset-2"
+              className="rounded font-semibold underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               switch to the decision cohort
             </button>{' '}
@@ -485,7 +312,7 @@ function CohortControls({
         <div>
           <label
             htmlFor="an-from"
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+            className="mb-1.5 block text-[13px] font-semibold text-foreground"
           >
             From
           </label>
@@ -498,10 +325,7 @@ function CohortControls({
           />
         </div>
         <div>
-          <label
-            htmlFor="an-to"
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
+          <label htmlFor="an-to" className="mb-1.5 block text-[13px] font-semibold text-foreground">
             To
           </label>
           <input
@@ -515,7 +339,7 @@ function CohortControls({
         <div>
           <label
             htmlFor="an-opening"
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+            className="mb-1.5 block text-[13px] font-semibold text-foreground"
           >
             Opening
           </label>
@@ -536,7 +360,7 @@ function CohortControls({
         <div>
           <label
             htmlFor="an-source"
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
+            className="mb-1.5 block text-[13px] font-semibold text-foreground"
           >
             Source
           </label>
@@ -555,9 +379,7 @@ function CohortControls({
           </select>
         </div>
         <div>
-          <span className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
-            Group by
-          </span>
+          <span className="mb-1.5 block text-[13px] font-semibold text-foreground">Group by</span>
           <SegTabs
             tabs={GROUP_TABS}
             active={filters.groupBy}
@@ -565,7 +387,7 @@ function CohortControls({
           />
         </div>
       </div>
-    </GlassCard>
+    </SectionCard>
   );
 }
 
@@ -687,23 +509,22 @@ export function HRAnalyticsPage(): JSX.Element {
   const showGroupTable = filters.groupBy !== 'none' && (funnelQuery.data?.groups.length ?? 0) > 0;
 
   return (
-    <div className="mx-auto max-w-[1280px] px-6 py-8 lg:px-8">
-      <h1 className="text-[28px] font-semibold tracking-[-1px]">Analytics</h1>
-      <p className="mt-1 text-[14px] text-muted-foreground">
-        Governed hiring metrics — versioned, auditable, recomputed from the underlying records every
-        time you look.
-      </p>
+    <Page width="workspace">
+      <PageHeader
+        title="Analytics"
+        description="Governed hiring metrics — versioned, auditable, recomputed from the underlying records every time you look."
+      />
 
       {forbidden ? (
-        <div className="mt-6 flex flex-col gap-5">
-          <div className="rounded-[14px] border border-border bg-[var(--ui-inset-soft)] p-4 text-[13px] text-[var(--ui-soft)]">
+        <div className="flex flex-col gap-5">
+          <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4 text-[14px] text-foreground">
             Your role sees how these metrics are defined, not this company&apos;s numbers. An HR
             manager can open the full funnel and quality-of-hire view.
           </div>
           <MetricGlossary definitionsQuery={definitionsQuery} onInfo={setInfoMetric} />
         </div>
       ) : (
-        <div className="mt-6 flex flex-col gap-5">
+        <div className="flex flex-col gap-5">
           <CohortControls
             filters={filters}
             onChange={onFiltersChange}
@@ -711,17 +532,16 @@ export function HRAnalyticsPage(): JSX.Element {
             sourceOptions={sourceOptions}
           />
 
-          <GlassCard className="p-5">
-            <h2 className="text-[15px] font-semibold text-foreground">The funnel</h2>
-            <div className="mt-3">
+          <SectionCard title="The funnel">
+            <div>
               {funnelQuery.isLoading ? (
                 <div className="space-y-2.5">
                   {[0, 1, 2, 3, 4].map((i) => (
-                    <div key={i} className="h-7 animate-pulse rounded-[8px] bg-[var(--ui-inset)]" />
+                    <Skeleton key={i} className="h-7 rounded-[8px]" />
                   ))}
                 </div>
               ) : funnelQuery.isError ? (
-                <p className="text-[13px] text-[var(--ui-danger)]">
+                <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
                   Could not load the funnel just now.
                 </p>
               ) : (
@@ -742,15 +562,12 @@ export function HRAnalyticsPage(): JSX.Element {
                 />
               )}
             </div>
-          </GlassCard>
+          </SectionCard>
 
           {showGroupTable ? (
-            <GlassCard className="p-5">
-              <h2 className="text-[15px] font-semibold text-foreground">
-                Compare {filters.groupBy === 'source' ? 'sources' : 'openings'}
-              </h2>
+            <SectionCard title={`Compare ${filters.groupBy === 'source' ? 'sources' : 'openings'}`}>
               {funnelQuery.data ? (
-                <div className="mt-3">
+                <div>
                   <GroupComparisonTable
                     groups={funnelQuery.data.groups}
                     definitions={definitionsQuery.data}
@@ -762,30 +579,26 @@ export function HRAnalyticsPage(): JSX.Element {
                   />
                 </div>
               ) : null}
-            </GlassCard>
+            </SectionCard>
           ) : null}
 
-          <GlassCard
-            className="border-[rgba(var(--accent-rgb),0.22)] p-5"
-            data-testid="quality-of-hire"
-          >
-            <h2 className="text-[15px] font-semibold text-foreground">Quality of hire</h2>
-            <div className="mt-3 flex items-start gap-2.5 rounded-[12px] border border-[rgba(var(--accent-rgb),0.3)] bg-[rgba(var(--accent-rgb),0.06)] p-3.5">
+          <SectionCard title="Quality of hire" data-testid="quality-of-hire">
+            <div className="flex items-start gap-2.5 rounded-[12px] border border-[var(--ui-info)]/30 bg-[var(--ui-info-wash)] p-3.5">
               <Info
                 size={15}
                 className="mt-0.5 shrink-0 text-[var(--ui-info)]"
                 aria-hidden="true"
               />
-              <p className="text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
+              <p className="text-[13px] leading-relaxed text-foreground">
                 Quality signals are recorded by your team after hiring. They describe outcomes; they
                 never change an application or a decision.
               </p>
             </div>
             <div className="mt-4">
               {qualityQuery.isLoading ? (
-                <p className="text-[13px] text-muted-foreground">Loading…</p>
+                <Skeleton className="h-16 rounded-[12px]" />
               ) : qualityQuery.isError ? (
-                <p className="text-[13px] text-[var(--ui-danger)]">
+                <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
                   Could not load quality-of-hire data just now.
                 </p>
               ) : (
@@ -818,7 +631,7 @@ export function HRAnalyticsPage(): JSX.Element {
                 })
               }
             />
-          </GlassCard>
+          </SectionCard>
 
           <OutcomeSignalsSection
             filters={sharedFilters}
@@ -861,6 +674,6 @@ export function HRAnalyticsPage(): JSX.Element {
         onClose={() => setOpenCandidate(null)}
         focusSection={openCandidate?.focusSection}
       />
-    </div>
+    </Page>
   );
 }

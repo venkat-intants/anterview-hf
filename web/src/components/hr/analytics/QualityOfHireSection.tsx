@@ -33,8 +33,11 @@ export default function QualityOfHireSection({
         const result = group.metrics[name];
         const def = findDefinition(definitions, name, result?.version);
         return (
-          <div key={name} className="rounded-[12px] border border-border p-3.5">
-            <p className="text-[11.5px] font-medium uppercase tracking-wide text-[var(--ui-faint)]">
+          <div
+            key={name}
+            className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4"
+          >
+            <p className="text-[12px] font-semibold text-muted-foreground">
               {metricLabel(name, def)}
             </p>
             <div className="mt-1.5">

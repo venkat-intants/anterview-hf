@@ -4,6 +4,7 @@
 
 import { uploadWithProgress, apiGet, apiPost, apiDelete } from './client';
 import { simulateDelay, mockResumesResponse, mockCurrentResume } from './mock';
+import { pathId } from './pathId';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -134,7 +135,7 @@ export async function setCurrentResume(resumeId: string): Promise<SetCurrentResu
     await simulateDelay(400);
     return { message: 'Resume set as current.', resume_id: resumeId };
   }
-  return apiPost<SetCurrentResumeResponse>(`/users/me/resumes/${resumeId}/set-current`, {});
+  return apiPost<SetCurrentResumeResponse>(`/users/me/resumes/${pathId(resumeId)}/set-current`, {});
 }
 
 // ---------------------------------------------------------------------------
@@ -152,5 +153,5 @@ export async function deleteResume(resumeId: string): Promise<DeleteResumeRespon
     await simulateDelay(400);
     return { message: `Resume ${resumeId} deleted.` };
   }
-  return apiDelete<DeleteResumeResponse>(`/users/me/resumes/${resumeId}`);
+  return apiDelete<DeleteResumeResponse>(`/users/me/resumes/${pathId(resumeId)}`);
 }

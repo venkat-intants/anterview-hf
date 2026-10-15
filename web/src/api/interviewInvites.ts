@@ -3,8 +3,17 @@
 
 import { apiGet, apiPost, apiPatch } from './client';
 import type { InviteStatus } from './publicInterview';
+import { pathId } from './pathId';
 
 export type { InviteStatus };
+
+/** How the candidate meets the interviewer.
+ *
+ *  `avatar` uses whatever avatar provider the instance is configured with;
+ *  `audio` is voice only, regardless of it. Deliberately not a vendor picker —
+ *  which vendor to pay is an instance-level decision with contracts and data
+ *  residency behind it, not an HR form field. */
+export type AvatarMode = 'avatar' | 'audio';
 
 /** One eligible APPLICATION (B5): a person appears once per opening they are
  *  eligible in, and the invite is for that opening. */
@@ -29,6 +38,7 @@ export interface InterviewInvite {
   applicant_name: string;
   job_title: string;
   language: string;
+  avatar_mode: AvatarMode;
   status: InviteStatus;
   scheduled_at: string | null;
   expires_at: string;
@@ -70,6 +80,8 @@ export interface InviteCreateInput {
   job_title?: string;
   level?: string;
   language?: 'en' | 'hi' | 'te';
+  /** Omitted means `avatar`, which is what every invite did before this existed. */
+  avatar_mode?: AvatarMode;
   scheduled_at?: string | null;
   ttl_hours?: number;
 }
@@ -92,16 +104,31 @@ export function createInvite(input: InviteCreateInput): Promise<InviteResult> {
 }
 
 export function revokeInvite(inviteId: string): Promise<InterviewInvite> {
-  return apiPost<InterviewInvite>(`/hr/interviews/${inviteId}/revoke`, {});
+  return apiPost<InterviewInvite>(`/hr/interviews/${pathId(inviteId)}/revoke`, {});
 }
 
 export function getInviteResult(inviteId: string): Promise<InterviewOutcome> {
-  return apiGet<InterviewOutcome>(`/hr/interviews/${inviteId}/result`);
+  return apiGet<InterviewOutcome>(`/hr/interviews/${pathId(inviteId)}/result`);
 }
 
 export function rescheduleInvite(
   inviteId: string,
   scheduledAt: string,
 ): Promise<InviteResult> {
-  return apiPatch<InviteResult>(`/hr/interviews/${inviteId}`, { scheduled_at: scheduledAt });
+  return apiPatch<InviteResult>(`/hr/interviews/${pathId(inviteId)}`, { scheduled_at: scheduledAt });
+}
+
+/** Switch one interview between the avatar and audio-only.
+ *
+ *  Only while the invite is still `invited` — the server 409s once the
+ *  candidate has started, because the mode is copied onto the session at that
+ *  point and a later change would silently do nothing. This is the path that
+ *  matters for workflow-minted invites, which nobody chose a mode for. */
+export function setInviteAvatarMode(
+  inviteId: string,
+  avatarMode: AvatarMode,
+): Promise<InterviewInvite> {
+  return apiPatch<InterviewInvite>(`/hr/interviews/${pathId(inviteId)}/avatar-mode`, {
+    avatar_mode: avatarMode,
+  });
 }

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -253,6 +255,80 @@ def _clamp(value: int, lo: int = 0, hi: int = 10) -> int:
     return max(lo, min(hi, value))
 
 
+# "7", "7.5", "7/10", "70/100" — the shapes a model returns for a 0-10 score
+# when it ignores the schema. Anything else is a malformed reply.
+_SCORE_TEXT = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*(?:/\s*(\d+(?:\.\d+)?))?\s*$")
+
+
+def _coerce_score(axis: str, value: Any) -> int:
+    """A model-supplied axis score as an int in [0, 10], or ScoringError.
+
+    ``int(value)`` on a raw reply raised TypeError for null and ValueError for
+    "7/10", and neither is a ScoringError, so the router's handler never saw them
+    and the scorer surfaced as an unhandled 500 on the candidate's scorecard.
+    Numbers keep the previous truncation (``int(7.9) == 7``); "n/d" is rescaled to
+    out-of-10 so "70/100" is not read as a ten.
+    """
+    if isinstance(value, bool) or value is None:
+        raise ScoringError(f"Gemini response has a non-numeric score for axis {axis!r}")
+    num: float
+    if isinstance(value, int | float):
+        num = float(value)
+    elif isinstance(value, str):
+        m = _SCORE_TEXT.match(value)
+        if m is None:
+            raise ScoringError(f"Gemini response has an unparseable score for axis {axis!r}")
+        num = float(m.group(1))
+        if m.group(2) is not None:
+            den = float(m.group(2))
+            if den <= 0:
+                raise ScoringError(f"Gemini response has an invalid score for axis {axis!r}")
+            num = num / den * 10
+    else:
+        raise ScoringError(f"Gemini response has a non-numeric score for axis {axis!r}")
+    if not math.isfinite(num):
+        raise ScoringError(f"Gemini response has a non-finite score for axis {axis!r}")
+    return _clamp(int(num))
+
+
+def _normalise_improvements(raw: Any) -> list[dict[str, Any]]:
+    """Improvements as ``[{"area", "suggestion"}, ...]`` whatever the model sent.
+
+    The prompt asks for objects, but a model sometimes returns plain strings. The
+    PDF step called ``i.get("area")`` on them AFTER the scorecard had committed,
+    so the scorecard existed and its PDF never did. A string is a suggestion with
+    no area; anything that is neither is dropped.
+    """
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if isinstance(item, dict):
+            out.append(
+                {**item, "area": str(item.get("area") or ""),
+                 "suggestion": str(item.get("suggestion") or "")}
+            )
+        elif isinstance(item, str) and item.strip():
+            out.append({"area": "", "suggestion": item.strip()})
+    return out
+
+
+# Strong references to in-flight PDF render tasks. The event loop keeps only a
+# weak reference to a task, so a bare ``create_task`` result can be garbage
+# collected mid-run, and an exception inside it is reported only as a
+# "Task exception was never retrieved" at interpreter shutdown.
+_background_tasks: set[asyncio.Task[Any]] = set()
+
+
+def _on_background_done(task: asyncio.Task[Any]) -> None:
+    _background_tasks.discard(task)
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error("scorer.pdf_task_failed", exc_type=type(exc).__name__, error=str(exc))
+
+
 def _extract_competency_breakdown(
     raw: dict[str, Any], profile: RoleProfile, *, strict: bool = False
 ) -> dict[str, dict[str, Any]]:
@@ -437,18 +513,22 @@ async def score_session(
     )
 
     # ---- 3. Validate and clamp scores -------------------------------------
-    raw_scores: dict[str, Any] = parsed.get("scores", {})
+    raw_scores_any = parsed.get("scores")
+    if not isinstance(raw_scores_any, dict):
+        raise ScoringError("Gemini response has no 'scores' object")
+    raw_scores: dict[str, Any] = raw_scores_any
     required_axes = list(_WEIGHTS.keys())
     for axis in required_axes:
         if axis not in raw_scores:
             raise ScoringError(f"Gemini response missing score axis: {axis!r}")
 
     scores: dict[str, int] = {
-        axis: _clamp(int(raw_scores[axis])) for axis in required_axes
+        axis: _coerce_score(axis, raw_scores[axis]) for axis in required_axes
     }
 
-    strengths: list[Any] = parsed.get("strengths", [])
-    improvements: list[Any] = parsed.get("improvements", [])
+    strengths_raw = parsed.get("strengths")
+    strengths: list[Any] = strengths_raw if isinstance(strengths_raw, list) else []
+    improvements: list[dict[str, Any]] = _normalise_improvements(parsed.get("improvements"))
     summary: str = parsed.get("summary", "")
 
     if not summary:
@@ -580,7 +660,7 @@ async def score_session(
             render_scorecard_pdf,  # local import — avoids circular  # noqa: PLC0415
         )
 
-        asyncio.create_task(
+        pdf_task = asyncio.create_task(
             render_scorecard_pdf(
                 scorecard_id,
                 session_id,
@@ -591,7 +671,7 @@ async def score_session(
                 composite,
                 [str(s) for s in strengths],
                 [
-                    {"area": str(i.get("area", "")), "suggestion": str(i.get("suggestion", ""))}
+                    {"area": str(i["area"]), "suggestion": str(i["suggestion"])}
                     for i in improvements
                 ],
                 summary,
@@ -599,5 +679,7 @@ async def score_session(
                 db_session_factory=db_session_factory,
             )
         )
+        _background_tasks.add(pdf_task)
+        pdf_task.add_done_callback(_on_background_done)
 
     return scorecard_id, scores, composite

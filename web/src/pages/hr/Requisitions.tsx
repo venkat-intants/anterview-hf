@@ -5,36 +5,57 @@
 // to open: no per-job funnel, no per-job workflow, nothing to count. Everything
 // on the workflow side hangs off a row on this page.
 //
-// The column that matters most is "awaiting you". A hiring process that runs
-// itself still stops at every point where a person must decide (D-05), and this
-// is the number that says how many people are standing at one of those stops.
-// It leads the row for that reason — a queue nobody can see is a queue nobody
-// works.
+// A DENSE LIST, NOT TALL CARDS. One row per opening, scannable down a column:
+// the role, five dots of setup progress, the approval, whether it is taking
+// applications, how many people are in it, and the one next action as a link
+// into the right place. The default sort puts the openings that need a person
+// first, because a queue nobody can see is a queue nobody works (D-05: every
+// point where a person must decide is one the process stops at).
+//
+// THE DOTS ARE HONEST. The list payload always proves approval and "accepting
+// applications". A newer backend also sends has_published_jd /
+// has_published_workflow, which make the first two dots truthful; when those are
+// absent (an older backend) they read "open to check" rather than a guess
+// (lib/openingList.ts).
 
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import {
   AlertTriangle,
   Briefcase,
+  Check,
   ChevronRight,
-  Loader2,
+  Clock,
   Plus,
+  Search,
   Users,
 } from '@/design/components/icons';
-import { GlassCard, StatCard, StatusTag, SegTabs } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
-import { toast } from '@/lib/toast';
+import { StatusTag, SegTabs } from '@/design/components/primitives';
+import { Page, PageHeader, EmptyState, Toolbar } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { LIVE_POLL_MS } from '@/lib/polling';
+import { APPROVAL_LABEL } from '@/lib/openingSetup';
+import {
+  isAcceptingApplications,
+  matchesQuery,
+  nextAction,
+  provenCount,
+  setupDots,
+  sortOpenings,
+  type DotState,
+  type OpeningSort,
+} from '@/lib/openingList';
 import {
   listRequisitions,
-  createRequisition,
-  closingDateToIso,
-  listTeam,
   getBackfillReview,
+  type ApprovalStatus,
   type Requisition,
   type RequisitionStatus,
 } from '@/api/requisitions';
+import NewOpeningDialog from '@/components/hr/opening/NewOpeningDialog';
+import { cn } from '@/lib/utils';
 
 const TABS = [
   { key: 'open', label: 'Open' },
@@ -43,332 +64,433 @@ const TABS = [
   { key: 'all', label: 'All' },
 ];
 
-const LEVELS = ['entry', 'mid', 'senior'];
+const SORTS: { key: OpeningSort; label: string }[] = [
+  { key: 'needs-you', label: 'Needs you first' },
+  { key: 'newest', label: 'Newest first' },
+  { key: 'title', label: 'Title A to Z' },
+];
+
+const APPROVAL_TONE: Record<ApprovalStatus, 'neutral' | 'amber' | 'forest' | 'ember'> = {
+  draft: 'neutral',
+  pending_approval: 'amber',
+  approved: 'forest',
+  rejected: 'ember',
+};
+
+// One grid for the header and every row, so the columns line up.
+const GRID =
+  'md:grid md:grid-cols-[minmax(0,2fr)_104px_minmax(0,1.15fr)_minmax(0,1.4fr)_minmax(0,1.1fr)_minmax(0,1.8fr)] md:items-center md:gap-x-4';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
 }
 
-/**
- * The roll-up across every opening in view — E3.
- *
- * Computed from the rows already fetched rather than from another endpoint:
- * the list carries per-opening totals, and a second query would be a second
- * thing to keep in step with the first for no new information.
- *
- * "Awaiting you" leads and is the only figure coloured, because it is the only
- * one nothing in the system will clear on its own.
- */
-function RollUp({ rows }: { rows: Requisition[] }) {
-  if (rows.length === 0) return null;
-  const waiting = rows.reduce((n, r) => n + r.awaiting_decision, 0);
-  const candidates = rows.reduce((n, r) => n + r.total_enrolments, 0);
-  const hired = rows.reduce((n, r) => n + r.hired, 0);
-  const live = rows.filter((r) => r.public_apply_enabled && r.status === 'open').length;
+/* ── The five setup dots ─────────────────────────────────────────────────── */
 
+function Dot({ state }: { state: DotState }): JSX.Element {
+  const base = 'flex h-4 w-4 flex-none items-center justify-center rounded-full';
+  switch (state) {
+    case 'done':
+      return (
+        <span className={cn(base, 'bg-primary text-primary-foreground')}>
+          <Check size={10} strokeWidth={3} />
+        </span>
+      );
+    case 'waiting':
+      return (
+        <span className={cn(base, 'border border-[var(--ui-warn)] bg-[var(--ui-warn-wash)] text-[var(--ui-warn)]')}>
+          <Clock size={9} strokeWidth={3} />
+        </span>
+      );
+    case 'open':
+      return <span className={cn(base, 'border-2 border-muted-foreground')} />;
+    case 'unknown':
+      return <span className={cn(base, 'border border-dashed border-muted-foreground')} />;
+    default:
+      return (
+        <span className={base}>
+          <span className="h-1.5 w-1.5 rounded-full bg-[var(--ui-faint)]" />
+        </span>
+      );
+  }
+}
+
+function SetupDots({ req }: { req: Requisition }): JSX.Element {
+  const dots = setupDots(req);
+  const proven = provenCount(dots);
   return (
-    <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <StatCard label="Awaiting your decision" value={String(waiting)} feature={waiting > 0} />
-      <StatCard label="Candidates in play" value={String(candidates)} />
-      <StatCard label="Hired" value={String(hired)} />
-      <StatCard label="Open to applications" value={String(live)} />
-    </div>
+    <ol
+      aria-label={`Setup progress, ${proven} of 4 stages confirmed by the list`}
+      className="flex items-center gap-1.5"
+      data-testid="setup-dots"
+    >
+      {dots.map((d) => (
+        <li key={d.key} title={d.text} data-state={d.state} className="flex items-center">
+          <Dot state={d.state} />
+          <span className="sr-only">{d.text}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
-function RequisitionRow({ req }: { req: Requisition }) {
+function DotLegend(): JSX.Element {
+  const items: { state: DotState; text: string }[] = [
+    { state: 'done', text: 'confirmed' },
+    { state: 'waiting', text: 'waiting on someone else' },
+    { state: 'open', text: 'not done' },
+    { state: 'unknown', text: 'open to check — the list cannot confirm it (the server did not say)' },
+    { state: 'optional', text: 'optional' },
+  ];
   return (
-    <GlassCard hover className="p-0">
-      <Link
-        to={`/hr/requisitions/${req.id}`}
-        data-testid="opening-row"
-        className="flex items-center gap-4 p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+    <p className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pb-3 text-[12px] text-muted-foreground">
+      <span className="font-semibold text-foreground">Setup dots, in order:</span>
+      <span>
+        role and posting, hiring process, approval, go live, documents. Approval can be submitted
+        while the first two are still open.
+      </span>
+      {items.map((i) => (
+        <span key={i.state} className="inline-flex items-center gap-1.5">
+          <span aria-hidden="true">
+            <Dot state={i.state} />
+          </span>
+          {i.text}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+/* ── A row ───────────────────────────────────────────────────────────────── */
+
+function Live({ req }: { req: Requisition }): JSX.Element | null {
+  if (isAcceptingApplications(req)) return <StatusTag tone="electric" className="whitespace-nowrap">accepting applications</StatusTag>;
+  if (req.status === 'open') return <StatusTag tone="neutral" className="whitespace-nowrap">not live</StatusTag>;
+  return (
+    <StatusTag tone={req.status === 'paused' ? 'amber' : 'neutral'}>{req.status}</StatusTag>
+  );
+}
+
+function RequisitionRow({ req }: { req: Requisition }): JSX.Element {
+  const status = req.approval_status ?? 'draft';
+  const next = nextAction(req);
+  const place = [req.department, req.location].filter(Boolean).join(' · ');
+  return (
+    <li
+      role="row"
+      data-testid="opening-row"
+      className={cn(
+        // Below md a row is two compact lines: the opening with its status
+        // pills, then the setup dots, who is in it, and what to do next. The
+        // DOM order is the desktop column order (so focus order is unchanged);
+        // `max-md:order-*` only re-lays it out on a phone, with a zero-height
+        // full-width spacer forcing the break between the two lines.
+        'relative flex flex-wrap items-center gap-x-3 gap-y-0 px-4 py-2.5 transition-colors hover:bg-[var(--ui-inset-soft)] md:py-3',
+        GRID,
+      )}
+    >
+      {/* The opening: the whole row opens it (stretched link); the next
+          action sits above the stretch so it stays its own target. */}
+      <div role="cell" className="min-w-0 max-md:order-1 max-md:flex-1 max-md:basis-0">
+        <Link
+          to={`/hr/requisitions/${req.id}`}
+          className="block truncate text-[14.5px] font-semibold text-foreground after:absolute after:inset-0 focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-[var(--accent)]"
+        >
+          {req.title}
+        </Link>
+        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] text-muted-foreground">
+          <span>{req.level}</span>
+          {place ? <span>{place}</span> : null}
+          {req.from_backfill ? <span>imported</span> : null}
+          {/* Only the two bands worth acting on; a green tick on every healthy
+              opening is noise nobody scans. */}
+          {req.status === 'open' && req.delivery_risk === 'at_risk' ? (
+            <StatusTag tone="amber">behind target</StatusTag>
+          ) : null}
+          {req.status === 'open' && req.delivery_risk === 'off_track' ? (
+            <StatusTag tone="ember">will miss target</StatusTag>
+          ) : null}
+        </p>
+      </div>
+
+      <div role="cell" className="max-md:order-4">
+        <SetupDots req={req} />
+      </div>
+
+      <div role="cell" className="max-md:order-2">
+        <span data-testid="opening-approval">
+          <StatusTag tone={APPROVAL_TONE[status]} className="whitespace-nowrap">
+            {APPROVAL_LABEL[status]}
+          </StatusTag>
+        </span>
+      </div>
+
+      <div
+        role="cell"
+        // "not live" repeats the go-live dot; on a phone that line is dropped.
+        className={cn(
+          'max-md:order-5',
+          req.status === 'open' && !isAcceptingApplications(req) && 'max-sm:hidden',
+        )}
       >
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-[var(--ui-inset)]">
-          <Briefcase className="h-[18px] w-[18px] text-[var(--ui-soft)]" aria-hidden="true" />
-        </span>
+        <Live req={req} />
+      </div>
 
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-2">
-            <span className="truncate text-[15px] font-medium text-foreground">{req.title}</span>
-            <StatusTag
-              tone={
-                req.status === 'open' ? 'forest' : req.status === 'paused' ? 'amber' : 'neutral'
-              }
-              dot={req.status === 'open'}
-            >
-              {req.status}
-            </StatusTag>
-            {req.from_backfill ? (
-              <StatusTag tone="lavender">imported</StatusTag>
-            ) : null}
-            {req.public_apply_enabled && req.status === 'open' ? (
-              <StatusTag tone="electric">accepting applications</StatusTag>
-            ) : null}
-            {/* E3. Only the two bands worth acting on are shown: an
-                "on track" badge on every healthy opening is noise, and a
-                board of green ticks is one nobody scans. */}
-            {req.status === 'open' && req.delivery_risk === 'at_risk' ? (
-              <StatusTag tone="amber">behind target</StatusTag>
-            ) : null}
-            {req.status === 'open' && req.delivery_risk === 'off_track' ? (
-              <StatusTag tone="ember">will miss target</StatusTag>
-            ) : null}
-          </span>
-          <span className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-muted-foreground">
-            <span>{req.level}</span>
-            <span>
-              {req.total_enrolments} candidate{req.total_enrolments === 1 ? '' : 's'}
-            </span>
-            {req.hired > 0 ? <span className="text-[var(--ui-ok)]">{req.hired} hired</span> : null}
-            {req.target_hires ? <span>target {req.target_hires}</span> : null}
-          </span>
-        </span>
+      <span aria-hidden="true" className="hidden basis-full max-md:order-3 max-md:block" />
 
+      <div role="cell" className="flex flex-wrap items-baseline gap-x-2 text-[13px] max-md:order-6 md:block">
+        <p>
+          <span className="font-semibold tabular-nums text-foreground">{req.total_enrolments}</span>{' '}
+          <span className="text-foreground">
+            candidate{req.total_enrolments === 1 ? '' : 's'}
+          </span>
+        </p>
+        {req.hired > 0 || req.target_hires ? (
+          <p className="text-[12.5px] text-muted-foreground">
+            {[req.hired > 0 ? `${req.hired} hired` : null, req.target_hires ? `target ${req.target_hires}` : null]
+              .filter(Boolean)
+              .join(' · ')}
+          </p>
+        ) : null}
         {req.awaiting_decision > 0 ? (
-          <span className="flex shrink-0 items-center gap-1.5 rounded-pill border border-[var(--ui-warn)]/35 bg-[var(--ui-warn)]/[0.08] px-3 py-1.5 text-[12px] font-medium text-[var(--ui-warn)]">
+          <span className="mt-0.5 flex items-center gap-1 font-semibold text-[var(--ui-warn)]">
             <Users className="h-3.5 w-3.5" aria-hidden="true" />
             {req.awaiting_decision} awaiting you
           </span>
         ) : null}
+      </div>
 
-        <ChevronRight className="h-4 w-4 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
-      </Link>
-    </GlassCard>
+      <div role="cell" className="min-w-0 text-[13px] max-md:order-7 max-md:ml-auto">
+        {next ? (
+          <Link
+            to={next.to}
+            className={cn(
+              'relative z-10 inline-flex min-h-10 items-center gap-1 rounded-[8px] font-semibold hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+              next.passive ? 'text-muted-foreground' : 'text-[var(--ui-info)]',
+            )}
+          >
+            <span>
+              {next.text} <span aria-hidden="true">→</span>
+            </span>
+          </Link>
+        ) : (
+          <span className="text-muted-foreground">Nothing to do</span>
+        )}
+      </div>
+    </li>
   );
 }
 
-function NewRequisitionForm({ onDone }: { onDone: () => void }) {
-  const qc = useQueryClient();
-  const [title, setTitle] = useState('');
-  const [level, setLevel] = useState('mid');
-  // B1: who fills it, how many, and by when. All optional; the owner defaults
-  // to whoever creates it.
-  const [owner, setOwner] = useState('');
-  const [target, setTarget] = useState('');
-  const [closes, setCloses] = useState('');
-  const team = useQuery({ queryKey: ['hr', 'team'], queryFn: listTeam, staleTime: 60_000 });
-
-  const mut = useMutation({
-    mutationFn: () =>
-      createRequisition({
-        title: title.trim(),
-        level,
-        ...(owner ? { owner_user_id: owner } : {}),
-        ...(target ? { target_hires: Number(target) } : {}),
-        ...(closes ? { closes_at: closingDateToIso(closes) } : {}),
-      }),
-    onSuccess: (r) => {
-      toast.success(`Opened “${r.title}”`);
-      void qc.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
-      onDone();
-    },
-    // A 409 means an open requisition already uses that title, and the server
-    // says which. Two recruiters opening the same role on one morning is
-    // normal; the right answer is to point at the one that exists.
-    onError: (e) => toast.error(errText(e, 'Could not create the opening')),
-  });
-
-  const field =
-    'rounded-[12px] border border-border bg-secondary px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
-
+function ListHeader(): JSX.Element {
+  const h = 'text-[12px] font-semibold uppercase tracking-[0.04em] text-muted-foreground';
   return (
-    <GlassCard className="p-5">
-      <h2 className="text-[15px] font-semibold text-foreground">New opening</h2>
-      <div className="mt-3 flex flex-wrap items-end gap-2">
-        <div className="min-w-[240px] flex-1">
-          <label htmlFor="new-title" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
-            Job title
-          </label>
-          <input
-            id="new-title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Backend Engineer"
-            className={`w-full ${field}`}
-          />
-        </div>
-        <div>
-          <label htmlFor="new-level" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
-            Level
-          </label>
-          <select
-            id="new-level"
-            value={level}
-            onChange={(e) => setLevel(e.target.value)}
-            className={field}
-          >
-            {LEVELS.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor="new-owner" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
-            Owner
-          </label>
-          <select
-            id="new-owner"
-            value={owner}
-            onChange={(e) => setOwner(e.target.value)}
-            className={field}
-          >
-            <option value="">Me</option>
-            {(team.data ?? []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.full_name || m.email}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="w-[120px]">
-          <label htmlFor="new-target" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
-            Hires wanted
-          </label>
-          <input
-            id="new-target"
-            type="number"
-            min={1}
-            max={10000}
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            placeholder="—"
-            className={`w-full ${field}`}
-          />
-        </div>
-        <div>
-          <label htmlFor="new-closes" className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]">
-            Closes on
-          </label>
-          <input
-            id="new-closes"
-            type="date"
-            min={new Date().toISOString().slice(0, 10)}
-            value={closes}
-            onChange={(e) => setCloses(e.target.value)}
-            className={field}
-          />
-        </div>
-        <button
-          type="button"
-          onClick={() => mut.mutate()}
-          data-testid="create-opening"
-          disabled={mut.isPending || title.trim().length < 2}
-          className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
-        >
-          {mut.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-          Create
-        </button>
-        <button
-          type="button"
-          onClick={onDone}
-          className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2.5 text-[13px] text-[var(--ui-soft)] hover:text-foreground"
-        >
-          Cancel
-        </button>
-      </div>
-    </GlassCard>
+    <div
+      role="row"
+      className={cn(
+        // top-16 clears the shell's sticky 64px top bar.
+        'sticky top-16 z-20 hidden rounded-t-card border-b border-border bg-[var(--ui-inset-soft)] px-4 py-2.5 backdrop-blur',
+        GRID,
+      )}
+    >
+      <span role="columnheader" className={h}>
+        Opening
+      </span>
+      <span role="columnheader" className={h}>
+        Setup
+      </span>
+      <span role="columnheader" className={h}>
+        Approval
+      </span>
+      <span role="columnheader" className={h}>
+        Status
+      </span>
+      <span role="columnheader" className={h}>
+        Candidates
+      </span>
+      <span role="columnheader" className={h}>
+        Next
+      </span>
+    </div>
+  );
+}
+
+/** The roll-up across every opening in view, in one quiet line. */
+function RollUp({ rows }: { rows: Requisition[] }): JSX.Element | null {
+  if (rows.length === 0) return null;
+  const waiting = rows.reduce((n, r) => n + r.awaiting_decision, 0);
+  const candidates = rows.reduce((n, r) => n + r.total_enrolments, 0);
+  const hired = rows.reduce((n, r) => n + r.hired, 0);
+  const live = rows.filter(isAcceptingApplications).length;
+  return (
+    <span
+      data-testid="openings-rollup"
+      className="px-4 pt-3 text-[13px] tabular-nums text-muted-foreground"
+    >
+      Across these openings: {waiting} awaiting you · {candidates} candidates · {hired} hired · {live}{' '}
+      accepting applications
+    </span>
   );
 }
 
 export default function Requisitions(): JSX.Element {
+  const navigate = useNavigate();
   const [tab, setTab] = useState('open');
   const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState('');
+  const [sort, setSort] = useState<OpeningSort>('needs-you');
 
   const list = useQuery({
     queryKey: ['hr', 'requisitions', tab],
-    queryFn: () =>
-      listRequisitions(tab === 'all' ? {} : { status: tab as RequisitionStatus }),
+    queryFn: () => listRequisitions(tab === 'all' ? {} : { status: tab as RequisitionStatus }),
     refetchInterval: LIVE_POLL_MS,
   });
 
   // Only to decide whether the review banner is worth showing. Cheap, cached,
   // and the alternative — a permanent link to a page that says "nothing to
   // review" — is the kind of dead nav that trains people to ignore banners.
-  const review = useQuery({ queryKey: ['hr', 'requisitions', 'review'], queryFn: getBackfillReview });
+  const review = useQuery({
+    queryKey: ['hr', 'requisitions', 'review'],
+    queryFn: getBackfillReview,
+  });
   const pending =
     (review.data?.backfilled_requisitions.length ?? 0) +
     (review.data?.merge_candidates.length ?? 0);
 
-  const rows = list.data ?? [];
+  const all = list.data;
+  const rows = useMemo(
+    () => sortOpenings((all ?? []).filter((r) => matchesQuery(r, query)), sort),
+    [all, query, sort],
+  );
+
+  const field =
+    'h-10 rounded-[10px] border border-input bg-card px-3 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
   return (
-    <div className="mx-auto w-full max-w-[1100px] px-4 py-8">
-      <Reveal>
-        <header className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">Openings</h1>
-            <p className="mt-1 text-[13.5px] text-muted-foreground">
-              Each opening carries its own hiring workflow and its own funnel.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setCreating((c) => !c)}
-            data-testid="new-opening"
-            className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2.5 text-[13px] font-medium text-primary-foreground hover:opacity-90"
-          >
-            <Plus className="h-4 w-4" aria-hidden="true" />
+    <Page>
+      <PageHeader
+        title="Openings"
+        description="Each opening carries its own hiring workflow and its own funnel."
+        actions={
+          <Button type="button" onClick={() => setCreating(true)} data-testid="new-opening">
+            <Plus aria-hidden="true" />
             New opening
-          </button>
-        </header>
-      </Reveal>
+          </Button>
+        }
+      />
 
       {pending > 0 ? (
         <Link
           to="/hr/requisitions/review"
-          className="mb-4 flex items-center gap-2.5 rounded-[14px] border border-[var(--ui-warn)]/30 bg-[var(--ui-warn)]/[0.07] px-4 py-3 text-[13px] text-[var(--ui-soft)] hover:border-[var(--ui-warn)]/55"
+          className="flex items-center gap-2.5 rounded-[16px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn-wash)] px-4 py-3 text-[14px] text-foreground hover:border-[var(--ui-warn)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
           <span className="flex-1">
-            {pending} thing{pending === 1 ? '' : 's'} to confirm from your imported data —
-            openings that were grouped by job title, and people who may be duplicated.
+            {pending} thing{pending === 1 ? '' : 's'} to confirm from your imported data — openings
+            that were grouped by job title, and people who may be duplicated.
           </span>
           <ChevronRight className="h-4 w-4 shrink-0" aria-hidden="true" />
         </Link>
       ) : null}
 
-      {creating ? (
-        <div className="mb-4">
-          <NewRequisitionForm onDone={() => setCreating(false)} />
-        </div>
-      ) : null}
+      <NewOpeningDialog
+        open={creating}
+        onOpenChange={setCreating}
+        onCreated={(id) => void navigate(`/hr/requisitions/${id}?tab=setup`)}
+      />
 
-      <div className="mb-4">
-        <SegTabs tabs={TABS} active={tab} onChange={setTab} />
+      <div className="-mt-2">
+        <Toolbar className="!mb-0">
+          <div className="relative min-w-[200px] max-w-[320px] flex-1 max-sm:max-w-none max-sm:basis-full">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <input
+              type="search"
+              aria-label="Search openings"
+              placeholder="Search title, department, location"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className={cn(field, 'w-full pl-9')}
+            />
+          </div>
+          <SegTabs tabs={TABS} active={tab} onChange={setTab} />
+          <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            Sort
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as OpeningSort)}
+              className={field}
+            >
+              {SORTS.map((s) => (
+                <option key={s.key} value={s.key}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {list.data ? (
+            <span
+              className="ml-auto text-[13px] tabular-nums text-muted-foreground"
+              aria-live="polite"
+            >
+              {rows.length} opening{rows.length === 1 ? '' : 's'}
+            </span>
+          ) : null}
+        </Toolbar>
       </div>
 
       {list.isLoading ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading openings…
+        <div className="flex flex-col gap-2" role="status">
+          <Skeleton className="h-14 rounded-card" />
+          <Skeleton className="h-14 rounded-card" />
+          <Skeleton className="h-14 rounded-card" />
+          <span className="sr-only">Loading openings…</span>
         </div>
       ) : list.isError ? (
-        <GlassCard className="p-6 text-[13.5px] text-[var(--ui-danger)]">
+        <div
+          role="alert"
+          className="rounded-card border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] p-4 text-[14px] text-[var(--ui-danger)]"
+        >
           {errText(list.error, 'Could not load openings')}
-        </GlassCard>
+        </div>
+      ) : (all ?? []).length === 0 ? (
+        <EmptyState
+          size="page"
+          icon={Briefcase}
+          title={tab === 'open' ? 'No open roles' : `Nothing ${tab}`}
+          description="Create an opening to give a role its own workflow, funnel and decision queue."
+          action={
+            <Button type="button" variant="outline" onClick={() => setCreating(true)}>
+              <Plus aria-hidden="true" />
+              New opening
+            </Button>
+          }
+        />
       ) : rows.length === 0 ? (
-        <GlassCard className="p-10 text-center">
-          <Briefcase className="mx-auto h-8 w-8 text-[var(--ui-faint)]" aria-hidden="true" />
-          <div className="mt-3 text-[15px] font-medium text-foreground">
-            {tab === 'open' ? 'No open roles' : `Nothing ${tab}`}
-          </div>
-          <p className="mx-auto mt-1.5 max-w-[44ch] text-[13px] text-muted-foreground">
-            Create an opening to give a role its own workflow, funnel and decision queue.
-          </p>
-        </GlassCard>
+        <EmptyState
+          size="row"
+          title={`No opening matches “${query.trim()}”.`}
+          action={
+            <Button type="button" variant="outline" size="sm" onClick={() => setQuery('')}>
+              Clear the search
+            </Button>
+          }
+        />
       ) : (
-        <>
-          <RollUp rows={rows} />
-          <div className="flex flex-col gap-3">
+        <div role="table" aria-label="Openings" className="rounded-card border border-border bg-card shadow-card">
+          <ListHeader />
+          <ul role="rowgroup" className="divide-y divide-border">
             {rows.map((r) => (
               <RequisitionRow key={r.id} req={r} />
             ))}
+          </ul>
+          <div className="flex flex-col gap-1 border-t border-border">
+            <RollUp rows={rows} />
+            <DotLegend />
           </div>
-        </>
+        </div>
       )}
-    </div>
+    </Page>
   );
 }

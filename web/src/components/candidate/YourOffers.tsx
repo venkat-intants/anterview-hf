@@ -16,7 +16,10 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { getMyOfferLink, listMyOffers, type CandidateOffer, type OfferStatus } from '@/api/offers';
 import { sameOriginUrl } from '@/lib/safeUrl';
-import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { SectionCard } from '@/design/components/page';
+import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { Briefcase } from '@/design/components/icons';
 
 function localeFor(lang: string): string {
@@ -47,7 +50,19 @@ function money(o: CandidateOffer, locale: string): string | null {
   return `${o.currency} ${amount}`;
 }
 
-function OfferCard({ offer, locale }: { offer: CandidateOffer; locale: string }) {
+/**
+ * One offer. `embedded` is for an offer shown ON its application card, where the
+ * card already names the role and company: only the status is repeated.
+ */
+function OfferCard({
+  offer,
+  locale,
+  embedded = false,
+}: {
+  offer: CandidateOffer;
+  locale: string;
+  embedded?: boolean;
+}) {
   const { t } = useTranslation();
   const [error, setError] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
@@ -71,58 +86,100 @@ function OfferCard({ offer, locale }: { offer: CandidateOffer; locale: string })
   }
 
   const pay = money(offer, locale);
+  const covered =
+    embedded &&
+    (offer.status === 'sent' || (offer.status === 'accepted' && !offer.preboarding_completed_at));
 
   return (
-    <GlassCard className="p-5">
+    <div className="rounded-[14px] bg-[var(--ui-inset-soft)] p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
-            <Briefcase size={14} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-            {offer.job_title}
-          </h3>
-          {offer.company ? (
-            <p className="mt-0.5 text-[12.5px] text-muted-foreground">{offer.company}</p>
-          ) : null}
+          {embedded ? (
+            <h3 className="text-[15px] font-bold text-foreground">{t('myOffers.heading')}</h3>
+          ) : (
+            <>
+              <h3 className="flex items-center gap-2 text-[15px] font-bold text-foreground">
+                <Briefcase
+                  size={15}
+                  className="shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                {offer.job_title}
+              </h3>
+              {offer.company ? (
+                <p className="mt-0.5 text-[13px] text-muted-foreground">{offer.company}</p>
+              ) : null}
+            </>
+          )}
         </div>
         <StatusTag tone={STATUS_TONE[offer.status]} dot>
           {t(`myOffers.status.${offer.status}`)}
         </StatusTag>
       </div>
 
-      {pay ? <p className="mt-3 text-[13.5px] text-foreground">{pay}</p> : null}
+      {pay ? <p className="mt-3 text-[14px] font-semibold text-foreground">{pay}</p> : null}
 
       {offer.status === 'sent' && offer.expires_at ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">
+        <p className="mt-2 text-[13px] text-muted-foreground">
           {t('myOffers.expires', {
             date: new Date(offer.expires_at).toLocaleDateString(locale),
           })}
         </p>
       ) : null}
       {offer.responded_at ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">
+        <p className="mt-2 text-[13px] text-muted-foreground">
           {t('myOffers.respondedOn', {
             date: new Date(offer.responded_at).toLocaleDateString(locale),
           })}
         </p>
       ) : null}
       {offer.preboarding_completed_at ? (
-        <p className="mt-2 text-[12.5px] text-[var(--ui-ok)]">{t('myOffers.preboardingDone')}</p>
+        <p className="mt-2 text-[13px] font-medium text-[var(--ui-ok)]">
+          {t('myOffers.preboardingDone')}
+        </p>
       ) : null}
 
-      <button
-        type="button"
-        onClick={() => void open()}
-        disabled={opening}
-        className="mt-4 inline-flex items-center gap-1.5 rounded-[8px] bg-primary px-3.5 py-1.5 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
-      >
-        {opening ? t('myOffers.opening') : t('myOffers.openOffer')}
-      </button>
-      {error ? <p className="mt-2 text-[12.5px] text-[var(--ui-danger)]">{error}</p> : null}
-    </GlassCard>
+      {/* On an application card the action row above already opens an offer that
+          is waiting on the candidate; the button here would be a second copy. */}
+      {covered ? null : (
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => void open()}
+          disabled={opening}
+          className="mt-4"
+        >
+          {opening ? t('myOffers.opening') : t('myOffers.openOffer')}
+        </Button>
+      )}
+      {error ? (
+        <p role="alert" className="mt-2 text-[13px] text-[var(--ui-danger)]">
+          {error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 
-export default function YourOffers(): JSX.Element | null {
+/** Offers shown on their application card (the server sent an `application_id`). */
+export function EmbeddedOffers({ offers }: { offers: CandidateOffer[] }): JSX.Element {
+  const { i18n } = useTranslation();
+  const locale = localeFor(i18n.language);
+  return (
+    <div className="flex flex-col gap-3">
+      {offers.map((o) => (
+        <OfferCard key={o.id} offer={o} locale={locale} embedded />
+      ))}
+    </div>
+  );
+}
+
+interface YourOffersProps {
+  /** Offer ids already shown on an application card; they are left out here. */
+  exclude?: ReadonlySet<string>;
+}
+
+export default function YourOffers({ exclude }: YourOffersProps = {}): JSX.Element | null {
   const { t, i18n } = useTranslation();
   const locale = localeFor(i18n.language);
 
@@ -134,7 +191,7 @@ export default function YourOffers(): JSX.Element | null {
     throwOnError: false,
   });
 
-  const rows = data ?? [];
+  const rows = (data ?? []).filter((o) => !exclude?.has(o.id));
 
   // Nothing to say when there is genuinely nothing and it never errored —
   // most candidates have no offer, and a permanent empty section on every
@@ -143,24 +200,24 @@ export default function YourOffers(): JSX.Element | null {
   if (!isLoading && !isError && rows.length === 0) return null;
 
   return (
-    <section aria-labelledby="your-offers-heading" className="mt-6">
-      <h2 id="your-offers-heading" className="text-[18px] font-semibold text-foreground">
-        {t('myOffers.heading')}
-      </h2>
-
+    <SectionCard title={t('myOffers.heading')} icon={Briefcase}>
       {isLoading ? (
-        <p className="mt-2 text-[13px] text-muted-foreground">{t('myOffers.loading')}</p>
+        <div aria-busy="true" className="space-y-2">
+          <Skeleton className="h-4 w-1/2" />
+          <Skeleton className="h-4 w-1/3" />
+          <span className="sr-only">{t('myOffers.loading')}</span>
+        </div>
       ) : isError ? (
-        <p className="mt-2 text-[13px] text-[var(--ui-danger)]">
+        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
           {errText(error, t('myOffers.loadError'))}
         </p>
       ) : (
-        <div className="mt-3 flex flex-col gap-3">
+        <div className="flex flex-col gap-3">
           {rows.map((o) => (
             <OfferCard key={o.id} offer={o} locale={locale} />
           ))}
         </div>
       )}
-    </section>
+    </SectionCard>
   );
 }

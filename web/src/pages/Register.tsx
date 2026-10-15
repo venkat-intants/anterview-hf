@@ -1,6 +1,7 @@
 // Register page — full_name + email + password → POST /auth/register → /dashboard
-// Design: AuthSplit skin (dark canvas, conic-G Google badge, Naipunyam disabled,
-//         DPDP consent checkbox as presentation gate).
+// Design: AuthLayout split shell. The form leads; the DPDP consent checkbox
+//         sits directly above its submit, and the SSO options (conic-G Google
+//         badge, Naipunyam disabled) follow, gated by the same checkbox.
 // Logic: RHF + zodResolver (full_name 2–100, email, password 8–128),
 //        registerUser()→getMe()→setAuth→/dashboard, isPending/aria-busy,
 //        toast errors, all t() keys. No role tabs (role is server-assigned).
@@ -17,7 +18,8 @@ import { googleLoginUrl } from '@/api/sso';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from '@/lib/toast';
 import type { AuthUser } from '@/types/auth';
-import AuthLayout from '@/components/layout/AuthLayout';
+import AuthLayout, { FormError, PasswordField, StatusPanel } from '@/components/layout/AuthLayout';
+import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
 import { Field, Pill } from '@/design/components/primitives';
 import { User, Mail, Lock, CheckCircle2 } from '@/design/components/icons';
 
@@ -54,8 +56,7 @@ function NaipunyamBadge() {
   return (
     <span
       aria-hidden="true"
-      className="flex h-5 w-5 items-center justify-center rounded-[6px] text-[11px] font-bold text-foreground"
-      style={{ background: 'linear-gradient(135deg,#16c253,var(--accent))' }}
+      className="flex h-5 w-5 items-center justify-center rounded-[6px] bg-[var(--ui-ok-wash)] text-[12px] font-bold text-[var(--ui-ok)]"
     >
       न
     </span>
@@ -64,7 +65,7 @@ function NaipunyamBadge() {
 
 // ── Base button classes reused across SSO buttons ─────────────────────────────
 const ssoBase =
-  'flex w-full items-center justify-center gap-2.5 rounded-[12px] px-4 py-3 text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background';
+  'flex min-h-11 w-full items-center justify-center gap-2.5 rounded-full px-5 py-3 text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background';
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -135,75 +136,132 @@ export default function Register() {
   if (verifyEmailSent) {
     return (
       <AuthLayout>
-        <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[var(--ui-ok)]">
-            <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
-            Confirm your email
-          </h1>
-          <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
+        <StatusPanel
+          icon={CheckCircle2}
+          tone="ok"
+          title="Confirm your email"
+          actions={
+            <Link to="/login" className={PRIMARY_LINK_CLASS}>
+              Go to sign in
+            </Link>
+          }
+        >
+          <p>
             Your account is ready. We sent a confirmation link to{' '}
-            <span className="text-foreground">{verifyEmailSent}</span>. Click it to verify your
+            <span className="font-semibold text-foreground">{verifyEmailSent}</span>. Click it to verify your
             email, then sign in.
           </p>
-          <Link
-            to="/login"
-            className="mt-6 inline-flex items-center justify-center rounded-pill bg-primary px-5 py-2.5 text-[14px] font-semibold text-primary-foreground hover:bg-primary/90"
-          >
-            Go to sign in
-          </Link>
-        </div>
+        </StatusPanel>
       </AuthLayout>
     );
   }
 
   return (
     <AuthLayout>
-      {/* Mobile compact logo (hidden on desktop where the brand panel shows) */}
-      <Link
-        to="/"
-        className="mb-8 flex items-center gap-2.5 lg:hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded-lg"
-        aria-label="AntHire home"
-      >
-        <span
-          className="flex h-8 w-8 items-center justify-center rounded-[9px]"
-          style={{ background: 'linear-gradient(135deg,#112d72,#a887dc)' }}
-        >
-          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-        </span>
-        <span className="text-[15px] font-semibold text-foreground">AntHire</span>
-      </Link>
-
       {/* Heading */}
-      <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
+      <h1 className="text-[30px] font-bold leading-tight tracking-[-0.8px] text-foreground">
         {t('auth.createYourAccount')}
       </h1>
-      <p className="mt-1.5 text-[14px] text-muted-foreground">{t('auth.startJourney')}</p>
+      <p className="mt-2 text-[15px] text-muted-foreground">{t('auth.startJourney')}</p>
 
-      {/* DPDP consent — gates BOTH sign-up methods (Google SSO + the form). */}
-      <label className="mt-8 flex cursor-pointer items-start gap-2.5 text-[12.5px] text-muted-foreground">
-        <input
-          type="checkbox"
-          checked={agreedToDpdp}
-          onChange={(e) => { setAgreedToDpdp(e.target.checked); }}
-          className="mt-0.5 h-4 w-4 flex-none cursor-pointer accent-[var(--accent)]"
-          aria-label="I agree to the Terms and DPDP-compliant Privacy Policy"
-        />
-        <span>
-          I agree to the Terms and the DPDP-compliant Privacy Policy, including
-          interview recording for scoring.
-        </span>
-      </label>
+      {/* Full name + email + password form — RHF + Zod + inline FormMessage */}
+      <form
+        onSubmit={(e) => void handleSubmit(onSubmit)(e)}
+        noValidate
+        aria-label="Registration form"
+        className="mt-8 flex flex-col gap-2"
+      >
+        <div>
+          <Field
+            label={t('auth.fullName')}
+            type="text"
+            autoComplete="name"
+            placeholder="Your name"
+            icon={<User size={15} aria-hidden="true" />}
+            aria-invalid={errors.full_name ? true : undefined}
+            aria-describedby={errors.full_name ? 'reg-full_name-error' : undefined}
+            {...register('full_name')}
+          />
+          <FormError id="reg-full_name-error">{errors.full_name?.message}</FormError>
+        </div>
+
+        <div>
+          <Field
+            label={t('auth.email')}
+            type="email"
+            autoComplete="email"
+            placeholder="you@email.com"
+            icon={<Mail size={15} aria-hidden="true" />}
+            aria-invalid={errors.email ? true : undefined}
+            aria-describedby={errors.email ? 'reg-email-error' : undefined}
+            {...register('email')}
+          />
+          <FormError id="reg-email-error">{errors.email?.message}</FormError>
+        </div>
+
+        <div>
+          <PasswordField
+            label={t('auth.password')}
+            autoComplete="new-password"
+            placeholder="8+ characters"
+            icon={<Lock size={15} aria-hidden="true" />}
+            hint="Use 8+ characters with a number and a symbol."
+            invalid={Boolean(errors.password)}
+            aria-describedby={errors.password ? 'reg-password-error' : undefined}
+            {...register('password')}
+          />
+          <FormError id="reg-password-error">{errors.password?.message}</FormError>
+        </div>
+
+        {/* DPDP consent — gates BOTH sign-up methods (Google SSO + the form). */}
+        <label className="mt-2 flex cursor-pointer items-start gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 text-[13px] leading-relaxed text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={agreedToDpdp}
+            onChange={(e) => { setAgreedToDpdp(e.target.checked); }}
+            className="mt-0.5 h-4 w-4 flex-none cursor-pointer accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            aria-label="I agree to the Terms and DPDP-compliant Privacy Policy"
+            aria-describedby={agreedToDpdp ? undefined : 'reg-consent-help'}
+          />
+          <span>
+            I agree to the Terms and the DPDP-compliant Privacy Policy, including
+            interview recording for scoring.
+          </span>
+        </label>
+
+        {!agreedToDpdp && (
+          <p id="reg-consent-help" className="text-[12.5px] text-muted-foreground">
+            {t('auth.consentNeededSignup')}
+          </p>
+        )}
+
+        {/* Submit — gated by the DPDP consent checkbox directly above it */}
+        <Pill
+          type="submit"
+          disabled={mutation.isPending || !agreedToDpdp}
+          aria-busy={mutation.isPending}
+          className="min-h-11 w-full py-3"
+        >
+          {mutation.isPending ? t('auth.creatingAccount') : t('auth.createAccount')}
+        </Pill>
+      </form>
+
+      {/* Divider */}
+      <div className="my-6 flex items-center gap-3 text-[13px] text-muted-foreground">
+        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
+        {t('auth.orContinueWithFull')}
+        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
+      </div>
 
       {/* SSO buttons */}
-      <div className="mt-4 flex flex-col gap-2.5">
+      <div className="flex flex-col gap-2.5">
         {/* Google — gated on DPDP consent; passes the consent signal through. */}
         <button
           type="button"
           disabled={!agreedToDpdp}
           aria-disabled={!agreedToDpdp}
-          className={`${ssoBase} bg-primary text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50`}
+          aria-describedby={agreedToDpdp ? undefined : 'reg-consent-help'}
+          className={`${ssoBase} border border-[var(--ui-line-strong)] bg-card text-foreground hover:bg-[var(--ui-inset)] disabled:cursor-not-allowed disabled:opacity-50`}
           onClick={() => { window.location.assign(googleLoginUrl('/dashboard', agreedToDpdp, 1)); }}
         >
           <GoogleBadge />
@@ -222,86 +280,12 @@ export default function Register() {
         </button>
       </div>
 
-      {/* Divider */}
-      <div className="my-6 flex items-center gap-3 text-[12px] text-[var(--ui-faint)]">
-        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
-        {t('auth.orContinueWithFull')}
-        <span className="h-px flex-1 bg-[var(--ui-inset-strong)]" aria-hidden="true" />
-      </div>
-
-      {/* Full name + email + password form — RHF + Zod + inline FormMessage */}
-      <form
-        onSubmit={(e) => void handleSubmit(onSubmit)(e)}
-        noValidate
-        aria-label="Registration form"
-        className="flex flex-col gap-4"
-      >
-        <div className="flex flex-col gap-1">
-          <Field
-            label={t('auth.fullName')}
-            type="text"
-            autoComplete="name"
-            placeholder="Your name"
-            icon={<User size={15} aria-hidden="true" />}
-            {...register('full_name')}
-          />
-          {errors.full_name && (
-            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
-              {errors.full_name.message}
-            </span>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <Field
-            label={t('auth.email')}
-            type="email"
-            autoComplete="email"
-            placeholder="you@email.com"
-            icon={<Mail size={15} aria-hidden="true" />}
-            {...register('email')}
-          />
-          {errors.email && (
-            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
-              {errors.email.message}
-            </span>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <Field
-            label={t('auth.password')}
-            type="password"
-            autoComplete="new-password"
-            placeholder="8+ characters"
-            icon={<Lock size={15} aria-hidden="true" />}
-            hint="Use 8+ characters with a number and a symbol."
-            {...register('password')}
-          />
-          {errors.password && (
-            <span role="alert" className="text-[11.5px] text-[var(--ui-danger)]">
-              {errors.password.message}
-            </span>
-          )}
-        </div>
-
-        {/* Submit — gated by the DPDP consent checkbox shown above the SSO buttons */}
-        <Pill
-          type="submit"
-          disabled={mutation.isPending || !agreedToDpdp}
-          aria-busy={mutation.isPending}
-          className="w-full py-3"
-        >
-          {mutation.isPending ? t('auth.creatingAccount') : t('auth.createAccount')}
-        </Pill>
-      </form>
-
       {/* Footer link */}
       <p className="mt-6 text-center text-[13px] text-muted-foreground">
         {t('auth.haveAccount')}{' '}
         <Link
           to="/login"
-          className="font-medium text-foreground hover:underline focus:outline-none focus:underline underline-offset-4"
+          className="inline-flex min-h-10 items-center rounded font-semibold text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {t('auth.signIn2')}
         </Link>

@@ -29,6 +29,11 @@ vi.mock('react-router-dom', async () => {
   return { ...actual, useParams: () => ({ requisitionId: 'req-1' }) };
 });
 
+// The finish states read the session (to decide whether to offer a sign-in link).
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ isAuthenticated: false, isInitializing: false, user: null }),
+}));
+
 import PublicApply from '../pages/PublicApply';
 
 function question(over: Partial<PostingQuestion> = {}): PostingQuestion {

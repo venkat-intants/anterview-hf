@@ -54,6 +54,33 @@ beforeEach(() => {
   listCompanyOffers.mockResolvedValue(RESPONSE);
 });
 
+const rowOf = (over: Partial<OfferListResponse['items'][number]>): OfferListResponse => ({
+  ...RESPONSE,
+  items: [{ ...RESPONSE.items[0], ...over }],
+});
+
+describe('Offers — each row says what it needs from the reader', () => {
+  it.each([
+    ['draft', 'Yours to submit'],
+    ['rejected', 'Sent back — yours to revise'],
+    ['approved', 'Yours to send'],
+    ['pending_approval', 'With the company admin'],
+    ['sent', 'Waiting on the candidate'],
+    ['declined', 'Closed'],
+  ] as const)('%s -> %s', async (status, text) => {
+    listCompanyOffers.mockResolvedValue(
+      rowOf({ status, documents: { mandatory_total: 0, mandatory_verified: 0, awaiting_review: 0 } }),
+    );
+    renderPage();
+    expect(await screen.findByTestId('offer-needs')).toHaveTextContent(text);
+  });
+
+  it('asks for a document review on an accepted offer with documents waiting', async () => {
+    renderPage();
+    expect(await screen.findByTestId('offer-needs')).toHaveTextContent('Documents to review');
+  });
+});
+
 describe('Offers — the list', () => {
   it('shows the candidate, job title, status in words and document progress', async () => {
     renderPage();

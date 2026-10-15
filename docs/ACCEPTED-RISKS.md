@@ -692,6 +692,115 @@ substantiated complaint — that is the decision recorded here, not a preference
 
 ---
 
+## AR-10 — A company `super_admin` can view named candidates on the hiring board, read-only
+
+| | |
+|---|---|
+| **Source finding** | Owner decision, 2026-10-12, following the role-rule matrix audit |
+| **Status** | **ACCEPTED — by the owner's explicit ruling; enforced as read-only and tenant-scoped, minimised after the audit** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable; `security-auditor` re-reviews when a trigger fires. |
+| **Trigger to revisit** | Any of: (a) a customer, candidate or regulator objecting to a company super admin seeing candidate names or HR-written notes; (b) any proposal to add a field, a link, a download or a write to the super-admin view or to give the super-admin copilot a candidate tool; (c) a new route reachable by `super_admin` that the matrix test (below) does not already list; (d) the first customer whose super admin is not an HR-line executive |
+
+**The decision.** The ruling is: *strict, rule-based access — a super admin can
+SEE things (read-only), but only the authorised role takes decisions.* A company
+`super_admin` (one per company, created by `platform_owner`) may therefore see
+named candidates on the hiring board and an opening's read-only dashboard, and
+may not move, hold, reject, hire, invite, offer or score anyone. Every one of
+those actions is `hr_manager`-only (interviewer scorecards: `interviewer` and
+`hr_manager`); approvals — opening, workflow review, offer, question review — are
+the super admin's. The only other things a super admin can write are its own
+company's HR-manager and interviewer accounts, the decision-reason vocabulary,
+and the HR policy document library — none of which names a candidate.
+
+**What a super admin receives** (`GET /admin/hiring-board` and
+`GET /admin/requisitions/{id}/dashboard`, `services/data_gateway/app/routers/company_board.py`):
+
+- *Board:* per open or paused opening — title, location, status, workflow state
+  and version, whether it is accepting applications, counts (applied, in play,
+  hired, awaiting a decision), target hires, closing date, and the computed
+  health band with its reason. **No candidate is named on the board.**
+- *Dashboard, candidate-bearing sections, after the 2026-10-12 change:*
+  - held pool (at most 25): `enrolment_id` (a list key), **candidate full name**,
+    **`held_reason` free text**, round title, days held;
+  - activity (at most 25 most recent moves): time, automated or not, the acting
+    staff member's name, **candidate full name**, from/to status and round, and
+    the transition **`reason` free text**;
+  - the "needs attention" item for a stalled round names up to five waiting
+    candidates in its text.
+- *Dashboard, non-candidate sections:* the opening record (job description,
+  budget and salary fields, approval state and the names of whoever submitted,
+  decided and owns it), aggregate progress counts, per-round funnel counts and
+  pass rates, median stage timings, average resume and round scores, workflow
+  versions. Links into HR's screens are nulled server-side.
+- *Removed from the payload by this change:* the applicant id and the
+  per-candidate resume score on held candidates, and the applicant id on
+  activity rows. The candidate sections are now an allowlist
+  (`READ_ONLY_HELD_KEYS`, `READ_ONLY_ACTIVITY_KEYS` in `app/company_board.py`), so a
+  field added to HR's payload does not reach the super admin until added there on
+  purpose.
+- *Never in this payload:* email, phone, resume or CV links, signed URLs,
+  interview/exam/offer tokens, or any control that performs an action.
+
+**The free text is the residual exposure.** `held_reason` and the transition
+`reason` can be text an HR manager typed about a named candidate. They are kept
+because the read-only screen renders them (`web/src/pages/hr/RequisitionDashboard.tsx`
+`HeldPool` and `Activity`); the owner accepted that a super admin sees names and
+this is the same class of data. It was not separately put to the owner.
+Whether those two fields should be dropped from the super-admin view is open.
+
+**It cannot act.** The two routes are the only routes of their router, both are
+GET, both require `super_admin` alone, the company comes from the authenticated
+session's `users.company_id` (never a parameter) and another company's opening
+is a 404, and the handlers contain no write, no mail and no token minting.
+
+**Enforced by:**
+`services/data_gateway/tests/unit/test_company_board_read_only.py` (GET-only,
+`super_admin`-only, tenancy from the session, allowlist projection, no
+credential/contact/file field) and the four `test_role_rule_matrix.py` modules
+(`services/{data_gateway,admin_ops,feedback_billing,interview_core}`), which fail on
+any route not listed, on any guard looser than its row, and on any route that
+names a candidate and is reachable by `super_admin`, `admin`, `platform_owner`,
+`candidate` or `guest_candidate`. The data_gateway module also sends a real
+signed token for every non-authorised role at every decision, approval, scoring,
+user-management and platform route and requires the role gate's own 403.
+
+**Relationship to the agent `data_class` invariant (CLAUDE.md) — unchanged.**
+That invariant governs the console COPILOTS: only `hr_manager` is ever offered a
+tool that returns a named candidate, and the candidate panel
+(`POST /agent/panel/{applicant_id}`) is `hr_manager`-only. This entry changes
+none of it: the super-admin copilot still has no named-candidate tool, and
+the panel still refuses `super_admin` (asserted in
+`test_role_rule_matrix.py` and `test_agent_role_isolation.py`). What this entry
+records is a human reading a REST view; it does not widen what an agent can read
+or do on that human's behalf.
+
+**What is NOT true.** It is not true that a company `super_admin` sees nothing
+named about a candidate: names and the two free-text fields above are visible. It
+is not true that the REST layer shows a super admin only this view. Read-only
+access to named records also exists in places this decision did not touch, found
+by the same audit: (1) `GET /api/scorecards/{id}` (feedback_billing) lets
+`hr_manager`, `super_admin`, `admin` and `platform_owner` read a same-company
+candidate's full scorecard, including a time-limited PDF link — the code requires
+the candidate's `users.company_id` to be set and equal to the caller's; how often
+that holds for real candidate accounts is **unverified**; (2)
+`GET /users/{id}/profile` lets `admin` and `platform_owner` read ANY user's
+profile, candidates included (email, phone), and `hr_manager`/`super_admin` read
+users of their own company; (3) the `admin` analytics role reads interview
+transcripts in admin_ops (`/admin/interviews/{id}/transcript`). All three are
+reads, none was changed, and none is a hiring decision. Question-bank review also
+has an `hr_manager` peer path (two-person rule enforced in `app/question_banks.py`)
+alongside the `super_admin` one, which predates this ruling and is not
+"`super_admin` only"; it is recorded in the matrix as `APPROVAL_PEER` and left as
+it was.
+
+**Path to closure.** If the owner reverses the ruling: drop `full_name`,
+`candidate` and the two free-text fields from `READ_ONLY_HELD_KEYS` /
+`READ_ONLY_ACTIVITY_KEYS` and the stalled-round names from the attention body —
+the allowlist and its test make that a three-line change — and give the screen
+counts only. No schema or route change is needed.
+
+---
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -705,3 +814,4 @@ substantiated complaint — that is the decision recorded here, not a preference
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
+| **AR-10** | A company `super_admin` views named candidates (and HR's free-text notes on them) on the hiring board, read-only; cannot act | Owner decision 2026-10-12 | `platform_owner` (+ `security-auditor`) | An objection to super-admin visibility of candidate names/notes, any added field/link/write on the view, a new `super_admin`-reachable route, or a candidate tool for the super-admin copilot |

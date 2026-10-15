@@ -5,6 +5,7 @@
 // HR's company. Field names match the data_gateway frozen contract EXACTLY.
 
 import { apiGet, apiPost } from './client';
+import { pathId } from './pathId';
 
 /** Applicant lifecycle status (Phase 4 adds the terminal decision states). */
 export type PipelineStatus =
@@ -175,7 +176,7 @@ export function setApplicantDecision(
   enrolmentId?: string | null,
 ): Promise<{ id: string; status: PipelineStatus }> {
   return apiPost<{ id: string; status: PipelineStatus }>(
-    `/hr/applicants/${applicantId}/decision`,
+    `/hr/applicants/${pathId(applicantId)}/decision`,
     {
       decision,
       rationale: rationale?.trim() || null,

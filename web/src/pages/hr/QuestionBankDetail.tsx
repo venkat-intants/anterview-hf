@@ -1,543 +1,369 @@
-// QuestionBankDetail (/hr/question-banks/:bankId) — PH4-D1. A filterable
-// table of one bank's questions, an editor for MCQ and coding content, and
-// per-question lifecycle actions: submit, withdraw, new version, retire —
-// plus its version history and where it is used.
+// QuestionBankDetail (/hr/question-banks/:bankId, and /new) - one bank, as a
+// guided flow instead of a table with three panels above it.
 //
-// English-only by design (CLAUDE.md — staff consoles are not translated).
+//   1 Set up the bank      name, what it assesses
+//   2 Add questions        write / AI MCQs / AI coding / import
+//   3 Check your drafts    master-detail over the drafts
+//   4 Send for review      submit them; see what is waiting
+//   5 Approved and in use  what came back, what was sent back, where it is used
+//
+// Every stage's state is computed by lib/bankFlow.ts from what the server holds
+// (the bank's status counts and its question list). The page's one next step is
+// the NextStep strip under the header; the stage the person has OPEN is theirs:
+// it is carried in `?stage=` and a refetch never swaps the panel under them.
+//
+// `/hr/question-banks/new` is the same rail with only stage 1 open. Creating the
+// bank lands on stage 2 of the same page - one flow, not a wizard and a page.
+//
+// English-only by design (CLAUDE.md - staff consoles are not translated).
 
-import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { Breadcrumbs, EmptyState, Page, PageHeader } from '@/design/components/page';
+import { Card } from '@/design/components/card';
+import { JourneyRail } from '@/design/components/journey-rail';
+import { NextStep } from '@/design/components/next-step';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useUnsavedGuard } from '@/components/bank/useUnsavedGuard';
+import { BankAddPanel } from '@/components/hr/bank/BankAddPanel';
+import { BankSetupPanel } from '@/components/hr/bank/BankSetupPanel';
+import { ApprovedPanel, CheckPanel, SendPanel } from '@/components/hr/bank/BankReviewPanels';
+import { StageFrame } from '@/components/hr/bank/StageFrame';
 import {
-  ArrowLeft,
-  ClipboardList,
-  Code2,
-  Loader2,
-  Plus,
-} from '@/design/components/icons';
-import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
-import { toast } from '@/lib/toast';
-import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
-import { cn } from '@/lib/utils';
-import { useAuth } from '@/context/AuthContext';
-import { BankQuestionEditor } from '@/components/bank/BankQuestionEditor';
-import BankFillPanel from '@/components/bank/BankFillPanel';
-import {
-  createBankQuestion,
-  deleteBankQuestion,
-  getBankQuestion,
-  listBankCompetencies,
-  listBankQuestions,
-  listQuestionBanks,
-  newBankQuestionVersion,
-  retireBankQuestion,
-  submitBankQuestion,
-  updateBankQuestion,
-  withdrawBankQuestion,
-  type BankDifficulty,
-  type BankQuestion,
-  type BankQuestionFilters,
-  type BankQuestionInput,
-  type BankQuestionKind,
-  type BankQuestionStatus,
-} from '@/api/questionBanks';
-import type { ExamLanguage } from '@/api/exams';
+  BANK_STATE_LABELS,
+  bankFacts,
+  bankStages,
+  canOpenStage,
+  defaultStageKey,
+  isSentBack,
+  newBankStages,
+  nextStatement,
+  parseStage,
+  type BankStageKey,
+} from '@/lib/bankFlow';
+import { listBankQuestions, listQuestionBanks, type BankQuestion } from '@/api/questionBanks';
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+const NEW = 'new';
 
-const STATUS_TONE: Record<BankQuestionStatus, TagTone> = {
-  draft: 'neutral',
-  in_review: 'amber',
-  approved: 'forest',
-  retired: 'ember',
+const STAGE_BLURB: Record<BankStageKey, string> = {
+  setup: 'Name the bank and say what it assesses, so a colleague can tell it from the others.',
+  add: 'Choose how to add questions. Every method saves drafts; none of them approves anything.',
+  check:
+    'Read each draft and fix or delete what is wrong. Questions written by AI need a human read before they go for review.',
+  send: 'Send the drafts to someone else to approve, and see what is already waiting.',
+  approved:
+    'Approved questions can be picked into an exam. Anything sent back is listed with the reviewer’s note.',
 };
-
-const inputCls =
-  'rounded-[9px] border border-border bg-secondary px-2.5 py-1.5 text-[12.5px] text-foreground ' +
-  'placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
-
-function FilterBar({
-  filters,
-  onChange,
-}: {
-  filters: BankQuestionFilters;
-  onChange: (next: BankQuestionFilters) => void;
-}) {
-  const catalog = useQuery({ queryKey: ['hr', 'bank-competencies'], queryFn: listBankCompetencies });
-  return (
-    <div className="flex flex-wrap gap-2">
-      <input
-        value={filters.q ?? ''}
-        onChange={(e) => onChange({ ...filters, q: e.target.value })}
-        placeholder="Search prompt…"
-        aria-label="Search"
-        className={cn(inputCls, 'min-w-[160px] flex-1')}
-      />
-      <select
-        value={filters.kind ?? ''}
-        onChange={(e) => onChange({ ...filters, kind: (e.target.value || undefined) as BankQuestionKind | undefined })}
-        aria-label="Filter by kind"
-        className={inputCls}
-      >
-        <option value="">Any kind</option>
-        <option value="mcq">MCQ</option>
-        <option value="coding">Coding</option>
-      </select>
-      <select
-        value={filters.difficulty ?? ''}
-        onChange={(e) =>
-          onChange({ ...filters, difficulty: (e.target.value || undefined) as BankDifficulty | undefined })
-        }
-        aria-label="Filter by difficulty"
-        className={inputCls}
-      >
-        <option value="">Any difficulty</option>
-        <option value="easy">Easy</option>
-        <option value="medium">Medium</option>
-        <option value="hard">Hard</option>
-      </select>
-      <select
-        value={filters.language ?? ''}
-        onChange={(e) =>
-          onChange({ ...filters, language: (e.target.value || undefined) as ExamLanguage | undefined })
-        }
-        aria-label="Filter by language"
-        className={inputCls}
-      >
-        <option value="">Any language</option>
-        <option value="en">English</option>
-        <option value="hi">हिन्दी</option>
-        <option value="te">తెలుగు</option>
-      </select>
-      <select
-        value={filters.competency ?? ''}
-        onChange={(e) => onChange({ ...filters, competency: e.target.value || undefined })}
-        aria-label="Filter by competency"
-        className={inputCls}
-      >
-        <option value="">Any competency</option>
-        {(catalog.data ?? []).map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.name}
-          </option>
-        ))}
-      </select>
-      <input
-        value={filters.tag ?? ''}
-        onChange={(e) => onChange({ ...filters, tag: e.target.value || undefined })}
-        placeholder="Tag…"
-        aria-label="Filter by tag"
-        className={cn(inputCls, 'w-24')}
-      />
-      <select
-        value={filters.status ?? ''}
-        onChange={(e) =>
-          onChange({ ...filters, status: (e.target.value || undefined) as BankQuestionStatus | undefined })
-        }
-        aria-label="Filter by status"
-        className={inputCls}
-      >
-        <option value="">Any status</option>
-        <option value="draft">Draft</option>
-        <option value="in_review">In review</option>
-        <option value="approved">Approved</option>
-        <option value="retired">Retired</option>
-      </select>
-    </div>
-  );
-}
-
-function QuestionRow({
-  q,
-  selected,
-  onSelect,
-}: {
-  q: BankQuestion;
-  selected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      className={cn(
-        'flex w-full items-start gap-2.5 rounded-[12px] border px-3 py-2.5 text-left transition-colors',
-        selected
-          ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.08)]'
-          : 'border-border hover:border-[var(--ui-line-strong)]',
-      )}
-    >
-      {q.kind === 'coding' ? (
-        <Code2 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
-      ) : (
-        <ClipboardList className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
-      )}
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[13px] font-medium text-foreground">{q.prompt}</p>
-        <div className="mt-1 flex flex-wrap items-center gap-1.5">
-          <StatusTag tone={STATUS_TONE[q.status]} className="text-[10px]">
-            {q.status.replace('_', ' ')}
-          </StatusTag>
-          <span className="text-[11px] text-muted-foreground">
-            v{q.version} · {q.difficulty} · {q.language}
-          </span>
-        </div>
-      </div>
-    </button>
-  );
-}
 
 export default function QuestionBankDetail(): JSX.Element {
   const { bankId = '' } = useParams();
-  const qc = useQueryClient();
-  const { user } = useAuth();
-  const [filters, setFilters] = useState<BankQuestionFilters>({});
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-  // PH4-D1 review finding — approved/retired content had no editable path at
-  // all ("New version" was unreachable). True while the user is editing an
-  // approved/retired question's content to create the next draft version.
-  const [newVersionMode, setNewVersionMode] = useState(false);
+  // Keyed by bank, so the stage, selection and pending edits of one bank never
+  // carry over to the next - including from /new to the bank it just created.
+  return <BankFlowPage key={bankId} bankId={bankId} />;
+}
 
-  function selectQuestion(id: string | null) {
-    setCreating(false);
-    setSelectedId(id);
-    setNewVersionMode(false);
+function BankFlowPage({ bankId }: { bankId: string }): JSX.Element {
+  const isNew = bankId === NEW;
+  const navigate = useNavigate();
+  const [params, setParams] = useSearchParams();
+  const guard = useUnsavedGuard();
+
+  const banksQuery = useQuery({
+    queryKey: ['hr', 'question-banks'],
+    queryFn: listQuestionBanks,
+    enabled: !isNew,
+  });
+  const bank = isNew ? undefined : (banksQuery.data ?? []).find((b) => b.id === bankId);
+
+  const listQuery = useQuery({
+    queryKey: ['hr', 'question-banks', bankId, 'questions'],
+    queryFn: () => listBankQuestions(bankId),
+    enabled: !isNew && Boolean(bankId) && Boolean(bank),
+  });
+  const questions: readonly BankQuestion[] = useMemo(() => listQuery.data ?? [], [listQuery.data]);
+  const listReady = listQuery.isSuccess;
+
+  const facts = useMemo(
+    () => (bank ? bankFacts(bank, listQuery.data) : null),
+    [bank, listQuery.data],
+  );
+  const stages = useMemo(
+    () => (isNew ? newBankStages() : facts ? bankStages(facts) : null),
+    [isNew, facts],
+  );
+
+  // ── Which stage is open ────────────────────────────────────────────────
+  // `?stage=` wins. Without it the bank opens on its real next stage, decided
+  // ONCE, when its counts first arrive - so a refetch (or a submit that changes
+  // the counts) can never swap the panel the person is working in.
+  const urlStage = parseStage(params.get('stage'));
+  const [firstStage, setFirstStage] = useState<BankStageKey | null>(null);
+  useEffect(() => {
+    if (firstStage === null && stages && !isNew) setFirstStage(defaultStageKey(stages));
+  }, [stages, firstStage, isNew]);
+
+  const wanted = urlStage ?? firstStage;
+  const active: BankStageKey | null = isNew
+    ? 'setup'
+    : wanted && canOpenStage(Boolean(bank), wanted)
+      ? wanted
+      : null;
+
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const moved = useRef(false);
+
+  function goTo(key: BankStageKey, questionId: string | null = null): void {
+    if (isNew || !canOpenStage(Boolean(bank), key)) return;
+    if (key === active && questionId === null) return;
+    if (!guard.confirmLeave()) return;
+    moved.current = true;
+    setSelectedId(questionId);
+    // REPLACE, not push: a stage change is a view inside this page, not a
+    // place. Pushing one entry per stage made the browser Back button step
+    // through stages - and out of a dirty editor - without ever asking.
+    setParams({ stage: key }, { replace: true });
   }
 
-  const banksQuery = useQuery({ queryKey: ['hr', 'question-banks'], queryFn: listQuestionBanks });
-  const bank = (banksQuery.data ?? []).find((b) => b.id === bankId);
-
-  const listKey = ['hr', 'question-banks', bankId, 'questions', filters];
-  const listQuery = useQuery({
-    queryKey: listKey,
-    queryFn: () => listBankQuestions(bankId, filters),
-    enabled: Boolean(bankId),
-  });
-
-  const detailQuery = useQuery({
-    queryKey: ['hr', 'bank-questions', selectedId],
-    queryFn: () => getBankQuestion(selectedId as string),
-    enabled: Boolean(selectedId),
-  });
-
-  const invalidateAll = () => {
-    void qc.invalidateQueries({ queryKey: listKey });
-    void qc.invalidateQueries({ queryKey: ['hr', 'question-banks'] });
-    if (selectedId) void qc.invalidateQueries({ queryKey: ['hr', 'bank-questions', selectedId] });
-  };
-
-  const createMut = useMutation({
-    mutationFn: (input: BankQuestionInput) => createBankQuestion(bankId, input),
-    onSuccess: (q) => {
-      toast.success('Question created');
-      setCreating(false);
-      setSelectedId(q.id);
-      invalidateAll();
-    },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not create this question')),
-  });
-
-  const updateMut = useMutation({
-    mutationFn: (input: BankQuestionInput) =>
-      updateBankQuestion(selectedId as string, input),
-    onSuccess: () => {
-      toast.success('Saved');
-      invalidateAll();
-    },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not save this question')),
-  });
-
-  const deleteMut = useMutation({
-    mutationFn: () => deleteBankQuestion(selectedId as string),
-    onSuccess: () => {
-      toast.success('Question deleted');
-      setSelectedId(null);
-      invalidateAll();
-    },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not delete this question')),
-  });
-
-  const submitMut = useMutation({
-    mutationFn: () => submitBankQuestion(selectedId as string),
-    onSuccess: () => {
-      toast.success('Submitted for review');
-      invalidateAll();
-    },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not submit this question')),
-  });
-
-  const withdrawMut = useMutation({
-    mutationFn: () => withdrawBankQuestion(selectedId as string),
-    onSuccess: () => {
-      toast.success('Withdrawn to draft');
-      invalidateAll();
-    },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not withdraw this question')),
-  });
-
-  const retireMut = useMutation({
-    mutationFn: () => retireBankQuestion(selectedId as string),
-    onSuccess: () => {
-      toast.success('Retired');
-      invalidateAll();
-    },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not retire this question')),
-  });
-
-  const newVersionMut = useMutation({
-    mutationFn: (input: BankQuestionInput) => newBankQuestionVersion(selectedId as string, input),
-    onSuccess: (q) => {
-      toast.success(`Version ${q.version} created as a draft`);
-      setSelectedId(q.id);
-      setNewVersionMode(false);
-      invalidateAll();
-    },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not create a new version')),
-  });
-
-  const questions = listQuery.data ?? [];
-  const selected = detailQuery.data?.question ?? null;
-
-  return (
-    <div className="mx-auto max-w-[1200px] px-6 py-8 lg:px-8">
-      <Reveal>
-        <Link
-          to="/hr/question-banks"
-          className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft size={15} aria-hidden="true" /> Question banks
-        </Link>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-[24px] font-semibold tracking-[-0.6px] text-foreground">
-              {bank?.name ?? 'Question bank'}
-            </h1>
-            {bank ? (
-              <p className="mt-1 text-[12.5px] text-muted-foreground">
-                Used in {bank.used_in_exams} exam{bank.used_in_exams === 1 ? '' : 's'}
-              </p>
-            ) : null}
-          </div>
+  // ── Loading and missing states ─────────────────────────────────────────
+  if (!isNew && banksQuery.isLoading) {
+    return (
+      <Page width="default">
+        <div className="flex flex-col gap-4" role="status" aria-label="Loading this question bank">
+          <Skeleton className="h-10 w-72" />
+          <Skeleton className="h-20 w-full rounded-card" />
+          <Skeleton className="h-72 w-full rounded-card" />
+        </div>
+      </Page>
+    );
+  }
+  if (!isNew && banksQuery.isError) {
+    return (
+      <Page width="default">
+        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
+          Could not load this question bank.{' '}
           <button
             type="button"
-            onClick={() => {
-              setCreating(true);
-              setSelectedId(null);
-              setNewVersionMode(false);
-            }}
-            className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground"
+            className="font-semibold underline"
+            onClick={() => void banksQuery.refetch()}
           >
-            <Plus size={15} aria-hidden="true" /> New question
+            Try again
           </button>
-        </div>
-      </Reveal>
+        </p>
+      </Page>
+    );
+  }
+  if (!isNew && !bank) {
+    return (
+      <Page width="default">
+        <EmptyState
+          size="page"
+          title="This bank was not found"
+          description="It may have been archived, or the link is wrong."
+          action={
+            <Button asChild variant="outline">
+              <Link to="/hr/question-banks">Back to question banks</Link>
+            </Button>
+          }
+        />
+      </Page>
+    );
+  }
 
-      {/* The three ways to fill a bank. One question at a time is the
-          "New question" button above; AI and spreadsheet import live here
-          because both arrive as a BATCH that then needs review. */}
-      {bankId ? <BankFillPanel bankId={bankId} /> : null}
+  const title = bank?.name ?? 'New question bank';
+  const statement = facts ? nextStatement(facts) : null;
+  const drafts = questions.filter((q) => q.status === 'draft');
+  const inReview = questions.filter((q) => q.status === 'in_review');
+  const decided = questions.filter((q) => q.status === 'approved' || q.status === 'retired');
+  const sentBack = drafts.filter(isSentBack);
 
-      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <GlassCard className="p-5">
-          <FilterBar filters={filters} onChange={setFilters} />
-          <div className="mt-4">
-            {listQuery.isLoading ? (
-              <p className="flex items-center gap-2 py-6 text-[13px] text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                Loading…
-              </p>
-            ) : listQuery.isError ? (
-              <p className="py-6 text-[13px] text-[var(--ui-danger)]">
-                Could not load this bank&apos;s questions.
-              </p>
-            ) : questions.length === 0 ? (
-              <p className="py-8 text-center text-[13px] text-muted-foreground">
-                No questions match these filters yet.
-              </p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {questions.map((q) => (
-                  <QuestionRow
-                    key={q.id}
-                    q={q}
-                    selected={selectedId === q.id}
-                    onSelect={() => selectQuestion(q.id)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        </GlassCard>
+  const browser = {
+    allQuestions: questions,
+    guard,
+    selectedId,
+    onSelect: setSelectedId,
+  };
 
-        <GlassCard className="h-fit p-5">
-          {creating ? (
-            <>
-              <h2 className="mb-3 text-[15px] font-semibold text-foreground">New question</h2>
-              <BankQuestionEditor
-                saving={createMut.isPending}
-                onSave={(input) => createMut.mutate(input)}
-                onCancel={() => setCreating(false)}
-              />
-            </>
-          ) : !selectedId ? (
-            <p className="text-[13px] text-muted-foreground">
-              Select a question to view or edit it, or create a new one.
-            </p>
-          ) : detailQuery.isLoading ? (
-            <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              Loading…
-            </p>
-          ) : detailQuery.isError || !selected ? (
-            <p className="text-[13px] text-[var(--ui-danger)]">Could not load this question.</p>
-          ) : (
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <h2 className="text-[15px] font-semibold text-foreground">
-                  {selected.kind === 'mcq' ? 'MCQ' : 'Coding'} question · v{selected.version}
-                </h2>
-                <StatusTag tone={STATUS_TONE[selected.status]}>
-                  {selected.status.replace('_', ' ')}
-                </StatusTag>
-              </div>
-
-              {selected.review_note ? (
-                <p className="rounded-[10px] border border-[var(--ui-warn)]/30 bg-[rgba(255,183,100,0.08)] px-3 py-2 text-[12.5px] text-[var(--ui-soft)]">
-                  Review note: {selected.review_note}
-                </p>
-              ) : null}
-
-              {newVersionMode ? (
-                <p className="rounded-[10px] border border-[rgba(var(--accent-rgb),0.35)] bg-[rgba(var(--accent-rgb),0.08)] px-3 py-2 text-[12.5px] text-[var(--ui-soft)]">
-                  Saving creates version {selected.version + 1} as a new draft — this{' '}
-                  {selected.status} version is unchanged.
-                </p>
-              ) : null}
-
-              <BankQuestionEditor
-                question={selected}
-                saving={updateMut.isPending || newVersionMut.isPending}
-                forceEditable={newVersionMode}
-                onCancel={newVersionMode ? () => setNewVersionMode(false) : undefined}
-                onSave={(input) =>
-                  selected.status === 'draft'
-                    ? updateMut.mutate(input)
-                    : newVersionMut.mutate(input)
-                }
-              />
-
-              {!newVersionMode ? (
-                <div className="flex flex-wrap gap-2 border-t border-border pt-3">
-                  {selected.status === 'draft' ? (
-                    <>
-                      <button
-                        type="button"
-                        disabled={submitMut.isPending}
-                        onClick={() => submitMut.mutate()}
-                        className="rounded-[9px] bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
-                      >
-                        Submit for review
-                      </button>
-                      <ConfirmDeleteButton
-                        label="Delete"
-                        pending={deleteMut.isPending}
-                        onConfirm={() => deleteMut.mutate()}
-                      />
-                    </>
-                  ) : null}
-                  {selected.status === 'in_review' && selected.submitted_by_user_id === user?.user_id ? (
-                    // Only the submitter may withdraw — the server 403s anyone
-                    // else with "Only the person who submitted this question can
-                    // withdraw it." Gating the control means that refusal is
-                    // never something another reviewer runs into by surprise.
-                    <button
-                      type="button"
-                      disabled={withdrawMut.isPending}
-                      onClick={() => withdrawMut.mutate()}
-                      className="rounded-[9px] border border-border px-3.5 py-1.5 text-[12.5px] text-foreground disabled:opacity-50"
-                    >
-                      Withdraw
-                    </button>
-                  ) : null}
-                  {selected.status === 'approved' ? (
-                    <button
-                      type="button"
-                      disabled={retireMut.isPending}
-                      onClick={() => retireMut.mutate()}
-                      className="rounded-[9px] border border-border px-3.5 py-1.5 text-[12.5px] text-foreground disabled:opacity-50"
-                    >
-                      Retire
-                    </button>
-                  ) : null}
-                  {selected.status === 'approved' || selected.status === 'retired' ? (
-                    <button
-                      type="button"
-                      onClick={() => setNewVersionMode(true)}
-                      className="rounded-[9px] border border-border px-3.5 py-1.5 text-[12.5px] text-foreground"
-                    >
-                      New version
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-
-              {detailQuery.data && detailQuery.data.versions.length > 1 ? (
-                <div className="border-t border-border pt-3">
-                  <h3 className="mb-2 text-[12.5px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                    Version history
-                  </h3>
-                  <ul className="flex flex-col gap-1.5">
-                    {detailQuery.data.versions.map((v) => (
-                      <li key={v.id}>
-                        <button
-                          type="button"
-                          onClick={() => selectQuestion(v.id)}
-                          className={cn(
-                            'flex w-full items-center justify-between rounded-[9px] border px-2.5 py-1.5 text-[12px]',
-                            v.id === selectedId
-                              ? 'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.08)]'
-                              : 'border-border text-muted-foreground hover:text-foreground',
-                          )}
-                        >
-                          <span>v{v.version}</span>
-                          <StatusTag tone={STATUS_TONE[v.status]} className="text-[10px]">
-                            {v.status.replace('_', ' ')}
-                          </StatusTag>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {detailQuery.data && detailQuery.data.used_in_exams.length > 0 ? (
-                <div className="border-t border-border pt-3">
-                  <h3 className="mb-2 text-[12.5px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                    Used in {detailQuery.data.used_in_exams.length} exam
-                    {detailQuery.data.used_in_exams.length === 1 ? '' : 's'}
-                  </h3>
-                  <ul className="flex flex-col gap-1">
-                    {detailQuery.data.used_in_exams.map((u) => (
-                      <li key={u.exam_id}>
-                        <Link
-                          to={`/hr/exams/${u.exam_id}`}
-                          className="text-[12.5px] text-[var(--ui-info)] hover:underline"
-                        >
-                          {u.exam_title}
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-            </div>
-          )}
-        </GlassCard>
-      </div>
+  const listState = listQuery.isError ? (
+    <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
+      Could not load this bank&apos;s questions.{' '}
+      <button
+        type="button"
+        className="font-semibold underline"
+        onClick={() => void listQuery.refetch()}
+      >
+        Try again
+      </button>
+    </p>
+  ) : (
+    <div className="flex flex-col gap-3" role="status" aria-label="Loading questions">
+      <Skeleton className="h-16 w-full rounded-card" />
+      <Skeleton className="h-40 w-full rounded-card" />
     </div>
+  );
+
+  let panel: JSX.Element | null = null;
+  if (active === 'setup') {
+    panel = (
+      <StageFrame
+        key="setup"
+        title="Set up the bank"
+        description={STAGE_BLURB.setup}
+        focusOnMount={moved.current}
+      >
+        <Card>
+          <BankSetupPanel
+            bank={bank}
+            guard={guard}
+            onCreated={(created) => {
+              void navigate(`/hr/question-banks/${created.id}?stage=add`, { replace: true });
+            }}
+          />
+        </Card>
+      </StageFrame>
+    );
+  } else if (active === 'add' && facts) {
+    panel = (
+      <StageFrame
+        key="add"
+        title="Add questions"
+        description={STAGE_BLURB.add}
+        focusOnMount={moved.current}
+      >
+        <BankAddPanel
+          bankId={bankId}
+          facts={facts}
+          factsReady={listReady}
+          guard={guard}
+          onCheckDrafts={() => goTo('check')}
+        />
+      </StageFrame>
+    );
+  } else if (active === 'check' && facts) {
+    panel = (
+      <StageFrame
+        key="check"
+        title="Check your drafts"
+        description={STAGE_BLURB.check}
+        focusOnMount={moved.current}
+      >
+        {listReady ? (
+          <CheckPanel drafts={drafts} facts={facts} onContinue={() => goTo('send')} {...browser} />
+        ) : (
+          listState
+        )}
+      </StageFrame>
+    );
+  } else if (active === 'send' && facts) {
+    panel = (
+      <StageFrame
+        key="send"
+        title="Send for review"
+        description={STAGE_BLURB.send}
+        focusOnMount={moved.current}
+      >
+        {listReady ? (
+          <SendPanel
+            bankId={bankId}
+            drafts={drafts}
+            inReview={inReview}
+            facts={facts}
+            {...browser}
+          />
+        ) : (
+          listState
+        )}
+      </StageFrame>
+    );
+  } else if (active === 'approved' && facts) {
+    panel = (
+      <StageFrame
+        key="approved"
+        title="Approved and in use"
+        description={STAGE_BLURB.approved}
+        focusOnMount={moved.current}
+      >
+        {listReady ? (
+          <ApprovedPanel
+            approved={decided}
+            sentBack={sentBack}
+            facts={facts}
+            onOpenSentBack={(id) => goTo('check', id)}
+            {...browser}
+          />
+        ) : (
+          listState
+        )}
+      </StageFrame>
+    );
+  }
+
+  const showAction = statement?.stage && statement.stage !== active;
+
+  return (
+    <Page width="default">
+      <PageHeader
+        compact
+        breadcrumbs={
+          <Breadcrumbs
+            items={[{ label: 'Question banks', to: '/hr/question-banks' }, { label: title }]}
+          />
+        }
+        title={title}
+        description={
+          isNew ? 'Create a bank, then fill it and send it for review.' : bank?.description
+        }
+        meta={
+          bank ? (
+            <span className="text-[13px] text-muted-foreground">
+              Used in {bank.used_in_exams} exam{bank.used_in_exams === 1 ? '' : 's'}
+            </span>
+          ) : undefined
+        }
+        actions={
+          <Button asChild variant="outline">
+            <Link to="/hr/question-banks/reviews">Question reviews</Link>
+          </Button>
+        }
+      />
+
+      {statement && showAction ? (
+        // Only when the person is somewhere else: on the next stage itself the
+        // rail and the panel already say it, and a second strip is just height.
+        <NextStep
+          tone={statement.tone}
+          title={statement.title}
+          context={statement.context}
+          data-testid="bank-next-step"
+          action={
+            statement.stage ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => goTo(statement.stage as BankStageKey)}
+              >
+                {statement.actionLabel}
+              </Button>
+            ) : undefined
+          }
+        />
+      ) : null}
+
+      {stages && active ? (
+        <JourneyRail
+          label="Bank flow"
+          data-testid="bank-rail"
+          stages={stages}
+          activeKey={active}
+          onSelect={(key) => goTo(key as BankStageKey)}
+          stateLabels={BANK_STATE_LABELS}
+        >
+          {panel}
+        </JourneyRail>
+      ) : (
+        <Skeleton className="h-72 w-full rounded-card" />
+      )}
+    </Page>
   );
 }

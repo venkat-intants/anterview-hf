@@ -141,8 +141,29 @@ async def verify_admin_role(
     return sub
 
 
+async def verify_admin_with_roles(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> tuple[str, frozenset[str]]:
+    """Like :func:`verify_admin_role`, but also returns the caller's role set.
+
+    For the few admin routes whose answer depends on WHICH admin is asking
+    (``platform_owner`` also holds ``admin``; the analytics ``admin`` role does
+    not imply authority over staff accounts). Same decode and revocation check.
+    """
+    sub, payload = await _authenticated_subject(credentials)
+    raw_roles = payload.get("roles") or []
+    roles = frozenset(str(r) for r in raw_roles) if isinstance(raw_roles, list) else frozenset()
+    if "admin" not in roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required",
+        )
+    return sub, roles
+
+
 # Convenience type aliases — use in endpoint signatures as the annotated dep.
 AdminDep = Annotated[str, Depends(verify_admin_role)]
+AdminCtxDep = Annotated[tuple[str, frozenset[str]], Depends(verify_admin_with_roles)]
 AuthenticatedDep = Annotated[str, Depends(verify_authenticated_user)]
 
 

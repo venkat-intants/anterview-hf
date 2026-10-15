@@ -1,70 +1,110 @@
-import { type PropsWithChildren, type CSSProperties } from 'react'
+import { type PropsWithChildren, type ReactNode } from 'react'
 import { cn } from '../lib/cn'
 
-/** Tinted card — surface + hairline follow the landing theme. */
-export function GlassCard({ children, className, style }: PropsWithChildren<{ className?: string; style?: CSSProperties }>) {
+/** The brand mark: the deep-blue brand surface with a white dot, as in the app
+ *  sidebar. It is the brand rather than a surface, so it does not follow the
+ *  colour mode. */
+export function BrandMark({ className }: { className?: string }) {
   return (
-    <div className={cn('rounded-card border', className)} style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-surface)', ...style }}>
+    <span
+      className={cn(
+        'inline-flex h-9 w-9 flex-none items-center justify-center rounded-[11px] bg-[image:var(--ui-grad-brand)] shadow-[inset_0_0_0_1px_rgba(255,255,255,0.16)]',
+        className,
+      )}
+    >
+      <span className="h-3 w-3 rounded-full bg-[var(--ui-brand-ink)]" aria-hidden="true" />
+    </span>
+  )
+}
+
+/** Resting white card on the paper canvas. */
+export function Card({ children, className }: PropsWithChildren<{ className?: string }>) {
+  return (
+    <div className={cn('rounded-card border border-[var(--lp-line)] bg-[var(--lp-surface)] shadow-card', className)}>
       {children}
     </div>
   )
 }
 
-/** Pill (nav link / chip / badge). */
-export function Pill({ children, className }: PropsWithChildren<{ className?: string }>) {
+/** Small chip (eyebrows, language tags). */
+export function Chip({ children, className }: PropsWithChildren<{ className?: string }>) {
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-pill border px-3 py-1 text-xs text-[var(--lp-text-muted)]', className)} style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-chip)' }}>
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-pill border border-[var(--lp-line)] bg-[var(--lp-surface)] px-3 py-1 text-xs font-medium text-[var(--lp-text-soft)]',
+        className,
+      )}
+    >
       {children}
     </span>
   )
 }
 
-/** KPI / stat tile. */
-export function StatCard({ icon, value, label, className }: { icon?: React.ReactNode; value: string; label: string; className?: string }) {
+/** Section heading block: a small violet eyebrow, a display title, an optional lede. */
+export function SectionHeading({
+  eyebrow,
+  title,
+  lede,
+  align = 'center',
+  id,
+}: {
+  eyebrow: string
+  title: ReactNode
+  lede?: ReactNode
+  align?: 'center' | 'left'
+  id?: string
+}) {
   return (
-    <GlassCard className={cn('p-5 transition-transform duration-300 hover:-translate-y-1', className)}>
-      {icon && <div className="mb-3 text-2xl text-[var(--lp-text)]">{icon}</div>}
-      <div className="text-[28px] font-semibold tracking-[-1px]">{value}</div>
-      <div className="mt-0.5 text-[12.5px] text-[var(--lp-text-muted)]">{label}</div>
-    </GlassCard>
+    <div className={cn('mb-10 max-w-[680px]', align === 'center' && 'mx-auto text-center')}>
+      <p className="mb-3 text-sm font-semibold text-[var(--ui-info)]">{eyebrow}</p>
+      <h2 id={id} className="text-[clamp(28px,4vw,40px)] font-bold leading-[1.12] tracking-[-0.02em] text-[var(--lp-text)]">
+        {title}
+      </h2>
+      {lede && <p className="mt-4 text-base leading-relaxed text-[var(--lp-text-muted)]">{lede}</p>}
+    </div>
   )
 }
 
 /** Animated SVG score ring. `pct` 0–100. */
-export function ScoreRing({ pct, size = 128, label = 'OVERALL', value }: { pct: number; size?: number; label?: string; value?: number }) {
-  const r = size / 2 - 11
+export function ScoreRing({ pct, size = 112, label = 'SAMPLE', value }: { pct: number; size?: number; label?: string; value?: number }) {
+  const stroke = 10
+  const r = size / 2 - stroke
   const circ = 2 * Math.PI * r
   return (
-    <div className="relative" style={{ width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }}>
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--lp-inset)" strokeWidth={11} />
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="url(#sr)" strokeWidth={11} strokeLinecap="round"
-          strokeDasharray={circ} strokeDashoffset={circ * (1 - pct / 100)}
-          style={{ transition: 'stroke-dashoffset 1.6s cubic-bezier(.2,.7,.2,1)' }} />
-        <defs>
-          <linearGradient id="sr" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#0088ff" />
-            <stop offset="100%" stopColor="#a887dc" />
-          </linearGradient>
-        </defs>
+    <div className="relative flex-none" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: 'rotate(-90deg)' }} aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--lp-inset)" strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke="var(--lp-accent)"
+          strokeWidth={stroke}
+          strokeLinecap="round"
+          strokeDasharray={circ}
+          strokeDashoffset={circ * (1 - pct / 100)}
+        />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <div className="text-[34px] font-semibold tracking-[-1.5px] text-[var(--lp-text)]">{value ?? pct}</div>
-        <div className="text-[10px] tracking-[1px] text-[var(--lp-text-faint)]">{label}</div>
+        <div className="font-display text-[30px] font-bold leading-none tracking-[-1px] text-[var(--lp-text)]">{value ?? pct}</div>
+        <div className="mt-1 text-xs font-medium text-[var(--lp-text-faint)]">{label}</div>
       </div>
     </div>
   )
 }
 
-/** Looping audio waveform bars. */
-export function WaveBars({ count = 9, colors = ['#0088ff', '#60a5fa'], className }: { count?: number; colors?: string[]; className?: string }) {
+/** Audio waveform bars; they hold still under prefers-reduced-motion. */
+export function WaveBars({ count = 9, className }: { count?: number; className?: string }) {
   return (
-    <div className={cn('flex items-end gap-[3px]', className)}>
+    <div className={cn('flex h-5 items-end gap-[3px]', className)} aria-hidden="true">
       {Array.from({ length: count }).map((_, i) => (
-        <span key={i} className="w-[3px] rounded-full animate-wave"
-          style={{ height: `${40 + Math.abs(Math.sin(i * 0.9)) * 60}%`, background: colors[i % colors.length], animationDelay: `${(i % 5) * 0.1}s` }} />
+        <span
+          key={i}
+          className="h-full w-[3px] rounded-full bg-[var(--lp-accent)] animate-wave"
+          style={{ height: `${40 + Math.abs(Math.sin(i * 0.9)) * 60}%`, animationDelay: `${(i % 5) * 0.1}s` }}
+        />
       ))}
     </div>
   )
 }
-

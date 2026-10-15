@@ -3,6 +3,7 @@
 // panel workload checks "outside availability" against. English-only by
 // design, same as the console it lives on (CLAUDE.md).
 
+import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2, Trash2 } from '@/design/components/icons';
@@ -56,7 +57,7 @@ export default function MyAvailability(): JSX.Element {
   const ready = Boolean(startLocal) && Boolean(endLocal);
 
   return (
-    <section className="mt-8">
+    <section>
       <h2 className="text-[16px] font-semibold text-foreground">My availability</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
         When HR can book you for an interview — in your own local time ({browserTimezone()}).
@@ -71,7 +72,10 @@ export default function MyAvailability(): JSX.Element {
           }}
         >
           <div>
-            <label htmlFor="avail-start" className="block text-[12px] font-medium text-[var(--ui-soft)]">
+            <label
+              htmlFor="avail-start"
+              className="block text-[12px] font-medium text-[var(--ui-soft)]"
+            >
               From
             </label>
             <input
@@ -83,7 +87,10 @@ export default function MyAvailability(): JSX.Element {
             />
           </div>
           <div>
-            <label htmlFor="avail-end" className="block text-[12px] font-medium text-[var(--ui-soft)]">
+            <label
+              htmlFor="avail-end"
+              className="block text-[12px] font-medium text-[var(--ui-soft)]"
+            >
               To
             </label>
             <input
@@ -94,13 +101,9 @@ export default function MyAvailability(): JSX.Element {
               className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
             />
           </div>
-          <button
-            type="submit"
-            disabled={!ready || addMut.isPending}
-            className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
-          >
+          <Button type="submit" disabled={!ready || addMut.isPending}>
             {addMut.isPending ? 'Adding…' : 'Add window'}
-          </button>
+          </Button>
         </form>
 
         {windows.isLoading ? (
@@ -130,7 +133,7 @@ export default function MyAvailability(): JSX.Element {
                   aria-label="Remove this window"
                   disabled={removeMut.isPending}
                   onClick={() => removeMut.mutate(w.id)}
-                  className="shrink-0 rounded-[7px] p-1 text-[var(--ui-faint)] hover:text-[var(--ui-danger)] disabled:opacity-40"
+                  className="-my-1 -mr-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
                 >
                   <Trash2 size={14} aria-hidden="true" />
                 </button>

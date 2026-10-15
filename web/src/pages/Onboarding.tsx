@@ -33,23 +33,25 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import { Reveal } from '@/design/components/Reveal';
-import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { StatusTag } from '@/design/components/primitives';
+import { Page, Stepper, type Step } from '@/design/components/page';
 import { Check } from '@/design/components/icons';
 
 const TOTAL_STEPS = 4;
 
+/** The wizard's four steps, in order. Labels are `practice.step*` keys. */
+const WIZARD_STEPS: { key: string; labelKey: string }[] = [
+  { key: '1', labelKey: 'practice.stepName' },
+  { key: '2', labelKey: 'practice.stepGoal' },
+  { key: '3', labelKey: 'practice.stepRole' },
+  { key: '4', labelKey: 'practice.stepLanguage' },
+];
+
 /** Where every page that starts an interview reads the spoken language from.
  *  Mirrors the constant in StartInterview/JobsList/Interview/AppShell. */
 const INTERVIEW_LANGUAGE_KEY = 'intants:interview-language';
-
-/** How long the "your plan is ready" recap holds before the dashboard.
- *
- * Long enough to read three lines, short enough that it still reads as one
- * continuous motion rather than a second page. The CTA skips it, and the
- * dashboard shows the same plan in more detail, so nothing is lost either way.
- */
-const HANDOFF_MS = 2600;
 
 /** Translation keys for the wizard's option lists.
  *
@@ -75,6 +77,17 @@ const LEVEL_KEYS: Record<TargetLevel, string> = {
   mid: 'Mid',
   senior: 'Senior',
 };
+
+/** Shared look for the wizard's radio tiles. Selection is a border and a wash
+ *  here, and a check icon at each call site. */
+function optionCls(selected: boolean): string {
+  return cn(
+    'rounded-[16px] border-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+    selected
+      ? 'border-[var(--accent)] bg-[var(--ui-info-wash)]'
+      : 'border-border bg-card hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
+  );
+}
 
 /** Debounce so typing a role doesn't fire a request per keystroke.
  *
@@ -220,13 +233,9 @@ export default function Onboarding(): JSX.Element {
     onError: () => toast.error(t('onboarding.skipFailed')),
   });
 
-  // Auto-advance off the recap. Cleared on unmount so an early CTA click does
-  // not fire a second navigate.
-  useEffect(() => {
-    if (handoff === null) return;
-    const id = setTimeout(() => goToDashboard(true), HANDOFF_MS);
-    return () => clearTimeout(id);
-  }, [handoff, goToDashboard]);
+  // No timed hand-off: the recap stays until the person chooses. A change of
+  // page they did not ask for, on a clock they cannot extend, is not a finish
+  // line. The two buttons below are the only ways out.
 
   const canAdvance = useCallback((): boolean => {
     if (step === 3) return role.trim().length >= 2;
@@ -248,280 +257,234 @@ export default function Onboarding(): JSX.Element {
     const plan = handoff === false ? null : handoff;
     const firstName = fullName.trim().split(' ')[0] ?? '';
     return (
-      <div className="mx-auto flex min-h-[80vh] max-w-[720px] flex-col justify-center px-6 py-10">
-        <Reveal>
-          <GlassCard className="p-6 sm:p-8 space-y-5">
-            <div>
-              <StatusTag tone="forest">{t('onboarding.readyTag')}</StatusTag>
-              <h1 className="mt-3 text-2xl font-semibold">
-                {firstName
-                  ? t('onboarding.readyTitleNamed', { name: firstName })
-                  : t('onboarding.readyTitle')}
-              </h1>
-              <p className="mt-2 text-sm opacity-70">
-                {plan?.ready
-                  ? plan.domain_label
-                    ? t('onboarding.readyPlanDomain', {
-                        role: plan.target_role,
-                        domain: plan.domain_label,
-                      })
-                    : t('onboarding.readyPlan', { role: plan.target_role })
-                  : t('onboarding.readySaved')}
+      <Page width="form">
+        <div className="max-w-[640px] space-y-6 rounded-card border border-border bg-card p-6 shadow-card sm:p-8">
+          <div>
+            <StatusTag tone="forest">{t('onboarding.readyTag')}</StatusTag>
+            <h1 className="mt-3 text-[28px] font-bold leading-tight tracking-[-0.5px] text-foreground">
+              {firstName
+                ? t('onboarding.readyTitleNamed', { name: firstName })
+                : t('onboarding.readyTitle')}
+            </h1>
+            <p className="mt-2 text-[15px] text-muted-foreground">
+              {plan?.ready
+                ? plan.domain_label
+                  ? t('onboarding.readyPlanDomain', {
+                      role: plan.target_role,
+                      domain: plan.domain_label,
+                    })
+                  : t('onboarding.readyPlan', { role: plan.target_role })
+                : t('onboarding.readySaved')}
+            </p>
+          </div>
+
+          {plan?.ready && plan.competencies.length > 0 && (
+            <div className="space-y-2 rounded-[16px] bg-[var(--ui-highlight-wash)] px-4 py-4">
+              <p className="text-[13px] font-semibold text-foreground">
+                {t('onboarding.readyCompetencies', {
+                  count: plan.competencies.length,
+                })}
               </p>
+              <ul className="flex flex-wrap gap-2">
+                {plan.competencies.map((c) => (
+                  <li
+                    key={c.id}
+                    className="rounded-full border border-border bg-card px-3 py-1 text-[13px] text-foreground"
+                  >
+                    {c.name}
+                  </li>
+                ))}
+              </ul>
             </div>
+          )}
 
-            {plan?.ready && plan.competencies.length > 0 && (
-              <div className="space-y-2 rounded-lg bg-[var(--ui-inset)] px-4 py-3">
-                <p className="text-xs opacity-60">
-                  {t('onboarding.readyCompetencies', {
-                    count: plan.competencies.length,
-                  })}
-                </p>
-                <div className="flex flex-wrap gap-1.5">
-                  {plan.competencies.map((c) => (
-                    <span
-                      key={c.id}
-                      className="rounded-full bg-[var(--ui-inset)] px-2 py-0.5 text-xs opacity-80"
-                    >
-                      {c.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <button
+          {/* The finish line: one primary, one way back. Nothing happens on a timer. */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <Button
               type="button"
+              size="lg"
+              onClick={() => void navigate('/start', { replace: true })}
+              className="w-full sm:w-auto"
+            >
+              {t('practice.startFirst')}
+            </Button>
+            <Button
+              type="button"
+              size="lg"
+              variant="outline"
               onClick={() => goToDashboard(true)}
-              className="w-full rounded-lg px-4 py-3 text-sm font-medium transition sm:w-auto"
-              style={{ background: 'var(--accent)', color: '#08131f' }}
+              className="w-full sm:w-auto"
             >
               {t('onboarding.goToDashboard')}
-            </button>
-          </GlassCard>
-        </Reveal>
-      </div>
+            </Button>
+          </div>
+        </div>
+      </Page>
     );
   }
 
+  const wizardSteps: Step[] = WIZARD_STEPS.map((s) => ({ key: s.key, label: t(s.labelKey) }));
+
   return (
-    <div className="mx-auto flex min-h-[80vh] max-w-[720px] flex-col justify-center px-6 py-10">
-      <Reveal>
-        <GlassCard className="p-6 sm:p-8 space-y-6">
-          {/* progress */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs opacity-60">
-              <span>{t('onboarding.stepOf', { step, total: TOTAL_STEPS })}</span>
-              <button
-                type="button"
-                onClick={() => skip.mutate()}
-                disabled={busy}
-                className="underline underline-offset-2 hover:opacity-100 disabled:opacity-40"
-              >
-                {t('onboarding.skip')}
-              </button>
+    <Page width="form">
+      <div className="max-w-[640px] space-y-7 rounded-card border border-border bg-card p-6 shadow-card sm:p-8">
+        {/* Where they are in the four steps: the shared Stepper (state in words
+            as well as shape), with Skip always one press away. */}
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-3 text-[13px] text-muted-foreground">
+            <Stepper
+              steps={wizardSteps}
+              current={String(step)}
+              label={t('practice.stepsLabel')}
+              compactLabel={t('onboarding.stepOf', { step, total: TOTAL_STEPS })}
+              className="min-w-0 flex-1"
+            />
+            <button
+              type="button"
+              onClick={() => skip.mutate()}
+              disabled={busy}
+              className="inline-flex min-h-10 items-center rounded-full px-3 underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+            >
+              {t('onboarding.skip')}
+            </button>
+          </div>
+        </div>
+
+        {step === 1 && (
+          <div className="space-y-4">
+            <div>
+              <h1 id="onboarding-name-title" className="text-[24px] font-bold tracking-[-0.4px] text-foreground">
+                {t('onboarding.nameTitle')}
+              </h1>
+              <p className="mt-1.5 text-[14.5px] text-muted-foreground">{t('onboarding.nameHint')}</p>
             </div>
-            <div className="h-1 w-full overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{ width: `${(step / TOTAL_STEPS) * 100}%`, background: 'var(--accent)' }}
-              />
+            <Input
+              autoFocus
+              aria-labelledby="onboarding-name-title"
+              value={fullName}
+              onChange={(e) => {
+                touch();
+                setFullName(e.target.value);
+              }}
+              placeholder={t('onboarding.namePlaceholder')}
+              maxLength={120}
+              className="h-12 text-base"
+            />
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-4">
+            <div>
+              <h1 id="onboarding-goal-title" className="text-[24px] font-bold tracking-[-0.4px] text-foreground">
+                {t('onboarding.goalTitle')}
+              </h1>
+              <p className="mt-1.5 text-[14.5px] text-muted-foreground">{t('onboarding.goalHint')}</p>
+            </div>
+            <div
+              role="radiogroup"
+              aria-labelledby="onboarding-goal-title"
+              className="flex flex-col gap-2.5"
+            >
+              {GOAL_OPTIONS.map((g) => {
+                const selected = goal === g.value;
+                return (
+                  <button
+                    key={g.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => {
+                      touch();
+                      setGoal(g.value);
+                    }}
+                    className={cn(optionCls(selected), 'min-h-14 px-4 py-3 text-left')}
+                  >
+                    <div className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
+                      {/* Selection is otherwise carried by a tint and a border
+                          alone — no use to anyone who cannot see them. */}
+                      {selected && (
+                        <Check size={16} className="shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
+                      )}
+                      {t(`onboarding.goal${GOAL_KEYS[g.value]}`, g.label)}
+                    </div>
+                    <div className="mt-0.5 text-[13px] text-muted-foreground">
+                      {t(`onboarding.goal${GOAL_KEYS[g.value]}Hint`, g.hint)}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
+        )}
 
-          {step === 1 && (
-            <div className="space-y-4">
-              <div>
-                <h1 id="onboarding-name-title" className="text-xl font-semibold">
-                  {t('onboarding.nameTitle')}
-                </h1>
-                <p className="mt-1 text-sm opacity-70">{t('onboarding.nameHint')}</p>
-              </div>
-              <input
-                autoFocus
-                aria-labelledby="onboarding-name-title"
-                value={fullName}
-                onChange={(e) => {
-                  touch();
-                  setFullName(e.target.value);
-                }}
-                placeholder={t('onboarding.namePlaceholder')}
-                maxLength={120}
-                className="w-full rounded-lg bg-[var(--ui-inset)] px-4 py-3 text-base outline-none focus:ring-1 focus:ring-[var(--accent)]"
-              />
+        {step === 3 && (
+          <div className="space-y-5">
+            <div>
+              <h1 id="onboarding-role-title" className="text-[24px] font-bold tracking-[-0.4px] text-foreground">
+                {t('onboarding.roleTitle')}
+              </h1>
+              <p className="mt-1.5 text-[14.5px] text-muted-foreground">{t('onboarding.roleHint')}</p>
             </div>
-          )}
+            <Input
+              autoFocus
+              aria-labelledby="onboarding-role-title"
+              value={role}
+              onChange={(e) => {
+                touch();
+                setRole(e.target.value);
+              }}
+              placeholder={t('onboarding.rolePlaceholder')}
+              maxLength={200}
+              className="h-12 text-base"
+            />
 
-          {step === 2 && (
-            <div className="space-y-4">
-              <div>
-                <h1 id="onboarding-goal-title" className="text-xl font-semibold">
-                  {t('onboarding.goalTitle')}
-                </h1>
-                <p className="mt-1 text-sm opacity-70">{t('onboarding.goalHint')}</p>
-              </div>
-              <div
-                role="radiogroup"
-                aria-labelledby="onboarding-goal-title"
-                className="flex flex-col gap-2"
-              >
-                {GOAL_OPTIONS.map((g) => {
-                  const selected = goal === g.value;
-                  return (
-                    <button
-                      key={g.value}
-                      type="button"
-                      role="radio"
-                      aria-checked={selected}
-                      onClick={() => {
-                        touch();
-                        setGoal(g.value);
-                      }}
-                      className={cn(
-                        'rounded-lg px-4 py-3 text-left transition',
-                        selected
-                          ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
-                          : 'bg-[var(--ui-inset)] hover:bg-[var(--ui-inset-strong)]',
-                      )}
-                    >
-                      <div className="flex items-center gap-1.5 text-sm font-medium">
-                        {/* Selection is otherwise carried by a tint and a ring
-                            alone — no use to anyone who cannot see them. */}
-                        {selected && (
-                          <Check
-                            size={14}
-                            className="shrink-0 text-[var(--accent)]"
-                            aria-hidden="true"
-                          />
-                        )}
-                        {t(`onboarding.goal${GOAL_KEYS[g.value]}`, g.label)}
-                      </div>
-                      <div className="text-xs opacity-60">
-                        {t(`onboarding.goal${GOAL_KEYS[g.value]}Hint`, g.hint)}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {step === 3 && (
-            <div className="space-y-4">
-              <div>
-                <h1 id="onboarding-role-title" className="text-xl font-semibold">
-                  {t('onboarding.roleTitle')}
-                </h1>
-                <p className="mt-1 text-sm opacity-70">{t('onboarding.roleHint')}</p>
-              </div>
-              <input
-                autoFocus
-                aria-labelledby="onboarding-role-title"
-                value={role}
-                onChange={(e) => {
-                  touch();
-                  setRole(e.target.value);
-                }}
-                placeholder={t('onboarding.rolePlaceholder')}
-                maxLength={200}
-                className="w-full rounded-lg bg-[var(--ui-inset)] px-4 py-3 text-base outline-none focus:ring-1 focus:ring-[var(--accent)]"
-              />
-
-              {/* Live confirmation that we understood the job. */}
-              {debouncedRole.length >= 2 && (
-                <div className="rounded-lg bg-[var(--ui-inset)] px-4 py-3 text-sm">
-                  {previewing && (
-                    <span className="opacity-60">{t('onboarding.roleReading')}</span>
-                  )}
-                  {!previewing && preview?.ready && (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <StatusTag tone="forest">{preview.domain_label}</StatusTag>
-                        <span className="text-xs opacity-60">
-                          {t('onboarding.roleCompetencies', {
-                            count: preview.competencies.length,
-                          })}
-                        </span>
-                      </div>
-                      <p className="text-xs opacity-70">{preview.what_this_person_does}</p>
-                      <div className="flex flex-wrap gap-1.5 pt-1">
-                        {preview.competencies.map((c) => (
-                          <span
-                            key={c.id}
-                            className="rounded-full bg-[var(--ui-inset)] px-2 py-0.5 text-xs opacity-80"
-                          >
-                            {c.name}
-                          </span>
-                        ))}
-                      </div>
-                      <p className="pt-1 text-xs opacity-50">
-                        {t('onboarding.roleNotRight')}
-                      </p>
+            {/* Live confirmation that we understood the job. */}
+            {debouncedRole.length >= 2 && (
+              <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] px-4 py-3 text-sm" aria-live="polite">
+                {previewing && (
+                  <span className="text-muted-foreground">{t('onboarding.roleReading')}</span>
+                )}
+                {!previewing && preview?.ready && (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <StatusTag tone="forest">{preview.domain_label}</StatusTag>
+                      <span className="text-[13px] text-muted-foreground">
+                        {t('onboarding.roleCompetencies', {
+                          count: preview.competencies.length,
+                        })}
+                      </span>
                     </div>
-                  )}
-                </div>
-              )}
-
-              <div>
-                <div id="onboarding-level-title" className="mb-2 text-sm font-medium">
-                  {t('onboarding.levelTitle')}
-                </div>
-                <div
-                  role="radiogroup"
-                  aria-labelledby="onboarding-level-title"
-                  className="flex flex-wrap gap-2"
-                >
-                  {LEVEL_OPTIONS.map((l) => {
-                    const selected = level === l.value;
-                    return (
-                      <button
-                        key={l.value}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() => {
-                          touch();
-                          setLevel(l.value);
-                        }}
-                        title={t(`onboarding.level${LEVEL_KEYS[l.value]}Hint`, l.hint)}
-                        className={cn(
-                          'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm transition',
-                          selected
-                            ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
-                            : 'bg-[var(--ui-inset)] hover:bg-[var(--ui-inset-strong)]',
-                        )}
-                      >
-                        {selected && (
-                          <Check
-                            size={14}
-                            className="shrink-0 text-[var(--accent)]"
-                            aria-hidden="true"
-                          />
-                        )}
-                        {t(`onboarding.level${LEVEL_KEYS[l.value]}`, l.label)}
-                      </button>
-                    );
-                  })}
-                </div>
+                    <p className="text-[13px] text-[var(--ui-soft)]">{preview.what_this_person_does}</p>
+                    <ul className="flex flex-wrap gap-1.5 pt-1">
+                      {preview.competencies.map((c) => (
+                        <li
+                          key={c.id}
+                          className="rounded-full border border-border bg-card px-2.5 py-0.5 text-[12px] text-foreground"
+                        >
+                          {c.name}
+                        </li>
+                      ))}
+                    </ul>
+                    <p className="pt-1 text-[12px] text-muted-foreground">
+                      {t('onboarding.roleNotRight')}
+                    </p>
+                  </div>
+                )}
               </div>
-            </div>
-          )}
+            )}
 
-          {step === 4 && (
-            <div className="space-y-4">
-              <div>
-                <h1 id="onboarding-language-title" className="text-xl font-semibold">
-                  {t('onboarding.languageTitle')}
-                </h1>
-                <p className="mt-1 text-sm opacity-70">{t('onboarding.languageHint')}</p>
+            <div>
+              <div id="onboarding-level-title" className="mb-2 text-[14px] font-semibold text-foreground">
+                {t('onboarding.levelTitle')}
               </div>
               <div
                 role="radiogroup"
-                aria-labelledby="onboarding-language-title"
+                aria-labelledby="onboarding-level-title"
                 className="flex flex-wrap gap-2"
               >
-                {LANGUAGE_OPTIONS.map((l) => {
-                  const selected = language === l.value;
+                {LEVEL_OPTIONS.map((l) => {
+                  const selected = level === l.value;
                   return (
                     <button
                       key={l.value}
@@ -530,72 +493,100 @@ export default function Onboarding(): JSX.Element {
                       aria-checked={selected}
                       onClick={() => {
                         touch();
-                        setLanguage(l.value);
+                        setLevel(l.value);
                       }}
-                      className={cn(
-                        'flex items-center gap-1.5 rounded-lg px-4 py-3 text-sm transition',
-                        selected
-                          ? 'bg-[var(--accent)]/15 ring-1 ring-[var(--accent)]'
-                          : 'bg-[var(--ui-inset)] hover:bg-[var(--ui-inset-strong)]',
-                      )}
+                      title={t(`onboarding.level${LEVEL_KEYS[l.value]}Hint`, l.hint)}
+                      className={cn(optionCls(selected), 'flex min-h-11 items-center gap-1.5 px-4 text-[14px] font-medium')}
                     >
                       {selected && (
-                        <Check
-                          size={14}
-                          className="shrink-0 text-[var(--accent)]"
-                          aria-hidden="true"
-                        />
+                        <Check size={15} className="shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
                       )}
-                      {/* Endonyms — never translated, that is the point of them. */}
-                      {l.label}
+                      {t(`onboarding.level${LEVEL_KEYS[l.value]}`, l.label)}
                     </button>
                   );
                 })}
               </div>
             </div>
-          )}
-
-          {/* nav */}
-          <div className="flex items-center justify-between pt-2">
-            <button
-              type="button"
-              onClick={() => setStep((s) => Math.max(1, s - 1))}
-              disabled={step === 1 || busy}
-              className="rounded-lg px-3 py-2 text-sm transition hover:bg-[var(--ui-inset-strong)] disabled:opacity-30"
-            >
-              {t('onboarding.back')}
-            </button>
-
-            {step < TOTAL_STEPS ? (
-              <button
-                type="button"
-                onClick={() => setStep((s) => s + 1)}
-                disabled={!canAdvance() || busy}
-                className="rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-40"
-                style={{ background: 'var(--accent)', color: '#08131f' }}
-              >
-                {t('onboarding.continue')}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => finish.mutate()}
-                disabled={role.trim().length < 2 || busy}
-                className="rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-40"
-                style={{ background: 'var(--accent)', color: '#08131f' }}
-              >
-                {finish.isPending ? t('onboarding.saving') : t('onboarding.submit')}
-              </button>
-            )}
           </div>
+        )}
 
-          {step === TOTAL_STEPS && role.trim().length < 2 && (
-            <p className="text-xs" style={{ color: '#ffb764' }}>
-              {t('onboarding.roleRequired')}
-            </p>
+        {step === 4 && (
+          <div className="space-y-4">
+            <div>
+              <h1 id="onboarding-language-title" className="text-[24px] font-bold tracking-[-0.4px] text-foreground">
+                {t('onboarding.languageTitle')}
+              </h1>
+              <p className="mt-1.5 text-[14.5px] text-muted-foreground">{t('onboarding.languageHint')}</p>
+            </div>
+            <div
+              role="radiogroup"
+              aria-labelledby="onboarding-language-title"
+              className="flex flex-wrap gap-2.5"
+            >
+              {LANGUAGE_OPTIONS.map((l) => {
+                const selected = language === l.value;
+                return (
+                  <button
+                    key={l.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    onClick={() => {
+                      touch();
+                      setLanguage(l.value);
+                    }}
+                    className={cn(optionCls(selected), 'flex min-h-12 items-center gap-2 px-5 text-[15px] font-medium')}
+                  >
+                    {selected && (
+                      <Check size={16} className="shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
+                    )}
+                    {/* Endonyms — never translated, that is the point of them. */}
+                    {l.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* nav */}
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setStep((s) => Math.max(1, s - 1))}
+            disabled={step === 1 || busy}
+          >
+            {t('onboarding.back')}
+          </Button>
+
+          {step < TOTAL_STEPS ? (
+            <Button
+              type="button"
+              size="lg"
+              onClick={() => setStep((s) => s + 1)}
+              disabled={!canAdvance() || busy}
+            >
+              {t('onboarding.continue')}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              size="lg"
+              onClick={() => finish.mutate()}
+              disabled={role.trim().length < 2 || busy}
+            >
+              {finish.isPending ? t('onboarding.saving') : t('onboarding.submit')}
+            </Button>
           )}
-        </GlassCard>
-      </Reveal>
-    </div>
+        </div>
+
+        {step === TOTAL_STEPS && role.trim().length < 2 && (
+          <p role="alert" className="text-[13px] font-medium text-[var(--ui-warn)]">
+            {t('onboarding.roleRequired')}
+          </p>
+        )}
+      </div>
+    </Page>
   );
 }

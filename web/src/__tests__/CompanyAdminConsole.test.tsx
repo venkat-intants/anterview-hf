@@ -80,6 +80,26 @@ vi.mock('../api/hr', () => ({
   deleteMyInterviewer: (...a: unknown[]) => api.deleteMyInterviewer(...a) as unknown,
 }));
 
+// "Waiting on you": the four queue lengths. Same functions the queue pages use.
+const queues = {
+  listPendingApprovals: vi.fn(),
+  listPendingWorkflowReviews: vi.fn(),
+  listOfferApprovals: vi.fn(),
+  listAdminQuestionReviews: vi.fn(),
+};
+vi.mock('../api/requisitions', () => ({
+  listPendingApprovals: (...a: unknown[]) => queues.listPendingApprovals(...a) as unknown,
+}));
+vi.mock('../api/workflowReview', () => ({
+  listPendingWorkflowReviews: (...a: unknown[]) => queues.listPendingWorkflowReviews(...a) as unknown,
+}));
+vi.mock('../api/offers', () => ({
+  listOfferApprovals: (...a: unknown[]) => queues.listOfferApprovals(...a) as unknown,
+}));
+vi.mock('../api/questionBanks', () => ({
+  listAdminQuestionReviews: (...a: unknown[]) => queues.listAdminQuestionReviews(...a) as unknown,
+}));
+
 const getMe = vi.fn();
 vi.mock('../api/auth', () => ({
   getMe: (...a: unknown[]) => getMe(...a) as unknown,
@@ -162,6 +182,10 @@ beforeEach(() => {
   api.listMyInterviewers.mockResolvedValue(INTERVIEWERS);
   api.createMyInterviewer.mockResolvedValue(INTERVIEWERS[0]);
   api.deleteMyInterviewer.mockResolvedValue(undefined);
+  queues.listPendingApprovals.mockResolvedValue([{}, {}, {}]);
+  queues.listPendingWorkflowReviews.mockResolvedValue([{}]);
+  queues.listOfferApprovals.mockResolvedValue([]);
+  queues.listAdminQuestionReviews.mockResolvedValue([{}, {}]);
 });
 
 // ---------------------------------------------------------------------------
@@ -223,6 +247,9 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
     renderConsole();
 
     await screen.findByRole('heading', { name: /super admin/i });
+    // The fields do not exist until the dialog is opened from the page header.
+    expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
     await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), '  new.hr@acme.edu  ');
     await user.type(screen.getByLabelText(/full name/i, { selector: '#hr-name' }), '  Deepa Menon  ');
     await user.click(screen.getByRole('button', { name: /^add hr$/i }));
@@ -237,6 +264,24 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
     // must derive the tenant from the caller, never trust the client.
     const payload = api.createMyHrManager.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(Object.keys(payload).sort()).toEqual(['email', 'full_name']);
+    // Success closes the dialog; the set-password hint stays on the page.
+    await waitFor(() => expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument());
+    expect(screen.getAllByText(/set your password.*link is emailed/i).length).toBe(2);
+  });
+
+  it('Cancel discards what was typed and sends nothing', async () => {
+    const user = userEvent.setup();
+    renderConsole();
+
+    await screen.findByRole('heading', { name: /super admin/i });
+    await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
+    await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'typed@acme.edu');
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }));
+    expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
+    expect(screen.getByLabelText(/^email$/i, { selector: '#hr-email' })).toHaveValue('');
+    expect(api.createMyHrManager).not.toHaveBeenCalled();
   });
 
   it('never ships a password — a set-password link is emailed instead', async () => {
@@ -253,11 +298,14 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
     renderConsole();
 
     await screen.findByRole('heading', { name: /super admin/i });
+    await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
     await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'only.email@acme.edu');
     await user.click(screen.getByRole('button', { name: /^add hr$/i }));
 
     expect(api.createMyHrManager).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith('Email and name are required.');
+    // The rule is unchanged (both fields required); it is now said beside the field.
+    expect(await screen.findByText('Full name is required.')).toBeInTheDocument();
+    expect(screen.queryByText('Email is required.')).not.toBeInTheDocument();
   });
 
   it('surfaces the server error rather than silently doing nothing', async () => {
@@ -266,11 +314,15 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
     renderConsole();
 
     await screen.findByRole('heading', { name: /super admin/i });
+    await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
     await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'dupe@acme.edu');
     await user.type(screen.getByLabelText(/full name/i, { selector: '#hr-name' }), 'Dupe');
     await user.click(screen.getByRole('button', { name: /^add hr$/i }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Email already registered'));
+    // The dialog stays open with the values and the reason, so nothing is lost.
+    expect(await screen.findByRole('alert')).toHaveTextContent('Email already registered');
+    expect(screen.getByLabelText(/^email$/i, { selector: '#hr-email' })).toHaveValue('dupe@acme.edu');
   });
 });
 
@@ -315,6 +367,7 @@ describe('CompanyAdminConsole — interviewers (D4-1)', () => {
     renderConsole();
 
     await screen.findByText('Farah Khan');
+    await user.click(screen.getByRole('button', { name: /^new interviewer$/i }));
     await user.type(screen.getByLabelText(/^email$/i, { selector: '#interviewer-email' }), 'new.iv@acme.edu');
     await user.type(screen.getByLabelText(/full name/i, { selector: '#interviewer-name' }), 'New Interviewer');
     await user.click(screen.getByRole('button', { name: /^add interviewer$/i }));
@@ -383,5 +436,59 @@ describe('CompanyAdminConsole — a wrong-role user sees nothing', () => {
 
     expect(await screen.findByRole('heading', { name: /super admin/i })).toBeInTheDocument();
     await waitFor(() => expect(api.listMyHrManagers).toHaveBeenCalled());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UX round 3: the console leads with what is waiting on the super admin
+// ---------------------------------------------------------------------------
+
+describe('CompanyAdminConsole — waiting on you', () => {
+  it('shows the real length of each queue, each cell linking to its queue', async () => {
+    renderConsole();
+
+    const group = await screen.findByTestId('waiting-on-you');
+    const cell = async (name: RegExp) => within(group).findByRole('link', { name });
+    const openings = await cell(/^Openings/);
+    expect(openings).toHaveTextContent('3');
+    expect(openings).toHaveAttribute('href', '/superadmin/approvals');
+    const workflows = await cell(/^Workflows/);
+    expect(workflows).toHaveTextContent('1');
+    expect(workflows).toHaveAttribute('href', '/superadmin/workflow-reviews');
+    // An empty queue is a real 0 — it is shown, not dashed.
+    const offers = await cell(/^Offers/);
+    expect(offers).toHaveTextContent('0');
+    expect(offers).toHaveAttribute('href', '/superadmin/offer-approvals');
+    const questions = await cell(/^Questions/);
+    expect(questions).toHaveTextContent('2');
+    expect(questions).toHaveAttribute('href', '/superadmin/question-reviews');
+  });
+
+  it('shows "—" for a queue whose count could not be fetched, never 0', async () => {
+    queues.listOfferApprovals.mockRejectedValue(new Error('503'));
+    renderConsole();
+
+    const group = await screen.findByTestId('waiting-on-you');
+    const offers = await within(group).findByRole('link', { name: /^Offers/ });
+    await waitFor(() => expect(offers).toHaveTextContent('—'));
+    expect(offers).not.toHaveTextContent('0');
+    // The queues that did load keep their numbers.
+    expect(within(group).getByRole('link', { name: /^Openings/ })).toHaveTextContent('3');
+  });
+
+  it('says so, instead of drawing nothing, when every queue failed', async () => {
+    for (const q of Object.values(queues)) q.mockRejectedValue(new Error('503'));
+    renderConsole();
+
+    const group = await screen.findByTestId('waiting-on-you');
+    expect(await within(group).findByRole('alert')).toHaveTextContent(/could not load the approval queues/i);
+    expect(within(group).queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('comes before the rosters', async () => {
+    renderConsole();
+    const group = await screen.findByTestId('waiting-on-you');
+    const roster = await screen.findByRole('list', { name: /^hr managers$/i });
+    expect(group.compareDocumentPosition(roster) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

@@ -4,6 +4,12 @@
 // the round they are on and every transition were recorded from the day they
 // applied, and the only people who could see any of it were the hiring team.
 //
+// ORDER IS THE POINT. The page answers "whose move is it?" before anything
+// else: applications waiting on the candidate first ("Your move"), then those
+// with the hiring team, then closed ones. Interviews and offers the server has
+// not tied to an application get their own section after those, and the
+// rediscovery consent — a setting, not a status — comes last.
+//
 // What it deliberately does NOT show, because the API does not send it: any
 // score, any threshold, any note written about them. Progress and next steps
 // only. The one place that shades toward tact is the internal `held` state,
@@ -12,311 +18,105 @@
 // them they fell short of a bar that cannot reject them would be both unkind
 // and untrue.
 //
+// The track under each title is `Applied → Round n of N → Decision` and nothing
+// more: the server sends the CURRENT round only, so past and future rounds are
+// not named. Drawing a five-stage tracker would invent four of the stages.
+//
 // The empty state carries real weight here. Two very different people see it:
 // someone who only practises and has applied to nothing, and an applicant who
 // signed in with an account that was never linked to their application. The
 // second needs to know their application is safe and what to do about it.
 
-import { useEffect, useState } from 'react';
-import { useMutation, useQuery } from '@tanstack/react-query';
-import {
-  getMyApplication,
-  listMyApplications,
-  type MyApplication,
-  mintMyExamLink,
-  mintMyInterviewLink,
-  mintMyTaskLink,
-} from '@/api/applications';
-import { ApiError } from '@/api/client';
-import { sameOriginUrl } from '@/lib/safeUrl';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { getMyApplication, type MyApplication } from '@/api/applications';
+import type { CandidateLoop } from '@/api/scheduling';
+import type { CandidateOffer } from '@/api/offers';
 import { toast } from '@/lib/toast';
-import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
-import YourInterviews from '@/components/candidate/YourInterviews';
-import YourOffers from '@/components/candidate/YourOffers';
+import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
+import { buttonVariants } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Page, PageHeader, EmptyState, Stepper, type Step } from '@/design/components/page';
+import { Card } from '@/design/components/card';
+import { Section } from '@/design/components/rows';
+import { TurnBadge } from '@/design/components/next-step';
+import { StatusTag } from '@/design/components/primitives';
+import { formatDate } from '@/lib/formatters';
+import { useCandidateActions } from '@/hooks/useCandidateActions';
+import { actionsForApplication, turnOf, type CandidateAction } from '@/lib/candidateActions';
+import { nextStepText, stageText, stageTone } from '@/lib/applicationStage';
+import YourInterviews, { EmbeddedLoops } from '@/components/candidate/YourInterviews';
+import YourOffers, { EmbeddedOffers } from '@/components/candidate/YourOffers';
 import YourRediscovery from '@/components/candidate/YourRediscovery';
+import ApplicationActionRow from '@/components/candidate/ApplicationActionRow';
+import { actionTitle } from '@/components/candidate/actionText';
 import {
   AlertCircle,
   Briefcase,
-  Building2,
   Check,
   ChevronDown,
   ChevronRight,
-  ClipboardCheck,
-  Clock,
   User,
-  Video,
 } from '@/design/components/icons';
 
-/**
- * Stage → visual tone. Keyed on the candidate-facing label the server sends,
- * so a stage this build has never heard of falls through to neutral rather
- * than crashing or being mislabelled.
- */
-const TONE: Record<string, TagTone> = {
-  'Application received': 'neutral',
-  Shortlisted: 'electric',
-  'Interview complete': 'lavender',
-  'Under review': 'amber',
-  Selected: 'forest',
-  'Not progressing': 'ember',
-};
-
-function dateOf(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
-/** "Round 2 of 4 · Coding Round", or null before a round is assigned. */
-function roundLine(app: MyApplication): string | null {
-  if (!app.current_round_title) return null;
-  const counted =
-    app.round_number && app.total_rounds
-      ? `Round ${app.round_number} of ${app.total_rounds} · `
-      : '';
-  return `${counted}${app.current_round_title}`;
+/** What the middle step of the track says: the round, or "In review" before one is assigned. */
+function roundStep(app: MyApplication, t: TFunction): { label: string; hint?: string } {
+  const title = app.current_round_title;
+  if (app.round_number && app.total_rounds) {
+    return {
+      label: t('track.roundOf', { n: app.round_number, total: app.total_rounds }),
+      hint: title ?? undefined,
+    };
+  }
+  if (title) return { label: title };
+  return { label: t('track.inReview') };
 }
 
 /**
- * The one thing on this page a candidate can act on.
- *
- * The invitation is emailed, and that used to be the ONLY way to reach it —
- * so a filtered or mistyped address left an interview that existed and could
- * not be started, while looking healthy from the hiring side. This is the
- * route that does not depend on mail.
- *
- * The link is fetched on click rather than rendered with the card, because
- * asking for it ROTATES the token: any previously issued link, including the
- * emailed one, stops working. That is the right trade for a deliberate press
- * and the wrong one for a page render, which would silently break the email
- * link of every candidate who merely looked at their applications.
+ * `Applied → Round n of N (round title) → Decision`, via the shared Stepper. A
+ * closed application sits on "Decision"; a live one on the round. Below `sm` the
+ * Stepper collapses to one line that carries the round too.
  */
-function InterviewCallToAction({
-  inviteId,
-  scheduledAt,
+function ApplicationTrack({ app }: { app: MyApplication }) {
+  const { t } = useTranslation();
+  const round = roundStep(app, t);
+  const steps: Step[] = [
+    { key: 'applied', label: t('track.applied') },
+    { key: 'progress', label: round.label, hint: round.hint },
+    { key: 'decision', label: t('track.decision') },
+  ];
+  const compactLabel = app.closed
+    ? `${t('pageBlocks.stepOf', { n: 3, total: 3 })} · ${t('track.decision')}`
+    : `${t('pageBlocks.stepOf', { n: 2, total: 3 })} · ${round.label}${round.hint ? ` · ${round.hint}` : ''}`;
+  return (
+    <Stepper
+      steps={steps}
+      current={app.closed ? 'decision' : 'progress'}
+      label={t('track.label')}
+      compactLabel={compactLabel}
+    />
+  );
+}
+
+function ApplicationCard({
+  app,
+  mine,
+  loops,
+  offers,
 }: {
-  inviteId: string;
-  scheduledAt: string | null;
+  app: MyApplication;
+  /** Everything waiting on the candidate for THIS application, in queue order. */
+  mine: CandidateAction[];
+  loops: CandidateLoop[];
+  offers: CandidateOffer[];
 }) {
-  const [error, setError] = useState<string | null>(null);
-
-  const mint = useMutation({
-    mutationFn: () => mintMyInterviewLink(inviteId),
-    onSuccess: (link) => {
-      // Same tab: this is the candidate starting their interview, not opening a
-      // reference. A popup here would also be the kind of thing a blocker eats.
-      // Same origin guard as the task and exam CTAs.
-      const safe = sameOriginUrl(link.interview_url, '/interview-invite');
-      if (!safe) {
-        setError('Could not open your interview.');
-        return;
-      }
-      window.location.assign(safe);
-    },
-    onError: (e: unknown) =>
-      setError(e instanceof Error ? e.message : 'Could not open your interview.'),
-  });
-
-  return (
-    <div className="mt-4 rounded-[10px] border border-[rgba(var(--accent-rgb),0.35)] bg-[rgba(var(--accent-rgb),0.06)] p-3.5">
-      <p className="flex items-center gap-2 text-[13.5px] font-medium text-foreground">
-        <Video size={14} className="shrink-0 text-[var(--accent)]" aria-hidden="true" />
-        Your interview is ready
-      </p>
-      {scheduledAt ? (
-        <p className="mt-1 pl-[22px] text-[12.5px] text-muted-foreground">
-          Scheduled for {dateOf(scheduledAt)}
-        </p>
-      ) : (
-        <p className="mt-1 pl-[22px] text-[12.5px] text-muted-foreground">
-          Take it whenever you are ready — it takes about 10 minutes.
-        </p>
-      )}
-      <button
-        type="button"
-        onClick={() => {
-          setError(null);
-          mint.mutate();
-        }}
-        disabled={mint.isPending}
-        className="mt-3 ml-[22px] inline-flex items-center gap-1.5 rounded-[8px] bg-primary px-3.5 py-1.5 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
-      >
-        {mint.isPending ? 'Opening…' : 'Start interview'}
-      </button>
-      {error ? (
-        <p className="mt-2 pl-[22px] text-[12.5px] text-[var(--ui-danger)]">{error}</p>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * The task equivalent of InterviewCallToAction — PH4-D4, the same reasoning:
- * a job_simulation/portfolio link is emailed, and email is not dependable, so
- * this is the path that does not need it. Fetched on click because asking for
- * it ROTATES the token, the same trade as the interview link.
- */
-function TaskCallToAction({ submissionId, dueAt }: { submissionId: string; dueAt: string | null }) {
-  const [error, setError] = useState<string | null>(null);
-
-  const mint = useMutation({
-    mutationFn: () => mintMyTaskLink(submissionId),
-    onSuccess: (link) => {
-      // The link carries a fresh bearer token in its fragment — never
-      // navigate to it unchecked (safeUrl.ts's own header names this exact
-      // mistake). Same guard as YourOffers.tsx's "Open offer".
-      const safe = sameOriginUrl(link.url, '/task');
-      if (!safe) {
-        setError('Could not open your task.');
-        return;
-      }
-      window.location.assign(safe);
-    },
-    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Could not open your task.'),
-  });
-
-  return (
-    <div className="mt-4 rounded-[10px] border border-[rgba(var(--accent-rgb),0.35)] bg-[rgba(var(--accent-rgb),0.06)] p-3.5">
-      <p className="flex items-center gap-2 text-[13.5px] font-medium text-foreground">
-        <Briefcase size={14} className="shrink-0 text-[var(--accent)]" aria-hidden="true" />
-        Your task is ready
-      </p>
-      {dueAt ? (
-        <p className="mt-1 pl-[22px] text-[12.5px] text-muted-foreground">Due {dateOf(dueAt)}</p>
-      ) : null}
-      <button
-        type="button"
-        onClick={() => {
-          setError(null);
-          mint.mutate();
-        }}
-        disabled={mint.isPending}
-        className="mt-3 ml-[22px] inline-flex items-center gap-1.5 rounded-[8px] bg-primary px-3.5 py-1.5 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
-      >
-        {mint.isPending ? 'Opening…' : 'Open task'}
-      </button>
-      {error ? (
-        <p className="mt-2 pl-[22px] text-[12.5px] text-[var(--ui-danger)]">{error}</p>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * The assessment, reachable from here as well as from the email.
- *
- * The same gap the interview button closed, one round earlier: the card named
- * the round ("Round 1 of 1 · Aptitude") and the only way into it was a link in
- * an email that may never have arrived. Fetched on click for the same reason
- * too — asking ROTATES the token, which must be a deliberate press and never a
- * side effect of the page rendering.
- *
- * "Resume" once they have begun: /exam/start picks up the attempt already open,
- * with its original deadline, so coming back here costs no time and gains
- * none. What it does cost is the tab that attempt may still be open in, whose
- * link stops working the moment this one is minted.
- *
- * Which the server refuses to do unattended: with an attempt already open it
- * answers 409, and this asks the question before pressing again. A candidate
- * who has this page in a second tab, or who double-clicks, would otherwise
- * lose a timed assessment to a press they did not think about — the clock
- * keeps running in the tab that just went dead.
- */
-function ExamCallToAction({
-  assignmentId,
-  inProgress,
-  expiresAt,
-  scheduledAt,
-}: {
-  assignmentId: string;
-  inProgress: boolean;
-  expiresAt: string | null;
-  scheduledAt: string | null;
-}) {
-  const [error, setError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState<string | null>(null);
-
-  const mint = useMutation({
-    mutationFn: (resumeAnyway: boolean) => mintMyExamLink(assignmentId, resumeAnyway),
-    onSuccess: (link) => {
-      // Same tab, as with the interview: this is the candidate starting their
-      // assessment, and a popup is the kind of thing a blocker eats. Checked
-      // first, as the task CTA does: the URL is built server-side from
-      // `exam_link_base_url`, so this is not attacker input — it is what stops
-      // a misconfigured base URL walking the candidate to another origin with
-      // a live exam token in the fragment.
-      const safe = sameOriginUrl(link.exam_url, '/exam');
-      if (!safe) {
-        setError('Could not open your assessment.');
-        return;
-      }
-      window.location.assign(safe);
-    },
-    onError: (e: unknown) => {
-      // 409 is not a failure. It is the server declining to close a tab the
-      // candidate may still be working in, and handing the decision back.
-      if (e instanceof ApiError && e.status === 409) {
-        setConfirming(e.message);
-        return;
-      }
-      setError(e instanceof Error ? e.message : 'Could not open your assessment.');
-    },
-  });
-
-  return (
-    <div
-      className="mt-4 rounded-[10px] border border-[rgba(var(--accent-rgb),0.35)] bg-[rgba(var(--accent-rgb),0.06)] p-3.5"
-      data-testid="exam-cta"
-    >
-      <p className="flex items-center gap-2 text-[13.5px] font-medium text-foreground">
-        <ClipboardCheck size={14} className="shrink-0 text-[var(--accent)]" aria-hidden="true" />
-        {inProgress ? 'Your assessment is in progress' : 'Your assessment is ready'}
-      </p>
-      <p className="mt-1 pl-[22px] text-[12.5px] text-muted-foreground">
-        {confirming
-          ? confirming
-          : inProgress
-            ? 'You can pick up where you left off.'
-            : // A scheduled round's own window is the deadline that binds, and
-              // it closes long before the link expires. Naming the link's
-              // expiry instead would state a deadline they do not have.
-              scheduledAt
-              ? `This round opens on ${dateOf(scheduledAt)}. Start it soon after — the window is short.`
-              : expiresAt
-                ? `Take it before ${dateOf(expiresAt)}.`
-                : 'Take it whenever you are ready.'}
-      </p>
-      <button
-        type="button"
-        onClick={() => {
-          setError(null);
-          // Only a press that followed the question may close the other tab.
-          mint.mutate(confirming !== null);
-        }}
-        disabled={mint.isPending}
-        className="mt-3 ml-[22px] inline-flex items-center gap-1.5 rounded-[8px] bg-primary px-3.5 py-1.5 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
-      >
-        {mint.isPending
-          ? 'Opening…'
-          : confirming
-            ? 'Open it here'
-            : inProgress
-              ? 'Resume assessment'
-              : 'Start assessment'}
-      </button>
-      {error ? (
-        <p className="mt-2 pl-[22px] text-[12.5px] text-[var(--ui-danger)]">{error}</p>
-      ) : null}
-    </div>
-  );
-}
-
-function ApplicationCard({ app }: { app: MyApplication }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const round = roundLine(app);
+  const [alsoOpen, setAlsoOpen] = useState(false);
+  const turn = turnOf(app, mine);
+  const [top, ...others] = mine;
 
   // The history is only fetched when someone asks for it. Most people want the
   // headline; loading a timeline per card would be work nobody requested.
@@ -330,226 +130,309 @@ function ApplicationCard({ app }: { app: MyApplication }) {
   });
 
   return (
-    <GlassCard className="p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-[16px] font-semibold text-foreground">
-            <Briefcase size={15} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span className="truncate">{app.job_title}</span>
-          </h2>
-          <p className="mt-1 flex items-center gap-1.5 text-[13px] text-muted-foreground">
-            <Building2 size={13} aria-hidden="true" />
-            {app.company_name}
-            <span aria-hidden="true">·</span>
-            <span>Applied {dateOf(app.applied_at)}</span>
+    <Card
+      as="article"
+      titleAs="h3"
+      data-testid={`application-${app.id}`}
+      title={app.job_title}
+      description={`${app.company_name} · ${t('applications.applied', { date: formatDate(app.applied_at) })}`}
+      actions={
+        <span className="flex flex-wrap items-center justify-end gap-2">
+          <StatusTag tone={stageTone(app)} dot>
+            {stageText(t, app)}
+          </StatusTag>
+          <TurnBadge turn={turn} label={t(`turn.${turn}`)} />
+        </span>
+      }
+    >
+      <div className="flex flex-col gap-4">
+        <ApplicationTrack app={app} />
+
+        {/* One action row for the application's most pressing item. The rest
+            stay one press away under "Also waiting": none is removed. */}
+        {top ? <ApplicationActionRow key={top.id} action={top} /> : null}
+
+        {others.length > 0 ? (
+          <div>
+            <button
+              type="button"
+              onClick={() => setAlsoOpen((v) => !v)}
+              aria-expanded={alsoOpen}
+              className="inline-flex min-h-[40px] items-center gap-1 rounded text-[13px] font-semibold text-[var(--ui-info)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            >
+              {alsoOpen ? (
+                <ChevronDown size={14} aria-hidden="true" />
+              ) : (
+                <ChevronRight size={14} aria-hidden="true" />
+              )}
+              {t('nextStep.alsoWaiting')} · {others.length}
+            </button>
+            {alsoOpen ? (
+              <div className="mt-2 flex flex-col gap-3">
+                {others.map((a) => (
+                  <ApplicationActionRow key={a.id} action={a} />
+                ))}
+              </div>
+            ) : (
+              // Collapsed, the titles are still readable by assistive tech and
+              // by anyone scanning: a hidden item is not an unknown item.
+              <ul className="sr-only">
+                {others.map((a) => (
+                  <li key={a.id}>{actionTitle(t, a)}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : null}
+
+        {/* With nothing waiting on the candidate, say where things stand. With
+            something waiting, the action row above already says what to do. */}
+        {top ? null : (
+          <p className="text-[14px] leading-relaxed text-muted-foreground">
+            {nextStepText(t, app)}
           </p>
-        </div>
-        <StatusTag tone={TONE[app.stage] ?? 'neutral'} dot>
-          {app.stage}
-        </StatusTag>
-      </div>
-
-      {round && (
-        <p className="mt-4 flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[13px] text-[var(--ui-soft)]">
-          <Clock size={13} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-          {round}
-        </p>
-      )}
-
-      <p className="mt-3 text-[13.5px] leading-relaxed text-muted-foreground">{app.next_step}</p>
-
-      {app.interview_invite_id ? (
-        <InterviewCallToAction
-          inviteId={app.interview_invite_id}
-          scheduledAt={app.interview_scheduled_at}
-        />
-      ) : app.task_submission_id ? (
-        <TaskCallToAction submissionId={app.task_submission_id} dueAt={app.task_due_at} />
-      ) : null}
-
-      {app.exam_assignment_id ? (
-        <ExamCallToAction
-          assignmentId={app.exam_assignment_id}
-          inProgress={app.exam_in_progress}
-          expiresAt={app.exam_expires_at}
-          scheduledAt={app.exam_scheduled_at}
-        />
-      ) : null}
-
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="mt-4 inline-flex items-center gap-1 text-[12.5px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline underline-offset-4"
-      >
-        {open ? (
-          <ChevronDown size={13} aria-hidden="true" />
-        ) : (
-          <ChevronRight size={13} aria-hidden="true" />
         )}
-        {open ? 'Hide history' : 'Show history'}
-      </button>
 
-      {open && (
-        <div className="mt-3 border-t border-border pt-3">
-          {isLoading && <p className="text-[13px] text-muted-foreground">Loading…</p>}
-          {detail && detail.history.length === 0 && (
-            <p className="text-[13px] text-muted-foreground">Nothing has changed yet.</p>
-          )}
-          {detail && detail.history.length > 0 && (
-            <ol className="flex flex-col gap-2.5">
-              {detail.history.map((e, i) => (
-                <li key={`${e.occurred_at}-${i}`} className="flex items-start gap-2.5">
-                  <span
-                    className="mt-1 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]"
-                    aria-hidden="true"
-                  >
-                    <Check size={10} />
-                  </span>
-                  <span className="text-[13px] text-[var(--ui-soft)]">
-                    {e.stage}
-                    <span className="text-muted-foreground">
-                      {' '}
-                      · {dateOf(e.occurred_at)}
-                      {/* Worth surfacing: it answers "did a person look at
-                          this, or did the system move me?" — which is exactly
-                          what someone waiting wants to know. */}
-                      {e.by_a_person && (
-                        <>
+        {loops.length > 0 ? <EmbeddedLoops loops={loops} /> : null}
+        {offers.length > 0 ? <EmbeddedOffers offers={offers} /> : null}
+
+        <div>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className="inline-flex min-h-[40px] items-center gap-1 rounded text-[13px] font-semibold text-[var(--ui-info)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          >
+            {open ? (
+              <ChevronDown size={14} aria-hidden="true" />
+            ) : (
+              <ChevronRight size={14} aria-hidden="true" />
+            )}
+            {open ? t('applications.hideHistory') : t('applications.showHistory')}
+          </button>
+
+          {open && (
+            <div className="mt-2 border-t border-border pt-3">
+              {isLoading && (
+                <p className="text-[13.5px] text-muted-foreground">{t('applications.loading')}</p>
+              )}
+              {detail && detail.history.length === 0 && (
+                <p className="text-[13.5px] text-muted-foreground">
+                  {t('applications.nothingChanged')}
+                </p>
+              )}
+              {detail && detail.history.length > 0 && (
+                <ol className="flex flex-col gap-2.5">
+                  {detail.history.map((e, i) => (
+                    <li key={`${e.occurred_at}-${i}`} className="flex items-start gap-2.5">
+                      <span
+                        className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[var(--ui-highlight-wash)] text-foreground"
+                        aria-hidden="true"
+                      >
+                        <Check size={11} />
+                      </span>
+                      <span className="text-[13.5px] text-foreground">
+                        {stageText(t, e)}
+                        <span className="text-muted-foreground">
                           {' '}
-                          <User size={10} className="inline align-baseline" aria-hidden="true" /> by
-                          the hiring team
-                        </>
-                      )}
-                    </span>
-                  </span>
-                </li>
-              ))}
-            </ol>
+                          · {formatDate(e.occurred_at)}
+                          {/* Worth surfacing: it answers "did a person look at
+                              this, or did the system move me?" — which is exactly
+                              what someone waiting wants to know. */}
+                          {e.by_a_person && (
+                            <>
+                              {' '}
+                              <User
+                                size={11}
+                                className="inline align-baseline"
+                                aria-hidden="true"
+                              />{' '}
+                              {t('applications.byTeam')}
+                            </>
+                          )}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </div>
           )}
         </div>
-      )}
-    </GlassCard>
+      </div>
+    </Card>
   );
 }
 
 function ErrorState() {
+  const { t } = useTranslation();
   return (
-    <GlassCard className="p-8 text-center">
-      <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[var(--ui-danger)]">
+    <div
+      role="alert"
+      className="rounded-card border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-wash)] p-8 text-center"
+    >
+      <span className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-card text-[var(--ui-danger)]">
         <AlertCircle className="h-6 w-6" aria-hidden="true" />
       </span>
-      <h2 className="mt-5 text-[18px] font-semibold text-foreground">
-        Could not load your applications
-      </h2>
+      <h2 className="mt-4 text-[18px] font-bold text-foreground">{t('applications.errorTitle')}</h2>
       <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-muted-foreground">
-        Something went wrong on our side, not with your applications. Refresh the page to try again.
+        {t('applications.errorBody')}
       </p>
-    </GlassCard>
+    </div>
   );
 }
 
-function EmptyState() {
+function NoApplications() {
+  const { t } = useTranslation();
   return (
-    <GlassCard className="p-8 text-center">
-      <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
-        <Briefcase className="h-6 w-6" aria-hidden="true" />
-      </span>
-      <h2 className="mt-5 text-[18px] font-semibold text-foreground">No applications yet</h2>
-      <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-muted-foreground">
-        Jobs you apply to will appear here, with the stage you are at and what happens next.
-      </p>
-      <p className="mx-auto mt-4 max-w-md text-[13px] leading-relaxed text-muted-foreground">
-        Already applied somewhere? Your application is safe either way — but it only shows up here
-        once you have opened the “Set a password” link in the confirmation email we sent you. Check
-        that email, including its spam folder.
-      </p>
-    </GlassCard>
+    <EmptyState
+      size="page"
+      icon={Briefcase}
+      title={t('applications.emptyTitle')}
+      description={
+        <>
+          {t('applications.emptyDesc')}
+          <span className="mt-3 block text-[13px]">{t('applications.emptyNote')}</span>
+        </>
+      }
+      action={
+        <Link to="/jobs" className={buttonVariants()}>
+          {t('applications.browse')}
+        </Link>
+      }
+    />
+  );
+}
+
+/** A section title with a plain count after it. The count is a number, not a plural. */
+function SectionTitle({ children, count }: { children: string; count: number }) {
+  return (
+    <>
+      {children} <span className="font-normal text-muted-foreground">{count}</span>
+    </>
   );
 }
 
 export default function Applications() {
-  const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['my-applications'],
-    queryFn: listMyApplications,
-    staleTime: 60 * 1000,
-    retry: false,
-    throwOnError: false,
-  });
+  const { t } = useTranslation();
+  const {
+    applications: apps,
+    loops,
+    offers,
+    actions,
+    isLoading,
+    isError,
+    error,
+    loopsFailed,
+    offersFailed,
+  } = useCandidateActions({ alwaysFetchSecondary: true });
 
   // One toast per distinct error, never one per render.
   useEffect(() => {
     if (isError) {
-      toast.error(error instanceof Error ? error.message : 'Could not load your applications.');
+      toast.error(error instanceof Error ? error.message : t('applications.loadFailedToast'));
     }
-  }, [isError, error]);
+  }, [isError, error, t]);
 
-  const apps = data ?? [];
-  const live = apps.filter((a) => !a.closed);
-  const closed = apps.filter((a) => a.closed);
+  // Each application's own queue items, and from them whose move it is.
+  const mineById = useMemo(
+    () => new Map(apps.map((a) => [a.id, actionsForApplication(actions, a.id)] as const)),
+    [apps, actions],
+  );
+  const mineOf = (a: MyApplication): CandidateAction[] => mineById.get(a.id) ?? [];
+
+  const yourMove = apps.filter((a) => mineOf(a).length > 0);
+  const withTeam = apps.filter((a) => mineOf(a).length === 0 && !a.closed);
+  const closed = apps.filter((a) => mineOf(a).length === 0 && a.closed);
+
+  // A loop or offer goes on its application's card only when the server said
+  // which application it belongs to AND that application is in this list.
+  // Otherwise it renders in its own section: never matched on job title.
+  const appIds = new Set(apps.map((a) => a.id));
+  const loopsOn = (a: MyApplication): CandidateLoop[] =>
+    loops.filter((l) => l.application_id === a.id);
+  const offersOn = (a: MyApplication): CandidateOffer[] =>
+    offers.filter((o) => o.application_id === a.id);
+  const placedLoops = new Set(
+    loops.filter((l) => l.application_id && appIds.has(l.application_id)).map((l) => l.id),
+  );
+  const placedOffers = new Set(
+    offers.filter((o) => o.application_id && appIds.has(o.application_id)).map((o) => o.id),
+  );
+  const loose =
+    loops.some((l) => !placedLoops.has(l.id)) ||
+    offers.some((o) => !placedOffers.has(o.id)) ||
+    loopsFailed ||
+    offersFailed;
+
+  const renderCard = (a: MyApplication) => (
+    <ApplicationCard key={a.id} app={a} mine={mineOf(a)} loops={loopsOn(a)} offers={offersOn(a)} />
+  );
 
   return (
-    <div aria-labelledby="applications-heading" className="mx-auto max-w-[820px] px-6 py-8 lg:px-8">
-      <Reveal>
-        <h1
-          id="applications-heading"
-          className="text-[28px] font-semibold tracking-[-1px] text-foreground"
-        >
-          My applications
-        </h1>
-        <p className="mt-1 text-[14px] text-muted-foreground">
-          Where you stand on every role you have applied for.
-        </p>
-      </Reveal>
+    <Page width="form">
+      <PageHeader
+        title={<span id="applications-heading">{t('applications.title')}</span>}
+        description={t('applications.subtitle')}
+      />
 
-      {/* PH4-A2 — interview loops the hiring team has scheduled or asked the
-          candidate to choose a time for. */}
-      <YourInterviews />
-
-      {/* PH4-A3 — offers, once an application has been decided as a hire. */}
-      <YourOffers />
-
-      {/* PH5-E3 (D5-1) — one row per company applied to: whether this
-          candidate has opted in to be found again for a future opening,
-          above the application list itself. */}
-      <YourRediscovery />
-
-      <div className="mt-6 flex flex-col gap-4">
+      {/* The page's body, named by its heading. `contents` leaves the Page's
+          24px rhythm to the children while keeping the landmark. */}
+      <section aria-labelledby="applications-heading" className="contents">
         {isLoading && (
-          <>
-            <GlassCard className="h-[132px] animate-pulse">
-              <span className="sr-only">Loading your applications…</span>
-            </GlassCard>
-            <GlassCard className="h-[132px] animate-pulse">
-              <span className="sr-only">Loading…</span>
-            </GlassCard>
-          </>
+          <div aria-busy="true" className="flex flex-col gap-4">
+            <Skeleton className="h-[132px] w-full rounded-card" />
+            <Skeleton className="h-[132px] w-full rounded-card" />
+            <span className="sr-only">{t('applications.loadingSr')}</span>
+          </div>
         )}
 
-        {/* An error is NOT an empty list. Falling through to EmptyState here
-            told an applicant they had applied to nothing because a fetch
-            failed — the one message this page must never send by accident. */}
+        {/* An error is NOT an empty list. Falling through to the empty state
+          here told an applicant they had applied to nothing because a fetch
+          failed — the one message this page must never send by accident. */}
         {!isLoading && isError && <ErrorState />}
-        {!isLoading && !isError && apps.length === 0 && <EmptyState />}
+        {!isLoading && !isError && apps.length === 0 && <NoApplications />}
 
-        {live.map((app) => (
-          <ApplicationCard key={app.id} app={app} />
-        ))}
-
-        {/* Closed applications are kept, below a divider rather than hidden: a
-            candidate looking for "did I hear back from that one?" needs them,
-            and they should not compete with the live ones for attention. */}
-        {closed.length > 0 && (
-          <>
-            <p className="mt-4 text-[11px] font-medium uppercase tracking-[0.1em] text-muted-foreground">
-              Closed
-            </p>
-            {closed.map((app) => (
-              <ApplicationCard key={app.id} app={app} />
-            ))}
-          </>
+        {/* The sections wait for the whole queue (applications, interviews and
+          offers). Drawn as soon as the applications arrive, a card would sit
+          under "With the hiring team" and jump to "Your move" when the offers
+          answered a moment later. */}
+        {!isLoading && yourMove.length > 0 && (
+          <Section title={<SectionTitle count={yourMove.length}>{t('turn.you')}</SectionTitle>}>
+            <div className="flex flex-col gap-4">{yourMove.map(renderCard)}</div>
+          </Section>
         )}
-      </div>
-    </div>
+
+        {!isLoading && withTeam.length > 0 && (
+          <Section title={<SectionTitle count={withTeam.length}>{t('turn.them')}</SectionTitle>}>
+            <div className="flex flex-col gap-4">{withTeam.map(renderCard)}</div>
+          </Section>
+        )}
+
+        {/* Closed applications are kept, below the live ones rather than hidden: a
+          candidate looking for "did I hear back from that one?" needs them,
+          and they should not compete with the live ones for attention. */}
+        {!isLoading && closed.length > 0 && (
+          <Section title={<SectionTitle count={closed.length}>{t('turn.closed')}</SectionTitle>}>
+            <div className="flex flex-col gap-4">{closed.map(renderCard)}</div>
+          </Section>
+        )}
+
+        {/* PH4-A2 / PH4-A3 — interviews the hiring team has scheduled and offers,
+          for any the server has not tied to an application. Hidden when empty. */}
+        {!isLoading && loose && (
+          <Section title={t('track.scheduledAndOffers')} data-testid="scheduled-and-offers">
+            <div className="flex flex-col gap-4">
+              <YourInterviews exclude={placedLoops} hideWhenEmpty />
+              <YourOffers exclude={placedOffers} />
+            </div>
+          </Section>
+        )}
+
+        {/* PH5-E3 (D5-1) — whether this candidate has opted in to be found again
+          for a future opening. Last: a setting, not a status. */}
+        <YourRediscovery />
+      </section>
+    </Page>
   );
 }

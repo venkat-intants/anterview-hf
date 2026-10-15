@@ -43,14 +43,21 @@ import {
 import { listApplicants, type Applicant } from '@/api/applicants';
 import { listRequisitions, type Requisition } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
-import { useDialogFocus } from '@/hooks/useDialogFocus';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
+import { Breadcrumbs, PageHeader, Page } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
 import {
   AlertTriangle,
   Archive,
   ArchiveRestore,
-  ArrowLeft,
   ChevronDown,
   ChevronRight,
   Loader2,
@@ -141,7 +148,8 @@ function PoolsList(): JSX.Element {
   });
 
   const archiveMut = useMutation({
-    mutationFn: ({ id, archived }: { id: string; archived: boolean }) => updatePool(id, { archived }),
+    mutationFn: ({ id, archived }: { id: string; archived: boolean }) =>
+      updatePool(id, { archived }),
     onSuccess: (_res, vars) => {
       toast.success(vars.archived ? 'Pool archived' : 'Pool restored');
       invalidate();
@@ -167,25 +175,18 @@ function PoolsList(): JSX.Element {
   const pools = list.data?.pools ?? [];
 
   return (
-    <div className="mx-auto max-w-[1080px] px-0 py-2 space-y-6">
-      <Reveal>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Talent pools</h1>
-            <p className="mt-1 text-[14px] text-muted-foreground">
-              Candidates you have chosen to keep in mind for future openings.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setNewOpen((v) => !v)}
-            className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-3.5 py-2 text-[13px] font-semibold text-primary-foreground"
-          >
-            <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+    <Page width="default">
+      <PageHeader
+        className="mb-0"
+        title="Talent pools"
+        description="Candidates you have chosen to keep in mind for future openings."
+        actions={
+          <Button type="button" onClick={() => setNewOpen((v) => !v)}>
+            <Plus aria-hidden="true" />
             New pool
-          </button>
-        </div>
-      </Reveal>
+          </Button>
+        }
+      />
 
       {newOpen ? (
         <Reveal delay={0.05}>
@@ -200,7 +201,10 @@ function PoolsList(): JSX.Element {
               }}
             >
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="pool-new-name" className="text-[12px] font-medium text-[var(--ui-soft)]">
+                <label
+                  htmlFor="pool-new-name"
+                  className="text-[12px] font-medium text-[var(--ui-soft)]"
+                >
                   Name
                 </label>
                 <input
@@ -209,11 +213,14 @@ function PoolsList(): JSX.Element {
                   onChange={(e) => setNewName(e.target.value)}
                   maxLength={120}
                   placeholder="e.g. Fitters, Vizag"
-                  className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                  className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <label htmlFor="pool-new-desc" className="text-[12px] font-medium text-[var(--ui-soft)]">
+                <label
+                  htmlFor="pool-new-desc"
+                  className="text-[12px] font-medium text-[var(--ui-soft)]"
+                >
                   Description (optional)
                 </label>
                 <input
@@ -221,14 +228,14 @@ function PoolsList(): JSX.Element {
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
                   maxLength={1000}
-                  className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                  className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 />
               </div>
               <div className="sm:col-span-2 flex items-center gap-3">
                 <button
                   type="submit"
                   disabled={!newName.trim() || createMut.isPending}
-                  className="rounded-[10px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+                  className="rounded-full bg-primary px-5 min-h-10 text-sm font-semibold text-primary-foreground disabled:opacity-50"
                 >
                   {createMut.isPending ? 'Creating…' : 'Create pool'}
                 </button>
@@ -274,7 +281,7 @@ function PoolsList(): JSX.Element {
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-[12.5px]">
                 <thead>
-                  <tr className="border-b border-border text-[11px] uppercase tracking-wide text-[var(--ui-faint)]">
+                  <tr className="border-b border-border text-[12px] uppercase tracking-wide text-muted-foreground">
                     <th scope="col" className="py-2 pr-3 font-medium">
                       Name
                     </th>
@@ -313,14 +320,14 @@ function PoolsList(): JSX.Element {
                             />
                             <button
                               type="submit"
-                              className="text-[11.5px] font-medium text-[var(--ui-info)]"
+                              className="text-[12px] font-medium text-[var(--ui-info)]"
                             >
                               Save
                             </button>
                             <button
                               type="button"
                               onClick={() => setRenamingId(null)}
-                              className="text-[11.5px] text-muted-foreground"
+                              className="text-[12px] text-muted-foreground"
                             >
                               Cancel
                             </button>
@@ -355,24 +362,28 @@ function PoolsList(): JSX.Element {
                             />
                             <button
                               type="submit"
-                              className="text-[11.5px] font-medium text-[var(--ui-info)]"
+                              className="text-[12px] font-medium text-[var(--ui-info)]"
                             >
                               Save
                             </button>
                             <button
                               type="button"
                               onClick={() => setEditingDescId(null)}
-                              className="text-[11.5px] text-muted-foreground"
+                              className="text-[12px] text-muted-foreground"
                             >
                               Cancel
                             </button>
                           </form>
                         ) : p.description ? (
-                          <p className="mt-0.5 text-[11.5px] text-muted-foreground">{p.description}</p>
+                          <p className="mt-0.5 text-[12px] text-muted-foreground">
+                            {p.description}
+                          </p>
                         ) : null}
                       </td>
                       <td className="py-2.5 pr-3 text-foreground">{p.member_count}</td>
-                      <td className="py-2.5 pr-3 text-muted-foreground">{p.created_by_name ?? '—'}</td>
+                      <td className="py-2.5 pr-3 text-muted-foreground">
+                        {p.created_by_name ?? '—'}
+                      </td>
                       <td className="py-2.5 pr-3 text-muted-foreground">{fmtDate(p.updated_at)}</td>
                       <td className="py-2.5 pr-3">
                         <div className="flex flex-wrap items-center gap-1.5">
@@ -382,7 +393,7 @@ function PoolsList(): JSX.Element {
                               setRenamingId(p.id);
                               setRenameValue(p.name);
                             }}
-                            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground"
+                            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground"
                           >
                             <Pencil className="h-3 w-3" aria-hidden="true" />
                             Rename
@@ -393,15 +404,17 @@ function PoolsList(): JSX.Element {
                               setEditingDescId(p.id);
                               setDescValue(p.description ?? '');
                             }}
-                            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground"
+                            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground"
                           >
                             Edit description
                           </button>
                           <button
                             type="button"
-                            onClick={() => archiveMut.mutate({ id: p.id, archived: !p.archived_at })}
+                            onClick={() =>
+                              archiveMut.mutate({ id: p.id, archived: !p.archived_at })
+                            }
                             disabled={archiveMut.isPending}
-                            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground disabled:opacity-40"
+                            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-40"
                           >
                             {p.archived_at ? (
                               <>
@@ -421,7 +434,7 @@ function PoolsList(): JSX.Element {
                               aria-label={`Confirm deleting ${p.name}`}
                               className="flex flex-col gap-1"
                             >
-                              <span className="text-[11px] text-[var(--ui-danger)]">
+                              <span className="text-[12px] text-[var(--ui-danger)]">
                                 Delete this pool and its {p.member_count} member
                                 {p.member_count === 1 ? '' : 's'}?
                               </span>
@@ -430,14 +443,14 @@ function PoolsList(): JSX.Element {
                                   type="button"
                                   onClick={() => deleteMut.mutate(p.id)}
                                   disabled={deleteMut.isPending}
-                                  className="rounded-[8px] bg-[#e6714f]/20 px-2 py-1 text-[11px] font-semibold text-[#ff8a66] disabled:opacity-50"
+                                  className="rounded-[8px] bg-[var(--ui-danger-wash)] px-2 py-1 text-[12px] font-semibold text-[var(--ui-danger)] disabled:opacity-50"
                                 >
                                   {deleteMut.isPending ? '…' : 'Delete'}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setConfirmDeleteId(null)}
-                                  className="rounded-[8px] bg-[var(--ui-inset)] px-2 py-1 text-[11px] text-[var(--ui-soft)]"
+                                  className="rounded-[8px] bg-[var(--ui-inset)] px-2 py-1 text-[12px] text-[var(--ui-soft)]"
                                 >
                                   Cancel
                                 </button>
@@ -447,7 +460,7 @@ function PoolsList(): JSX.Element {
                             <button
                               type="button"
                               onClick={() => setConfirmDeleteId(p.id)}
-                              className="inline-flex items-center gap-1 rounded-[8px] border border-[#e6714f]/30 px-2 py-1 text-[11.5px] text-[#ff8a66]"
+                              className="inline-flex items-center gap-1 rounded-[8px] border border-[var(--ui-danger)]/40 px-2 py-1 text-[12px] text-[var(--ui-danger)]"
                             >
                               <Trash2 className="h-3 w-3" aria-hidden="true" />
                               Delete
@@ -463,7 +476,7 @@ function PoolsList(): JSX.Element {
           )}
         </GlassCard>
       </Reveal>
-    </div>
+    </Page>
   );
 }
 
@@ -478,7 +491,8 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
     queryKey: ['hr', 'pools', 'detail', poolId],
     queryFn: () => getPool(poolId),
   });
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ['hr', 'pools', 'detail', poolId] });
+  const invalidate = () =>
+    void qc.invalidateQueries({ queryKey: ['hr', 'pools', 'detail', poolId] });
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
@@ -518,22 +532,20 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
   );
 
   return (
-    <div className="mx-auto max-w-[1080px] px-0 py-2 space-y-6">
-      <Reveal>
-        <Link
-          to="/hr/pools"
-          className="inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-          Talent pools
-        </Link>
-        <h1 className="mt-2 text-[28px] font-semibold tracking-[-1px] text-foreground">
-          {detail.data?.pool.name ?? 'Pool'}
-        </h1>
-        {detail.data?.pool.description ? (
-          <p className="mt-1 text-[14px] text-muted-foreground">{detail.data.pool.description}</p>
-        ) : null}
-      </Reveal>
+    <Page width="default">
+      <PageHeader
+        className="mb-0"
+        breadcrumbs={
+          <Breadcrumbs
+            items={[
+              { label: 'Talent pools', to: '/hr/pools' },
+              { label: detail.data?.pool.name ?? 'Pool' },
+            ]}
+          />
+        }
+        title={detail.data?.pool.name ?? 'Pool'}
+        description={detail.data?.pool.description ?? undefined}
+      />
 
       <Reveal delay={0.05}>
         <GlassCard className="p-5">
@@ -545,7 +557,7 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
             <button
               type="button"
               onClick={() => setAddOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-3.5 py-2 text-[13px] font-semibold text-primary-foreground"
+              className="inline-flex items-center gap-1.5 rounded-full bg-primary px-5 min-h-10 text-sm font-semibold text-primary-foreground"
             >
               <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
               {t('hrPools.addCandidates')}
@@ -579,7 +591,7 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left text-[12.5px]">
                 <thead>
-                  <tr className="border-b border-border text-[11px] uppercase tracking-wide text-[var(--ui-faint)]">
+                  <tr className="border-b border-border text-[12px] uppercase tracking-wide text-muted-foreground">
                     <th scope="col" className="py-2 pr-3 font-medium">
                       Name
                     </th>
@@ -607,7 +619,9 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
                       poolId={poolId}
                       member={m}
                       expanded={expandedId === m.member_id}
-                      onToggle={() => setExpandedId(expandedId === m.member_id ? null : m.member_id)}
+                      onToggle={() =>
+                        setExpandedId(expandedId === m.member_id ? null : m.member_id)
+                      }
                       onReview={() => reviewedMut.mutate(m.member_id)}
                       reviewPending={reviewedMut.isPending && reviewedMut.variables === m.member_id}
                       confirmingRemove={confirmRemoveId === m.member_id}
@@ -634,7 +648,7 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
           )}
         </GlassCard>
       </Reveal>
-    </div>
+    </Page>
   );
 }
 
@@ -677,11 +691,13 @@ function MemberRow(props: MemberRowProps): JSX.Element {
             <span className="font-medium text-foreground">{m.full_name}</span>
           )}
           {m.current_title || m.current_company ? (
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
+            <p className="mt-0.5 text-[12px] text-muted-foreground">
               {[m.current_title, m.current_company].filter(Boolean).join(' · ')}
             </p>
           ) : null}
-          {m.note ? <p className="mt-1 text-[11px] italic text-muted-foreground">“{m.note}”</p> : null}
+          {m.note ? (
+            <p className="mt-1 text-[12px] italic text-muted-foreground">“{m.note}”</p>
+          ) : null}
         </td>
         <td className="py-2.5 pr-3 text-muted-foreground">
           {fmtDate(m.added_at)}
@@ -698,9 +714,9 @@ function MemberRow(props: MemberRowProps): JSX.Element {
               {freshnessChipLabel(m.evidence_freshness)}
             </StatusTag>
           ) : (
-            <span className="text-[11.5px] text-muted-foreground">—</span>
+            <span className="text-[12px] text-muted-foreground">—</span>
           )}
-          <p className="mt-1 text-[11px] text-muted-foreground">
+          <p className="mt-1 text-[12px] text-muted-foreground">
             {m.evidence_reviewed_at
               ? `Evidence re-checked${m.evidence_reviewed_by_name ? ` by ${m.evidence_reviewed_by_name}` : ''} on ${fmtDate(m.evidence_reviewed_at)}`
               : 'Evidence not re-checked'}
@@ -709,7 +725,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
             <button
               type="button"
               onClick={props.onToggle}
-              className="mt-1 inline-flex items-center gap-1 text-[11px] text-[var(--ui-info)] hover:underline"
+              className="mt-1 inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
             >
               {props.expanded ? (
                 <ChevronDown className="h-3 w-3" aria-hidden="true" />
@@ -736,7 +752,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
                 {m.enrolment_id ? (
                   <Link
                     to={`/hr/enrolments/${m.enrolment_id}/evidence`}
-                    className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground"
+                    className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground"
                   >
                     <ShieldCheck className="h-3 w-3" aria-hidden="true" />
                     Review evidence
@@ -747,7 +763,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
                     type="button"
                     onClick={props.onReview}
                     disabled={props.reviewPending}
-                    className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground disabled:opacity-40"
+                    className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-40"
                   >
                     Mark evidence reviewed
                   </button>
@@ -755,7 +771,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
                 <button
                   type="button"
                   onClick={props.onInviteClick}
-                  className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11.5px] text-foreground"
+                  className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground"
                 >
                   Invite to an opening
                 </button>
@@ -772,21 +788,21 @@ function MemberRow(props: MemberRowProps): JSX.Element {
                   onChange={(e) => props.onRemoveReasonChange(e.target.value)}
                   placeholder="Reason (optional)"
                   aria-label={`Reason for removing ${m.full_name}`}
-                  className="rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground"
+                  className="rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground"
                 />
                 <span className="flex gap-1.5">
                   <button
                     type="button"
                     onClick={props.onRemoveConfirm}
                     disabled={props.removePending}
-                    className="rounded-[8px] bg-[#e6714f]/20 px-2 py-1 text-[11px] font-semibold text-[#ff8a66] disabled:opacity-50"
+                    className="rounded-[8px] bg-[var(--ui-danger-wash)] px-2 py-1 text-[12px] font-semibold text-[var(--ui-danger)] disabled:opacity-50"
                   >
                     {props.removePending ? '…' : 'Remove'}
                   </button>
                   <button
                     type="button"
                     onClick={props.onRemoveCancel}
-                    className="rounded-[8px] bg-[var(--ui-inset)] px-2 py-1 text-[11px] text-[var(--ui-soft)]"
+                    className="rounded-[8px] bg-[var(--ui-inset)] px-2 py-1 text-[12px] text-[var(--ui-soft)]"
                   >
                     Cancel
                   </button>
@@ -796,7 +812,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
               <button
                 type="button"
                 onClick={props.onRemoveClick}
-                className="inline-flex items-center gap-1 rounded-[8px] border border-[#e6714f]/30 px-2 py-1 text-[11.5px] text-[#ff8a66]"
+                className="inline-flex items-center gap-1 rounded-[8px] border border-[var(--ui-danger)]/40 px-2 py-1 text-[12px] text-[var(--ui-danger)]"
               >
                 <UserMinus className="h-3 w-3" aria-hidden="true" />
                 Remove
@@ -885,7 +901,7 @@ function InviteDialog({
               type="button"
               onClick={() => inviteMut.mutate(true)}
               disabled={inviteMut.isPending}
-              className="rounded-[8px] bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+              className="rounded-full bg-primary px-5 min-h-10 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
             >
               {inviteMut.isPending ? '…' : 'Invite anyway'}
             </button>
@@ -907,7 +923,7 @@ function InviteDialog({
             id={`invite-req-${memberId}`}
             value={requisitionId}
             onChange={(e) => setRequisitionId(e.target.value)}
-            className="rounded-[8px] border border-border bg-secondary px-2 py-1.5 text-[12px] text-foreground"
+            className="h-9 rounded-[10px] border border-border bg-secondary ps-2.5 text-[12px] text-foreground"
           >
             <option value="">Choose an opening…</option>
             {(openings.data ?? []).map((r: Requisition) => (
@@ -920,7 +936,7 @@ function InviteDialog({
             type="button"
             onClick={() => requisitionId && inviteMut.mutate(false)}
             disabled={!requisitionId || inviteMut.isPending}
-            className="rounded-[8px] bg-primary px-3 py-1.5 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+            className="rounded-full bg-primary px-5 min-h-10 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
           >
             {inviteMut.isPending ? '…' : 'Invite'}
           </button>
@@ -955,7 +971,6 @@ function AddCandidatesDialog({
   onAdded: () => void;
 }): JSX.Element {
   const { t } = useTranslation();
-  const panelRef = useDialogFocus<HTMLDivElement>(onClose);
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 300);
   const trimmedQuery = debouncedQuery.trim();
@@ -1025,24 +1040,13 @@ function AddCandidatesDialog({
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <button
-        type="button"
-        aria-label={t('hrPools.close')}
-        onClick={onClose}
-        className="absolute inset-0"
-      />
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="add-candidates-title"
-        tabIndex={-1}
-        className="relative z-10 max-h-[85vh] w-full max-w-[480px] space-y-3 overflow-y-auto rounded-[24px] border border-border bg-card p-5 outline-none"
-      >
-        <h3 id="add-candidates-title" className="text-[15px] font-semibold text-foreground">
-          {t('hrPools.dialogTitle', { pool: poolName })}
-        </h3>
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent aria-describedby={undefined} className="max-w-[480px] space-y-3">
+        <DialogHeader>
+          <DialogTitle className="text-[17px] font-bold">
+            {t('hrPools.dialogTitle', { pool: poolName })}
+          </DialogTitle>
+        </DialogHeader>
 
         <div>
           <label htmlFor="pool-add-search" className="sr-only">
@@ -1058,7 +1062,7 @@ function AddCandidatesDialog({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t('hrPools.searchPlaceholder')}
-              className="w-full rounded-[10px] border border-border bg-secondary py-2 pl-8 pr-3 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+              className="w-full rounded-[10px] border border-border bg-secondary py-2 pl-8 pr-3 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
           </div>
         </div>
@@ -1081,11 +1085,15 @@ function AddCandidatesDialog({
                 key={a.id}
                 className="flex items-center gap-2 rounded-[8px] px-2 py-1.5 text-[12.5px] text-foreground hover:bg-[var(--ui-inset-soft)]"
               >
-                <input type="checkbox" checked={Boolean(selected[a.id])} onChange={() => toggle(a)} />
+                <input
+                  type="checkbox"
+                  checked={Boolean(selected[a.id])}
+                  onChange={() => toggle(a)}
+                />
                 <span className="flex-1">
                   <span className="font-medium">{a.full_name}</span>
                   {a.current_title || a.current_company ? (
-                    <span className="ml-1.5 text-[11.5px] text-muted-foreground">
+                    <span className="ml-1.5 text-[12px] text-muted-foreground">
                       {[a.current_title, a.current_company].filter(Boolean).join(' · ')}
                     </span>
                   ) : null}
@@ -1095,7 +1103,7 @@ function AddCandidatesDialog({
           )}
         </div>
 
-        <p className="text-[11.5px] text-muted-foreground">
+        <p className="text-[12px] text-muted-foreground">
           {t('hrPools.selected', { count: selectedIds.length })}
         </p>
 
@@ -1109,17 +1117,19 @@ function AddCandidatesDialog({
             onChange={(e) => setNote(e.target.value)}
             maxLength={500}
             placeholder={t('hrPools.notePlaceholder')}
-            className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           />
         </div>
 
         {skipped.length > 0 ? (
           <div
             role="status"
-            className="space-y-1 rounded-[10px] border border-[#e6714f]/30 bg-[#e6714f]/10 p-2.5"
+            className="space-y-1 rounded-[10px] border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] p-2.5"
           >
-            <p className="text-[11.5px] font-medium text-[#ff8a66]">{t('hrPools.notAddedHeading')}</p>
-            <ul className="space-y-0.5 text-[11.5px] text-[#ff8a66]">
+            <p className="text-[12px] font-medium text-[var(--ui-danger)]">
+              {t('hrPools.notAddedHeading')}
+            </p>
+            <ul className="space-y-0.5 text-[12px] text-[var(--ui-danger)]">
               {skipped.map((s) => (
                 <li key={s.applicantId}>
                   {s.name} — {t(`hrPools.skipReason.${s.reason}`)}
@@ -1129,22 +1139,21 @@ function AddCandidatesDialog({
           </div>
         ) : null}
 
-        <div className="flex items-center gap-3">
-          <button
+        <DialogFooter className="flex-row items-center justify-end gap-2 sm:space-x-0">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            {t('hrPools.cancel')}
+          </Button>
+          <Button
             type="button"
             onClick={() => addMut.mutate()}
             disabled={selectedIds.length === 0 || addMut.isPending}
-            className="rounded-[10px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
           >
             {addMut.isPending
               ? t('hrPools.adding')
               : t('hrPools.addSelected', { count: selectedIds.length })}
-          </button>
-          <button type="button" onClick={onClose} className="text-[13px] text-muted-foreground">
-            {t('hrPools.cancel')}
-          </button>
-        </div>
-      </div>
-    </div>
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -76,13 +76,13 @@ export default function CalibrationInfoDialog({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="shrink-0 rounded-[8px] p-1 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:text-foreground"
+            className="shrink-0 rounded-[8px] p-1 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <X size={16} aria-hidden="true" />
           </button>
         </div>
 
-        <p className="mt-1 text-[12px] text-[var(--ui-faint)]">
+        <p className="mt-1 text-[12px] text-muted-foreground">
           {calibration.spec.name}@{calibration.spec.version}
         </p>
 
@@ -94,7 +94,7 @@ export default function CalibrationInfoDialog({
         </p>
 
         <div className="mt-3 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3">
-          <p className="text-[11px] font-medium uppercase tracking-wide text-[var(--ui-faint)]">
+          <p className="text-[12px] font-medium uppercase tracking-wide text-muted-foreground">
             Cohort
           </p>
           <p className="mt-1 text-[12.5px] text-foreground">
@@ -107,24 +107,24 @@ export default function CalibrationInfoDialog({
         <dl className="mt-3 flex flex-col gap-1.5 text-[12.5px]">
           {RULE_ORDER.map((key) => (
             <div key={key} className="flex items-baseline justify-between gap-3">
-              <dt className="text-[var(--ui-faint)]">{RULE_LABELS[key]}</dt>
+              <dt className="text-muted-foreground">{RULE_LABELS[key]}</dt>
               <dd className="text-right text-foreground">{String(calibration.rules[key])}</dd>
             </div>
           ))}
         </dl>
 
-        <div className="mt-4 flex items-center gap-2 text-[11.5px] text-[var(--ui-faint)]">
+        <div className="mt-4 flex items-center gap-2 text-[12px] text-muted-foreground">
           <span>registry {calibration.registry_hash.slice(0, 10)}…</span>
           <button
             type="button"
             onClick={() => void copyHash()}
-            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[11px] text-foreground hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
+            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <Copy size={11} aria-hidden="true" /> {copied ? 'Copied' : 'Copy'}
           </button>
         </div>
 
-        <p className="mt-4 text-[11.5px] leading-relaxed text-[var(--ui-faint)]">
+        <p className="mt-4 text-[12px] leading-relaxed text-muted-foreground">
           These are patterns in scoring, not assessments of any interviewer. Differences can have
           good reasons. Use them to start a calibration conversation. Nothing here changes a
           scorecard or a decision.

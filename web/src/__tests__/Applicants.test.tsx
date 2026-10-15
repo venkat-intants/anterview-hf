@@ -684,3 +684,32 @@ describe('Applicants — applicant citation deep link', () => {
     expect(screen.getByText('Bhavya Nair')).toBeInTheDocument();
   });
 });
+
+describe('Applicants — the open applicant survives a round trip (QA ANTHIRE-004)', () => {
+  it('reopens the applicant named in ?view= when the page loads, e.g. on Back from the full profile', async () => {
+    renderPage('/hr/applicants?view=ap-1');
+    expect(await screen.findByLabelText('Bhavya Nair applicant details')).toBeInTheDocument();
+  });
+
+  it('stays closed after the person closes it', async () => {
+    // react-router v7 updates ?view inside a transition; an effect that
+    // re-synced from it re-opened the drawer right after close.
+    const user = userEvent.setup();
+    renderPage('/hr/applicants');
+    await user.click((await screen.findAllByText('Bhavya Nair'))[0]);
+    const dialog = await screen.findByLabelText('Bhavya Nair applicant details');
+    await user.click(within(dialog).getByRole('button', { name: /close/i }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Bhavya Nair applicant details')).not.toBeInTheDocument(),
+    );
+    // And it does not come back once the URL update lands.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByLabelText('Bhavya Nair applicant details')).not.toBeInTheDocument();
+  });
+
+  it('opens nothing for an id that is not in the list', async () => {
+    renderPage('/hr/applicants?view=nobody');
+    await screen.findAllByText('Bhavya Nair');
+    expect(screen.queryByLabelText('Bhavya Nair applicant details')).not.toBeInTheDocument();
+  });
+});

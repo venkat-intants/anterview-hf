@@ -14,6 +14,7 @@ import { CheckCircle2, Clock } from '@/design/components/icons';
 import type { SlaBoardRow } from '@/api/stageSla';
 import AtRiskRow from '@/components/AtRiskRow';
 import CandidateDrawer from '@/components/CandidateDrawer';
+import { SLA_SCOPE_NOTE } from '@/components/stageSlaCopy';
 
 const VISIBLE = 6;
 
@@ -42,10 +43,13 @@ export default function StagesAtRiskWidget({
       ) : null}
 
       {!board.isLoading && !board.isError && rows.length === 0 ? (
-        <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
-          Nothing overdue or due soon.
-        </p>
+        <>
+          <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
+            <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
+            Nothing overdue or due soon.
+          </p>
+          <p className="mt-1 text-[12px] leading-snug text-muted-foreground">{SLA_SCOPE_NOTE}</p>
+        </>
       ) : null}
 
       {rows.length > 0 ? (

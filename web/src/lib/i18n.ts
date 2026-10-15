@@ -78,7 +78,7 @@ const en = {
       adminOverview: 'Overview',
       adminInterviews: 'Interviews',
       adminAnalytics: 'Analytics',
-      adminJd: 'JD Upload',
+      adminJd: 'Practice JDs',
     },
     // Language switcher
     lang: {
@@ -86,6 +86,7 @@ const en = {
       en: 'English',
       hi: 'हिंदी',
       te: 'తెలుగు',
+      staffNote: 'Staff consoles are in English. Your choice applies to sign-in and to candidate-facing pages.',
     },
     // Footer of the no-login public pages (apply, exam, offer, …)
     publicFrame: {
@@ -1788,13 +1789,14 @@ const hi = {
       adminOverview: 'Overview',
       adminInterviews: 'Interviews',
       adminAnalytics: 'Analytics',
-      adminJd: 'JD Upload',
+      adminJd: 'Practice JDs',
     },
     lang: {
       label: 'UI भाषा',
       en: 'English',
       hi: 'हिंदी',
       te: 'తెలుగు',
+      staffNote: 'स्टाफ़ कंसोल अंग्रेज़ी में हैं। आपकी पसंद साइन-इन और उम्मीदवारों को दिखने वाले पेजों पर लागू होती है।',
     },
     publicFrame: {
       footer: 'AntHire के ज़रिए आपको भेजा गया। यह लिंक सिर्फ़ आपके लिए है, कृपया इसे साझा न करें।',
@@ -3388,13 +3390,14 @@ const te = {
       adminOverview: 'Overview',
       adminInterviews: 'Interviews',
       adminAnalytics: 'Analytics',
-      adminJd: 'JD Upload',
+      adminJd: 'Practice JDs',
     },
     lang: {
       label: 'UI భాష',
       en: 'English',
       hi: 'हिंदी',
       te: 'తెలుగు',
+      staffNote: 'సిబ్బంది కన్సోల్‌లు ఇంగ్లీష్‌లో ఉంటాయి. మీ ఎంపిక సైన్-ఇన్‌కు మరియు అభ్యర్థులకు కనిపించే పేజీలకు వర్తిస్తుంది.',
     },
     publicFrame: {
       footer: 'AntHire ద్వారా మీకు పంపబడింది. ఈ లింక్ మీకు మాత్రమే, దయచేసి షేర్ చేయకండి.',

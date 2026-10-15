@@ -39,6 +39,7 @@ import { LIVE_POLL_MS } from '@/lib/polling';
 import { APPROVAL_LABEL } from '@/lib/openingSetup';
 import {
   isAcceptingApplications,
+  notLiveReason,
   matchesQuery,
   nextAction,
   provenCount,
@@ -165,7 +166,16 @@ function DotLegend(): JSX.Element {
 
 function Live({ req }: { req: Requisition }): JSX.Element | null {
   if (isAcceptingApplications(req)) return <StatusTag tone="electric" className="whitespace-nowrap">accepting applications</StatusTag>;
-  if (req.status === 'open') return <StatusTag tone="neutral" className="whitespace-nowrap">not live</StatusTag>;
+  if (req.status === 'open') {
+    // Say WHY: "open" in the tab and "not live" here otherwise read as a
+    // contradiction (QA ANTHIRE-002/003).
+    const why = notLiveReason(req);
+    return (
+      <StatusTag tone={why === 'closing date passed' ? 'amber' : 'neutral'} className="whitespace-nowrap">
+        {why ? `not live · ${why}` : 'not live'}
+      </StatusTag>
+    );
+  }
   return (
     <StatusTag tone={req.status === 'paused' ? 'amber' : 'neutral'}>{req.status}</StatusTag>
   );
@@ -320,7 +330,7 @@ function RollUp({ rows }: { rows: Requisition[] }): JSX.Element | null {
   const waiting = rows.reduce((n, r) => n + r.awaiting_decision, 0);
   const candidates = rows.reduce((n, r) => n + r.total_enrolments, 0);
   const hired = rows.reduce((n, r) => n + r.hired, 0);
-  const live = rows.filter(isAcceptingApplications).length;
+  const live = rows.filter((r) => isAcceptingApplications(r)).length;
   return (
     <span
       data-testid="openings-rollup"

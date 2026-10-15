@@ -95,7 +95,7 @@ describe('AdminJobJd', () => {
   it('renders the page and loads the job list', async () => {
     renderPage();
 
-    expect(screen.getByRole('heading', { name: /jobs & jd library/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /practice-interview job descriptions/i })).toBeInTheDocument();
     await waitFor(() => expect(getJobs).toHaveBeenCalled());
     expect(await screen.findByLabelText(/select job posting/i)).toBeInTheDocument();
   });
@@ -105,6 +105,9 @@ describe('AdminJobJd', () => {
 
     await screen.findByLabelText(/select job posting/i);
     expect(screen.getByText(/select a job above to enable jd upload/i)).toBeInTheDocument();
+    // QA ANTHIRE-011: no made-up "Published" roles, and the scope is stated.
+    expect(screen.queryByText(/frontend engineer · l2/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/each company's hr adds the job description on the opening/i)).toBeInTheDocument();
     expect(screen.queryByText(/jd document for/i)).not.toBeInTheDocument();
   });
 
@@ -165,7 +168,7 @@ describe('AdminJobJd', () => {
     });
     renderPage();
 
-    expect(screen.getByRole('heading', { name: /jobs & jd library/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /practice-interview job descriptions/i })).toBeInTheDocument();
     await waitFor(() => expect(getJobs).not.toHaveBeenCalled());
   });
 });

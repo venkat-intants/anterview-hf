@@ -360,6 +360,30 @@ export function visibleNavSections(roles: string[]): NavSection[] {
   return NAV_SECTIONS.filter((section) => section.visibleTo(roles));
 }
 
+/** Console homes: active only on the exact path, never as a prefix of every page under them. */
+const EXACT_ONLY = new Set(['/hr', '/superadmin', '/platform']);
+
+/**
+ * The ONE nav path that is active for `pathname`: the longest item path that
+ * is the page itself or a whole-segment prefix of it. Per-link prefix matching
+ * lit both "Question banks" (/hr/question-banks) and "Question reviews"
+ * (/hr/question-banks/reviews) at once (QA ANTHIRE-007/010); choosing a single
+ * winner across the whole sidebar makes two active items impossible, while a
+ * detail page with no item of its own (/hr/question-banks/b-1) still lights
+ * its parent.
+ */
+export function activeNavPath(rawPathname: string, paths: readonly string[]): string | null {
+  // "/hr/" is "/hr": a trailing slash must not leave the sidebar with nothing lit.
+  const pathname =
+    rawPathname.length > 1 && rawPathname.endsWith('/') ? rawPathname.slice(0, -1) : rawPathname;
+  let best: string | null = null;
+  for (const to of paths) {
+    const hit = pathname === to || (!EXACT_ONLY.has(to) && pathname.startsWith(`${to}/`));
+    if (hit && (best === null || to.length > best.length)) best = to;
+  }
+  return best;
+}
+
 // ── Where does this user call home? ───────────────────────────────────────────
 //
 // One answer, because there were three and they disagreed. Login.tsx branched

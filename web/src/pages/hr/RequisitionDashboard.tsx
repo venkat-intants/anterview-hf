@@ -33,6 +33,7 @@ import {
   Users,
 } from '@/design/components/icons';
 import { StatusTag, SegTabs } from '@/design/components/primitives';
+import { notLiveReason } from '@/lib/openingList';
 import { Breadcrumbs, Page, PageBody, PageHeader } from '@/design/components/page';
 import { Card } from '@/design/components/card';
 import { Section } from '@/design/components/rows';
@@ -846,6 +847,7 @@ export default function RequisitionDashboard({
   // The freshest copy: after a panel saves, the record query is newer than the poll.
   const req = setup.requisition ?? data.requisition;
   const wf = data.workflow_state;
+  const notLive = notLiveReason({ ...req, has_published_workflow: !!wf.published_version });
 
   const stageKey = pickedStage ?? resolvedStage ?? defaultStage;
   const next = tab === 'setup' && !readOnly ? primaryAction(setup.stages) : null;
@@ -876,6 +878,14 @@ export default function RequisitionDashboard({
             >
               {req.status}
             </StatusTag>
+            {notLive ? (
+              // 'open' is the opening's lifecycle; this says whether the public
+              // can actually apply. Without it, a green "open" beside a draft
+              // workflow or a passed closing date reads as live (QA ANTHIRE-002/003).
+              <span data-testid="opening-not-live">
+                <StatusTag tone="amber">not live · {notLive}</StatusTag>
+              </span>
+            ) : null}
             <ApprovalPill status={req.approval_status} />
           </>
         }

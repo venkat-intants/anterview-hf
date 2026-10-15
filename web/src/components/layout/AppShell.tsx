@@ -7,8 +7,8 @@
 // items, and the blue highlight tint (--ui-highlight) marking where you are. All
 // in-app authenticated routes render as children.
 
-import { useState } from 'react';
-import { Link, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -50,7 +50,13 @@ import { cn } from '@/lib/utils';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
 import ThemeToggle from '@/components/ThemeToggle';
 import ModeSwitch from '@/components/ModeSwitch';
-import { homePathFor, isCandidateOnly, visibleNavSections, type NavItem } from './navSections';
+import {
+  activeNavPath,
+  homePathFor,
+  isCandidateOnly,
+  visibleNavSections,
+  type NavItem,
+} from './navSections';
 import { appPath } from '@/lib/safeUrl';
 
 // The interview-language localStorage key (separate concern from UI language)
@@ -128,37 +134,38 @@ function getInitials(name: string): string {
 
 function SideNavLink({
   item,
+  active,
   onNavigate,
   collapsed = false,
 }: {
   item: NavItem;
+  /** Decided once for the whole sidebar (activeNavPath), not per link. */
+  active: boolean;
   onNavigate?: () => void;
   collapsed?: boolean;
 }) {
   const { t } = useTranslation();
   const label = item.labelKey ? t(item.labelKey) : item.label;
   return (
-    <NavLink
+    <Link
       to={item.to}
-      end={item.to === '/hr' || item.to === '/superadmin' || item.to === '/platform'}
+      aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
       // When collapsed the label is hidden, so expose it as a tooltip + a11y name.
       title={collapsed ? label : undefined}
       aria-label={collapsed ? label : undefined}
-      className={({ isActive }) =>
-        cn(
-          'flex items-center gap-3 rounded-full py-2.5 text-[14px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-          collapsed ? 'justify-center px-0' : 'px-3.5',
-          // The highlight tint carries its own ink, each valued per mode.
-          isActive
-            ? 'bg-[var(--ui-highlight)] font-semibold text-[var(--ui-highlight-ink)]'
-            : 'font-medium text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground',
-        )
-      }
+      className={cn(
+        'flex items-center gap-3 rounded-full py-2.5 text-[14px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+        collapsed ? 'justify-center px-0' : 'px-3.5',
+        // The highlight tint carries its own ink, each valued per mode.
+        active
+          ? 'bg-[var(--ui-highlight)] font-semibold text-[var(--ui-highlight-ink)]'
+          : 'font-medium text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground',
+      )}
     >
       {item.icon}
       {!collapsed && <span className="truncate">{label}</span>}
-    </NavLink>
+    </Link>
   );
 }
 
@@ -288,6 +295,14 @@ function SidebarUser({
 
 // ── Sidebar content (brand + nav + user) ──────────────────────────────────────
 
+// Where the sidebar's menu was scrolled to. Module scope on purpose: some menu
+// items live under a different route group (HR → "My interviews" at
+// /interviewer is under InterviewerRoute, not HRRoute), and each group mounts
+// its own AppShell, so a click there rebuilt the sidebar and threw the menu
+// back to the top (QA ANTHIRE-013). Kept per-surface so the desktop rail and
+// the mobile drawer do not fight over one value.
+const sidebarScroll: Record<string, number> = {};
+
 function SidebarContent({
   onNavigate,
   collapsed = false,
@@ -303,6 +318,18 @@ function SidebarContent({
   const roleLabel = getRoleLabel(roles, t('shell.roleCandidate'));
   const accent = getRoleAccent(roles);
   const candidateOnly = isCandidateOnly(roles);
+  const { pathname } = useLocation();
+  const sections = visibleNavSections(roles);
+  const activeTo = activeNavPath(
+    pathname,
+    sections.flatMap((section) => section.items.map((item) => item.to)),
+  );
+  const navRef = useRef<HTMLElement>(null);
+  const scrollKey = onToggle ? 'rail' : 'drawer';
+  useLayoutEffect(() => {
+    // Before paint, so a remount never flashes the top of the menu first.
+    if (navRef.current) navRef.current.scrollTop = sidebarScroll[scrollKey] ?? 0;
+  }, [scrollKey]);
 
   return (
     <div className="flex h-full flex-col">
@@ -375,8 +402,15 @@ function SidebarContent({
       </div>
 
       {/* Nav */}
-      <nav aria-label="Primary" className="flex-1 space-y-6 overflow-y-auto px-3 py-2">
-        {visibleNavSections(roles).map((section, index) => (
+      <nav
+        ref={navRef}
+        aria-label="Primary"
+        onScroll={(e) => {
+          sidebarScroll[scrollKey] = e.currentTarget.scrollTop;
+        }}
+        className="flex-1 space-y-6 overflow-y-auto px-3 py-2"
+      >
+        {sections.map((section, index) => (
           <div key={section.id} className="space-y-1">
             {/* `index > 0`: collapsed, NavSectionLabel renders as a hairline
                 divider whose job is separating one group from the previous one.
@@ -396,6 +430,7 @@ function SidebarContent({
               <SideNavLink
                 key={item.to}
                 item={item}
+                active={item.to === activeTo}
                 onNavigate={onNavigate}
                 collapsed={collapsed}
               />
@@ -629,7 +664,7 @@ function TopBar() {
         <div className="hidden sm:block">
           <ThemeToggle />
         </div>
-        <LanguageSwitcher />
+        <LanguageSwitcher staff={!candidateOnly} />
         <NotificationsBell />
         {candidateOnly && !onDashboard && (
           <Link

@@ -1,8 +1,9 @@
 """workflows.auto_shortlist — an opt-in switch that removes the human shortlist gate
+(plus enrolments.ats_injection_markers, which that switch depends on)
 
 Revision ID: a2c4e6f8b0d3
 Revises: f3a5c7e9b1d4
-Create Date: 2026-10-16
+Create Date: 2026-10-15
 
 THIS REVERSES A DELIBERATE DESIGN DECISION, AND SAYS SO. Migration
 e7a9c1d3f5b8 (Group C workflows) created this table with two human gates —
@@ -61,6 +62,18 @@ every existing row satisfies it trivially. See docs/ACCEPTED-RISKS.md and the
 "CI migrates an empty database" note — a narrowing change here later would need
 the NOT VALID treatment.
 
+ENROLMENTS.ATS_INJECTION_MARKERS. The resume scorer has always scanned the
+CV it scores for prompt-injection markers, but its HTTP response model dropped
+the result, so data_gateway never knew a score might have been talked up. With
+a person reviewing every shortlist that mattered less; with auto-shortlist the
+score alone starts an assessment. The scorer now returns the marker NAMES and
+they are stored next to the score they describe, so the check always concerns
+the CV that produced THIS number — not whatever CV the applicant row holds now
+(a returning applicant's new CV lives on the enrolment, not the applicant).
+NULL means "not on record" (scored before this column existed)
+and is never read as clean. Nullable, no default, no backfill: nothing here
+can fail against existing rows.
+
 SCALE NOTE, because it is easy to get wrong in the code that reads this:
 ``shortlist_ats_threshold`` is stored 0-10 and ``enrolments.ats_overall`` is
 0-100. Every existing reader compares ``ats_overall >= threshold * 10``
@@ -71,6 +84,7 @@ auto-shortlist advances everyone.
 from __future__ import annotations
 
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -95,11 +109,16 @@ def upgrade() -> None:
         "workflows",
         "NOT auto_shortlist OR (shortlist_ats_threshold IS NOT NULL AND shortlist_ats_threshold >= 1 AND auto_assign_first_round)",
     )
+    op.add_column(
+        "enrolments",
+        sa.Column("ats_injection_markers", postgresql.JSONB(), nullable=True),
+    )
 
 
 def downgrade() -> None:
     # Lossy, honestly: every workflow returns to a human shortlist gate, which is
     # the behaviour the table had before. There is nowhere else to keep the value.
+    op.drop_column("enrolments", "ats_injection_markers")
     op.drop_constraint(
         "ck_workflows_auto_shortlist_needs_threshold", "workflows", type_="check"
     )

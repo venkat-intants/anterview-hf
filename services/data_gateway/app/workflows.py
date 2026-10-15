@@ -1289,7 +1289,10 @@ async def waiting_candidates(db: AsyncSession, requisition_id: uuid.UUID) -> dic
 
     ``shortlisted`` is the number a person has already confirmed: publishing
     starts their first round. ``applied`` is everyone else, who join the
-    workflow and wait for the shortlist as normal.
+    workflow and wait for the shortlist as normal — unless the version being
+    published has ``auto_shortlist`` on, in which case publish offers them to
+    it (up to ``PUBLISH_AUTO_SHORTLIST_LIMIT``) and those who clear the bar
+    start their first round too.
     """
     row = (
         await db.execute(text(_WAITING_COUNT_SQL), {"r": requisition_id})

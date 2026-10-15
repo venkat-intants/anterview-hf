@@ -612,7 +612,7 @@ class CommitSpec(BaseModel):
     def _no_agent_removes_a_human_gate(cls, v: dict[str, Any]) -> dict[str, Any]:
         """No proposal may switch automatic shortlisting on or off.
 
-        Tightened 2026-10-16 (tightening direction only, same as the DELETE
+        Tightened 2026-10-15 (tightening direction only, same as the DELETE
         removal above). ``auto_shortlist`` takes a person out of a step that
         decides which candidates are assessed. Whether to do that is a choice a
         human makes deliberately, in the workflow builder, where the

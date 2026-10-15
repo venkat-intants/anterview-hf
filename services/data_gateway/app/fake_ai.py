@@ -20,6 +20,8 @@ import math
 import re
 from typing import Any
 
+from shared.agents.guardrails import detect_injection
+
 # The same width the embedding column stores (vector(3072)).
 FAKE_EMBEDDING_DIMENSIONS = 3072
 
@@ -86,6 +88,13 @@ def fake_resume_score(
         "concerns": [] if overall >= 50 else [f"[fake AI] Little overlap with {job_title}"],
         "recommendation": recommendation,
         "summary": f"[fake AI] Scored {overall}/100 against {job_title} — {recommendation}.",
+        # Same shape and scope as resume_scorer: the shared detector over the
+        # excerpt the real scorer reads, labelled by field. Without it every
+        # fake-mode score would be "not on record", and auto-shortlist would
+        # behave differently in E2E than in production.
+        "injection_markers": sorted(
+            {f"resume:{m}" for m in detect_injection((resume_text or "")[:8000])}
+        ),
     }
 
 

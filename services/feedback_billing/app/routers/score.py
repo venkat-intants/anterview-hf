@@ -517,6 +517,13 @@ class ResumeScoreResponse(BaseModel):
     concerns: list[str]
     recommendation: str
     summary: str
+    # Names of prompt-injection markers found in the CV text THIS score was
+    # computed from (resume_scorer.scan_untrusted). Names only, never the
+    # matching text. The scorer always computed these, but this model dropped
+    # them, so the caller never knew a score might have been talked up. A
+    # workflow that shortlists on the score with no person looking needs to
+    # know (data_gateway workflow_runner._auto_shortlist).
+    injection_markers: list[str] = []
 
 
 @router.post(
@@ -557,6 +564,7 @@ async def internal_score_resume(
         concerns=result["concerns"],
         recommendation=result["recommendation"],
         summary=result["summary"],
+        injection_markers=list(result.get("injection_markers") or []),
     )
 
 

@@ -1539,6 +1539,11 @@ class Enrolment(Base):
     ats_concerns: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
     ats_recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
     ats_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Injection marker NAMES the scorer found in the CV this score came from.
+    # NULL = not on record (a score taken before migration a2c4e6f8b0d3);
+    # [] = scanned and clean. Auto-shortlist declines a flagged score, and an
+    # unrecorded one it cannot otherwise verify.
+    ats_injection_markers: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     # Which CV produced the score, so it stays reproducible after a re-upload.
     scored_resume_s3_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     scored_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

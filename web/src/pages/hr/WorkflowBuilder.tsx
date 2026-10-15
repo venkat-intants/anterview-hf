@@ -599,11 +599,18 @@ export default function WorkflowBuilder(): JSX.Element {
       applyWorkflow(res);
       const started = res.started_candidates ?? 0;
       const attached = res.attached_candidates ?? 0;
+      const deferred = res.auto_shortlist_deferred ?? 0;
       toast.success(
         attached > 0
           ? `Version ${res.version} is live — ${attached} waiting candidate${attached === 1 ? '' : 's'} joined${started > 0 ? `, ${started} started round 1` : ''}`
           : `Version ${res.version} is live`,
       );
+      if (deferred > 0) {
+        // Not an error: they are in the shortlist queue, as on a manual version.
+        toast.info(
+          `${deferred} more waiting candidate${deferred === 1 ? ' was' : 's were'} not checked for automatic shortlisting at publish — review them in the shortlist queue.`,
+        );
+      }
     },
     onError: (e) => {
       setConfirmPublish(false);

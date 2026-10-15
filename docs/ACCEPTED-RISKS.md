@@ -805,9 +805,9 @@ counts only. No schema or route change is needed.
 
 | | |
 |---|---|
-| **Source finding** | Owner decision, 2026-10-16, building `auto_shortlist` (migration `a2c4e6f8b0d3`); raised as H3 by the security audit of that change |
+| **Source finding** | Owner decision, 2026-10-15, building `auto_shortlist` (migration `a2c4e6f8b0d3`); raised as H3 by the security audit of that change |
 | **Status** | **ACCEPTED — by the owner's explicit ruling; opt-in per workflow, off by default, approval-gated, advance-only** |
-| **Owner** | `platform_owner` (support@intants.com) — accountable. `security-auditor` reviewed the implementation 2026-10-16; its blockers and conditions were fixed before merge. **A DPO co-signature is pending** — it is a person's to give and is not implied by this entry. |
+| **Owner** | `platform_owner` (support@intants.com) — accountable. `security-auditor` and `code-reviewer` (AI review agents, not people) reviewed the implementation on 2026-10-15; the merge record (the PR) states which of their findings were fixed and whether they signed off — this entry does not assert it. **A DPO co-signature is pending** — it is a person's to give and is not implied by this entry. |
 | **Trigger to revisit** | Any of: (a) a government (APSSDC/NSDC) bid, or any bid or contract that asks how candidates are selected for assessment; (b) a candidate complaint about not being progressed, or about being progressed without review; (c) any change to the ATS model, prompt or scoring scale; (d) evidence that HR stops working the below-bar queue on an auto-shortlist opening; (e) any proposal to make the FINAL decision automatic, which this entry does not cover and does not license |
 
 **The decision.** The product owner asked for a high-volume role to run from
@@ -839,25 +839,44 @@ on its own. That is the risk this entry names.
 - Settings are draft-only, so turning it on is a new version that a super admin
   approves. The approver is shown it (a prominent notice and the "what
   approving changes" sentence), the version fingerprint changes when it is on
-  (so an approval of a gated version cannot publish an ungated one), and the
-  approval binds to the fingerprint the approver actually viewed.
+  (so an approval of a gated version cannot publish an ungated one), and an
+  approval is refused if the version changed after the approver opened it. That
+  last check runs when the approve request carries the fingerprint the page
+  showed — the review page always sends it; a hand-made request that omits it
+  is not checked.
 - It needs a bar of at least 1 and first-round auto-assign on — enforced in the
   service and by `ck_workflows_auto_shortlist_needs_threshold`.
-- It declines (leaves for a person) a CV flagged for prompt injection, and any
-  HR-uploaded applicant (`source = 'internal'`), who never applied through the
-  product and whose basis is `hr_collected_application`.
+- It declines (leaves for a person) a CV flagged for prompt injection. The
+  flag is the resume scorer's own, stored with the score it describes
+  (`enrolments.ats_injection_markers`), so it concerns the CV that produced the
+  number — for a returning applicant that is not the CV on their applicant row.
+  A score with no flag on record is accepted only when the scored CV is the
+  current one and a fresh scan of it is clean; otherwise it is declined.
+- It declines anyone who did not apply themselves. This is decided from two
+  facts HR cannot set, and both are required: the application's creating
+  pipeline-ledger row was written by the system with no person named (every HR
+  upload, single add and talent-pool add names the HR user), and the applicant's
+  own identity holds a live `application_data` consent, which only the public
+  apply form writes. It does **not** read the `source` label — HR chooses that
+  at upload, so it cannot prove who filed the application.
 - Every automatic move is recorded `automated=True` with no actor and the score
   and bar in the reason; enabling or disabling it writes its own audit row.
 - No AI copilot proposal can change it: `CommitSpec` refuses the key
   structurally.
 - Candidate notices (EN/HI/TE) no longer claim "nothing is decided
-  automatically"; they disclose that steps may be automatic depending on the
-  role and that every hire or reject is a person.
+  automatically" or that a person reviews every application. The notice beside
+  the consent checkbox says the CV is scored automatically and that, for some
+  roles, a candidate meeting the standard may be moved on without a person
+  reviewing it first; every notice says each hire or reject is a person's.
 
 **What is not covered.** Applicants attached to an archived workflow version
-are not auto-shortlisted, and applicants already waiting when a version is
-published are offered to it once, at publish. Hindi and Telugu notice wording
-has not been reviewed by a native speaker (the PH4 HI/TE review item).
+are not auto-shortlisted. Applicants already waiting when a version is
+published are offered to it once, at publish, at most 50 per publish; the rest
+stay in HR's queue (the builder says how many) until a rescore offers them
+again. The consent notice is the same whatever the opening's setting, so a
+candidate applying to a manual opening is told progression *may* be automatic.
+Hindi and Telugu notice wording has not been reviewed by a native speaker (the
+PH4 HI/TE review item).
 
 ## Index
 
@@ -873,4 +892,4 @@ has not been reviewed by a native speaker (the PH4 HI/TE review item).
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
 | **AR-10** | A company `super_admin` views named candidates (and HR's free-text notes on them) on the hiring board, read-only; cannot act | Owner decision 2026-10-12 | `platform_owner` (+ `security-auditor`) | An objection to super-admin visibility of candidate names/notes, any added field/link/write on the view, a new `super_admin`-reachable route, or a candidate tool for the super-admin copilot |
-| **AR-11** | An opted-in workflow shortlists on the ATS score with no person confirming; advance-only, approval-gated, off by default | Owner decision 2026-10-16 | `platform_owner` (+ `security-auditor`; DPO co-sign pending) | A government bid, a progression complaint, any ATS model/prompt change, the below-bar queue going stale, or any proposal to automate the final decision |
+| **AR-11** | An opted-in workflow shortlists on the ATS score with no person confirming; advance-only, approval-gated, off by default | Owner decision 2026-10-15 | `platform_owner` (+ `security-auditor`; DPO co-sign pending) | A government bid, a progression complaint, any ATS model/prompt change, the below-bar queue going stale, or any proposal to automate the final decision |

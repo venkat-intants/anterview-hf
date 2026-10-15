@@ -123,7 +123,9 @@ def test_a_fake_resume_score_has_every_field_the_real_one_has() -> None:
     score = f(resume_text="Asha\nasha@example.com\nPython FastAPI", job_title="Python Developer",
               level="mid", jd_text="Python FastAPI PostgreSQL")
     real_fields = {"candidate_name", "candidate_email", "overall", "breakdown", "strengths",
-                   "concerns", "recommendation", "summary"}
+                   "concerns", "recommendation", "summary",
+                   # feedback_billing ResumeScoreResponse gained it for auto-shortlist.
+                   "injection_markers"}
     assert set(score) == real_fields
     assert score["candidate_name"] == "Asha" and score["candidate_email"] == "asha@example.com"
     assert score["recommendation"] in {"strong_fit", "moderate_fit", "weak_fit"}

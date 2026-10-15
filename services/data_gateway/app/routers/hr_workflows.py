@@ -80,6 +80,11 @@ from app.workflows import (
 )
 
 log = structlog.get_logger(__name__)
+
+# How many waiting applicants one publish offers to auto-shortlist (see
+# publish_workflow). Sized so the request stays well inside a timeout.
+PUBLISH_AUTO_SHORTLIST_LIMIT = 50
+
 router = APIRouter(prefix="/hr", tags=["hr-workflows"])
 
 _LEVELS = ("entry", "mid", "senior")
@@ -408,7 +413,8 @@ async def start_draft(
     status_code=status.HTTP_201_CREATED,
 )
 async def apply_draft(
-    requisition_id: uuid.UUID, body: ApplyDraftIn, ctx: HrCtxDep, db: DbSessionDep
+    requisition_id: uuid.UUID, body: ApplyDraftIn, request: Request, ctx: HrCtxDep,
+    db: DbSessionDep,
 ) -> dict[str, Any]:
     """Create a draft and all its rounds in ONE transaction.
 
@@ -445,11 +451,21 @@ async def apply_draft(
                 criteria=[c.model_dump() for c in round_.criteria],
             )
         if body.settings is not None:
-            await update_settings(
-                db,
-                workflow_id=wf_id,
-                fields=body.settings.model_dump(exclude_unset=True),
-            )
+            settings_fields = body.settings.model_dump(exclude_unset=True)
+            await update_settings(db, workflow_id=wf_id, fields=settings_fields)
+            # The same audit row patch_settings writes. A draft is created with
+            # auto_shortlist off, so asking for it here is always a change. (A
+            # copilot cannot reach this: CommitSpec refuses the key.)
+            if settings_fields.get("auto_shortlist"):
+                db.add(AuditLog(
+                    actor_id=hr_uid, actor_type="user",
+                    action="workflow.auto_shortlist.enabled",
+                    resource_type="workflow", resource_id=wf_id,
+                    details={"company_id": str(company_id), "from": False, "to": True,
+                             "via": "apply"},
+                    ip_address=extract_client_ip(request),
+                    user_agent=extract_user_agent(request),
+                ))
         await db.commit()
     except WorkflowError as exc:
         # One rollback for the whole thing. A partially applied workflow — two
@@ -492,7 +508,8 @@ async def list_workflow_templates(
     status_code=status.HTTP_201_CREATED,
 )
 async def create_from_template(
-    requisition_id: uuid.UUID, body: TemplateIn, ctx: HrCtxDep, db: DbSessionDep
+    requisition_id: uuid.UUID, body: TemplateIn, request: Request, ctx: HrCtxDep,
+    db: DbSessionDep,
 ) -> dict[str, Any]:
     """Create a DRAFT from a starter template, seeded from the role model (D4).
 
@@ -503,7 +520,7 @@ async def create_from_template(
     _hr_uid, company_id = ctx
     req = await _owned_requisition(db, company_id, requisition_id)
     payload = ApplyDraftIn.model_validate(build_template(body.template, _role_profile(req)))
-    return await apply_draft(requisition_id, payload, ctx, db)
+    return await apply_draft(requisition_id, payload, request, ctx, db)
 
 
 def _criterion_out(c: dict[str, Any]) -> dict[str, Any]:
@@ -845,28 +862,44 @@ async def publish_workflow(
     # what the approver just approved, and every guard in maybe_auto_shortlist
     # still holds (published, switch on, bar >= 1, status new, clears the bar);
     # it never raises, so one bad row cannot fail the publish. D-05 unchanged.
+    #
+    # BOUNDED. Each offer can assign a round and queue its emails, all inside
+    # this one request and transaction, so an opening with thousands waiting
+    # would hold row locks and time the publish out. At most
+    # PUBLISH_AUTO_SHORTLIST_LIMIT are offered here; the rest stay 'new' in
+    # HR's queue — exactly where a version without auto-shortlist leaves them —
+    # and the response says how many, so the builder can tell HR. A later
+    # rescore offers each of them again.
     attached = await attach_waiting_candidates(
         db, requisition_id=wf["requisition_id"], workflow_id=workflow_id
     )
     started = 0
     auto_started = 0
+    offered = 0
+    deferred = 0
     for enrolment_id, st in attached:
         if st == "shortlisted":
             outcome = await on_shortlisted(db, enrolment_id=enrolment_id, actor_user_id=_hr_uid)
             started += outcome.action == "advanced"
         elif st == "new":
+            if offered >= PUBLISH_AUTO_SHORTLIST_LIMIT:
+                deferred += 1
+                continue
+            offered += 1
             outcome = await maybe_auto_shortlist(db, enrolment_id=enrolment_id)
             auto_started += outcome.action == "advanced"
     await db.commit()
     log.info("hr.workflow.published", workflow_id=str(workflow_id),
              company_id=str(company_id), warnings=len(report.warnings),
-             attached=len(attached), started=started, auto_started=auto_started)
+             attached=len(attached), started=started, auto_started=auto_started,
+             auto_deferred=deferred)
     return {
         **await get_workflow(workflow_id, ctx, db),
         "validation": report.as_dict(),
         "attached_candidates": len(attached),
         "started_candidates": started + auto_started,
         "auto_shortlisted_candidates": auto_started,
+        "auto_shortlist_deferred": deferred,
     }
 
 

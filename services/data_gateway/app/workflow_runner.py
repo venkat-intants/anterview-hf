@@ -760,7 +760,33 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
         await db.execute(
             text(
                 "SELECT e.status, e.workflow_id, e.current_round_id, e.company_id,"
-                "       e.ats_overall, e.source, a.resume_text"
+                "       e.ats_overall, e.ats_injection_markers, e.scored_resume_s3_key,"
+                "       a.resume_s3_key AS current_resume_key, a.resume_text,"
+                # PROVENANCE, from facts HR cannot set (see the guard below).
+                # Created by nobody: the enrolment's creating ledger row is the
+                # system's (enrol_applicant writes automated = actor IS NULL),
+                # and no creating row names a person. `automated` is checked as
+                # well as the NULL actor because actor_user_id is ON DELETE SET
+                # NULL — deleting the HR account that uploaded a CV must not
+                # turn its upload into a self-application.
+                "       (EXISTS (SELECT 1 FROM stage_transitions st"
+                "                 WHERE st.enrolment_id = e.id AND st.from_status IS NULL"
+                "                   AND st.to_status = 'new' AND st.actor_user_id IS NULL"
+                "                   AND st.automated)"
+                "        AND NOT EXISTS (SELECT 1 FROM stage_transitions st"
+                "                 WHERE st.enrolment_id = e.id AND st.from_status IS NULL"
+                "                   AND (st.actor_user_id IS NOT NULL OR NOT st.automated))"
+                "       ) AS self_created,"
+                # Consented themselves: the public apply form is the only writer
+                # of application_data/recruitment (public_apply._record_apply_consent),
+                # against the identity that owns the applicant row.
+                "       (a.user_id IS NOT NULL AND EXISTS ("
+                "           SELECT 1 FROM dpdp_consent_ledger c"
+                "            WHERE c.user_id = a.user_id"
+                "              AND c.consent_type = 'application_data'"
+                "              AND c.purpose = 'recruitment'"
+                "              AND c.granted AND c.revoked_at IS NULL)"
+                "       ) AS self_consented"
                 "  FROM enrolments e"
                 "  JOIN applicants a ON a.id = e.applicant_id"
                 " WHERE e.id = :i AND e.deleted_at IS NULL"
@@ -781,16 +807,26 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
         return RunnerOutcome(action="noop", enrolment_id=eid, reason="already in a round")
     if not row["workflow_id"]:
         return RunnerOutcome(action="noop", enrolment_id=eid, reason="no workflow attached")
-    # HR-CREATED APPLICANTS ARE NEVER AUTO-SHORTLISTED. 'internal' is a CV HR
-    # uploaded (bulk or single) — a person who did not apply through the
-    # product and whose processing rests on the hr_collected_application basis
-    # (bulk_ingest.py). Sending them an exam link or an AI-interview invite
-    # because a model scored their CV, with no human choosing to contact them,
-    # is a different act from advancing someone who applied. HR can still
-    # shortlist them by hand; that is a person deciding to reach out.
-    if row["source"] == "internal":
+    # ONLY PEOPLE WHO APPLIED THEMSELVES ARE AUTO-SHORTLISTED. An HR-uploaded
+    # CV (bulk, single, or added from a talent pool) is a person who did not
+    # apply through the product and whose processing rests on the
+    # hr_collected_application basis. Sending them an exam link or an
+    # AI-interview invite because a model scored their CV, with no human
+    # choosing to contact them, is a different act from advancing someone who
+    # applied. HR can still shortlist them by hand; that is a person deciding to
+    # reach out.
+    #
+    # NOT `e.source`. Source is an attribution label HR picks at upload
+    # (application_source.validate_hr_source accepts any governed channel), so
+    # an upload tagged 'referral' would have passed a source check. Both facts
+    # below are written by code HR cannot steer, and BOTH are required, so a
+    # future mistake in either one still fails closed.
+    if not row["self_created"]:
         return RunnerOutcome(action="noop", enrolment_id=eid,
                              reason="HR-created applicant — a person decides to contact them")
+    if not row["self_consented"]:
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason="no application consent from the applicant on record")
 
     workflow = await _load_workflow(db, row["workflow_id"])
     if workflow is None:
@@ -829,7 +865,28 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
     # still nothing — left 'new', in HR's queue — which keeps it inside D-05; and
     # the markers are recomputed from the CV wherever HR looks at the applicant
     # (agents/tools.py), so a person sees the warning rather than losing it.
-    markers = detect_injection(row["resume_text"] or "")
+    #
+    # THE SCAN MUST CONCERN THE CV THAT WAS SCORED. A returning applicant's new
+    # CV belongs to the enrolment (applied_resume_s3_key), not the applicant
+    # row, so applicants.resume_text can be a different document from the one
+    # that produced this number. The scorer's own markers, stored with the
+    # score, describe exactly that CV. With none on record (scored before they
+    # were stored), a live scan is trustworthy only when the scored CV IS the
+    # current one; otherwise there is no evidence either way, and no evidence
+    # is not clean.
+    stored = row["ats_injection_markers"]
+    scored_is_current = (
+        row["scored_resume_s3_key"] is not None
+        and row["scored_resume_s3_key"] == row["current_resume_key"]
+    )
+    if stored is None and not scored_is_current:
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason="no injection check on record for the scored CV — left for a person")
+    markers = list(stored or [])
+    if scored_is_current:
+        # Belt and braces: the shared detector HR's tools show, over the same
+        # CV. A marker either source finds is enough to decline.
+        markers += detect_injection(row["resume_text"] or "")
     if markers:
         log.warning("runner.auto_shortlist_declined_injection",
                     enrolment_id=eid, marker_count=len(markers))

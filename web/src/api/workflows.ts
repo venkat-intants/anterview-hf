@@ -367,20 +367,17 @@ export function setRoundCriteria(
  * ValidationReport — see `validationFromError`, which the builder uses to
  * render those errors inline rather than as a bare failure toast.
  */
-export function publishWorkflow(workflowId: string): Promise<
-  Workflow & {
-    validation: ValidationReport;
-    attached_candidates?: number;
-    started_candidates?: number;
-  }
-> {
-  return apiPost<
-    Workflow & {
-      validation: ValidationReport;
-      attached_candidates?: number;
-      started_candidates?: number;
-    }
-  >(`/hr/workflows/${pathId(workflowId)}/publish`, {});
+export type PublishResult = Workflow & {
+  validation: ValidationReport;
+  attached_candidates?: number;
+  started_candidates?: number;
+  auto_shortlisted_candidates?: number;
+  /** Waiting applicants past the per-publish limit, left in HR's queue. */
+  auto_shortlist_deferred?: number;
+};
+
+export function publishWorkflow(workflowId: string): Promise<PublishResult> {
+  return apiPost<PublishResult>(`/hr/workflows/${pathId(workflowId)}/publish`, {});
 }
 
 /** Open a published workflow for editing as version n+1. The original is untouched. */

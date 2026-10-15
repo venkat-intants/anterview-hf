@@ -3,7 +3,9 @@
 // Switches between mock and real backend via VITE_USE_MOCK env var.
 
 import { simulateDelay } from './mock';
+import { csvRow } from '../lib/csv';
 import { clientFetch, fetchBlobWithAuth } from './client';
+import { pathId } from './pathId';
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
 
@@ -472,7 +474,7 @@ export async function getInterviewTranscript(sessionId: string): Promise<Transcr
     await simulateDelay(300);
     return { session_id: sessionId, turns: [] };
   }
-  return adminGet<TranscriptResponse>(`/admin/interviews/${sessionId}/transcript`);
+  return adminGet<TranscriptResponse>(`/admin/interviews/${pathId(sessionId)}/transcript`);
 }
 
 /** GET /admin/interviews — paginated, filterable interview list */
@@ -529,7 +531,7 @@ export async function getInterviewDetail(sessionId: string): Promise<InterviewDe
     if (!found) throw new Error(`Session ${sessionId} not found`);
     return { ...MOCK_INTERVIEW_DETAIL, session_id: sessionId };
   }
-  return adminGet<InterviewDetailResponse>(`/admin/interviews/${sessionId}`);
+  return adminGet<InterviewDetailResponse>(`/admin/interviews/${pathId(sessionId)}`);
 }
 
 /** GET /admin/analytics/by-role */
@@ -586,7 +588,7 @@ export async function exportInterviewsCsv(filters: InterviewFilters = {}): Promi
     const header =
       'session_id,candidate_email,candidate_name,job_title,status,language,composite_score,created_at,completed_at,duration_seconds\n';
     const rows = MOCK_INTERVIEWS.map((i) =>
-      [
+      csvRow([
         i.session_id,
         i.candidate_email,
         i.candidate_name ?? '',
@@ -597,7 +599,7 @@ export async function exportInterviewsCsv(filters: InterviewFilters = {}): Promi
         i.created_at,
         i.completed_at ?? '',
         i.duration_seconds ?? '',
-      ].join(','),
+      ]),
     ).join('\n');
     const blob = new Blob([header + rows], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);

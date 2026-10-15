@@ -7,7 +7,9 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { GlassCard, SegTabs } from '@/design/components/primitives';
+import { SegTabs } from '@/design/components/primitives';
+import { PageHeader, SectionCard, Toolbar, Page } from '@/design/components/page';
+import { Skeleton } from '@/components/ui/skeleton';
 import { CheckCircle2 } from '@/design/components/icons';
 import { getSlaBoard, type SlaBoardRow, type SlaState } from '@/api/stageSla';
 import AtRiskRow from '@/components/AtRiskRow';
@@ -44,24 +46,37 @@ export default function StagesAtRisk(): JSX.Element {
   const rows = board.data ?? [];
 
   return (
-    <div className="mx-auto max-w-[1120px] px-6 py-8 lg:px-8">
-      <header>
-        <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">Stages at risk</h1>
-        <p className="mt-1 text-[14px] text-muted-foreground">
-          Applications against the SLA their stage owner answers for, worst first. Open one to
-          act on it — nothing on this page moves a candidate.
-        </p>
-      </header>
+    <Page width="default">
+      <PageHeader
+        title="Stages at risk"
+        description="Applications against the SLA their stage owner answers for, worst first. Open one to act on it — nothing on this page moves a candidate."
+      />
 
-      <div className="mt-5">
-        <SegTabs tabs={[...FILTERS]} active={filter} onChange={(k) => setFilter(k as FilterKey)} />
-      </div>
+      <Toolbar
+        trailing={
+          board.data ? (
+            <span className="text-[13px] tabular-nums text-muted-foreground" aria-live="polite">
+              {rows.length} application{rows.length === 1 ? '' : 's'}
+            </span>
+          ) : null
+        }
+      >
+        <div className="max-w-full overflow-x-auto">
+          <SegTabs tabs={[...FILTERS]} active={filter} onChange={(k) => setFilter(k as FilterKey)} />
+        </div>
+      </Toolbar>
 
-      <GlassCard className="mt-5 p-5">
+      <SectionCard title="Applications">
         {board.isLoading ? (
-          <p className="text-[13px] text-muted-foreground">Loading…</p>
+          <div role="status" className="flex flex-col gap-2">
+            <Skeleton className="h-[58px] rounded-[12px]" />
+            <Skeleton className="h-[58px] rounded-[12px]" />
+            <span className="sr-only">Loading…</span>
+          </div>
         ) : board.isError ? (
-          <p className="text-[13px] text-[var(--ui-danger)]">Could not check stage SLAs just now.</p>
+          <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
+            Could not check stage SLAs just now.
+          </p>
         ) : rows.length === 0 ? (
           <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
             <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
@@ -69,9 +84,6 @@ export default function StagesAtRisk(): JSX.Element {
           </p>
         ) : (
           <>
-            <p className="mb-3 text-[12px] text-muted-foreground">
-              {rows.length} application{rows.length === 1 ? '' : 's'}
-            </p>
             <ul className="flex flex-col gap-2">
               {rows.map((r) => (
                 <li key={r.enrolment_id}>
@@ -81,13 +93,13 @@ export default function StagesAtRisk(): JSX.Element {
             </ul>
           </>
         )}
-      </GlassCard>
+      </SectionCard>
 
       <CandidateDrawer
         applicantId={open?.applicant_id ?? null}
         enrolmentId={open?.enrolment_id ?? null}
         onClose={() => setOpen(null)}
       />
-    </div>
+    </Page>
   );
 }

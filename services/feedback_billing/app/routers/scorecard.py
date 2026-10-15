@@ -13,6 +13,7 @@ Access control (IDOR fix):
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Annotated, Any
 
 import structlog
@@ -21,7 +22,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import UNAUTHORIZED, require_jwt
+from app.auth import UNAUTHORIZED, is_guest_token, require_jwt
 from app.config import Settings
 from app.config import settings as _app_settings
 from app.database import get_db_session
@@ -209,7 +210,7 @@ _PRIVILEGED_ROLES = frozenset({"hr_manager", "super_admin", "admin", "platform_o
     ),
 )
 async def get_scorecard(
-    scorecard_id: str,
+    scorecard_id: uuid.UUID,
     jwt_payload: Annotated[dict[str, Any], Depends(_require_jwt)],
     db: Annotated[AsyncSession, Depends(get_db_session)],
     app_settings: Annotated[Settings, Depends(_get_settings)],
@@ -246,7 +247,7 @@ async def get_scorecard(
             WHERE sc.scorecard_id = :scorecard_id
             """
         ),
-        {"scorecard_id": scorecard_id},
+        {"scorecard_id": str(scorecard_id)},
     )
     row = result.mappings().first()
 
@@ -263,6 +264,23 @@ async def get_scorecard(
     # ------------------------------------------------------------------
     session_owner_id = str(row["session_owner_id"])
     owner_company_id = row["owner_company_id"]  # may be None for platform users
+
+    # An interview magic-link token carries the applicant's REAL user id as `sub`,
+    # so the owner check below would hand it every scorecard on that account. It
+    # may read only the scorecard of the one session it is bound to.
+    if is_guest_token(jwt_payload) and str(jwt_payload.get("session_id") or "") != str(
+        row["session_id"]
+    ):
+        log.warning(
+            "scorecard.access_denied",
+            scorecard_id=str(scorecard_id),
+            caller=caller_sub,
+            reason="guest_token_other_session",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scorecard {str(scorecard_id)!r} not found.",
+        )
 
     caller_is_owner = caller_sub == session_owner_id
     if not caller_is_owner:

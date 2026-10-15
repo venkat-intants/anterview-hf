@@ -205,6 +205,61 @@ SELECT r.id, r.title, r.location, r.status, r.target_hires, r.closes_at, r.creat
 """
 
 
+# ---------------------------------------------------------------------------
+# The company super admin's READ-ONLY projection of the per-opening dashboard.
+#
+# ``build_requisition_dashboard`` is HR's payload. A super admin may SEE the
+# board (owner's ruling 2026-10-12, docs/ACCEPTED-RISKS.md AR-10) but not act on
+# it, so the candidate-bearing sections are rebuilt from an ALLOWLIST here: a
+# field added to HR's payload tomorrow does not reach the super admin until
+# someone adds it below on purpose. Names, stage and counts stay; the applicant
+# id (a handle into HR-only routes) and the per-candidate resume score go.
+#
+# What is deliberately KEPT because the read-only screen renders it
+# (web/src/pages/hr/RequisitionDashboard.tsx, HeldPool and Activity): the
+# held-reason text and the transition reason text. Both can be HR-typed free
+# text about a named candidate; they are listed in AR-10 rather than removed.
+# ---------------------------------------------------------------------------
+READ_ONLY_HELD_KEYS: tuple[str, ...] = (
+    "enrolment_id",  # React list key only; not an id any super-admin route accepts
+    "full_name",
+    "held_reason",
+    "round_title",
+    "held_days",
+)
+READ_ONLY_ACTIVITY_KEYS: tuple[str, ...] = (
+    "occurred_at",
+    "automated",
+    "actor",
+    "candidate",
+    "enrolment_id",  # React list key only
+    "from_status",
+    "to_status",
+    "from_round",
+    "to_round",
+    "reason",
+)
+
+
+def read_only_dashboard(payload: dict[str, Any]) -> dict[str, Any]:
+    """HR's dashboard payload, reduced to what a viewer who cannot act needs.
+
+    Pure. Never mutates ``payload``. Deep links into HR's screens are nulled
+    server-side (the frontend also hides them): a super admin has no route to
+    follow them to.
+    """
+    out = dict(payload)
+    out["held_pool"] = [
+        {k: row.get(k) for k in READ_ONLY_HELD_KEYS} for row in payload.get("held_pool") or []
+    ]
+    out["activity"] = [
+        {k: row.get(k) for k in READ_ONLY_ACTIVITY_KEYS} for row in payload.get("activity") or []
+    ]
+    out["attention"] = [{**a, "link": None} for a in payload.get("attention") or []]
+    out["manual_steps"] = [{**s, "link": None} for s in payload.get("manual_steps") or []]
+    return out
+
+
 async def hiring_board(db: AsyncSession, *, company_id: uuid.UUID) -> dict[str, Any]:
     """Every open or paused opening in the company, worst health first."""
     now = datetime.now(tz=UTC)

@@ -1,27 +1,25 @@
 // Scorecard — full-screen results page (outside AppShell).
 // Route: /scorecard/:scorecardId
 //
-// Design: new dark GlassCard layout from @/design/components/primitives.
+// Design: paper canvas, white section cards. A score ring + radar up top, the
+// per-competency breakdown below, then strengths / improvements / summary.
 // Data: getScorecard query (live, 0–10 scale); ScoreRing receives score*10 (0–100).
 // Must-preserve: query, skeleton, ErrorState+toast, rationale accordions,
 // recharts radar, strengths/improvements/summary, PDF gate, back-nav, all t() keys.
+// The AI never decides a hiring outcome: nothing here reads as one.
 
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAccentColor } from '@/lib/useAccentColor';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
 import {
-  ArrowLeft,
   Download,
   CheckCircle2,
   AlertTriangle,
   TrendingUp,
-  LayoutDashboard,
   ChevronDown,
   Info,
-  History,
   ShieldCheck,
 } from '@/design/components/icons';
 import {
@@ -33,32 +31,21 @@ import {
   Tooltip,
 } from 'recharts';
 import { useAuth } from '@/context/AuthContext';
+import { isGuestOnly } from '@/lib/guest';
+import { downloadUrl } from '@/lib/safeUrl';
 import { getScorecard } from '@/api/scorecard';
 import type { ScoreBreakdown, ImprovementItem, AxisFeedbackEntry } from '@/api/scorecard';
 import { getSessionIntegrity } from '@/api/integrity';
 import type { IntegrityReport } from '@/api/integrity';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import {
-  GlassCard,
-  ScoreRing,
-  StatusTag,
-  type TagTone,
-} from '@/design/components/primitives';
-import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
-
-// ── Inline skeleton (avoids @/components/ui/skeleton — shadcn forbidden on this page) ──
-
-function Skeleton({ className }: { className?: string }) {
-  return <div className={cn('animate-pulse bg-[var(--ui-inset)]', className)} />;
-}
-
-// ── Animation ─────────────────────────────────────────────────────────────────
-
-const fadeDown = {
-  hidden: { opacity: 0, y: -14 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.45, ease: [0.22, 1, 0.36, 1] as const } },
-};
+import { GRID_STROKE, TOOLTIP_STYLE } from '@/lib/chartTheme';
+import { buttonVariants } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Breadcrumbs, PageHeader, SectionCard } from '@/design/components/page';
+import { ScoreRing, StatusTag, type TagTone } from '@/design/components/primitives';
+import { Collapsible } from '@/design/components/collapsible';
+import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -94,14 +81,14 @@ function scoreLabelKey(score: number): string {
   return 'scorecard.labelNeedsWork';
 }
 
-/** Convert a 0–10 score to a hex colour for the competency bars.
- *  Semantic red→orange→green ramp: the bar colour alone must read as
- *  "bad / medium / good" (a blue→orange gradient read as decoration). */
-function scoreHexColor(score: number): string {
-  if (score >= 8) return '#27c93f'; // excellent — green
-  if (score >= 6) return '#a3e635'; // good — lime
-  if (score >= 4) return '#ffb764'; // fair — orange
-  return '#e6714f'; // needs work — red
+/** Per-band status tokens for a 0–10 score: the pill ink, its wash, and the bar
+ *  fill. The number is always printed beside the bar, so the band never rests
+ *  on colour alone. */
+function scoreBand(score: number): { ink: string; wash: string; fill: string } {
+  if (score >= 8) return { ink: 'var(--ui-ok)', wash: 'var(--ui-ok-wash)', fill: 'var(--ui-ok)' };
+  if (score >= 6) return { ink: 'var(--ui-info)', wash: 'var(--ui-info-wash)', fill: 'var(--accent)' };
+  if (score >= 4) return { ink: 'var(--ui-warn)', wash: 'var(--ui-warn-wash)', fill: 'var(--ui-warn)' };
+  return { ink: 'var(--ui-danger)', wash: 'var(--ui-danger-wash)', fill: 'var(--ui-danger)' };
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -109,26 +96,19 @@ function scoreHexColor(score: number): string {
 function ErrorState() {
   const { t } = useTranslation();
   return (
-    <main className="min-h-screen bg-card flex items-center justify-center px-4">
+    <main className="flex min-h-screen items-center justify-center bg-background px-4">
       <div
         role="alert"
-        className="rounded-[24px] border border-border bg-card p-8 max-w-md w-full text-center space-y-5"
+        className="w-full max-w-md space-y-5 rounded-card border border-border bg-card p-8 text-center shadow-card"
       >
-        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(230,113,79,0.16)] mx-auto">
+        <div className="mx-auto inline-flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ui-danger-wash)]">
           <AlertTriangle className="h-6 w-6 text-[var(--ui-danger)]" aria-hidden="true" />
         </div>
         <div>
-          <p className="text-[16px] font-semibold text-foreground">
-            {t('scorecard.notAvailableTitle')}
-          </p>
-          <p className="mt-1.5 text-[13.5px] text-muted-foreground">
-            {t('scorecard.notAvailableDesc')}
-          </p>
+          <p className="text-[17px] font-bold text-foreground">{t('scorecard.notAvailableTitle')}</p>
+          <p className="mt-1.5 text-[14px] text-muted-foreground">{t('scorecard.notAvailableDesc')}</p>
         </div>
-        <Link
-          to="/history"
-          className="inline-flex items-center gap-2 rounded-pill border border-border bg-[var(--ui-inset)] px-5 py-2.5 text-[14px] font-semibold text-foreground hover:bg-[var(--ui-inset-strong)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-        >
+        <Link to="/history" className={buttonVariants({ variant: 'outline' })}>
           {t('scorecard.backToHistory')}
         </Link>
       </div>
@@ -153,7 +133,7 @@ function ScoreBarRow({
   const pct = Math.round((score / 10) * 100);
   const panelId = `rationale-${label.replace(/\s+/g, '-').toLowerCase()}`;
   const hasRationale = Boolean(rationale && rationale.trim());
-  const hexColor = scoreHexColor(score);
+  const band = scoreBand(score);
 
   return (
     <div className="space-y-2">
@@ -164,37 +144,36 @@ function ScoreBarRow({
         aria-expanded={open}
         aria-controls={panelId}
         className={cn(
-          'w-full flex items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left',
+          'flex min-h-[44px] w-full items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-left',
           'transition-colors hover:bg-[var(--ui-inset)]',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
         )}
       >
-        <span className="flex items-center gap-1.5 text-[13.5px] font-medium text-[var(--ui-soft)]">
+        <span className="flex items-center gap-1.5 text-[14px] font-semibold text-foreground">
           {label}
           <ChevronDown
             className={cn(
-              'h-3.5 w-3.5 text-[var(--ui-faint)] transition-transform duration-200',
+              'h-4 w-4 text-muted-foreground transition-transform duration-200',
               open && 'rotate-180',
             )}
             aria-hidden="true"
           />
         </span>
         <span
-          className="flex-none rounded-pill px-2.5 py-0.5 text-[12px] font-semibold tabular-nums"
-          style={{ color: hexColor, background: `${hexColor}1a` }}
+          className="flex-none rounded-full px-2.5 py-0.5 text-[13px] font-bold tabular-nums"
+          style={{ color: band.ink, background: band.wash }}
         >
           {score} / 10
         </span>
       </button>
 
-      {/* Score-coloured progress bar — the colour IS the verdict (red→green) */}
-      <div className="h-2 overflow-hidden rounded-full bg-[var(--ui-inset-strong)]" aria-label={`${label}: ${score} out of 10`}>
+      <div
+        className="h-2 overflow-hidden rounded-full bg-[var(--ui-inset-strong)]"
+        aria-label={t('scorecard.scoreOutOf', { label, score })}
+      >
         <div
           className="h-full rounded-full transition-all duration-700"
-          style={{
-            width: `${pct}%`,
-            background: `linear-gradient(90deg,${hexColor}99,${hexColor})`,
-          }}
+          style={{ width: `${pct}%`, background: band.fill }}
         />
       </div>
 
@@ -202,30 +181,29 @@ function ScoreBarRow({
       {open && (
         <div
           id={panelId}
-          className="mt-1 space-y-3 rounded-[14px] border border-border bg-[rgba(var(--accent-rgb),0.06)] px-4 py-3"
+          className="mt-1 space-y-3 rounded-[14px] bg-[var(--ui-inset-soft)] px-4 py-3"
         >
           <div>
-            <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ui-info)]">
+            <p className="mb-1.5 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-[var(--ui-info)]">
               <Info className="h-3.5 w-3.5" aria-hidden="true" />
               {t('scorecard.whyThisScore')}
             </p>
-            <p className="text-[13px] leading-relaxed text-muted-foreground">
+            <p className="text-[14px] leading-relaxed text-foreground">
               {hasRationale ? rationale : t('scorecard.rationaleUnavailable')}
             </p>
           </div>
 
           {feedback && feedback.went_wrong.length > 0 && (
             <div>
-              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ui-danger)]">
+              <p className="mb-1.5 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-[var(--ui-danger)]">
                 <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-                {/* "What went wrong" — design-only label */}
-                What went wrong
+                {t('scorecard.whatWentWrong')}
               </p>
-              <ul className="space-y-1.5" aria-label={`${label}: what went wrong`}>
+              <ul className="space-y-1.5" aria-label={t('scorecard.wentWrongAria', { label })}>
                 {feedback.went_wrong.map((point, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-[13px] leading-relaxed text-[var(--ui-soft)]">
+                  <li key={idx} className="flex items-start gap-2 text-[14px] leading-relaxed text-foreground">
                     <span
-                      className="mt-[7px] h-1.5 w-1.5 flex-none rounded-full bg-[var(--ui-danger)]"
+                      className="mt-[8px] h-1.5 w-1.5 flex-none rounded-full bg-[var(--ui-danger)]"
                       aria-hidden="true"
                     />
                     {point}
@@ -237,16 +215,15 @@ function ScoreBarRow({
 
           {feedback && feedback.how_to_improve.length > 0 && (
             <div>
-              <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ui-ok)]">
+              <p className="mb-1.5 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-[var(--ui-ok)]">
                 <TrendingUp className="h-3.5 w-3.5" aria-hidden="true" />
-                {/* "How to improve" — design-only label */}
-                How to improve
+                {t('scorecard.howToImprove')}
               </p>
-              <ul className="space-y-1.5" aria-label={`${label}: how to improve`}>
+              <ul className="space-y-1.5" aria-label={t('scorecard.improveAria', { label })}>
                 {feedback.how_to_improve.map((point, idx) => (
-                  <li key={idx} className="flex items-start gap-2 text-[13px] leading-relaxed text-[var(--ui-soft)]">
+                  <li key={idx} className="flex items-start gap-2 text-[14px] leading-relaxed text-foreground">
                     <CheckCircle2
-                      className="mt-0.5 h-3.5 w-3.5 flex-none text-[var(--ui-ok)]"
+                      className="mt-0.5 h-4 w-4 flex-none text-[var(--ui-ok)]"
                       aria-hidden="true"
                     />
                     {point}
@@ -267,7 +244,8 @@ interface RadarDataPoint {
   fullMark: number;
 }
 
-// Recharts radar — dark theme, live 4-dimension data (0–10 scale preserved).
+// Recharts radar — live 4-dimension data (0–10 scale preserved). Grid, labels
+// and tooltip come from lib/chartTheme so they follow the mode.
 function DimensionRadar({ scores }: { scores: ScoreBreakdown }) {
   const { t } = useTranslation();
   const data: RadarDataPoint[] = DIMENSION_ORDER.map((key) => ({
@@ -283,19 +261,13 @@ function DimensionRadar({ scores }: { scores: ScoreBreakdown }) {
     <div className="h-[260px] w-full">
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart data={data} outerRadius="72%">
-          <PolarGrid stroke="rgba(255,255,255,0.08)" />
+          <PolarGrid stroke={GRID_STROKE} />
           <PolarAngleAxis
             dataKey="dimension"
-            tick={{ fill: '#b8babf', fontSize: 11 }}
+            tick={{ fill: 'var(--chart-text)', fontSize: 12 }}
           />
           <Tooltip
-            contentStyle={{
-              background: '#1c1c1e',
-              border: '1px solid rgba(255,255,255,0.1)',
-              borderRadius: '10px',
-              fontSize: 12,
-              color: '#f5f5f7',
-            }}
+            contentStyle={TOOLTIP_STYLE}
             formatter={(value) => [`${Number(value ?? 0)} / 10`, 'Score']}
           />
           <Radar
@@ -314,8 +286,8 @@ function DimensionRadar({ scores }: { scores: ScoreBreakdown }) {
 
 function StrengthItem({ text }: { text: string }) {
   return (
-    <li className="flex items-start gap-2.5 text-[13.5px] text-[var(--ui-soft)]">
-      <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)] flex-none mt-0.5" aria-hidden="true" />
+    <li className="flex items-start gap-2.5 rounded-[12px] bg-[var(--ui-ok-wash)] px-3.5 py-3 text-[14px] text-foreground">
+      <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none text-[var(--ui-ok)]" aria-hidden="true" />
       <span className="leading-relaxed">{text}</span>
     </li>
   );
@@ -323,11 +295,11 @@ function StrengthItem({ text }: { text: string }) {
 
 function ImprovementCard({ item }: { item: ImprovementItem }) {
   return (
-    <li className="flex items-start gap-2.5 text-[13.5px]">
-      <TrendingUp className="h-4 w-4 text-[var(--ui-warn)] flex-none mt-0.5" aria-hidden="true" />
+    <li className="flex items-start gap-2.5 rounded-[12px] bg-[var(--ui-warn-wash)] px-3.5 py-3 text-[14px]">
+      <TrendingUp className="mt-0.5 h-4 w-4 flex-none text-[var(--ui-warn)]" aria-hidden="true" />
       <p className="leading-relaxed">
         <span className="font-semibold text-foreground">{item.area}:</span>{' '}
-        <span className="text-[var(--ui-soft)]">{item.suggestion}</span>
+        <span className="text-foreground">{item.suggestion}</span>
       </p>
     </li>
   );
@@ -335,25 +307,25 @@ function ImprovementCard({ item }: { item: ImprovementItem }) {
 
 // ── Integrity (proctoring) panel ───────────────────────────────────────────────
 
-/** Human-readable labels for proctoring event types (mirrors admin console). */
-const INTEGRITY_LABELS: Record<string, string> = {
-  gaze_away: 'Looked away from screen',
-  face_absent: 'Face not visible',
-  multiple_faces: 'Multiple faces detected',
-  tab_blur: 'Switched tab / window',
-  fullscreen_exit: 'Left fullscreen',
-  copy: 'Copied text',
-  paste: 'Pasted text',
-  second_voice: 'Second voice detected',
-  devtools_open: 'Developer tools opened',
-  proctor_error: 'Camera detection unavailable',
+/** Proctoring event types → translation keys for their candidate-facing labels. */
+const INTEGRITY_LABEL_KEYS: Record<string, string> = {
+  gaze_away: 'scorecard.evGazeAway',
+  face_absent: 'scorecard.evFaceAbsent',
+  multiple_faces: 'scorecard.evMultipleFaces',
+  tab_blur: 'scorecard.evTabBlur',
+  fullscreen_exit: 'scorecard.evFullscreenExit',
+  copy: 'scorecard.evCopy',
+  paste: 'scorecard.evPaste',
+  second_voice: 'scorecard.evSecondVoice',
+  devtools_open: 'scorecard.evDevtools',
+  proctor_error: 'scorecard.evProctorError',
 };
 
-/** Integrity score colour (0–100 scale) — same thresholds as the admin console. */
+/** Integrity score ink (0–100 scale) — same thresholds as the admin console. */
 function integrityColor(score: number): string {
-  if (score >= 80) return '#27c93f';
-  if (score >= 60) return '#ffb764';
-  return '#e6714f';
+  if (score >= 80) return 'var(--ui-ok)';
+  if (score >= 60) return 'var(--ui-warn)';
+  return 'var(--ui-danger)';
 }
 
 /** mm:ss offset of an event into the interview; falls back to wall-clock time. */
@@ -373,52 +345,50 @@ function fmtOffset(eventIso: string, sessionStartIso: string | null): string {
 }
 
 function IntegrityPanel({ report }: { report: IntegrityReport }) {
+  const { t } = useTranslation();
+  const timelineKey = useScopedPersistKey('scorecard-integrity-timeline');
   const score = report.integrity_score;
   const byType = report.summary?.by_type ?? {};
   const flaggedSeconds = report.summary?.flagged_seconds ?? {};
   const types = Object.keys(byType);
   const timeline = report.events;
 
+  const labelFor = (type: string): string =>
+    INTEGRITY_LABEL_KEYS[type] ? t(INTEGRITY_LABEL_KEYS[type]) : type;
+
   // integrity_score null = proctoring never ran; the parent hides the panel.
   if (score === null) return null;
 
   return (
-    <GlassCard className="p-5">
-      <h3 className="mb-1 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-        <ShieldCheck className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
-        {/* "Interview integrity" — design-only label, matches admin console wording */}
-        Interview integrity
-      </h3>
-      <p className="mb-4 text-[12px] text-muted-foreground">
-        AI-assisted flagging for human review — not an automated decision.
-      </p>
-
+    <SectionCard
+      title={t('scorecard.integrityTitle')}
+      icon={ShieldCheck}
+      description={t('scorecard.integrityNote')}
+    >
       <div className="mb-4 flex items-baseline gap-2">
         <span
-          className="text-[30px] font-semibold tabular-nums tracking-[-1px]"
+          className="text-[30px] font-bold tabular-nums tracking-[-1px]"
           style={{ color: integrityColor(score) }}
           data-testid="integrity-score"
         >
           {score}
         </span>
-        <span className="text-[13px] text-muted-foreground">/ 100 integrity</span>
+        <span className="text-[13.5px] text-muted-foreground">{t('scorecard.integrityOutOf')}</span>
       </div>
 
       {types.length === 0 ? (
-        <p className="text-[13px] text-[var(--ui-ok)]">No integrity flags were raised. ✓</p>
+        <p className="text-[14px] font-medium text-[var(--ui-ok)]">{t('scorecard.integrityNoFlags')}</p>
       ) : (
-        <div className="flex flex-col gap-2.5" aria-label="Integrity flags">
-          {types.map((t) => (
+        <div className="flex flex-col gap-2.5" aria-label={t('scorecard.integrityFlagsAria')}>
+          {types.map((type) => (
             <div
-              key={t}
-              className="flex items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3"
+              key={type}
+              className="flex items-center gap-3 rounded-[12px] bg-[var(--ui-inset-soft)] p-3"
             >
-              <AlertTriangle className="h-[15px] w-[15px] flex-none text-[var(--ui-warn)]" aria-hidden="true" />
-              <span className="flex-1 text-[12.5px] text-[var(--ui-soft)]">
-                {INTEGRITY_LABELS[t] ?? t}
-              </span>
-              <span className="font-mono text-[11px] text-[var(--ui-faint)] tabular-nums">
-                {byType[t]}×{flaggedSeconds[t] ? ` · ${flaggedSeconds[t]}s` : ''}
+              <AlertTriangle className="h-4 w-4 flex-none text-[var(--ui-warn)]" aria-hidden="true" />
+              <span className="flex-1 text-[14px] text-foreground">{labelFor(type)}</span>
+              <span className="font-mono text-[12px] tabular-nums text-muted-foreground">
+                {byType[type]}×{flaggedSeconds[type] ? ` · ${flaggedSeconds[type]}s` : ''}
               </span>
             </div>
           ))}
@@ -426,59 +396,59 @@ function IntegrityPanel({ report }: { report: IntegrityReport }) {
       )}
 
       {timeline.length > 0 && (
-        <div className="pt-4">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">
-            Event timeline
-          </p>
+        <Collapsible
+          className="mt-4"
+          title={t('scorecard.integrityTimeline')}
+          count={timeline.length}
+          summary={t('scorecard.integrityTimelineSummary', { count: timeline.length })}
+          persistKey={timelineKey}
+          data-testid="integrity-timeline"
+        >
           <ul
             className="max-h-64 space-y-1 overflow-y-auto"
-            aria-label="Integrity event timeline"
+            aria-label={t('scorecard.integrityTimelineAria')}
           >
             {timeline.map((ev, idx) => (
               <li
                 key={idx}
-                className="flex items-center justify-between gap-2 rounded-[10px] bg-[var(--ui-inset-soft)] px-2.5 py-1.5 text-[11.5px]"
+                className="flex items-center justify-between gap-2 rounded-[10px] bg-[var(--ui-inset-soft)] px-3 py-2 text-[13px]"
               >
-                <span className="flex items-center gap-2 text-[var(--ui-soft)]">
-                  <span className="font-mono text-[var(--ui-faint)] tabular-nums">
+                <span className="flex items-center gap-2 text-foreground">
+                  <span className="font-mono tabular-nums text-muted-foreground">
                     {fmtOffset(ev.started_at, report.session_started_at)}
                   </span>
-                  {INTEGRITY_LABELS[ev.event_type] ?? ev.event_type}
+                  {labelFor(ev.event_type)}
                 </span>
                 {ev.duration_seconds != null && (
-                  <span className="font-mono text-[var(--ui-faint)] tabular-nums">
+                  <span className="font-mono tabular-nums text-muted-foreground">
                     {ev.duration_seconds}s
                   </span>
                 )}
               </li>
             ))}
           </ul>
-        </div>
+        </Collapsible>
       )}
-    </GlassCard>
+    </SectionCard>
   );
 }
 
 // ── Loading skeleton ───────────────────────────────────────────────────────────
 
 function ScorecardSkeleton() {
+  const { t } = useTranslation();
   return (
-    <main className="min-h-screen bg-card py-10 px-4">
+    <main className="min-h-screen bg-background px-4 py-10">
       {/* Screen-reader status — preserves existing test contract */}
-      <span
-        role="status"
-        aria-label="Loading scorecard"
-        aria-live="polite"
-        className="sr-only"
-      />
-      <div className="max-w-[1180px] mx-auto space-y-5">
-        <Skeleton className="h-10 w-64 rounded-full bg-[var(--ui-inset)]" />
+      <span role="status" aria-label={t('scorecard.loadingAria')} aria-live="polite" className="sr-only" />
+      <div className="mx-auto max-w-[1180px] space-y-5">
+        <Skeleton className="h-10 w-64 rounded-full" />
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-          <Skeleton className="h-64 rounded-[24px] bg-[var(--ui-inset)]" />
-          <Skeleton className="h-64 rounded-[24px] bg-[var(--ui-inset)] lg:col-span-2" />
+          <Skeleton className="h-64 rounded-card" />
+          <Skeleton className="h-64 rounded-card lg:col-span-2" />
         </div>
-        <Skeleton className="h-48 rounded-[24px] bg-[var(--ui-inset)]" />
-        <Skeleton className="h-36 rounded-[24px] bg-[var(--ui-inset)]" />
+        <Skeleton className="h-48 rounded-card" />
+        <Skeleton className="h-36 rounded-card" />
       </div>
     </main>
   );
@@ -489,7 +459,10 @@ function ScorecardSkeleton() {
 export default function Scorecard() {
   const { t } = useTranslation();
   const { scorecardId } = useParams<{ scorecardId: string }>();
-  const { accessToken } = useAuth();
+  const { accessToken, user } = useAuth();
+  // An invited guest can read this scorecard and nothing else in the account
+  // area, so the trail and the "browse roles" link are left out for them.
+  const isGuest = isGuestOnly(user?.roles);
 
   // Live query — preserved exactly: key ['scorecard',id], enabled guard, staleTime, retry:false
   const { data, isLoading, isError } = useQuery({
@@ -521,9 +494,9 @@ export default function Scorecard() {
   // Fire error toast once per distinct error transition — never on every render.
   useEffect(() => {
     if (isError) {
-      toast.error('Could not load scorecard. Please try again.');
+      toast.error(t('scorecard.loadError'));
     }
-  }, [isError]);
+  }, [isError, t]);
 
   if (isLoading) return <ScorecardSkeleton />;
   if (isError || !data) return <ErrorState />;
@@ -533,217 +506,141 @@ export default function Scorecard() {
   const verdict = t(scoreLabelKey(data.composite_score));
   const tone = scoreTone(data.composite_score);
 
+  // https only (see downloadUrl) — a server string is never trusted as an href.
+  const pdfHref = data.report_pdf_url ? downloadUrl(data.report_pdf_url) : null;
+  const pdfLink = pdfHref ? (
+    <a
+      href={pdfHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={buttonVariants()}
+    >
+      <Download aria-hidden="true" />
+      {t('scorecard.downloadPdf')}
+    </a>
+  ) : null;
+
   return (
-    <main className="min-h-screen bg-card py-8 px-4">
-      <div className="mx-auto max-w-[1180px] px-2 lg:px-4">
-
-        {/* ── Page header ─────────────────────────────────────────────── */}
-        <motion.header
-          initial="hidden"
-          animate="visible"
-          variants={fadeDown}
-          className="mb-7"
-        >
-          {/* Back navigation — history + dashboard links */}
-          <nav className="flex items-center gap-3 mb-5" aria-label="Breadcrumb">
-            <Link
-              to="/history"
-              className="inline-flex items-center gap-1.5 rounded-pill border border-border bg-[var(--ui-inset)] px-3.5 py-1.5 text-[13px] text-muted-foreground hover:bg-[var(--ui-inset-strong)] hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('nav.history')}
-            </Link>
-            <span className="h-4 w-px bg-[var(--ui-inset-strong)]" aria-hidden="true" />
-            <Link
-              to="/dashboard"
-              className="inline-flex items-center gap-1.5 rounded-pill border border-border bg-[var(--ui-inset)] px-3.5 py-1.5 text-[13px] text-muted-foreground hover:bg-[var(--ui-inset-strong)] hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            >
-              <LayoutDashboard className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('nav.dashboard')}
-            </Link>
-          </nav>
-
-          {/* Role + badge breadcrumb line */}
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-                <History className="h-3.5 w-3.5" aria-hidden="true" />
-                {t('scorecard.badge')}
-              </div>
-              <h1 className="mt-1 text-[26px] font-semibold tracking-[-0.5px] text-foreground">
-                {t('scorecard.title')}
-              </h1>
-            </div>
-
-            {/* PDF download — only when url is present (conditional preserved) */}
-            {data.report_pdf_url && (
-              <a
-                href={data.report_pdf_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 rounded-pill bg-primary px-5 py-2.5 text-[14px] font-semibold text-primary-foreground hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              >
-                <Download className="h-4 w-4" aria-hidden="true" />
-                {t('scorecard.downloadPdf')}
-              </a>
-            )}
-          </div>
-        </motion.header>
-
-        {/* ── Row 1: ScoreRing (left) + Radar (right) ──────────────────── */}
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-          {/* Score + verdict card */}
-          <Reveal dir="left">
-            <GlassCard feature className="flex h-full flex-col items-center justify-center gap-5 text-center p-8">
-              {/* sr-only overall label for a11y */}
-              <span className="sr-only">
-                {`${t('scorecard.overallScore')}: ${data.composite_score.toFixed(1)} ${t('scorecard.outOf10')}`}
-              </span>
-
-              {/* ScoreRing takes 0–100; live data is 0–10, so multiply by 10 */}
-              <ScoreRing
-                score={compositeScore100}
-                size={160}
-                label={t('scorecard.outOf10')}
+    <main className="min-h-screen bg-background px-4 py-8">
+      <div className="mx-auto max-w-[1180px] space-y-5 sm:px-2 lg:px-4">
+        <PageHeader
+          className="mb-0"
+          breadcrumbs={
+            isGuest ? undefined : (
+              <Breadcrumbs
+                items={[
+                  { label: t('nav.dashboard'), to: '/dashboard' },
+                  { label: t('nav.history'), to: '/history' },
+                  { label: t('scorecard.title') },
+                ]}
               />
+            )
+          }
+          eyebrow={t('scorecard.badge')}
+          title={t('scorecard.title')}
+          actions={pdfLink}
+        />
 
-              <div className="flex flex-col items-center gap-2">
-                <StatusTag tone={tone} dot>
-                  {verdict}
-                </StatusTag>
-                <p className="text-[12px] text-[var(--ui-soft)]">
-                  {t('scorecard.overallScore')}
-                </p>
-              </div>
-            </GlassCard>
-          </Reveal>
+        {/* Row 1: ScoreRing (left) + Radar (right) */}
+        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+          <section className="flex flex-col items-center justify-center gap-5 rounded-card border border-border bg-card p-8 text-center shadow-card">
+            {/* sr-only overall label for a11y */}
+            <span className="sr-only">
+              {`${t('scorecard.overallScore')}: ${data.composite_score.toFixed(1)} ${t('scorecard.outOf10')}`}
+            </span>
+
+            {/* ScoreRing takes 0–100; live data is 0–10, so multiply by 10 */}
+            <ScoreRing score={compositeScore100} size={160} label={t('scorecard.outOf100')} />
+
+            <div className="flex flex-col items-center gap-2">
+              <StatusTag tone={tone} dot>
+                {verdict}
+              </StatusTag>
+              <p className="text-[13px] text-[var(--ui-soft)]">{t('scorecard.overallScore')}</p>
+              {/* A score is feedback on how the interview went. It is never a
+                  hiring outcome, and the page must say so where the number is.
+                  A guest is reading an invited interview, not a practice one. */}
+              <p data-testid="not-a-decision" className="max-w-[260px] text-[12.5px] leading-snug text-muted-foreground">
+                {isGuest ? t('practice.notDecisionGuest') : t('practice.notDecision')}
+              </p>
+            </div>
+          </section>
 
           {/* Radar chart — recharts over live data.scores (4 real dimensions) */}
-          <Reveal className="lg:col-span-2">
-            <GlassCard className="h-full p-5">
-              <h3 className="mb-2 text-[15px] font-semibold text-foreground">
-                {t('scorecard.scoreBreakdown')}
-              </h3>
-              <p className="mb-3 text-[12.5px] text-muted-foreground">{t('scorecard.tapForDetail')}</p>
-              <DimensionRadar scores={data.scores} />
-            </GlassCard>
-          </Reveal>
+          <SectionCard
+            className="lg:col-span-2"
+            title={t('scorecard.scoreBreakdown')}
+            description={t('scorecard.tapForDetail')}
+          >
+            <DimensionRadar scores={data.scores} />
+          </SectionCard>
         </div>
 
-        {/* ── Competency bars with collapsible rationale accordions ──────── */}
-        <Reveal className="mt-5">
-          <GlassCard className="p-5">
-            <h3 className="mb-4 text-[15px] font-semibold text-foreground">
-              {/* "Competency breakdown" — design-only label, no existing t() key */}
-              Competency breakdown
-            </h3>
-            <Stagger className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              {DIMENSION_ORDER.map((key) => (
-                <StaggerItem key={key}>
-                  <ScoreBarRow
-                    label={t(DIMENSION_LABEL_KEYS[key])}
-                    score={data.scores[key]}
-                    rationale={data.rationale?.[key]}
-                    feedback={data.axis_feedback?.[key]}
-                  />
-                </StaggerItem>
-              ))}
-            </Stagger>
-          </GlassCard>
-        </Reveal>
+        {/* Competency bars with collapsible rationale accordions */}
+        <SectionCard title={t('scorecard.competencyBreakdown')}>
+          <div className="grid grid-cols-1 gap-x-6 gap-y-4 sm:grid-cols-2">
+            {DIMENSION_ORDER.map((key) => (
+              <ScoreBarRow
+                key={key}
+                label={t(DIMENSION_LABEL_KEYS[key])}
+                score={data.scores[key]}
+                rationale={data.rationale?.[key]}
+                feedback={data.axis_feedback?.[key]}
+              />
+            ))}
+          </div>
+        </SectionCard>
 
-        {/* ── Strengths / Improvements ──────────────────────────────────── */}
+        {/* Strengths / Improvements */}
         {(data.strengths.length > 0 || data.improvements.length > 0) && (
-          <div className="mt-5 grid grid-cols-1 gap-5 md:grid-cols-2">
-            {/* Strengths — conditional on data */}
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
             {data.strengths.length > 0 && (
-              <Reveal dir="left">
-                <GlassCard className="h-full p-5">
-                  <h3 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-                    <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
-                    {t('scorecard.keyStrengths')}
-                  </h3>
-                  <ul className="flex flex-col gap-2.5" aria-label="Key strengths list">
-                    {data.strengths.map((strength, idx) => (
-                      <StrengthItem key={idx} text={strength} />
-                    ))}
-                  </ul>
-                </GlassCard>
-              </Reveal>
+              <SectionCard title={t('scorecard.keyStrengths')} icon={CheckCircle2}>
+                <ul className="flex flex-col gap-2.5" aria-label={t('scorecard.strengthsListAria')}>
+                  {data.strengths.map((strength, idx) => (
+                    <StrengthItem key={idx} text={strength} />
+                  ))}
+                </ul>
+              </SectionCard>
             )}
 
-            {/* Improvements — conditional on data */}
             {data.improvements.length > 0 && (
-              <Reveal dir="right">
-                <GlassCard className="h-full p-5">
-                  <h3 className="mb-3 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-                    <TrendingUp className="h-4 w-4 text-[var(--ui-warn)]" aria-hidden="true" />
-                    {t('scorecard.areasForImprovement')}
-                  </h3>
-                  <ul className="flex flex-col gap-3" aria-label="Areas for improvement list">
-                    {data.improvements.map((item, idx) => (
-                      <ImprovementCard key={idx} item={item} />
-                    ))}
-                  </ul>
-                </GlassCard>
-              </Reveal>
+              <SectionCard title={t('scorecard.areasForImprovement')} icon={TrendingUp}>
+                <ul className="flex flex-col gap-2.5" aria-label={t('scorecard.improvementsListAria')}>
+                  {data.improvements.map((item, idx) => (
+                    <ImprovementCard key={idx} item={item} />
+                  ))}
+                </ul>
+              </SectionCard>
             )}
           </div>
         )}
 
-        {/* ── Summary ───────────────────────────────────────────────────── */}
+        {/* Summary */}
         {data.summary && (
-          <Reveal className="mt-5">
-            <GlassCard className="p-5">
-              <h3 className="mb-3 text-[15px] font-semibold text-foreground">
-                {t('scorecard.summary')}
-              </h3>
-              <p className="text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
-                {data.summary}
-              </p>
-            </GlassCard>
-          </Reveal>
+          <SectionCard title={t('scorecard.summary')}>
+            <p className="text-[15px] leading-relaxed text-foreground">{data.summary}</p>
+          </SectionCard>
         )}
 
-        {/* ── Interview integrity (proctoring) ──────────────────────────── */}
-        {integrity && integrity.integrity_score !== null && (
-          <Reveal className="mt-5">
-            <IntegrityPanel report={integrity} />
-          </Reveal>
-        )}
+        {/* Interview integrity (proctoring) */}
+        {integrity && integrity.integrity_score !== null && <IntegrityPanel report={integrity} />}
 
-        {/* ── CTA footer ────────────────────────────────────────────────── */}
-        <Reveal className="mt-6">
-          <div className="flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-border bg-card p-5">
-            <div>
-              {/* "Want to improve your score?" — design-only label, no existing t() key */}
-              <div className="text-[15px] font-semibold text-foreground">Want to improve your score?</div>
-              {/* "Retake or try a different role." — design-only label */}
-              <p className="text-[13px] text-muted-foreground">Retake the interview or try a different role.</p>
-            </div>
-            <div className="flex items-center gap-2.5">
-              {/* "Browse roles" anchor styled as a ghost Pill — Link wrapping a button is invalid HTML */}
-              <Link
-                to="/jobs"
-                className="inline-flex items-center justify-center gap-2 rounded-[9999px] px-5 py-2.5 text-[13px] font-semibold bg-[var(--ui-inset)] text-foreground border border-border hover:bg-[var(--ui-inset-strong)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              >
-                Browse roles
-              </Link>
-              {data.report_pdf_url && (
-                <a
-                  href={data.report_pdf_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center justify-center gap-2 rounded-[9999px] px-5 py-2.5 text-[13px] font-semibold bg-primary text-primary-foreground hover:bg-primary/90 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                >
-                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                  {t('scorecard.downloadPdf')}
-                </a>
-              )}
-            </div>
+        {/* CTA footer */}
+        <div className="flex flex-wrap items-center justify-between gap-4 rounded-card border border-border bg-card p-6 shadow-card">
+          <div>
+            <div className="text-[17px] font-bold text-foreground">{t('scorecard.improveTitle')}</div>
+            <p className="mt-1 text-[14px] text-muted-foreground">{t('scorecard.improveDesc')}</p>
           </div>
-        </Reveal>
-
+          <div className="flex flex-wrap items-center gap-2.5">
+            {!isGuest && (
+              <Link to="/jobs" className={buttonVariants({ variant: 'outline' })}>
+                {t('scorecard.browseRoles')}
+              </Link>
+            )}
+            {pdfLink}
+          </div>
+        </div>
       </div>
     </main>
   );

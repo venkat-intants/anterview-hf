@@ -26,8 +26,9 @@ import {
   type ActivationTarget,
 } from '@/api/publicApply';
 import { toast } from '@/lib/toast';
-import AuthLayout from '@/components/layout/AuthLayout';
-import { Field, Pill } from '@/design/components/primitives';
+import AuthLayout, { FormError, PasswordField, PasswordStrength, StatusPanel } from '@/components/layout/AuthLayout';
+import { TEXT_LINK_CLASS } from '@/components/layout/authStyles';
+import { Pill } from '@/design/components/primitives';
 import {
   AlertCircle,
   CheckCircle2,
@@ -35,33 +36,25 @@ import {
   Lock,
   UserPlus,
 } from '@/design/components/icons';
-
-/** 0–4 password-strength score (presentation only). Mirrors ResetPassword. */
-function strengthOf(pw: string): number {
-  let s = 0;
-  if (pw.length >= 8) s++;
-  if (pw.length >= 12) s++;
-  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) s++;
-  if (/\d/.test(pw) && /[^A-Za-z0-9]/.test(pw)) s++;
-  return Math.min(4, s);
-}
-
-const STRENGTH_COLOR = ['#e6714f', '#e6714f', '#ffb764', 'var(--accent)', '#27c93f'];
-const STRENGTH_LABEL = ['Too weak', 'Weak', 'Fair', 'Good', 'Strong'];
-
-function tokenFromHash(): string {
-  if (typeof window === 'undefined') return '';
-  return window.location.hash.replace(/^#/, '').trim();
-}
+import { useFragmentToken } from '@/hooks/useFragmentToken';
+import { useTranslation } from 'react-i18next';
 
 type Phase = 'checking' | 'ready' | 'expired' | 'done';
 
 export default function ActivateAccount() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
-  const [token] = useState(tokenFromHash);
+  // Read once, then removed from the address bar and history entry.
+  const token = useFragmentToken();
   const [phase, setPhase] = useState<Phase>(token ? 'checking' : 'expired');
   const [target, setTarget] = useState<ActivationTarget | null>(null);
   const [linked, setLinked] = useState<'new' | 'existing'>('new');
+  // What the server said happened. For an address that already had an account
+  // there are two outcomes with opposite instructions — "use your existing
+  // password" and, when that account had never been verified, "use the one you
+  // just chose" — and only the server knows which, so its sentence is shown
+  // rather than one guessed from `linked`.
+  const [serverMessage, setServerMessage] = useState('');
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -81,25 +74,26 @@ export default function ActivateAccount() {
       })
       .catch((err: unknown) => {
         setCheckError(
-          err instanceof Error ? err.message : 'This link is invalid or has expired.',
+          err instanceof Error ? err.message : t('public.activate.invalidLink'),
         );
         setPhase('expired');
       });
-  }, [token]);
+  }, [token, t]);
 
   const mutation = useMutation({
     mutationFn: () => activateAccount(token, pw),
     onSuccess: (result) => {
       setLinked(result.linked);
+      setServerMessage(result.message.trim());
       setPhase('done');
       toast.success(
         result.linked === 'existing'
-          ? 'Application added to your existing account.'
-          : 'Your account is ready.',
+          ? t('public.activate.toastExisting')
+          : t('public.activate.toastNew'),
       );
     },
     onError: (err: unknown) => {
-      setError(err instanceof Error ? err.message : 'Could not set up your account.');
+      setError(err instanceof Error ? err.message : t('public.activate.setupError'));
     },
   });
 
@@ -107,11 +101,11 @@ export default function ActivateAccount() {
     e.preventDefault();
     setError(null);
     if (pw.length < 8) {
-      setError('Password must be at least 8 characters.');
+      setError(t('public.activate.pwShort'));
       return;
     }
     if (pw !== confirm) {
-      setError('Passwords do not match.');
+      setError(t('public.activate.pwMismatch'));
       return;
     }
     mutation.mutate();
@@ -120,15 +114,9 @@ export default function ActivateAccount() {
   if (phase === 'checking') {
     return (
       <AuthLayout>
-        <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
-            <Loader2 className="h-6 w-6 animate-spin" aria-hidden="true" />
-          </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
-            Checking your link…
-          </h1>
-          <p className="mt-2 text-[14px] text-muted-foreground">One moment.</p>
-        </div>
+        <StatusPanel icon={Loader2} tone="info" spin title={t('public.activate.checking')}>
+          <p>{t('public.activate.oneMoment')}</p>
+        </StatusPanel>
       </AuthLayout>
     );
   }
@@ -136,31 +124,22 @@ export default function ActivateAccount() {
   if (phase === 'expired') {
     return (
       <AuthLayout>
-        <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(230,113,79,0.14)] text-[var(--ui-danger)]">
-            <AlertCircle className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
-            This link has expired
-          </h1>
-          <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
-            {checkError ??
-              'This link is missing its token. Open the link from your application confirmation email.'}
-          </p>
+        <StatusPanel
+          icon={AlertCircle}
+          tone="danger"
+          title={t('public.activate.expiredTitle')}
+          actions={
+            <Link to="/login" className={TEXT_LINK_CLASS}>
+              {t('public.activate.signInExisting')}
+            </Link>
+          }
+        >
+          <p>{checkError ?? t('public.activate.missingToken')}</p>
           {/* Deliberately no "request a new one": nothing on the public side
               can re-issue an applicant's activation link, and offering a button
               that cannot work is worse than saying who can help. */}
-          <p className="mt-4 max-w-sm text-[13px] text-muted-foreground">
-            Your application is safe — this only affects signing in. Reply to the
-            confirmation email and the hiring team can send a new link.
-          </p>
-          <Link
-            to="/login"
-            className="mt-6 text-[13px] text-[var(--ui-info)] hover:underline underline-offset-4"
-          >
-            Already have an account? Sign in
-          </Link>
-        </div>
+          <p className="text-[13px]">{t('public.activate.expiredSafe')}</p>
+        </StatusPanel>
       </AuthLayout>
     );
   }
@@ -168,125 +147,107 @@ export default function ActivateAccount() {
   if (phase === 'done') {
     return (
       <AuthLayout>
-        <div className="flex flex-col items-center text-center">
-          <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(39,201,63,0.14)] text-[var(--ui-ok)]">
-            <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <h1 className="mt-5 text-[22px] font-semibold tracking-[-0.6px] text-foreground">
-            {linked === 'existing' ? 'Added to your account' : 'You’re all set'}
-          </h1>
-          <p className="mt-2 max-w-sm text-[14px] text-muted-foreground">
-            {linked === 'existing'
-              ? 'This email already had an account, so we added the application to it. Sign in with your existing password.'
-              : 'Sign in to see which stage your application is at and what happens next.'}
-          </p>
-          <Pill
-            className="mt-6 w-full py-3"
-            onClick={() => void navigate('/login', { replace: true })}
-          >
-            Sign in
-          </Pill>
-        </div>
+        <StatusPanel
+          icon={CheckCircle2}
+          tone="ok"
+          title={
+            linked === 'existing'
+              ? t('public.activate.doneExistingTitle')
+              : t('public.activate.doneNewTitle')
+          }
+          actions={
+            <Pill className="min-h-11 w-full py-3" onClick={() => void navigate('/login', { replace: true })}>
+              {t('public.activate.signIn')}
+            </Pill>
+          }
+        >
+          {linked === 'existing' ? (
+            <>
+              {/* The server's own sentence wins: only it knows whether the
+                  existing password or the one just chosen now applies. */}
+              <p>{serverMessage || t('public.activate.existingFallback')}</p>
+              <p>{t('public.activate.inApplications')}</p>
+            </>
+          ) : (
+            <p>{t('public.activate.doneNew')}</p>
+          )}
+        </StatusPanel>
       </AuthLayout>
     );
   }
 
-  const strength = strengthOf(pw);
-
   return (
     <AuthLayout>
-      <div className="mb-2 flex flex-col items-center text-center">
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
-          <UserPlus className="h-6 w-6" aria-hidden="true" />
-        </span>
-      </div>
-      <h1 className="text-center text-[24px] font-semibold tracking-[-0.6px] text-foreground">
-        Track your application
+      <span className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[var(--ui-info-wash)] text-[var(--ui-info)]">
+        <UserPlus className="h-6 w-6" aria-hidden="true" />
+      </span>
+      <h1 className="mt-5 text-[30px] font-bold leading-tight tracking-[-0.8px] text-foreground">
+        {t('public.activate.heading')}
       </h1>
-      <p className="mt-1.5 text-center text-[14px] text-muted-foreground">
+      <p className="mt-2 text-[15px] text-muted-foreground">
         {target?.job_title && target?.company_name
-          ? `Set a password to follow your ${target.job_title} application at ${target.company_name}.`
-          : 'Set a password to follow your application.'}
+          ? t('public.activate.subtitleFull', {
+              job: target.job_title,
+              company: target.company_name,
+            })
+          : t('public.activate.subtitle')}
       </p>
 
       {target?.email && (
-        <p className="mt-4 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-4 py-3 text-center text-[13px] text-[var(--ui-soft)]">
-          Your account will use{' '}
-          <span className="font-medium text-foreground">{target.email}</span>
+        <p className="mt-4 rounded-[12px] bg-[var(--ui-inset-soft)] px-4 py-3 text-[13px] text-muted-foreground">
+          {t('public.activate.accountUses')}{' '}
+          <span className="break-all font-semibold text-foreground">{target.email}</span>
         </p>
       )}
 
       <form
         onSubmit={onSubmit}
         noValidate
-        aria-label="Activate account form"
+        aria-label={t('public.activate.formAria')}
         className="mt-6 flex flex-col gap-4"
       >
         <div className="space-y-2">
-          <Field
+          <PasswordField
             id="ac-new"
-            label="Choose a password"
-            type="password"
+            label={t('public.activate.choosePw')}
             autoComplete="new-password"
             placeholder="••••••••"
             icon={<Lock size={15} aria-hidden="true" />}
             value={pw}
             onChange={(e) => setPw(e.target.value)}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'ac-error' : undefined}
           />
-          {pw.length > 0 && (
-            <div className="flex items-center gap-2">
-              <div className="flex flex-1 gap-1">
-                {[0, 1, 2, 3].map((i) => (
-                  <span
-                    key={i}
-                    className="h-1 flex-1 rounded-full transition-colors"
-                    style={{
-                      background:
-                        i < strength ? STRENGTH_COLOR[strength] : 'rgba(255,255,255,0.08)',
-                    }}
-                  />
-                ))}
-              </div>
-              <span className="text-[11px]" style={{ color: STRENGTH_COLOR[strength] }}>
-                {STRENGTH_LABEL[strength]}
-              </span>
-            </div>
-          )}
+          <PasswordStrength password={pw} />
         </div>
 
-        <Field
+        <PasswordField
           id="ac-confirm"
-          label="Confirm password"
-          type="password"
+          label={t('public.activate.confirmPw')}
           autoComplete="new-password"
           placeholder="••••••••"
           icon={<Lock size={15} aria-hidden="true" />}
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'ac-error' : undefined}
         />
 
-        {error && (
-          <p role="alert" className="text-[12.5px] text-[var(--ui-danger)]">
-            {error}
-          </p>
-        )}
+        <FormError id="ac-error">{error}</FormError>
 
         <Pill
           type="submit"
           disabled={mutation.isPending}
           aria-busy={mutation.isPending}
-          className="w-full py-3"
+          className="min-h-11 w-full py-3"
         >
-          {mutation.isPending ? 'Setting up…' : 'Create my account'}
+          {mutation.isPending ? t('public.activate.settingUp') : t('public.activate.create')}
         </Pill>
       </form>
 
-      <p className="mt-6 text-center text-[13px] text-muted-foreground">
-        <Link
-          to="/login"
-          className="font-medium text-foreground hover:underline focus:outline-none focus:underline underline-offset-4"
-        >
-          Already have an account? Sign in
+      <p className="mt-6 text-center">
+        <Link to="/login" className={TEXT_LINK_CLASS}>
+          {t('public.activate.signInExisting')}
         </Link>
       </p>
     </AuthLayout>

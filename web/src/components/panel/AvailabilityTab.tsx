@@ -66,14 +66,17 @@ export default function AvailabilityTab(): JSX.Element {
 
   return (
     <div>
-      <label htmlFor="panel-avail-who" className="block text-[12px] font-medium text-[var(--ui-soft)]">
+      <label
+        htmlFor="panel-avail-who"
+        className="block text-[12px] font-medium text-[var(--ui-soft)]"
+      >
         Interviewer
       </label>
       <select
         id="panel-avail-who"
         value={userId}
         onChange={(e) => setUserId(e.target.value)}
-        className="mt-1 w-full max-w-[320px] rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+        className="mt-1 w-full max-w-[320px] rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       >
         <option value="">Choose an interviewer…</option>
         {(interviewers.data ?? []).map((iv) => (
@@ -100,7 +103,10 @@ export default function AvailabilityTab(): JSX.Element {
             }}
           >
             <div>
-              <label htmlFor="panel-avail-start" className="block text-[12px] font-medium text-[var(--ui-soft)]">
+              <label
+                htmlFor="panel-avail-start"
+                className="block text-[12px] font-medium text-[var(--ui-soft)]"
+              >
                 From
               </label>
               <input
@@ -108,11 +114,14 @@ export default function AvailabilityTab(): JSX.Element {
                 type="datetime-local"
                 value={startLocal}
                 onChange={(e) => setStartLocal(e.target.value)}
-                className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               />
             </div>
             <div>
-              <label htmlFor="panel-avail-end" className="block text-[12px] font-medium text-[var(--ui-soft)]">
+              <label
+                htmlFor="panel-avail-end"
+                className="block text-[12px] font-medium text-[var(--ui-soft)]"
+              >
                 To
               </label>
               <input
@@ -120,13 +129,13 @@ export default function AvailabilityTab(): JSX.Element {
                 type="datetime-local"
                 value={endLocal}
                 onChange={(e) => setEndLocal(e.target.value)}
-                className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               />
             </div>
             <button
               type="submit"
               disabled={!ready || addMut.isPending}
-              className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+              className="rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
             >
               {addMut.isPending ? 'Adding…' : `Add window for ${chosen?.full_name ?? 'them'}`}
             </button>
@@ -159,7 +168,7 @@ export default function AvailabilityTab(): JSX.Element {
                     aria-label="Remove this window"
                     disabled={removeMut.isPending}
                     onClick={() => removeMut.mutate(w.id)}
-                    className="shrink-0 rounded-[7px] p-1 text-[var(--ui-faint)] hover:text-[var(--ui-danger)] disabled:opacity-40"
+                    className="shrink-0 rounded-[7px] p-1 text-muted-foreground hover:text-[var(--ui-danger)] disabled:opacity-40"
                   >
                     <Trash2 size={14} aria-hidden="true" />
                   </button>

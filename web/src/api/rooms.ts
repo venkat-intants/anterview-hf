@@ -8,6 +8,7 @@
 // Auth is injected automatically by clientFetch (Bearer + httpOnly cookie).
 
 import { clientFetch } from './client';
+import { pathId } from './pathId';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const INTERVIEW_BASE: string = import.meta.env.VITE_INTERVIEW_API_URL;
@@ -32,7 +33,7 @@ export interface RoomTokenResponse {
  */
 export async function getRoomToken(sessionId: string): Promise<RoomTokenResponse> {
   return clientFetch<RoomTokenResponse>(
-    `${INTERVIEW_BASE}/api/rooms/${encodeURIComponent(sessionId)}/token`,
+    `${INTERVIEW_BASE}/api/rooms/${pathId(sessionId)}/token`,
     { method: 'POST', body: JSON.stringify({}) },
   );
 }

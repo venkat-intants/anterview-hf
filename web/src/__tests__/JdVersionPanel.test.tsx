@@ -180,6 +180,13 @@ describe('the editor starts from something real', () => {
   });
 });
 
+// The version history is a closed disclosure until opened (structural change).
+async function openHistory(): Promise<void> {
+  // Idempotent: the choice is remembered in localStorage across tests.
+  const toggle = await screen.findByRole('button', { name: /Version history/ });
+  if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle);
+}
+
 describe('history', () => {
   it('shows when each version was the live one', async () => {
     getJdHistory.mockResolvedValue(
@@ -194,6 +201,7 @@ describe('history', () => {
       ]),
     );
     renderPanel();
+    await openHistory();
     // The window a wording was live for is the question PH3-B6 Task 5 asks.
     expect(await screen.findByText(/Live .*–.*/)).toBeInTheDocument();
   });
@@ -202,7 +210,7 @@ describe('history', () => {
     // The date, the author and the live window are separate text nodes inside
     // one line, so this asserts on the rendered line rather than on a node.
     const { container } = renderPanel();
-    await screen.findByText(/Version history/);
+    await openHistory();
     await waitFor(() => expect(container.textContent).toContain('Priya'));
   });
 
@@ -219,6 +227,7 @@ describe('history', () => {
       ]),
     );
     renderPanel();
+    await openHistory();
     expect(await screen.findByRole('button', { name: /Restore/ })).toBeInTheDocument();
     expect(screen.getByText(/Nothing in the history is overwritten/)).toBeInTheDocument();
   });
@@ -236,6 +245,7 @@ describe('history', () => {
       ]),
     );
     renderPanel();
+    await openHistory();
     await userEvent.click(await screen.findByRole('button', { name: /Restore/ }));
     await waitFor(() => expect(publishJdVersion).toHaveBeenCalledWith('req-1', 'v-1'));
   });
@@ -243,6 +253,7 @@ describe('history', () => {
   it('explains an empty history rather than showing nothing', async () => {
     getJdHistory.mockResolvedValue(history([]));
     renderPanel();
+    await openHistory();
     expect(await screen.findByText(/next edit will create version 1/)).toBeInTheDocument();
   });
 });

@@ -23,6 +23,8 @@ import type { AuthUser } from '../types/auth';
 import { getToken, setToken, clearToken, subscribeToken } from '../api/tokenStore';
 import { attemptRefresh } from '../api/client';
 import { getMe } from '../api/auth';
+import { openAuthSync, type AuthSync } from '../lib/authSync';
+import { clearCollapsibleKeysFor } from '../lib/collapsibleKeys';
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -74,15 +76,89 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (user) lastUserIdRef.current = user.user_id;
   }, [user]);
 
+  // Mirrors of state for callbacks that must not re-subscribe on every change.
+  const userRef = useRef<AuthUser | null>(null);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+  // The token this tab's own setAuth just wrote: the store subscriber must not
+  // treat it as an EXTERNAL refresh and re-check the identity it just set.
+  const ownTokenRef = useRef<string | null>(null);
+  const syncRef = useRef<AuthSync | null>(null);
+  const reconcilingRef = useRef(false);
+
+  // After a token refresh the refresh COOKIE is shared by every tab, so the new
+  // token may belong to a different account than the one this tab's `user`,
+  // roles and query cache describe (another tab signed in as someone else).
+  // Re-read the profile; if the account changed, drop the cache and adopt it.
+  const reconcileIdentity = useCallback(async () => {
+    const current = userRef.current;
+    if (!current || reconcilingRef.current) return;
+    reconcilingRef.current = true;
+    try {
+      const me = await getMe();
+      if (me.user_id !== current.user_id) {
+        queryClient?.getQueryCache().clear();
+        lastUserIdRef.current = me.user_id;
+      }
+      setUser((prev) => {
+        const next: AuthUser = {
+          user_id: me.user_id,
+          full_name: me.full_name,
+          email: me.email,
+          roles: me.roles,
+          must_change_password: me.must_change_password,
+        };
+        // Same account and nothing changed: keep the object so consumers do
+        // not re-render on every routine refresh.
+        return prev &&
+          prev.user_id === next.user_id &&
+          prev.full_name === next.full_name &&
+          prev.email === next.email &&
+          prev.must_change_password === next.must_change_password &&
+          prev.roles.join(',') === next.roles.join(',')
+          ? prev
+          : next;
+      });
+    } catch {
+      // Offline or a transient failure: keep the identity we have. The next
+      // refresh checks again, and a revoked session surfaces as a 401 anyway.
+    } finally {
+      reconcilingRef.current = false;
+    }
+  }, [queryClient]);
+
   // Keep React state in sync when the store changes from outside React
   // (e.g. the 401-refresh path in apiClient writes directly to tokenStore).
   useEffect(() => {
     const unsub = subscribeToken((tok) => {
       setAccessToken(tok);
-      if (!tok) setUser(null);
+      if (!tok) {
+        setUser(null);
+        return;
+      }
+      if (tok !== ownTokenRef.current && !USE_MOCK) void reconcileIdentity();
     });
     return unsub;
-  }, []);
+  }, [reconcileIdentity]);
+
+  // Cross-tab session sync. Never carries a token (see lib/authSync).
+  useEffect(() => {
+    const sync = openAuthSync((event) => {
+      if (event.type !== 'logout') return;
+      // Another tab signed out: this tab's token is now for a revoked session.
+      ownTokenRef.current = null;
+      clearToken();
+      setAccessToken(null);
+      setUser(null);
+      queryClient?.getQueryCache().clear();
+    });
+    syncRef.current = sync;
+    return () => {
+      sync.close();
+      syncRef.current = null;
+    };
+  }, [queryClient]);
 
   // Silent refresh on mount — attempts to exchange the httpOnly refresh cookie
   // for a fresh access token before rendering protected routes.
@@ -154,9 +230,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         queryClient?.getQueryCache().clear();
       }
       lastUserIdRef.current = authUser.user_id;
+      ownTokenRef.current = token;
       setToken(token);
       setAccessToken(token);
       setUser(authUser);
+      syncRef.current?.publish({ type: 'login', userId: authUser.user_id });
     },
     [queryClient],
   );
@@ -166,9 +244,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const clearAuth = useCallback(() => {
+    // Remembered open/closed choices belong to the person who made them.
+    clearCollapsibleKeysFor(userRef.current?.user_id);
+    ownTokenRef.current = null;
     clearToken();
     setAccessToken(null);
     setUser(null);
+    syncRef.current?.publish({ type: 'logout' });
   }, []);
 
   const value = useMemo<AuthContextValue>(

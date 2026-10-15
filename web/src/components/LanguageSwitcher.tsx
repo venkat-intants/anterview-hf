@@ -2,12 +2,17 @@
 // Calls i18n.changeLanguage(); persistence is handled in lib/i18n.ts via the
 // 'languageChanged' event → localStorage write.
 // Rendered inside TopBar (AppShell) — visible on all pages.
-// Visual: Globe icon button + floating dropdown, matching the dark shell design.
+// Visual: Globe pill button + floating dropdown, matching the shell's controls.
 
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Globe, ChevronDown } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 const LANGUAGES = [
   { code: 'en', label: 'EN' },
@@ -20,69 +25,48 @@ type LangCode = (typeof LANGUAGES)[number]['code'];
 export default function LanguageSwitcher() {
   const { i18n, t } = useTranslation();
   const current = i18n.language as LangCode;
-  const [open, setOpen] = useState(false);
 
-  const currentLabel =
-    LANGUAGES.find(
-      ({ code }) => current === code || (code === 'en' && !(['hi', 'te'] as string[]).includes(current)),
-    )?.label ?? 'EN';
+  // Anything that is not hi/te (en, en-US, unset) is English.
+  const activeCode: LangCode = current === 'hi' || current === 'te' ? current : 'en';
+  const currentLabel = LANGUAGES.find(({ code }) => code === activeCode)?.label ?? 'EN';
 
+  // A Radix menu: arrow keys + typeahead move through the options, Escape closes
+  // and returns focus to the trigger, and outside click dismisses.
   return (
-    <div role="group" aria-label={t('lang.label')} className="relative hidden sm:block">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={t('lang.label')}
-        className="flex items-center gap-1.5 rounded-[10px] border border-border bg-[var(--ui-inset)] px-3 py-2 text-[13px] text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] transition-colors"
-      >
-        <Globe size={15} aria-hidden="true" />
-        <span>{currentLabel}</span>
-        <ChevronDown size={13} aria-hidden="true" />
-      </button>
-
-      {open && (
-        <>
-          {/* Backdrop to dismiss */}
-          <div
-            className="fixed inset-0 z-30"
-            aria-hidden="true"
-            onClick={() => setOpen(false)}
-          />
-          <div
-            role="menu"
-            className="absolute right-0 top-[calc(100%+8px)] z-40 w-32 overflow-hidden rounded-[12px] border border-border bg-card p-1 shadow-2xl"
+    <div role="group" aria-label={t('lang.label')}>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label={t('lang.label')}
+            className="group flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-[13px] font-medium text-[var(--ui-soft)] transition-colors hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] data-[state=open]:bg-[var(--ui-inset)] data-[state=open]:text-foreground"
           >
-            {LANGUAGES.map(({ code, label }) => {
-              const isActive =
-                current === code ||
-                (code === 'en' && !(['hi', 'te'] as string[]).includes(current));
-              return (
-                <button
-                  key={code}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={isActive}
-                  aria-label={t(`lang.${code}`)}
-                  onClick={() => {
-                    void i18n.changeLanguage(code);
-                    setOpen(false);
-                  }}
-                  className={cn(
-                    'flex w-full items-center rounded-[8px] px-3 py-2 text-left text-[13px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] transition-colors',
-                    isActive
-                      ? 'bg-[var(--ui-inset)] text-foreground'
-                      : 'text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground',
-                  )}
-                >
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
+            <Globe size={15} aria-hidden="true" />
+            {/* The label and chevron drop away below `sm`; the globe stays, so a
+                phone always has a way to change language. */}
+            <span className="hidden sm:inline">{currentLabel}</span>
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              className="hidden transition-transform duration-150 group-data-[state=open]:rotate-180 sm:block"
+            />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" sideOffset={8} className="w-40 min-w-0">
+          <DropdownMenuRadioGroup
+            value={activeCode}
+            onValueChange={(code) => {
+              void i18n.changeLanguage(code);
+            }}
+          >
+            {LANGUAGES.map(({ code, label }) => (
+              <DropdownMenuRadioItem key={code} value={code} aria-label={t(`lang.${code}`)}>
+                {label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </div>
   );
 }

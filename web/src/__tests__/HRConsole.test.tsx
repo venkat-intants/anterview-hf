@@ -12,11 +12,13 @@
 
 import { analyticsDefaults } from './analyticsFixture';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { HrAnalytics } from '../api/hr';
 import type { NotificationList } from '../api/notifications';
+import type { Requisition } from '../api/requisitions';
 
 const ANALYTICS: HrAnalytics = {
   funnel: {
@@ -67,6 +69,17 @@ vi.mock('../api/stageSla', () => ({
   getSlaBoard: (...a: unknown[]) => getSlaBoard(...a) as unknown,
 }));
 
+// "Needs you today" counts and "Openings in setup" read these.
+const getAttention = vi.fn();
+vi.mock('../api/attention', () => ({
+  getAttention: (...a: unknown[]) => getAttention(...a) as unknown,
+}));
+
+const listRequisitions = vi.fn();
+vi.mock('../api/requisitions', () => ({
+  listRequisitions: (...a: unknown[]) => listRequisitions(...a) as unknown,
+}));
+
 const { mockUseAuth } = vi.hoisted(() => ({ mockUseAuth: vi.fn() }));
 vi.mock('../context/AuthContext', () => ({ useAuth: () => mockUseAuth() as unknown }));
 
@@ -81,6 +94,13 @@ function renderConsole() {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+// "Recent activity" is a record, so it sits closed under a one-line summary;
+// opening it is part of reading it.
+async function openActivity() {
+  const toggle = await screen.findByRole('button', { name: /Recent activity/ });
+  if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle);
 }
 
 beforeEach(() => {
@@ -104,6 +124,8 @@ beforeEach(() => {
   getHrAnalytics.mockResolvedValue(ANALYTICS);
   listNotifications.mockResolvedValue(NOTIFS);
   getSlaBoard.mockResolvedValue([]);
+  getAttention.mockResolvedValue({ generated_at: new Date().toISOString(), total: 0, items: [] });
+  listRequisitions.mockResolvedValue([]);
 });
 
 describe('HRConsole — the public careers link', () => {
@@ -201,6 +223,7 @@ describe('HRConsole — activity feed', () => {
   it('renders each notification as an activity entry with a relative time', async () => {
     renderConsole();
 
+    await openActivity();
     expect(await screen.findByText('Bhavya Nair scored 82')).toBeInTheDocument();
     expect(screen.getByText(/ATS screening complete/)).toBeInTheDocument();
     expect(screen.getByText('3h ago')).toBeInTheDocument();
@@ -210,6 +233,7 @@ describe('HRConsole — activity feed', () => {
     listNotifications.mockResolvedValue({ items: [], unread_count: 0 });
     renderConsole();
 
+    await openActivity();
     expect(await screen.findByText(/no recent activity yet/i)).toBeInTheDocument();
   });
 
@@ -220,6 +244,7 @@ describe('HRConsole — activity feed', () => {
     // The console is the HR landing page — a degraded feed must not block the
     // funnel or the quick actions.
     expect(await screen.findByRole('heading', { name: /welcome/i })).toBeInTheDocument();
+    await openActivity();
     expect(await screen.findByText(/no recent activity yet/i)).toBeInTheDocument();
   });
 });
@@ -257,8 +282,8 @@ describe('HRConsole — stages at risk (PH4-O1)', () => {
   });
 });
 
-describe('HRConsole — quick actions', () => {
-  it('links each quick action to its console route', async () => {
+describe('HRConsole — shortcuts', () => {
+  it('links each shortcut to its console route', async () => {
     renderConsole();
     await screen.findByRole('heading', { name: /welcome/i });
 
@@ -299,6 +324,7 @@ describe('HRConsole activity feed — events, not conditions', () => {
     });
     renderConsole();
 
+    await openActivity();
     expect(await screen.findByText('Bhavya Nair scored 82')).toBeTruthy();
     expect(
       screen.queryByText("'Backend Engineer' funnel is losing almost everyone"),
@@ -313,6 +339,7 @@ describe('HRConsole activity feed — events, not conditions', () => {
     });
     renderConsole();
 
+    await openActivity();
     expect(await screen.findByText('Something new happened')).toBeTruthy();
   });
 
@@ -320,6 +347,7 @@ describe('HRConsole activity feed — events, not conditions', () => {
     listNotifications.mockResolvedValue({ unread_count: 1, items: [WATCHER_FINDING] });
     renderConsole();
 
+    await openActivity();
     expect(await screen.findByText('No recent activity yet.')).toBeTruthy();
   });
 });
@@ -348,8 +376,148 @@ describe('HRConsole activity feed — does not overwrite the bell', () => {
       </QueryClientProvider>,
     );
 
+    await openActivity();
     expect(await screen.findByText('Bhavya Nair scored 82')).toBeTruthy();
     expect(listNotifications).toHaveBeenCalledWith(8);
     expect(client.getQueryData<NotificationList>(['notifications'])?.items).toHaveLength(30);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UX round 3: one raised "Needs you today" region, openings in setup, one stat group
+// ---------------------------------------------------------------------------
+
+function opening(over: Partial<Requisition>): Requisition {
+  return {
+    id: 'req-1',
+    title: 'Backend Engineer',
+    level: 'L2',
+    status: 'open',
+    approval_status: 'draft',
+    public_apply_enabled: false,
+    ...over,
+  } as Requisition;
+}
+
+describe('HRConsole — needs you today', () => {
+  it('shows attention and stages at risk together, each with its real count', async () => {
+    getAttention.mockResolvedValue({
+      generated_at: new Date().toISOString(),
+      total: 2,
+      items: [
+        {
+          watcher: 'w', severity: 'warning', title: 'Seven applicants stalled', body: 'b',
+          link: '/hr/pipeline', dedupe_key: 'a', citations: [], citation_state: 'unread',
+        },
+        {
+          watcher: 'w', severity: 'info', title: 'A funnel is thin', body: 'b',
+          link: null, dedupe_key: 'b', citations: [], citation_state: 'unread',
+        },
+      ],
+    });
+    getSlaBoard.mockResolvedValue([
+      {
+        enrolment_id: 'en-1', applicant_id: 'ap-1', requisition_id: 'req-9',
+        opening_title: 'Backend Engineer', full_name: 'Chetan Iyer', stage: 'Fundamentals',
+        owner_user_id: 'u-1', owner_name: 'Priya HR', open_exceptions: 0, state: 'overdue',
+        sla_hours: 24, entered_at: '2026-09-01T00:00:00.000Z', due_at: '2026-09-02T00:00:00.000Z',
+        hours_remaining: -10,
+      },
+    ]);
+    renderConsole();
+
+    const region = await screen.findByTestId('needs-you-today');
+    expect(await within(region).findByRole('heading', { name: /attention required\s*2/i })).toBeInTheDocument();
+    expect(await within(region).findByRole('heading', { name: /stages at risk\s*1/i })).toBeInTheDocument();
+    // Neither list is hidden behind a tab.
+    expect(within(region).queryByRole('tab')).not.toBeInTheDocument();
+    expect(within(region).getByText('Seven applicants stalled')).toBeInTheDocument();
+    expect(within(region).getByRole('button', { name: /Chetan Iyer/ })).toBeInTheDocument();
+  });
+
+  it('shows no count when the check failed, rather than a 0', async () => {
+    getAttention.mockRejectedValue(new Error('503'));
+    renderConsole();
+
+    const region = await screen.findByTestId('needs-you-today');
+    expect(await within(region).findByText(/could not check for issues/i)).toBeInTheDocument();
+    expect(within(region).getByRole('heading', { name: /^attention required$/i })).toBeInTheDocument();
+  });
+});
+
+describe('HRConsole — openings in setup', () => {
+  it('lists only unclosed openings that are not yet approved and live, each to its setup tab', async () => {
+    listRequisitions.mockResolvedValue([
+      opening({ id: 'req-draft', title: 'Backend Engineer', approval_status: 'draft' }),
+      opening({
+        id: 'req-pending', title: 'Data Analyst', approval_status: 'pending_approval',
+        submitted_by_name: 'Asha R',
+      }),
+      opening({ id: 'req-approved', title: 'Designer', approval_status: 'approved', public_apply_enabled: false }),
+      // Approved and accepting applications: finished setting up.
+      opening({ id: 'req-live', title: 'Live Role', approval_status: 'approved', public_apply_enabled: true }),
+      // Closed: not setup, whatever its approval says.
+      opening({ id: 'req-closed', title: 'Closed Role', status: 'closed', approval_status: 'draft' }),
+    ]);
+    renderConsole();
+
+    const section = await screen.findByTestId('openings-in-setup');
+    expect(await within(section).findByRole('link', { name: /Backend Engineer/ })).toHaveAttribute(
+      'href',
+      '/hr/requisitions/req-draft?tab=setup',
+    );
+    expect(within(section).getByRole('link', { name: /Data Analyst/ })).toHaveAttribute(
+      'href',
+      '/hr/requisitions/req-pending?tab=setup',
+    );
+    expect(within(section).getByRole('link', { name: /Designer/ })).toHaveAttribute(
+      'href',
+      '/hr/requisitions/req-approved?tab=setup',
+    );
+    expect(within(section).queryByText('Live Role')).not.toBeInTheDocument();
+    expect(within(section).queryByText('Closed Role')).not.toBeInTheDocument();
+
+    // The real next stage, in words, from each opening's own fields.
+    expect(within(section).getByText(/waiting for approval \(submitted by Asha R\)/)).toBeInTheDocument();
+    expect(within(section).getByText(/not submitted for approval yet/)).toBeInTheDocument();
+    expect(within(section).getByText(/approved, but not accepting applications yet/)).toBeInTheDocument();
+    expect(within(section).getByRole('heading', { name: /openings in setup\s*3/i })).toBeInTheDocument();
+  });
+
+  it('says so when nothing is waiting', async () => {
+    renderConsole();
+    const section = await screen.findByTestId('openings-in-setup');
+    expect(await within(section).findByText('No opening is waiting on setup.')).toBeInTheDocument();
+  });
+
+  it('shows an error rather than an empty list when openings cannot be fetched', async () => {
+    listRequisitions.mockRejectedValue(new Error('503'));
+    renderConsole();
+    const section = await screen.findByTestId('openings-in-setup');
+    expect(await within(section).findByRole('alert')).toHaveTextContent(/could not load your openings/i);
+    expect(within(section).queryByText('No opening is waiting on setup.')).not.toBeInTheDocument();
+  });
+});
+
+describe('HRConsole — pipeline stat group', () => {
+  it('makes every cell a link to its list', async () => {
+    renderConsole();
+    await screen.findByText('avg ATS 72');
+
+    const group = screen.getByRole('region', { name: /pipeline at a glance/i });
+    const hrefOf = (name: RegExp) => within(group).getByRole('link', { name }).getAttribute('href');
+    expect(hrefOf(/^Open roles/)).toBe('/hr/requisitions');
+    expect(hrefOf(/^Applicants/)).toBe('/hr/applicants');
+    expect(hrefOf(/^Shortlisted/)).toBe('/hr/applicants');
+    expect(hrefOf(/^Exam passed/)).toBe('/hr/applicants');
+    expect(hrefOf(/^Interviewed/)).toBe('/hr/interviews');
+    expect(hrefOf(/^Hired/)).toBe('/hr/pipeline');
+  });
+
+  it('shows no stat group before the funnel has loaded', async () => {
+    getHrAnalytics.mockImplementation(() => new Promise(() => undefined));
+    renderConsole();
+    await screen.findByRole('heading', { name: /welcome/i });
+    expect(screen.queryByText('Shortlisted')).not.toBeInTheDocument();
   });
 });

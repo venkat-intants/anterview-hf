@@ -14,6 +14,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { TakeExam } from '../api/publicExam';
 import i18n from '../lib/i18n';
+import { ApiError } from '../api/client';
 
 const getPublicExam = vi.fn();
 const startExam = vi.fn();
@@ -25,6 +26,11 @@ vi.mock('../api/publicExam', () => ({
   grantCameraConsent: (...a: unknown[]) => grantCameraConsent(...a) as unknown,
   submitRound: vi.fn(),
   sendIntegrityEvent: (...a: unknown[]) => sendIntegrityEvent(...a) as unknown,
+}));
+
+// The finish states read the session (to decide whether to offer a sign-in link).
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ isAuthenticated: false, isInitializing: false, user: null }),
 }));
 
 import PublicExam from '../pages/PublicExam';
@@ -55,7 +61,7 @@ const EXAM: TakeExam = {
 const EXAM_WITH_CAMERA: TakeExam = { ...EXAM, camera_required: true };
 
 function renderExam() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0 } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -373,5 +379,41 @@ describe('PublicExam — camera proctoring consent (camera-proctoring contract)'
     // hang or block on that.
     await waitFor(() => expect(screen.queryByRole('checkbox')).not.toBeInTheDocument());
     expect(await screen.findByText(/camera unavailable/i)).toBeInTheDocument();
+  });
+});
+
+describe('PublicExam — the per-tab token does not outlive a link that cannot be used', () => {
+  const KEY = 'anthire.exam.token';
+
+  beforeEach(() => {
+    sessionStorage.clear();
+  });
+
+  it('clears it when the link is rejected as invalid, expired or revoked', async () => {
+    getPublicExam.mockRejectedValue(new ApiError('Not found', 404));
+    renderExam();
+    await screen.findByText(i18n.t('publicExam.invalidTitle'));
+    await waitFor(() => expect(sessionStorage.getItem(KEY)).toBeNull());
+  });
+
+  it('clears it when the assessment was already submitted', async () => {
+    getPublicExam.mockResolvedValue({ ...EXAM, already_submitted: true });
+    renderExam();
+    await screen.findByText(i18n.t('publicExam.completedTitle'));
+    await waitFor(() => expect(sessionStorage.getItem(KEY)).toBeNull());
+  });
+
+  it('keeps it across a transient load error, so Retry still has the link', async () => {
+    getPublicExam.mockRejectedValue(new ApiError('Bad gateway', 503));
+    renderExam();
+    await screen.findByText(i18n.t('publicExam.networkTitle'));
+    expect(sessionStorage.getItem(KEY)).toBe('exam_tok_123456');
+  });
+
+  it('keeps it while the assessment is open and usable', async () => {
+    getPublicExam.mockResolvedValue(EXAM);
+    renderExam();
+    await screen.findByText('Backend fundamentals');
+    expect(sessionStorage.getItem(KEY)).toBe('exam_tok_123456');
   });
 });

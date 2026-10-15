@@ -2,6 +2,7 @@
 
 import { apiGet } from './client';
 import type { RequisitionDashboard } from './requisitions';
+import { pathId } from './pathId';
 
 export type HealthBand = 'on_track' | 'at_risk' | 'watch' | 'not_published';
 
@@ -47,5 +48,5 @@ export function getHiringBoard(): Promise<HiringBoard> {
 
 /** One opening's dashboard, as the company super admin may see it: read-only. */
 export function getCompanyRequisitionDashboard(id: string): Promise<RequisitionDashboard> {
-  return apiGet<RequisitionDashboard>(`/admin/requisitions/${id}/dashboard`);
+  return apiGet<RequisitionDashboard>(`/admin/requisitions/${pathId(id)}/dashboard`);
 }

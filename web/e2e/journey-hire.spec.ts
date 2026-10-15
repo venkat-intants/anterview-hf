@@ -60,7 +60,7 @@ test.describe('a candidate is hired', () => {
 
     // ── The candidate sits the exam from the emailed link ───────────────────
     const verdict = await sitTheExam(candidatePage, candidate, { answerCorrectly: true });
-    expect(verdict).toContain('You passed');
+    expect(verdict).toContain('Assessment submitted');
     await candidateContext.close();
 
     // ── Finishing the workflow puts them in front of a person ───────────────
@@ -72,11 +72,14 @@ test.describe('a candidate is hired', () => {
 
     await page.goto(`/hr/requisitions/${opening.id}/decisions`);
     await expect(page.getByText(candidate.name).first()).toBeVisible();
+    // The queue is a master-detail workspace: the first candidate is selected,
+    // and the panel goes Evidence -> Decision -> Reason & confirm.
+    await page.getByTestId('to-decision').click();
 
     // Hiring is refused until a reason category is chosen AND a reason is
     // written (PH4-O4): the panel says which is missing, and the confirm
     // button stays dead until both are there.
-    await page.getByRole('button', { name: 'Hire', exact: true }).click();
+    await page.getByRole('button', { name: /^Hire/ }).click();
     await expect(page.getByText('Choose a reason above first.')).toBeVisible();
     const confirm = page.getByRole('button', { name: 'Confirm' });
     await expect(confirm).toBeDisabled();

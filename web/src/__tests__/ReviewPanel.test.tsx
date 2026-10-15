@@ -176,7 +176,7 @@ describe('ReviewPanel — history', () => {
     await screen.findByText('Draft');
 
     expect(screen.queryByText(/Submitted for review — Rekha HR/)).toBeNull();
-    await user.click(screen.getByRole('button', { name: /show history/i }));
+    await user.click(screen.getByRole('button', { name: /history/i }));
     expect(screen.getByText(/Submitted for review — Rekha HR/)).toBeTruthy();
   });
 });

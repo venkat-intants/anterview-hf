@@ -177,6 +177,7 @@ describe('ActivateAccount', () => {
       expect(activateAccount).toHaveBeenCalledWith('tok-abc-1234567890123456', 'GoodPass123!'),
     );
     expect(await screen.findByText('You’re all set')).toBeInTheDocument();
+    expect(screen.getByText(/Your application is in My applications/)).toBeInTheDocument();
   });
 
   it('says the password was not used when the address already had an account', async () => {
@@ -186,7 +187,8 @@ describe('ActivateAccount', () => {
     activateAccount.mockResolvedValue({
       email: TARGET.email,
       linked: 'existing',
-      message: 'ignored',
+      message:
+        'This email already had an account, so we have added the application to it. Sign in with your existing password.',
     });
     const user = userEvent.setup();
     renderPage();
@@ -196,6 +198,29 @@ describe('ActivateAccount', () => {
 
     expect(await screen.findByText('Added to your account')).toBeInTheDocument();
     expect(screen.getByText(/existing password/i)).toBeInTheDocument();
+    // The server's sentence wins, and the page still says where the application is.
+    expect(screen.getByText('Your application is in My applications.')).toBeInTheDocument();
+  });
+
+  it('says to use the NEW password when an unverified account was taken over', async () => {
+    // Same `linked` value, opposite instruction: the old account was never
+    // verified, so the server replaced its password with the one just chosen.
+    // Telling this person to use their "existing password" locks them out.
+    activateAccount.mockResolvedValue({
+      email: TARGET.email,
+      linked: 'existing',
+      message:
+        'This email already had an account that was never verified, so we have added the application to it and set it to the password you just chose. Sign in with that password.',
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Track your application');
+    await fillPasswords(user);
+    await user.click(screen.getByRole('button', { name: 'Create my account' }));
+
+    expect(await screen.findByText('Added to your account')).toBeInTheDocument();
+    expect(screen.getByText(/the password you just chose/i)).toBeInTheDocument();
+    expect(screen.queryByText(/existing password/i)).not.toBeInTheDocument();
   });
 
   it('surfaces a server refusal without losing the form', async () => {

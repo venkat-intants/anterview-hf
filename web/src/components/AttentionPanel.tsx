@@ -16,14 +16,16 @@
 // quiet line rather than inventing something to report. A panel that always has
 // content is one people stop reading.
 
-import { useQuery } from '@tanstack/react-query';
+import { useAttention } from '@/hooks/useHrHomeQueries';
 import { Link } from 'react-router-dom';
-import { getAttention, type AttentionItem, type AttentionSeverity } from '@/api/attention';
-import { GlassCard } from '@/design/components/primitives';
+import type { AttentionItem, AttentionSeverity } from '@/api/attention';
+import { SectionCard } from '@/design/components/page';
+import { Skeleton } from '@/components/ui/skeleton';
 import { AlertTriangle, CheckCircle2, ChevronRight, Info } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 import CitationChips from './agent/CitationChips';
 import EvidenceBanner from './agent/EvidenceBanner';
+import { appPath } from '@/lib/safeUrl';
 
 /**
  * Severity is carried by an icon and a word as well as a colour.
@@ -41,7 +43,7 @@ const SEVERITY: Record<
   info: { label: 'For information', tint: 'text-[var(--ui-info)]', icon: Info },
 };
 
-function Finding({ item }: { item: AttentionItem }) {
+function Finding({ item, flat = false }: { item: AttentionItem; flat?: boolean }) {
   const tone = SEVERITY[item.severity] ?? SEVERITY.info;
   const Icon = tone.icon;
 
@@ -56,7 +58,10 @@ function Finding({ item }: { item: AttentionItem }) {
         <p className="mt-0.5 text-[13px] leading-relaxed text-muted-foreground">{item.body}</p>
       </div>
       {item.link ? (
-        <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+        <ChevronRight
+          className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
       ) : null}
     </div>
   );
@@ -70,13 +75,19 @@ function Finding({ item }: { item: AttentionItem }) {
   return (
     <div
       className={cn(
-        'rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 text-left transition-colors',
-        item.link && 'hover:border-[var(--ui-line-strong)] focus-within:border-[var(--accent)]',
+        'text-left transition-colors',
+        // `flat`: a row of a divided list inside a card, not a box of its own.
+        flat
+          ? 'py-3 first:pt-0 last:pb-0'
+          : 'rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5',
+        !flat &&
+          item.link &&
+          'hover:border-[var(--ui-line-strong)] focus-within:border-[var(--accent)]',
       )}
     >
       {/* A finding with nowhere to go is rendered as text rather than a dead link. */}
       {item.link ? (
-        <Link to={item.link} className="block rounded-[8px] outline-none">
+        <Link to={appPath(item.link, '/')} className="block rounded-[8px] outline-none">
           {header}
         </Link>
       ) : (
@@ -101,46 +112,35 @@ function Finding({ item }: { item: AttentionItem }) {
   );
 }
 
-export default function AttentionPanel({ className }: { className?: string }) {
-  const attention = useQuery({
-    queryKey: ['hr-attention'],
-    // Wrapped: passed bare, the query context would land in getAttention's
-    // optional opening filter.
-    queryFn: () => getAttention(),
-    // Fresh enough to be trusted, not so fresh that leaving the dashboard open
-    // re-runs the aggregate queries every minute. Deliberately no polling: the
-    // events that change what needs attention (a submission, a completed
-    // interview, a lapsed link) arrive as notifications, and the bell
-    // invalidates this query when one does — see lib/liveRefresh.
-    staleTime: 5 * 60 * 1000,
-    retry: false,
-    throwOnError: false,
-  });
+export default function AttentionPanel({
+  className,
+  bare = false,
+}: {
+  className?: string;
+  /**
+   * Only the findings — no card, title or count badge, and each finding a row
+   * rather than a box — for a page that supplies its own frame and heading
+   * (the HR home's "Needs you today").
+   */
+  bare?: boolean;
+}) {
+  const attention = useAttention();
 
   const items = attention.data?.items ?? [];
 
-  return (
-    <GlassCard className={cn('p-5', className)}>
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-[15px] font-semibold text-foreground">Attention required</h2>
-        {attention.data && attention.data.total > 0 ? (
-          <span className="text-[12px] text-muted-foreground">
-            {attention.data.total} {attention.data.total === 1 ? 'item' : 'items'}
-          </span>
-        ) : null}
-      </div>
-
+  const body = (
+    <>
       {attention.isLoading ? (
         <div className="flex flex-col gap-2">
-          <div className="h-[58px] animate-pulse rounded-[12px] bg-[var(--ui-inset-soft)]" />
-          <div className="h-[58px] animate-pulse rounded-[12px] bg-[var(--ui-inset-soft)]" />
+          <Skeleton className="h-[58px] rounded-[12px]" />
+          <Skeleton className="h-[58px] rounded-[12px]" />
         </div>
       ) : null}
 
       {/* A failure must not read as "nothing needs attention" — that is the one
           wrong answer this panel can give, because it is also the good news. */}
       {attention.isError ? (
-        <p className="text-[13px] text-muted-foreground">
+        <p role="alert" className="text-[13px] text-muted-foreground">
           Could not check for issues just now. Refresh to try again.
         </p>
       ) : null}
@@ -153,12 +153,35 @@ export default function AttentionPanel({ className }: { className?: string }) {
       ) : null}
 
       {items.length > 0 ? (
-        <div className="flex flex-col gap-2">
+        <div className={bare ? 'flex flex-col divide-y divide-border' : 'flex flex-col gap-2'}>
           {items.map((item) => (
-            <Finding key={item.dedupe_key || `${item.watcher}-${item.title}`} item={item} />
+            <Finding
+              key={item.dedupe_key || `${item.watcher}-${item.title}`}
+              item={item}
+              flat={bare}
+            />
           ))}
         </div>
       ) : null}
-    </GlassCard>
+    </>
+  );
+
+  if (bare) return <div className={className}>{body}</div>;
+
+  return (
+    <SectionCard
+      title="Attention required"
+      icon={AlertTriangle}
+      className={className}
+      action={
+        attention.data && attention.data.total > 0 ? (
+          <span className="rounded-full bg-[var(--ui-warn-wash)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ui-warn)]">
+            {attention.data.total} {attention.data.total === 1 ? 'item' : 'items'}
+          </span>
+        ) : null
+      }
+    >
+      {body}
+    </SectionCard>
   );
 }

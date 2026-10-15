@@ -99,8 +99,73 @@ def rate_limit(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
     return Depends(_dep)
 
 
+#: What a FAIL-CLOSED route answers (503) when Redis cannot be reached.
+FAIL_CLOSED_DETAIL = (
+    "Usage limits are temporarily unavailable, so this action is paused. "
+    "Please try again in a minute."
+)
+
+_rate_limit_failed_closed = Counter(
+    "rate_limit_check_failed_closed_total",
+    "Requests refused with 503 because Redis was unreachable on a route that "
+    "opted in to fail-closed (routes that spend LLM budget).",
+    ["bucket", "error_type"],
+)
+
+
+def _refuse_unchecked(bucket: str, exc: Exception) -> HTTPException:
+    """The 503 for a fail-closed route whose limiter could not run."""
+    _rate_limit_failed_closed.labels(bucket=bucket, error_type=type(exc).__name__).inc()
+    log.warning("rate_limit.failed_closed", bucket=bucket, error_type=type(exc).__name__)
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=FAIL_CLOSED_DETAIL
+    )
+
+
+async def enforce_company_budget(
+    company_id: Any,
+    *,
+    bucket: str,
+    limit: int,
+    window_seconds: int = 60,
+    fail_closed: bool = False,
+    detail: str | None = None,
+) -> None:
+    """Charge ONE request to a company's fixed-window budget, in the handler.
+
+    The dependency-style limiters run before the handler body, so a request
+    that is then refused (unknown bank, 404) has already spent budget. A route
+    that bills a model call charges here instead, after those checks, so only a
+    request that is about to reach the model counts. Same ``rl:{bucket}:{company}``
+    key style and INCR+EXPIRE window as ``rate_limit_context``.
+
+    ``fail_closed=True`` answers 503 when Redis errors instead of skipping the
+    check; the default is the module's fail-open posture.
+    """
+    try:
+        redis = get_redis()
+        key = f"rl:{bucket}:{company_id}"
+        count: int = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, window_seconds)
+    except Exception as exc:  # noqa: BLE001 — Redis down / any error
+        if fail_closed:
+            raise _refuse_unchecked(bucket, exc) from exc
+        _rate_limit_skipped.labels(bucket=bucket, error_type=type(exc).__name__).inc()
+        log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+        return
+    if count > limit:
+        _rate_limit_exceeded.labels(bucket=bucket).inc()
+        log.warning("rate_limit.exceeded", bucket=bucket)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=detail or "Too many requests from your company. Please wait a minute and try again.",
+        )
+
+
 def rate_limit_context(
     bucket: str, per_minute: int, context_dep: Callable[..., Any],
+    *, fail_closed: bool = False,
 ) -> Callable[..., Awaitable[None]]:
     """Cap a route at *per_minute* requests per COMPANY, keyed off an
     arbitrary tenant-context dependency rather than ``get_hr_company``
@@ -129,6 +194,8 @@ def rate_limit_context(
             if count == 1:
                 await redis.expire(key, 60)
         except Exception as exc:  # noqa: BLE001 — Redis down / any error → fail open
+            if fail_closed:
+                raise _refuse_unchecked(bucket, exc) from exc
             _rate_limit_skipped.labels(
                 bucket=bucket, error_type=type(exc).__name__
             ).inc()
@@ -145,11 +212,15 @@ def rate_limit_context(
     return Depends(_dep)
 
 
-def rate_limit_company(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:
+def rate_limit_company(
+    bucket: str, per_minute: int, *, fail_closed: bool = False
+) -> Callable[..., Awaitable[None]]:
     """Cap a route at *per_minute* requests per COMPANY rather than per client
     IP (MEDIUM-4, PH4-D3) — the ``get_hr_company``-scoped case of
-    ``rate_limit_context`` above."""
-    return rate_limit_context(bucket, per_minute, get_hr_company)
+    ``rate_limit_context`` above. ``fail_closed=True`` (opt-in; every existing
+    caller keeps fail-open) answers 503 when Redis is unreachable — for routes
+    that spend LLM budget, where "limiter down" must not mean "unlimited"."""
+    return rate_limit_context(bucket, per_minute, get_hr_company, fail_closed=fail_closed)
 
 
 def rate_limit_actor(bucket: str, per_minute: int) -> Callable[..., Awaitable[None]]:

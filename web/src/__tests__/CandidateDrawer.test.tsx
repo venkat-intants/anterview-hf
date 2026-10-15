@@ -268,8 +268,14 @@ function renderDrawer(
   return { ...view, onClose };
 }
 
+async function openHistory() {
+  const toggle = await screen.findByRole('button', { name: /History/ });
+  if (toggle.getAttribute('aria-expanded') !== 'true') await userEvent.click(toggle);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   getApplicant.mockResolvedValue(applicant());
   listAnswers.mockResolvedValue([]);
   listRoundResults.mockResolvedValue([]);
@@ -1206,6 +1212,7 @@ describe('CandidateDrawer', () => {
       ]);
       renderDrawer({ enrolmentId: 'en-1' });
 
+      await openHistory();
       const whyLinks = await screen.findAllByRole('link', { name: 'Why?' });
       // One decision row (new -> shortlisted is not a decision) — never a
       // "Why?" on an ordinary stage move. The link carries THAT row's own
@@ -1233,8 +1240,55 @@ describe('CandidateDrawer', () => {
       ]);
       renderDrawer({ enrolmentId: 'en-1' });
 
-      await screen.findByText('History');
+      await openHistory();
+      // opened, and showing the automated row: there is something to look at
+      expect(await screen.findByText(/backfill: status at migration/)).toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'Why?' })).not.toBeInTheDocument();
+    });
+
+    it('keeps History closed under a summary of the newest move, and shows five before "Show all"', async () => {
+      const move = (n: number) => ({
+        id: n,
+        occurred_at: `2026-08-${String(10 + n).padStart(2, '0')}T10:00:00.000Z`,
+        from_status: 'new',
+        to_status: 'shortlisted',
+        from_round: null,
+        to_round: null,
+        automated: true,
+        actor: null,
+        reason: `move ${n}`,
+        reason_code: null,
+        reason_label: null,
+      });
+      getEnrolmentHistory.mockResolvedValue(Array.from({ length: 8 }, (_, i) => move(i + 1)));
+      renderDrawer({ enrolmentId: 'en-1' });
+
+      const toggle = await screen.findByRole('button', { name: /History/ });
+      expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      expect(screen.getByTestId('collapsible-summary').textContent).toMatch(/^8 moves · latest: /);
+      expect(screen.queryByText(/move 1$/)).not.toBeInTheDocument();
+
+      await userEvent.click(toggle);
+      expect(await screen.findByText(/move 1$/)).toBeInTheDocument();
+      expect(screen.queryByText(/move 8$/)).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole('button', { name: 'Show all 8 moves' }));
+      expect(await screen.findByText(/move 8$/)).toBeInTheDocument();
+    });
+
+    it('remembers that History was opened', async () => {
+      getEnrolmentHistory.mockResolvedValue([
+        {
+          id: 1, occurred_at: '2026-08-15T10:00:00.000Z', from_status: 'new', to_status: 'shortlisted',
+          from_round: null, to_round: null, automated: true, actor: null, reason: 'x',
+          reason_code: null, reason_label: null,
+        },
+      ]);
+      const first = renderDrawer({ enrolmentId: 'en-1' });
+      await userEvent.click(await screen.findByRole('button', { name: /History/ }));
+      first.unmount();
+
+      renderDrawer({ enrolmentId: 'en-1' });
+      expect(await screen.findByRole('button', { name: /History/ })).toHaveAttribute('aria-expanded', 'true');
     });
   });
 });

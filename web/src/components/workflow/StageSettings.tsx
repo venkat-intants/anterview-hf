@@ -92,7 +92,7 @@ export default function StageSettings({ workflowId, roundId, label }: Props): JS
             id={`stage-owner-${key}`}
             value={ownerId}
             onChange={(e) => setOwnerId(e.target.value)}
-            className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <option value="">Unassigned</option>
             {(owners.data ?? []).map((o) => (
@@ -117,11 +117,11 @@ export default function StageSettings({ workflowId, roundId, label }: Props): JS
             placeholder="none"
             value={slaHours}
             onChange={(e) => setSlaHours(e.target.value)}
-            className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           />
         </div>
       </div>
-      <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+      <p className="text-[12px] leading-relaxed text-muted-foreground">
         Who is answerable for this stage, and how long before it is overdue. This never moves a
         candidate — it only tells your team where to look.
       </p>

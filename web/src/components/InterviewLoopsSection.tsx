@@ -44,9 +44,9 @@ import {
 } from '@/design/components/icons';
 
 const inputCls =
-  'mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
-const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
+  'mt-1 w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] ' +
+  'text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
+const labelCls = 'text-[13px] font-semibold text-foreground';
 
 const COMMON_ZONES = [
   'Asia/Kolkata',
@@ -220,7 +220,7 @@ function CreateLoopForm({ enrolmentId, onDone }: { enrolmentId: string; onDone: 
         type="button"
         disabled={createMut.isPending}
         onClick={() => createMut.mutate()}
-        className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+        className="self-start rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
       >
         {createMut.isPending ? 'Creating…' : 'Create loop'}
       </button>
@@ -278,7 +278,7 @@ function AddSessionForm({
     },
   });
 
-  if (blocked) return <p className="mt-2 text-[11.5px] text-[var(--ui-faint)]">{blocked}</p>;
+  if (blocked) return <p className="mt-2 text-[12px] text-muted-foreground">{blocked}</p>;
 
   const ready =
     Boolean(roundId) && selected.length > 0 && Boolean(startLocal || loop.self_schedule);
@@ -396,7 +396,7 @@ function AddSessionForm({
       {conflict ? (
         <div
           role="alert"
-          className="rounded-[10px] border border-[var(--ui-warn)]/40 bg-[rgba(255,183,100,0.1)] p-2.5 text-[12px] text-[var(--ui-soft)]"
+          className="rounded-[10px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn-wash)] p-2.5 text-[12px] text-[var(--ui-soft)]"
         >
           <p>{conflict}</p>
           <button
@@ -414,7 +414,7 @@ function AddSessionForm({
         type="button"
         disabled={!ready || submitMut.isPending}
         onClick={() => submitMut.mutate(false)}
-        className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+        className="self-start rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
       >
         {submitMut.isPending ? 'Adding…' : 'Add session'}
       </button>
@@ -574,7 +574,7 @@ function RescheduleForm({
       {conflict ? (
         <div
           role="alert"
-          className="rounded-[10px] border border-[var(--ui-warn)]/40 bg-[rgba(255,183,100,0.1)] p-2.5 text-[12px] text-[var(--ui-soft)]"
+          className="rounded-[10px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn-wash)] p-2.5 text-[12px] text-[var(--ui-soft)]"
         >
           <p>{conflict}</p>
           <button
@@ -593,7 +593,7 @@ function RescheduleForm({
           type="button"
           disabled={!startLocal || rescheduleMut.isPending}
           onClick={() => rescheduleMut.mutate(false)}
-          className="rounded-[10px] bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+          className="rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
         >
           {rescheduleMut.isPending ? 'Saving…' : 'Save new time'}
         </button>
@@ -647,9 +647,9 @@ function SessionRow({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-[12.5px] font-medium text-foreground">
-            {session.title} <span className="text-[var(--ui-faint)]">· {session.round_title}</span>
+            {session.title} <span className="text-muted-foreground">· {session.round_title}</span>
           </p>
-          <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+          <p className="mt-0.5 text-[12px] text-muted-foreground">
             {session.starts_at
               ? `${formatSessionWhen(session.starts_at, candidateTimezone)} · ${session.duration_minutes} min`
               : 'No time set yet — waiting on the candidate to choose one.'}
@@ -666,10 +666,10 @@ function SessionRow({
           {session.interviewers.map((iv) => (
             <li
               key={iv.user_id}
-              className="flex items-center justify-between text-[11.5px] text-[var(--ui-soft)]"
+              className="flex items-center justify-between text-[12px] text-[var(--ui-soft)]"
             >
               <span>{iv.name}</span>
-              <span className="text-[var(--ui-faint)]">
+              <span className="text-muted-foreground">
                 {iv.scorecard_status ? iv.scorecard_status.replace('_', ' ') : 'no scorecard'}
               </span>
             </li>
@@ -686,7 +686,11 @@ function SessionRow({
             onClick={() => setRescheduling((v) => !v)}
             className="text-[12px] text-[var(--ui-info)] hover:underline"
           >
-            {rescheduling ? 'Close' : session.status === 'awaiting_slot' ? 'Set a time' : 'Reschedule'}
+            {rescheduling
+              ? 'Close'
+              : session.status === 'awaiting_slot'
+                ? 'Set a time'
+                : 'Reschedule'}
           </button>
           {session.status === 'scheduled' && started ? (
             <>
@@ -694,7 +698,7 @@ function SessionRow({
                 type="button"
                 disabled={outcomeMut.isPending}
                 onClick={() => outcomeMut.mutate('completed')}
-                className="rounded-[8px] border border-border px-2.5 py-1 text-[11.5px] text-foreground disabled:opacity-40"
+                className="rounded-[8px] border border-border px-2.5 py-1 text-[12px] text-foreground disabled:opacity-40"
               >
                 Mark completed
               </button>
@@ -702,13 +706,13 @@ function SessionRow({
                 type="button"
                 disabled={outcomeMut.isPending}
                 onClick={() => outcomeMut.mutate('no_show')}
-                className="rounded-[8px] border border-border px-2.5 py-1 text-[11.5px] text-foreground disabled:opacity-40"
+                className="rounded-[8px] border border-border px-2.5 py-1 text-[12px] text-foreground disabled:opacity-40"
               >
                 Mark no-show
               </button>
             </>
           ) : session.status === 'scheduled' ? (
-            <span className="text-[11px] text-[var(--ui-faint)]">
+            <span className="text-[12px] text-muted-foreground">
               Completed/no-show can be recorded once it has started.
             </span>
           ) : null}
@@ -718,7 +722,7 @@ function SessionRow({
             onChange={(e) => setCancelReason(e.target.value)}
             placeholder="Cancel reason (optional)"
             aria-label={`Cancel reason for ${session.title}`}
-            className="w-[180px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+            className="w-[180px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           />
           <ConfirmDeleteButton
             label="Cancel"
@@ -787,7 +791,7 @@ function LoopCard({ loop, requisitionId }: { loop: InterviewLoop; requisitionId:
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-[12.5px] font-medium text-foreground">{loop.title}</p>
-          <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+          <p className="mt-0.5 text-[12px] text-muted-foreground">
             Candidate timezone {loop.candidate_timezone}
             {loop.sent_at ? ' · sent to the candidate' : ' · not sent yet'}
             {loop.self_schedule ? ' · candidate chooses times' : ''}
@@ -812,7 +816,7 @@ function LoopCard({ loop, requisitionId }: { loop: InterviewLoop; requisitionId:
             ))}
         </ul>
       ) : (
-        <p className="mt-2 text-[11.5px] text-muted-foreground">No sessions yet.</p>
+        <p className="mt-2 text-[12px] text-muted-foreground">No sessions yet.</p>
       )}
 
       {open ? (
@@ -867,7 +871,7 @@ function LoopCard({ loop, requisitionId }: { loop: InterviewLoop; requisitionId:
               onChange={(e) => setCancelReason(e.target.value)}
               placeholder="Cancel reason (optional)"
               aria-label={`Cancel reason for ${loop.title}`}
-              className="w-[180px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+              className="w-[180px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
             <ConfirmDeleteButton
               label="Cancel loop"
@@ -901,7 +905,7 @@ export default function InterviewLoopsSection({
   const rows = loops.data ?? [];
 
   return (
-    <div className="mt-5">
+    <div className="mt-6 border-t border-border pt-5">
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
@@ -920,7 +924,7 @@ export default function InterviewLoopsSection({
         <button
           type="button"
           onClick={() => setCreating((v) => !v)}
-          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {creating ? 'Close' : 'New loop'}
         </button>

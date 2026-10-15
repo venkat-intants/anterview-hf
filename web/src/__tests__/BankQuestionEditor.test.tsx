@@ -6,10 +6,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { BankQuestion } from '../api/questionBanks';
+import { REFERENCE_UNVERIFIED_TAG, type BankQuestion } from '../api/questionBanks';
 
 const listBankCompetencies = vi.fn();
-vi.mock('../api/questionBanks', () => ({
+vi.mock('../api/questionBanks', async (importActual) => ({
+  ...(await importActual<typeof import('../api/questionBanks')>()),
   listBankCompetencies: (...a: unknown[]) => listBankCompetencies(...a) as unknown,
 }));
 
@@ -103,6 +104,54 @@ describe('BankQuestionEditor — anything but draft is read-only', () => {
     renderEditor({ question: approvedQuestion(), forceEditable: true, onSave: vi.fn() });
     expect(screen.getByLabelText('Prompt')).toHaveValue('What is a monad?');
     expect(screen.getByRole('button', { name: 'Save as new version' })).toBeInTheDocument();
+  });
+});
+
+describe('BankQuestionEditor — the server-stamped unverified tag is locked', () => {
+  const aiCoding: BankQuestion = {
+    id: 'q-ai', bank_id: 'bank-1', root_id: 'q-ai', version: 1, kind: 'coding',
+    prompt: 'Reverse a string', points: 100, options: null, correct_index: null,
+    starter_code: null, reference_solution: null, allowed_languages: ['python'],
+    test_cases: [{ stdin: 'ab', expected_output: 'ba', is_sample: true, weight: 1 }],
+    time_limit_ms: 5000, difficulty: 'medium', language: 'en', competencies: [],
+    tags: [REFERENCE_UNVERIFIED_TAG, 'strings'],
+    status: 'draft', origin: 'ai_draft', content_hash: 'h',
+    created_by_user_id: 'u-1', submitted_by_user_id: null, submitted_at: null,
+    reviewed_by_user_id: null, reviewed_at: null, review_note: null,
+    retired_by_user_id: null, retired_at: null,
+    created_at: '2026-09-01T00:00:00.000Z', updated_at: '2026-09-01T00:00:00.000Z',
+  };
+
+  it('shows the marker as a locked chip with its explanation, not as editable text', () => {
+    renderEditor({ question: aiCoding, onSave: vi.fn() });
+    const chip = screen.getByTestId('locked-unverified-tag');
+    expect(chip).toHaveTextContent(REFERENCE_UNVERIFIED_TAG);
+    expect(chip).toHaveTextContent('cannot be removed');
+    expect(chip).toHaveTextContent('have not been run');
+    // The text box holds only the author's own tags.
+    expect(screen.getByLabelText(/Tags/)).toHaveValue('strings');
+  });
+
+  it('keeps the marker on save even if the author types it away or retypes it', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    renderEditor({ question: aiCoding, onSave });
+    const tags = screen.getByLabelText(/Tags/);
+    await user.clear(tags);
+    await user.type(tags, `arrays, ${REFERENCE_UNVERIFIED_TAG}`);
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const sent = onSave.mock.calls[0]?.[0] as { tags: string[] };
+    expect(sent.tags).toEqual([REFERENCE_UNVERIFIED_TAG, 'arrays']);
+  });
+
+  it('shows no locked chip, and sends none, for a question without the marker', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    renderEditor({ question: { ...aiCoding, tags: ['strings'] }, onSave });
+    expect(screen.queryByTestId('locked-unverified-tag')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect((onSave.mock.calls[0]?.[0] as { tags: string[] }).tags).toEqual(['strings']);
   });
 });
 

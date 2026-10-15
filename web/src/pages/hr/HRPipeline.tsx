@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
-  TrendingUp,
+  Users,
   CheckCircle2,
   XCircle,
   ChevronDown,
@@ -32,33 +32,14 @@ import { applicationKey } from '@/lib/applicationKey';
 import { offerOutcomeTag } from '@/lib/offerOutcome';
 import PipelineBoard from '@/components/PipelineBoard';
 import { cn } from '@/lib/utils';
-import {
-  GlassCard,
-  StatusTag,
-  Avatar,
-  SegTabs,
-  type TagTone,
-} from '@/design/components/primitives';
-import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
+import { StatusTag, Avatar, SegTabs, type TagTone } from '@/design/components/primitives';
+import { PageHeader, EmptyState, Toolbar, Page } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import HRAnalytics from './HRAnalytics';
 import { LIVE_POLL_MS } from '../../lib/polling';
 
 const PAGE_SIZE = 50;
-
-/* ── Design-kit colour helpers (inlined — no cross-project import) ─────────── */
-
-const GRADIENTS = [
-  'linear-gradient(135deg,var(--accent),#a887dc)',
-  'linear-gradient(135deg,#16c253,var(--accent))',
-  'linear-gradient(135deg,#dd55e7,#a887dc)',
-  'linear-gradient(135deg,#ffb764,#dd55e7)',
-  'linear-gradient(135deg,#0fb7fa,#16c253)',
-  'linear-gradient(135deg,#a887dc,var(--accent))',
-];
-
-function gradientFor(seed: number): string {
-  return GRADIENTS[Math.abs(seed) % GRADIENTS.length];
-}
 
 function initialsOf(name: string): string {
   return name
@@ -69,16 +50,10 @@ function initialsOf(name: string): string {
     .toUpperCase();
 }
 
-function seedOf(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-
 /* ── Score helpers ──────────────────────────────────────────────────────────── */
 
 function scoreToneClass(n: number | null): string {
-  if (n === null) return 'text-[var(--ui-faint)]';
+  if (n === null) return 'text-muted-foreground';
   if (n >= 70) return 'text-[var(--ui-ok)]';
   if (n >= 45) return 'text-[var(--ui-warn)]';
   return 'text-[var(--ui-danger)]';
@@ -157,7 +132,7 @@ function StageScore({
   return (
     <div className="w-12 shrink-0 text-center">
       <div className={cn('text-[15px] font-semibold leading-none', tone)}>{value ?? '—'}</div>
-      <div className="text-[10px] text-[var(--ui-faint)]">{unit}</div>
+      <div className="text-[12px] text-muted-foreground">{unit}</div>
     </div>
   );
 }
@@ -178,7 +153,8 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
   // OPTIONAL unless the chosen reason itself demands an explanation — that
   // policy is this screen's own, so it is not folded into minReasonLength.
   const chosenReason = (reasonsQuery.data ?? []).find((r) => r.code === reasonCode) ?? null;
-  const rationaleReady = !chosenReason?.requires_explanation || rationale.trim().length >= MIN_REASON_EXPLAINED;
+  const rationaleReady =
+    !chosenReason?.requires_explanation || rationale.trim().length >= MIN_REASON_EXPLAINED;
   // O4: a reason code is now required for every hire/reject write.
   const canDecide = Boolean(reasonCode) && rationaleReady;
 
@@ -192,8 +168,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
       void qc.invalidateQueries({ queryKey: ['hr', 'pipeline'] });
       void qc.invalidateQueries({ queryKey: ['hr', 'analytics'] });
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Decision failed'),
+    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Decision failed'),
   });
 
   const rec = recBadge(a.ats_recommendation);
@@ -202,72 +177,39 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
   const offerTag = offerOutcomeTag(a.offer_outcome);
 
   const canHire = a.status === 'shortlisted' || a.status === 'interviewed';
-  const canReject =
-    a.status === 'new' || a.status === 'shortlisted' || a.status === 'interviewed';
-
-  const seed = seedOf(a.applicant_id || a.full_name);
+  const canReject = a.status === 'new' || a.status === 'shortlisted' || a.status === 'interviewed';
 
   return (
     <div
       className={cn(
-        'rounded-[20px] border bg-card transition-colors',
+        'rounded-card border bg-card shadow-card transition-colors',
         open
-          ? 'border-[rgba(var(--accent-rgb),0.3)]'
-          : 'border-border hover:border-[rgba(var(--accent-rgb),0.2)]',
+          ? 'border-[var(--ui-line-strong)]'
+          : 'border-border hover:border-[var(--ui-line-strong)]',
       )}
     >
-      {/* Opens the drawer rather than expanding in place: the full record is
-          more than a row can hold, and it is a read — a recruiter looking
-          somebody up should not lose their place in the list. */}
-      <button
-        type="button"
-        onClick={onOpen}
-        aria-label={`Open details for ${a.full_name}`}
-        className="float-right m-3 rounded-[8px] border border-border px-2.5 py-1 text-[11.5px] text-muted-foreground hover:text-foreground focus:outline-none focus-visible:border-[var(--accent)]"
-      >
-        Details
-      </button>
       {/* ── Collapsed row ── */}
       <div className="flex items-center gap-3 p-3.5">
         {/* Avatar */}
-        <Avatar
-          initials={initialsOf(a.full_name)}
-          gradient={gradientFor(seed)}
-          size={36}
-          aria-hidden="true"
-        />
+        <Avatar initials={initialsOf(a.full_name)} size={36} />
 
         {/* ATS score */}
-        <StageScore
-          value={a.ats_overall}
-          tone={scoreToneClass(a.ats_overall)}
-          unit="ATS"
-        />
+        <StageScore value={a.ats_overall} tone={scoreToneClass(a.ats_overall)} unit="ATS" />
 
         {/* Name + badges */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate text-[13.5px] font-medium text-foreground">{a.full_name}</p>
-            <StatusTag tone={rec.tone} className="text-[11px]">
-              {rec.label}
-            </StatusTag>
+            <p className="truncate text-[14px] font-semibold text-foreground">{a.full_name}</p>
+            <StatusTag tone={rec.tone}>{rec.label}</StatusTag>
             {a.status === 'shortlisted' && (
-              <StatusTag tone="electric" className="gap-1 text-[11px]">
-                <Star size={11} aria-hidden="true" /> Shortlisted
+              <StatusTag tone="electric" className="gap-1">
+                <Star size={12} aria-hidden="true" /> Shortlisted
               </StatusTag>
             )}
-            {pill && (
-              <StatusTag tone={pill.tone} className="text-[11px]">
-                {pill.label}
-              </StatusTag>
-            )}
-            {offerTag && (
-              <StatusTag tone={offerTag.tone} className="text-[11px]">
-                {offerTag.label}
-              </StatusTag>
-            )}
+            {pill && <StatusTag tone={pill.tone}>{pill.label}</StatusTag>}
+            {offerTag && <StatusTag tone={offerTag.tone}>{offerTag.label}</StatusTag>}
           </div>
-          <p className="mt-0.5 truncate text-[11px] text-[var(--ui-faint)]">
+          <p className="mt-0.5 truncate text-[13px] text-muted-foreground">
             {a.opening_title ?? a.target_job_title} &middot; {a.target_level}
           </p>
         </div>
@@ -280,11 +222,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
             unit="exam %"
           />
           {a.exam_passed === true && (
-            <ClipboardCheck
-              size={14}
-              className="text-[var(--ui-ok)]"
-              aria-label="Exam passed"
-            />
+            <ClipboardCheck size={14} className="text-[var(--ui-ok)]" aria-label="Exam passed" />
           )}
         </div>
 
@@ -292,12 +230,10 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
         <div className="hidden items-center gap-1.5 md:flex">
           <StageScore
             value={a.interview_score !== null ? a.interview_score.toFixed(1) : null}
-            tone={a.interview_score !== null ? 'text-[var(--ui-ok)]' : 'text-[var(--ui-faint)]'}
+            tone={a.interview_score !== null ? 'text-[var(--ui-ok)]' : 'text-muted-foreground'}
             unit="/10"
           />
-          <StatusTag tone={iv.tone} className="text-[11px]">
-            {iv.label}
-          </StatusTag>
+          <StatusTag tone={iv.tone}>{iv.label}</StatusTag>
         </div>
 
         {/* A hire/reject decision now always needs a reason code (O4), so the
@@ -305,9 +241,21 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
             details is the one way in, and the reason + rationale + Hire/Reject
             controls live in the panel below. */}
         <div className="flex shrink-0 items-center gap-1">
+          {/* Opens the drawer rather than expanding in place: the full record is
+              more than a row can hold, and it is a read — a recruiter looking
+              somebody up should not lose their place in the list. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onOpen}
+            aria-label={`Open details for ${a.full_name}`}
+          >
+            Details
+          </Button>
           <button
             type="button"
-            className="flex h-8 w-8 items-center justify-center rounded-[9px] text-muted-foreground hover:bg-[var(--ui-inset)] transition-colors"
+            className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             onClick={() => setOpen((v) => !v)}
             aria-label={open ? 'Collapse details' : 'Expand details'}
             aria-expanded={open}
@@ -327,72 +275,57 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
           {/* Per-stage score grid */}
           <div className="grid gap-3 sm:grid-cols-3">
             {/* ATS */}
-            <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                ATS score
-              </p>
+            <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
+              <p className="mb-1.5 text-[12px] font-semibold text-muted-foreground">ATS score</p>
               <div className="flex items-center gap-2">
-                <span className={cn('text-[18px] font-semibold', scoreToneClass(a.ats_overall))}>
+                <span className={cn('text-[18px] font-bold', scoreToneClass(a.ats_overall))}>
                   {a.ats_overall ?? '—'}
-                  <span className="text-[11px] font-normal text-[var(--ui-faint)]">/100</span>
+                  <span className="text-[12px] font-normal text-muted-foreground">/100</span>
                 </span>
-                <StatusTag tone={rec.tone} className="text-[10px]">
-                  {rec.label}
-                </StatusTag>
+                <StatusTag tone={rec.tone}>{rec.label}</StatusTag>
               </div>
             </div>
 
             {/* Exam */}
-            <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                Exam
-              </p>
+            <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
+              <p className="mb-1.5 text-[12px] font-semibold text-muted-foreground">Exam</p>
               <div className="flex items-center gap-2">
-                <span
-                  className={cn('text-[18px] font-semibold', scoreToneClass(a.best_exam_percent))}
-                >
+                <span className={cn('text-[18px] font-bold', scoreToneClass(a.best_exam_percent))}>
                   {a.best_exam_percent !== null ? `${a.best_exam_percent}%` : '—'}
                 </span>
                 {a.total_exam_attempts > 0 && (
-                  <span className="text-[12px] text-[var(--ui-faint)]">
+                  <span className="text-[13px] text-muted-foreground">
                     {a.total_exam_attempts} attempt{a.total_exam_attempts === 1 ? '' : 's'} &middot;{' '}
                     {a.exam_passed ? 'passed' : 'not passed'}
                   </span>
                 )}
                 {a.total_exam_attempts === 0 && (
-                  <span className="text-[12px] text-[var(--ui-faint)]">no exam</span>
+                  <span className="text-[13px] text-muted-foreground">no exam</span>
                 )}
               </div>
             </div>
 
             {/* Interview */}
-            <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.5)] p-3">
-              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                Interview
-              </p>
+            <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-3.5">
+              <p className="mb-1.5 text-[12px] font-semibold text-muted-foreground">Interview</p>
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-[18px] font-semibold text-foreground">
+                <span className="text-[18px] font-bold text-foreground">
                   {a.interview_score !== null ? (
                     <>
                       {a.interview_score.toFixed(1)}
-                      <span className="text-[11px] font-normal text-[var(--ui-faint)]">/10</span>
+                      <span className="text-[12px] font-normal text-muted-foreground">/10</span>
                     </>
                   ) : (
-                    <span className="text-[var(--ui-faint)]">—</span>
+                    <span className="text-muted-foreground">—</span>
                   )}
                 </span>
-                <StatusTag tone={iv.tone} className="text-[10px]">
-                  {iv.label}
-                </StatusTag>
+                <StatusTag tone={iv.tone}>{iv.label}</StatusTag>
                 {a.scorecard_id && (
-                  <Link to={`/scorecard/${a.scorecard_id}`}>
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 rounded-[8px] border border-border bg-transparent px-2 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-white/[0.2] transition-colors"
-                    >
-                      <BarChart3 size={12} aria-hidden="true" /> Scorecard
-                    </button>
-                  </Link>
+                  <Button asChild variant="outline" size="sm">
+                    <Link to={`/scorecard/${a.scorecard_id}`}>
+                      <BarChart3 aria-hidden="true" /> Scorecard
+                    </Link>
+                  </Button>
                 )}
               </div>
             </div>
@@ -400,7 +333,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
 
           {/* Reason + rationale + decision buttons (persisted — audit trail) */}
           {(canHire || canReject) && (
-            <div className="rounded-[14px] border border-border bg-[rgba(28,29,31,0.4)] p-3.5">
+            <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
               <DecisionReasonSelect
                 id={`reason-code-${a.applicant_id}`}
                 reasons={reasonsQuery.data ?? []}
@@ -408,16 +341,16 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                 onChange={setReasonCode}
               />
 
-              <label className="mb-2 mt-3 block text-[12px] font-semibold text-foreground">
+              <label className="mb-2 mt-3 block text-[13px] font-semibold text-foreground">
                 Hire decision{' '}
-                <span className="font-normal text-[var(--ui-faint)]">
+                <span className="font-normal text-muted-foreground">
                   {chosenReason?.requires_explanation
                     ? '— this reason needs at least 10 characters of explanation'
                     : '— rationale is optional but logged for audit'}
                 </span>
               </label>
               <textarea
-                className="min-h-[44px] w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[12.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none focus:border-[var(--accent)] transition-colors"
+                className="min-h-[44px] w-full resize-y rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] transition-colors focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
                 placeholder="Why this decision? (optional)…"
                 value={rationale}
                 onChange={(e) => setRationale(e.target.value)}
@@ -425,40 +358,42 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
               />
               <div className="mt-2.5 flex flex-wrap items-center gap-2">
                 {canHire && (
-                  <button
+                  <Button
                     type="button"
-                    className="inline-flex items-center gap-1.5 rounded-[9999px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
                     disabled={decideMut.isPending || !canDecide}
                     onClick={() => decideMut.mutate('hired')}
                     aria-busy={decideMut.isPending && decideMut.variables === 'hired'}
                   >
                     {decideMut.isPending && decideMut.variables === 'hired' ? (
-                      <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                      <Loader2 className="animate-spin" aria-hidden="true" />
                     ) : (
-                      <CheckCircle2 size={14} aria-hidden="true" />
+                      <CheckCircle2 aria-hidden="true" />
                     )}
                     Hire
-                  </button>
+                  </Button>
                 )}
                 {canReject && (
-                  <button
+                  <Button
                     type="button"
-                    className="inline-flex items-center gap-1.5 rounded-[9999px] bg-[rgba(230,113,79,0.14)] border border-[rgba(230,113,79,0.35)] px-4 py-2 text-[13px] font-semibold text-[var(--ui-danger)] hover:bg-[rgba(230,113,79,0.22)] disabled:opacity-50 transition-colors"
+                    variant="outline"
+                    className="border-[var(--ui-danger)]/40 text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]"
                     disabled={decideMut.isPending || !canDecide}
                     onClick={() => decideMut.mutate('rejected')}
                     aria-busy={decideMut.isPending && decideMut.variables === 'rejected'}
                   >
                     {decideMut.isPending && decideMut.variables === 'rejected' ? (
-                      <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                      <Loader2 className="animate-spin" aria-hidden="true" />
                     ) : (
-                      <XCircle size={14} aria-hidden="true" />
+                      <XCircle aria-hidden="true" />
                     )}
                     Reject
-                  </button>
+                  </Button>
                 )}
                 {!canDecide ? (
-                  <span className="text-[11.5px] text-[var(--ui-warn)]">
-                    {!reasonCode ? 'Choose a reason first.' : 'Write at least 10 characters explaining why.'}
+                  <span className="text-[13px] text-[var(--ui-warn)]">
+                    {!reasonCode
+                      ? 'Choose a reason first.'
+                      : 'Write at least 10 characters explaining why.'}
                   </span>
                 ) : null}
               </div>
@@ -520,129 +455,124 @@ export default function HRPipeline() {
   const toRow = Math.min(offset + PAGE_SIZE, count);
 
   return (
-    <div className="mx-auto max-w-[1400px] px-6 py-8 lg:px-8 space-y-8">
-      {/* ── Page header ── */}
-      <Reveal>
-        <div className="flex items-center gap-3">
-          <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
-            <TrendingUp size={20} aria-hidden="true" />
-          </span>
-          <div>
-            <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
-              Hiring pipeline
-            </h1>
-            <p className="mt-1 text-[14px] text-muted-foreground">
-              Every candidate, end to end — resume &rarr; exam &rarr; interview &rarr; decision.
-            </p>
-          </div>
-        </div>
-      </Reveal>
+    <Page width="workspace">
+      <PageHeader
+        title="Hiring pipeline"
+        description="Every candidate, end to end — resume → exam → interview → decision."
+      />
 
-      {/* ── Embedded analytics panel ── */}
-      <HRAnalytics />
-
-      {/* ── Stage filter tabs ── */}
-      <Reveal delay={0.05}>
-        <SegTabs
-          tabs={STAGE_TABS.map((t) => ({ key: t.value, label: t.label }))}
-          active={stage}
-          onChange={(k) => pickStage(k as PipelineStage)}
-        />
-
-        {/* Same rows, same query — an arrangement, not a different dataset. */}
-        <div
-          role="group"
-          aria-label="Pipeline view"
-          className="mt-3 inline-flex rounded-[10px] border border-border p-0.5"
+      {/* ── Candidates: filters in one toolbar row, then the list ── */}
+      <section aria-label="Candidates" className="space-y-4">
+        <Toolbar
+          className="mb-0"
+          trailing={
+            <>
+              <h2 className="text-[13px] font-semibold tabular-nums text-muted-foreground">
+                Candidates{count > 0 ? ` (${count})` : ''}
+              </h2>
+              {/* Same rows, same query — an arrangement, not a different dataset. */}
+              <div
+                role="group"
+                aria-label="Pipeline view"
+                className="inline-flex rounded-full border border-input bg-card p-0.5"
+              >
+                {(['list', 'board'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => pickView(v)}
+                    aria-pressed={view === v}
+                    className={cn(
+                      'min-h-9 rounded-full px-4 text-[13px] font-semibold capitalize focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+                      view === v
+                        ? 'bg-foreground text-background'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </>
+          }
         >
-          {(['list', 'board'] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              onClick={() => pickView(v)}
-              aria-pressed={view === v}
-              className={cn(
-                'rounded-[8px] px-3 py-1.5 text-[12.5px] capitalize',
-                view === v ? 'bg-[var(--ui-inset-strong)] text-foreground' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {v}
-            </button>
-          ))}
-        </div>
-      </Reveal>
-
-      {/* ── Candidates list ── */}
-      <section aria-label="Candidates">
-        <Reveal delay={0.08}>
-          <h2 className="mb-4 text-[14px] font-semibold text-foreground">
-            Candidates{count > 0 ? ` (${count})` : ''}
-          </h2>
-        </Reveal>
+          <div className="max-w-full overflow-x-auto">
+            <SegTabs
+              tabs={STAGE_TABS.map((t) => ({ key: t.value, label: t.label }))}
+              active={stage}
+              onChange={(k) => pickStage(k as PipelineStage)}
+            />
+          </div>
+        </Toolbar>
 
         {isLoading ? (
           <div className="space-y-3" aria-busy="true" aria-label="Loading candidates">
             {[0, 1, 2].map((i) => (
-              <div key={i} className="h-[68px] w-full rounded-[20px] bg-[var(--ui-inset)] animate-pulse" />
+              <Skeleton key={i} className="h-[68px] w-full rounded-card" />
             ))}
           </div>
         ) : items.length === 0 ? (
-          <GlassCard className="py-14 text-center">
-            <p className="text-[14px] text-muted-foreground">
-              {stage === 'all'
+          <EmptyState
+            size="page"
+            icon={Users}
+            title={
+              stage === 'all'
                 ? 'No candidates yet — screen resumes to start the pipeline.'
-                : `No candidates at the "${STAGE_TABS.find((t) => t.value === stage)?.label ?? stage}" stage.`}
-            </p>
-          </GlassCard>
+                : `No candidates at the "${STAGE_TABS.find((t) => t.value === stage)?.label ?? stage}" stage.`
+            }
+          />
         ) : (
           <>
             {view === 'board' ? (
               <PipelineBoard rows={items} onOpen={(row) => setDrawer(row)} />
             ) : (
-              <Stagger className="flex flex-col gap-2.5">
+              <div className="flex flex-col gap-2.5">
                 {items.map((a) => (
-                  <StaggerItem key={applicationKey(a)}>
-                    <PipelineCard a={a} onOpen={() => setDrawer(a)} />
-                  </StaggerItem>
+                  <PipelineCard key={applicationKey(a)} a={a} onOpen={() => setDrawer(a)} />
                 ))}
-              </Stagger>
+              </div>
             )}
 
             {/* Pagination */}
             {count > PAGE_SIZE && (
-              <div className="mt-5 flex items-center justify-between">
-                <button
+              <div className="flex items-center justify-between pt-1">
+                <Button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-transparent px-4 py-2 text-[13px] text-muted-foreground hover:text-foreground hover:border-white/[0.2] disabled:opacity-40 transition-colors"
+                  variant="outline"
                   disabled={offset === 0}
                   onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
                   aria-label="Previous page"
                 >
                   Previous
-                </button>
-                <span className="text-[12px] text-[var(--ui-faint)]" aria-live="polite">
+                </Button>
+                <span className="text-[13px] text-muted-foreground" aria-live="polite">
                   {fromRow}–{toRow} of {count}
                 </span>
-                <button
+                <Button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-transparent px-4 py-2 text-[13px] text-muted-foreground hover:text-foreground hover:border-white/[0.2] disabled:opacity-40 transition-colors"
+                  variant="outline"
                   disabled={offset + PAGE_SIZE >= count}
                   onClick={() => setOffset(offset + PAGE_SIZE)}
                   aria-label="Next page"
                 >
                   Next
-                </button>
+                </Button>
               </div>
             )}
           </>
         )}
       </section>
 
+      {/* ── Funnel analytics, below the people it summarises ── */}
+      <div>
+        <HRAnalytics />
+      </div>
+
       <CandidateDrawer
         applicantId={drawer?.applicant_id ?? null}
         enrolmentId={drawer?.enrolment_id ?? null}
         onClose={() => setDrawer(null)}
       />
-    </div>
+    </Page>
   );
 }

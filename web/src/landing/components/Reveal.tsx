@@ -1,32 +1,24 @@
 import { motion, useReducedMotion } from 'framer-motion'
-import { type CSSProperties, type PropsWithChildren } from 'react'
-import { cn } from '../lib/cn'
-import { reveal, type RevealKind } from '../lib/motion'
+import { type PropsWithChildren } from 'react'
+import { reveal } from '../lib/motion'
 
 type RevealProps = PropsWithChildren<{
-  kind?: RevealKind
   className?: string
-  /** inline styles for the revealed element (the landing theme tokens) */
-  style?: CSSProperties
-  /** fraction of element visible before it animates in (0–1) */
+  /** fraction of the element visible before it animates in (0–1) */
   amount?: number
-  /** re-run on every enter/exit instead of once */
-  once?: boolean
 }>
 
-/** Scroll-in wrapper. <Reveal kind="left">…</Reveal> */
-export function Reveal({ children, kind = 'fade', className, style, amount = 0.3, once = false }: RevealProps) {
+/** Scroll-in wrapper, played once. Renders plain under prefers-reduced-motion. */
+export function Reveal({ children, className, amount = 0.2 }: RevealProps) {
   const reduce = useReducedMotion()
-  if (reduce) return <div className={className} style={style}>{children}</div>
+  if (reduce) return <div className={className}>{children}</div>
   return (
     <motion.div
-      className={cn(className)}
-      style={style}
+      className={className}
       variants={reveal}
-      custom={kind}
       initial="hidden"
       whileInView="show"
-      viewport={{ amount, once }}
+      viewport={{ amount, once: true }}
     >
       {children}
     </motion.div>

@@ -22,8 +22,31 @@ from app.remote import describe_unreachable
 log = structlog.get_logger(__name__)
 
 
+#: The ONLY sentence a browser is told when resume scoring fails. Specifics
+#: (service origin, start command, the upstream body) are logged here and
+#: never put in an HTTP response. Same pattern as ``exam_ai_client``.
+SCORING_UNAVAILABLE = "Scoring is not available right now. Please try again in a minute."
+
+
 class ResumeScoreError(Exception):
-    """Raised when the resume scorer cannot be reached or returns an error."""
+    """Raised when the resume scorer cannot be reached or returns an error.
+
+    ``str(exc)`` is the INTERNAL description (may hold an upstream body
+    excerpt) — for logs, never for a response. ``hint`` is a short, body-free
+    developer note. Route code answers with :func:`client_message`.
+    """
+
+    def __init__(self, internal: str, *, hint: str | None = None) -> None:
+        super().__init__(internal)
+        self.hint = hint
+
+
+def client_message(exc: ResumeScoreError) -> str:
+    """What the HR browser is told: fixed, plus the developer hint ONLY when
+    ``APP_ENV`` is ``development``."""
+    if settings.app_env == "development" and exc.hint:
+        return f"{SCORING_UNAVAILABLE} (dev: {exc.hint})"
+    return SCORING_UNAVAILABLE
 
 
 # The service identity this process presents to feedback_billing. It must be
@@ -93,12 +116,17 @@ async def score_resume_remote(
                 },
             )
     except httpx.RequestError as exc:
-        raise ResumeScoreError(
-            describe_unreachable(exc, what="Resume scoring", url=url)
-        ) from exc
+        detail = describe_unreachable(exc, what="Resume scoring", url=url)
+        log.error("resume_score.unreachable", error_type=type(exc).__name__, detail=detail)
+        raise ResumeScoreError(detail, hint=detail) from exc
     if resp.status_code != 200:
+        # The body excerpt goes to the log only; it never reaches a response.
+        log.error(
+            "resume_score.upstream_error", status=resp.status_code, body=resp.text[:160]
+        )
         raise ResumeScoreError(
-            f"resume scorer returned HTTP {resp.status_code}: {resp.text[:160]}"
+            f"resume scorer returned HTTP {resp.status_code}: {resp.text[:160]}",
+            hint=f"resume scorer returned HTTP {resp.status_code}",
         )
     result: dict[str, Any] = resp.json()
     return result

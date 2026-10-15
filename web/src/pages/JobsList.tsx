@@ -1,10 +1,7 @@
 // JobsList — protected page inside AppShell; fetches GET /jobs; renders a grid
 // of job cards. "Start Interview" is gated by DPDP Act 2023 consent (S3-011).
 // Language picker persisted to localStorage ('intants:interview-language').
-// AppShell provides the top bar — this page does NOT render its own header.
-//
-// Design: anterview-pages/src/screens/candidate/JobsList.tsx layout merged
-// with all live behavior (consent, session start, i18n, filters).
+// The page title is rendered here (PageHeader); AppShell supplies only the top bar.
 
 import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
@@ -18,8 +15,9 @@ import { createSession } from '@/api/sessions';
 import JobCard from '@/components/JobCard';
 import OpenRoles from '@/components/OpenRoles';
 import ConsentModal from '@/components/ConsentModal';
-import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
-import { GlassCard, SegTabs } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Page, PageHeader, EmptyState } from '@/design/components/page';
 import { Search, Briefcase, X, AlertTriangle, RefreshCw } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 import type { Language } from '@/types/interview';
@@ -34,68 +32,40 @@ const LANGUAGE_OPTIONS: { value: Language; label: string }[] = [
   { value: 'te', label: 'తెలుగు (Telugu)' },
 ];
 
-// Label resolved via t() at render time so it follows the UI language.
-const LEVEL_OPTIONS = [
-  { value: '', labelKey: 'jobs.allLevels' },
-  { value: 'entry', labelKey: 'jobs.levelEntry' },
-  { value: 'mid', labelKey: 'jobs.levelMid' },
-  { value: 'senior', labelKey: 'jobs.levelSenior' },
-] as const;
-
 type LevelFilter = '' | 'entry' | 'mid' | 'senior';
 
-// SegTabs items for the level filter — labels resolved once per render inside
-// the component where t() is available.
-const LEVEL_TAB_KEYS = [
+// Level filter pills — labels resolved with t() at render time.
+const LEVEL_FILTERS: { key: LevelFilter; labelKey: string }[] = [
   { key: '', labelKey: 'jobs.allLevels' },
   { key: 'entry', labelKey: 'jobs.levelEntry' },
   { key: 'mid', labelKey: 'jobs.levelMid' },
   { key: 'senior', labelKey: 'jobs.levelSenior' },
-] as const;
-
-// ── Inline skeleton — avoids @/components/ui/* shadcn dep ────────────────────
-
-function Sk({ className }: { className?: string }) {
-  return (
-    <div
-      className={cn('animate-pulse rounded-md bg-[var(--ui-inset)]', className)}
-      aria-hidden="true"
-    />
-  );
-}
+];
 
 // ── Loading skeleton card ──────────────────────────────────────────────────────
 
 function JobCardSkeleton() {
   return (
     <div
-      className="rounded-[24px] border border-border bg-card p-5 flex flex-col gap-4"
+      className="flex flex-col gap-4 rounded-card border border-border bg-card p-5 shadow-card"
       aria-hidden="true"
     >
-      <div className="flex items-start gap-3">
-        <Sk className="h-12 w-12 flex-none rounded-[12px]" />
-        <div className="flex-1 space-y-2">
-          <Sk className="h-4 w-3/4 rounded" />
-          <Sk className="h-3 w-1/2 rounded" />
-        </div>
-        <Sk className="h-5 w-20 rounded-full" />
+      <Skeleton className="h-5 w-3/4" />
+      <div className="flex gap-1.5">
+        <Skeleton className="h-6 w-20 rounded-full" />
+        <Skeleton className="h-6 w-16 rounded-full" />
       </div>
-      <div className="flex flex-wrap gap-1.5">
-        <Sk className="h-5 w-16 rounded-full" />
-        <Sk className="h-5 w-20 rounded-full" />
-        <Sk className="h-5 w-14 rounded-full" />
+      <div className="space-y-2">
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-5/6" />
       </div>
-      <div className="flex items-center gap-4">
-        <Sk className="h-3 w-24 rounded" />
-        <Sk className="h-3 w-16 rounded" />
-      </div>
-      <div className="flex items-center gap-2.5 border-t border-border pt-4">
-        <Sk className="h-10 flex-1 rounded-full" />
-        <Sk className="h-10 w-20 rounded-full" />
-      </div>
+      <Skeleton className="h-10 w-36 rounded-full" />
     </div>
   );
 }
+
+const CONTROL =
+  'h-10 rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50';
 
 // ── JobsList page ──────────────────────────────────────────────────────────────
 
@@ -219,30 +189,28 @@ export default function JobsList() {
     return matchesLevel && matchesSearch;
   });
 
-  // SegTabs labels built with t() — fine to compute inline since hooks aren't called
-  const levelTabs = LEVEL_TAB_KEYS.map((opt) => ({ key: opt.key, label: t(opt.labelKey) }));
-
   // ── Loading state ───────────────────────────────────────────────────────────
 
   if (isLoading || consentLoading) {
     return (
-      <div className="mx-auto max-w-[1100px] px-6 py-8 lg:px-8 space-y-6">
+      <Page width="default" data-testid="jobs-loading">
+        <div aria-busy="true" className="flex flex-col gap-6">
         <div>
-          <Sk className="h-7 w-40 rounded mb-2" />
-          <Sk className="h-4 w-72 rounded" />
+          <Skeleton className="mb-2 h-8 w-48" />
+          <Skeleton className="h-4 w-72 max-w-full" />
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <Sk className="h-10 w-[260px] rounded-full" />
-          <Sk className="h-10 w-52 rounded-full" />
-          <Sk className="h-10 w-44 rounded-[9px]" />
-          <Sk className="h-10 w-36 rounded-[9px]" />
+          <Skeleton className="h-10 w-[260px] max-w-full rounded-full" />
+          <Skeleton className="h-10 w-52 rounded-full" />
+          <Skeleton className="h-10 w-44 rounded-[12px]" />
         </div>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {Array.from({ length: 4 }).map((_, i) => (
             <JobCardSkeleton key={i} />
           ))}
         </div>
-      </div>
+        </div>
+      </Page>
     );
   }
 
@@ -250,77 +218,58 @@ export default function JobsList() {
 
   if (isError) {
     return (
-      <div className="mx-auto max-w-[1100px] px-6 py-8 lg:px-8">
+      <Page width="default">
         <div
           role="alert"
-          className="rounded-[24px] border border-[rgba(230,113,79,0.3)] bg-[rgba(230,113,79,0.07)] p-6 flex flex-col sm:flex-row items-start sm:items-center gap-4"
+          className="flex flex-col items-start gap-4 rounded-card border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-wash)] p-6 sm:flex-row sm:items-center"
         >
-          <AlertTriangle className="h-5 w-5 text-[var(--ui-danger)] shrink-0" aria-hidden="true" />
-          <p className="text-[14px] text-[var(--ui-danger)] flex-1">
+          <AlertTriangle className="h-5 w-5 shrink-0 text-[var(--ui-danger)]" aria-hidden="true" />
+          <p className="flex-1 text-[14px] text-foreground">
             {error instanceof Error ? error.message : t('jobs.loadError')}
           </p>
-          <button
-            type="button"
-            onClick={() => void refetch()}
-            className="inline-flex items-center gap-1.5 rounded-[9999px] border border-[rgba(230,113,79,0.35)] bg-[rgba(230,113,79,0.1)] px-4 py-2 text-[13px] font-medium text-[var(--ui-danger)] hover:bg-[rgba(230,113,79,0.18)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6714f]"
-          >
-            <RefreshCw size={14} aria-hidden="true" />
+          <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
+            <RefreshCw aria-hidden="true" />
             {t('jobs.retry')}
-          </button>
+          </Button>
         </div>
-      </div>
+      </Page>
     );
   }
 
   // ── Main render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="mx-auto max-w-[1100px] px-6 py-8 lg:px-8">
+    <Page width="default">
+      <PageHeader title={t('jobs.pageTitle')} description={t('jobs.pageSubtitle')} />
 
-      {/* ── Page heading ─────────────────────────────────────────────────────── */}
-      <Reveal>
-        <h1 className="text-[28px] font-semibold tracking-[-1px]">
-          {t('jobs.pageTitle')}
-        </h1>
-        <p className="mt-1 text-[14px] text-muted-foreground">
-          {t('jobs.pageSubtitle')}
-        </p>
-      </Reveal>
+      {/* Real openings — above the practice catalogue, because a candidate
+          arriving here is far more likely to be looking for a job than for a
+          rehearsal, and because the section below is mock interviews, which
+          the copy has to keep separate. Renders nothing when nobody is hiring. */}
+      <OpenRoles />
 
-      {/* ── Real openings ──
-          Above the practice catalogue, because a candidate arriving here is far
-          more likely to be looking for a job than for a rehearsal — and because
-          the section below is mock interviews, which the copy has to keep
-          separate. Renders nothing when nobody is hiring. */}
-      <div className="mt-7">
-        <OpenRoles />
-      </div>
-
-      {/* ── Decline banner ───────────────────────────────────────────────────── */}
+      {/* Decline banner */}
       {showDeclineBanner && (
         <div
           role="alert"
-          className="mt-4 rounded-[16px] border border-[rgba(255,183,100,0.3)] bg-[rgba(255,183,100,0.08)] px-4 py-3 flex items-start justify-between gap-4"
+          className="flex items-start justify-between gap-4 rounded-[14px] bg-[var(--ui-warn-wash)] px-4 py-3"
         >
-          <p className="text-[14px] text-[var(--ui-warn)]">{t('jobs.declineBanner')}</p>
+          <p className="text-[14px] text-foreground">{t('jobs.declineBanner')}</p>
           <button
             type="button"
             onClick={() => setShowDeclineBanner(false)}
             aria-label={t('jobs.dismiss')}
-            className="shrink-0 rounded text-[var(--ui-warn)]/80 hover:text-[var(--ui-warn)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#ffb764]/50"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
       )}
 
-      {/* ── Session-start error banner ────────────────────────────────────────── */}
+      {/* Session-start error banner */}
       {startInterviewMutation.isError && (
-        <div
-          role="alert"
-          className="mt-4 rounded-[16px] border border-[rgba(230,113,79,0.3)] bg-[rgba(230,113,79,0.07)] px-4 py-3"
-        >
-          <p className="text-[14px] text-[var(--ui-danger)]">
+        <div role="alert" className="rounded-[14px] bg-[var(--ui-danger-wash)] px-4 py-3">
+          <p className="text-[14px] text-foreground">
             {startInterviewMutation.error instanceof Error
               ? startInterviewMutation.error.message
               : t('jobs.startError')}
@@ -328,145 +277,118 @@ export default function JobsList() {
         </div>
       )}
 
-      {/* ── Toolbar ──────────────────────────────────────────────────────────── */}
-      {/*
-        Layout: [search box] [SegTabs for level] [language select] [level select (sr-only + hidden)] [count]
-        The native <select id="interview-language"> and <select id="level-filter"> MUST remain
-        present for test-suite compatibility (tests use them directly). SegTabs is additive UX;
-        it syncs with the hidden level select.
-      */}
-      <div className="mt-6 flex flex-wrap items-center gap-3">
+      <section aria-labelledby="practice-heading">
+        <h2 id="practice-heading" className="mb-4 text-[20px] font-bold tracking-[-0.3px] text-foreground">
+          {t('jobs.practiceTitle')}
+        </h2>
 
-        {/* Design search box — additive; client-filters by title */}
-        <div className="flex w-[260px] items-center gap-2 rounded-[9999px] border border-border bg-secondary px-3.5 py-2.5">
-          <Search size={15} className="text-[var(--ui-faint)] shrink-0" aria-hidden="true" />
-          <input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={t('jobs.searchPlaceholder')}
-            aria-label={t('jobs.searchPlaceholder')}
-            className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
-          />
+        {/* Toolbar: search, level pills, interview language, count. The native
+            language <select> stays native — it is the most reliable control on
+            a phone and carries the label tests and screen readers rely on. */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex w-full items-center gap-2 rounded-full border border-input bg-card px-4 focus-within:ring-2 focus-within:ring-[var(--accent)] sm:w-[280px]">
+            <Search size={16} className="shrink-0 text-[var(--ui-soft)]" aria-hidden="true" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t('jobs.searchPlaceholder')}
+              aria-label={t('jobs.searchPlaceholder')}
+              className="h-10 min-w-0 flex-1 bg-transparent text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
+            />
+          </div>
+
+          <div role="group" aria-label={t('jobs.filterByLevel')} className="flex flex-wrap gap-2">
+            {LEVEL_FILTERS.map((opt) => {
+              const on = levelFilter === opt.key;
+              return (
+                <button
+                  key={opt.key || 'all'}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setLevelFilter(opt.key)}
+                  className={cn(
+                    'h-10 rounded-full border px-4 text-[13.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+                    on
+                      ? 'border-primary bg-highlight text-highlight-foreground'
+                      : 'border-input bg-card text-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
+                  )}
+                >
+                  {t(opt.labelKey)}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="interview-language"
+              className="shrink-0 text-[13px] font-semibold text-foreground"
+            >
+              {t('jobs.interviewLanguage')}
+            </label>
+            <select
+              id="interview-language"
+              value={selectedLanguage}
+              onChange={(e) => setSelectedLanguage(e.target.value as Language)}
+              className={CONTROL}
+            >
+              {LANGUAGE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <p className="text-[13px] text-muted-foreground sm:ml-auto" aria-live="polite">
+            {t('jobs.positionsCount', { count: jobs.length })}
+            {(levelFilter || searchQuery) && (
+              <span className="ml-1">{t('jobs.filteredFrom', { count: allJobs.length })}</span>
+            )}
+          </p>
         </div>
 
-        {/* SegTabs for level — additive design element, synced with hidden select */}
-        <SegTabs
-          tabs={levelTabs}
-          active={levelFilter}
-          onChange={(key) => setLevelFilter(key as LevelFilter)}
-        />
+        {/* Empty state — no jobs at all */}
+        {jobs.length === 0 && allJobs.length === 0 && (
+          <EmptyState
+            size="page"
+            className="mt-5"
+            icon={Briefcase}
+            title={t('jobs.noPositionsTitle')}
+            description={t('jobs.noPositionsEmpty')}
+          />
+        )}
 
-        {/* Interview language label + native select — test-id accessible */}
-        <label
-          htmlFor="interview-language"
-          className="text-[12.5px] font-medium text-muted-foreground shrink-0"
-        >
-          {t('jobs.interviewLanguage')}
-        </label>
-        <select
-          id="interview-language"
-          value={selectedLanguage}
-          onChange={(e) => setSelectedLanguage(e.target.value as Language)}
-          className={cn(
-            'h-10 rounded-[9px] border border-border bg-secondary',
-            'px-3 py-2 text-[13px] text-foreground',
-            'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            'disabled:cursor-not-allowed disabled:opacity-50',
-          )}
-        >
-          {LANGUAGE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
+        {/* Empty state — filters returned no results */}
+        {jobs.length === 0 && allJobs.length > 0 && (
+          <EmptyState
+            size="page"
+            className="mt-5"
+            icon={Briefcase}
+            title={t('jobs.noPositionsTitle')}
+            description={t('jobs.noPositionsFiltered')}
+            action={
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setLevelFilter('');
+                  setSearchQuery('');
+                }}
+              >
+                {t('jobs.clearFilter')}
+              </Button>
+            }
+          />
+        )}
 
-        {/* Level filter — native select (sr-only label); SegTabs above is the visible UI.
-            This element MUST stay in the DOM — tests use #level-filter selectOptions() */}
-        <label htmlFor="level-filter" className="sr-only">
-          {t('jobs.filterByLevel')}
-        </label>
-        <select
-          id="level-filter"
-          value={levelFilter}
-          onChange={(e) => setLevelFilter(e.target.value as LevelFilter)}
-          className={cn(
-            'h-10 rounded-[9px] border border-border bg-secondary',
-            'px-3 py-2 text-[13px] text-foreground',
-            'focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            'disabled:cursor-not-allowed disabled:opacity-50',
-          )}
-        >
-          {LEVEL_OPTIONS.map((opt) => (
-            <option key={`level-${opt.value}`} value={opt.value}>
-              {t(opt.labelKey)}
-            </option>
-          ))}
-        </select>
-
-        {/* Count */}
-        <p className="ml-auto text-[12.5px] text-[var(--ui-faint)] whitespace-nowrap">
-          {t('jobs.positionsCount', { count: jobs.length })}
-          {(levelFilter || searchQuery) && (
-            <span className="ml-1 text-[11.5px] text-[var(--ui-faint)]">
-              {t('jobs.filteredFrom', { count: allJobs.length })}
-            </span>
-          )}
-        </p>
-      </div>
-
-      {/* ── Empty state — no jobs at all ─────────────────────────────────────── */}
-      {jobs.length === 0 && allJobs.length === 0 && (
-        <GlassCard className="mt-5 flex flex-col items-center justify-center py-20 px-6 text-center gap-4">
-          <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.1)] border border-[rgba(var(--accent-rgb),0.2)]">
-            <Briefcase className="h-7 w-7 text-[var(--ui-info)]" aria-hidden="true" />
-          </div>
-          <div>
-            <p className="text-[16px] font-semibold text-foreground">
-              {t('jobs.noPositionsTitle')}
-            </p>
-            <p className="mt-1 text-[14px] text-muted-foreground">
-              {t('jobs.noPositionsEmpty')}
-            </p>
-          </div>
-        </GlassCard>
-      )}
-
-      {/* ── Empty state — filters returned no results ─────────────────────────── */}
-      {jobs.length === 0 && allJobs.length > 0 && (
-        <GlassCard className="mt-5 flex flex-col items-center justify-center py-20 px-6 text-center gap-4">
-          <div className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[rgba(var(--accent-rgb),0.1)] border border-[rgba(var(--accent-rgb),0.2)]">
-            <Briefcase className="h-7 w-7 text-[var(--ui-info)]" aria-hidden="true" />
-          </div>
-          <div>
-            <p className="text-[16px] font-semibold text-foreground">
-              {t('jobs.noPositionsTitle')}
-            </p>
-            <p className="mt-1 text-[14px] text-muted-foreground">
-              {t('jobs.noPositionsFiltered')}
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              setLevelFilter('');
-              setSearchQuery('');
-            }}
-            className="inline-flex items-center gap-1.5 rounded-[9999px] border border-border bg-transparent px-4 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset)] hover:border-[var(--ui-line-strong)] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            {t('jobs.clearFilter')}
-          </button>
-        </GlassCard>
-      )}
-
-      {/* ── Job grid ─────────────────────────────────────────────────────────── */}
-      {jobs.length > 0 && (
-        <Stagger
-          className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2"
-        >
-          {jobs.map((job) => (
-            <StaggerItem key={job.id}>
+        {/* Job grid */}
+        {jobs.length > 0 && (
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2">
+            {jobs.map((job) => (
               <JobCard
+                key={job.id}
                 job={job}
                 onStartInterview={handleStartInterview}
                 isStarting={
@@ -474,10 +396,10 @@ export default function JobsList() {
                   startInterviewMutation.variables?.jobId === job.id
                 }
               />
-            </StaggerItem>
-          ))}
-        </Stagger>
-      )}
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Consent gate modal — overlays everything */}
       {showConsent && (
@@ -488,6 +410,6 @@ export default function JobsList() {
           error={consentError}
         />
       )}
-    </div>
+    </Page>
   );
 }

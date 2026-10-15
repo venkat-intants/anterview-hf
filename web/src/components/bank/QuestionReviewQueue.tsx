@@ -8,9 +8,18 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { CheckCircle2, ClipboardCheck, Code2, Loader2, XCircle } from '@/design/components/icons';
-import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { Check, CheckCircle2, ClipboardCheck, Loader2, XCircle } from '@/design/components/icons';
+import { StatusTag } from '@/design/components/primitives';
+import { Card } from '@/design/components/card';
+import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
+import { EmptyState } from '@/design/components/page';
+import { BankCodingQuestionView } from '@/components/hr/bank/BankCodingQuestionView';
+import { QuestionBadges } from '@/components/bank/QuestionBadges';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
+import { questionBrief } from '@/lib/bankFlow';
 import type { BankQuestion, ReviewQueueRow } from '@/api/questionBanks';
 
 const CHANGES_NOTE_MIN = 5;
@@ -26,9 +35,50 @@ interface RowProps {
   approve: (id: string, note?: string | null) => Promise<BankQuestion>;
   requestChanges: (id: string, note: string) => Promise<BankQuestion>;
   invalidate: () => void;
+  /** The first coding question opens with its tests and code showing. */
+  openContent: boolean;
 }
 
-function ReviewRow({ row, approve, requestChanges, invalidate }: RowProps) {
+/** What a reviewer reads before deciding: the whole question, not a title. */
+function ReviewContent({ row, open }: { row: ReviewQueueRow; open: boolean }): JSX.Element {
+  if (row.kind === 'coding') {
+    const tests = row.test_cases ?? [];
+    const samples = tests.filter((t) => t.is_sample).length;
+    return (
+      <Collapsible
+        title="Statement, tests and code"
+        summary={`${tests.length} test case${tests.length === 1 ? '' : 's'} (${samples} sample, ${tests.length - samples} hidden)`}
+        defaultOpen={open}
+        headingLevel="h4"
+        data-testid="review-content"
+      >
+        <BankCodingQuestionView question={row} headingAs="h5" />
+      </Collapsible>
+    );
+  }
+  return (
+    <div data-testid="review-content" className="flex flex-col gap-2">
+      <ol className="flex flex-col gap-1" aria-label="Options">
+        {(row.options ?? []).map((o, i) => (
+          <li key={i} className="flex items-start gap-2 text-[13.5px] text-foreground">
+            <span className="font-semibold tabular-nums text-muted-foreground">
+              {String.fromCharCode(65 + i)}.
+            </span>
+            <span className="min-w-0 flex-1 break-words">{o}</span>
+            {i === row.correct_index ? (
+              <span className="inline-flex flex-none items-center gap-1 text-[12.5px] font-semibold text-[var(--ui-ok)]">
+                <Check size={13} aria-hidden="true" />
+                Correct answer
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function ReviewRow({ row, approve, requestChanges, invalidate, openContent }: RowProps) {
   const [mode, setMode] = useState<'approve' | 'changes' | null>(null);
   const [note, setNote] = useState('');
 
@@ -57,97 +107,93 @@ function ReviewRow({ row, approve, requestChanges, invalidate }: RowProps) {
   const changesReady = note.trim().length >= CHANGES_NOTE_MIN;
 
   return (
-    <GlassCard className="p-4">
+    <Card as="li" density="compact" data-testid="review-row" className="list-none">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            {row.kind === 'coding' ? (
-              <Code2 className="h-4 w-4 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
-            ) : (
-              <ClipboardCheck className="h-4 w-4 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
-            )}
-            <p className="truncate text-[14px] font-medium text-foreground">{row.prompt}</p>
-          </div>
-          <p className="mt-1 text-[12px] text-muted-foreground">
+          <h3 className="min-w-0 whitespace-pre-wrap break-words text-[14px] font-semibold text-foreground">
+            {row.kind === 'coding' ? questionBrief(row.prompt, 140) : row.prompt}
+          </h3>
+          <p className="mt-1 text-[13px] text-muted-foreground">
             {row.bank_name} · v{row.version} · {row.difficulty} · {row.language}
           </p>
+          <QuestionBadges question={row} className="mt-2" />
         </div>
         <StatusTag tone="amber">in review</StatusTag>
       </div>
 
+      <div className="mt-3">
+        <ReviewContent row={row} open={openContent} />
+      </div>
+
       {row.own_submission ? (
-        <p className="mt-3 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[12.5px] text-muted-foreground">
+        <p className="mt-3 rounded-[12px] bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[13px] text-muted-foreground">
           {row.reason ?? 'You wrote or submitted this question — another reviewer must decide it.'}
         </p>
       ) : mode === null ? (
         <div className="mt-3 flex flex-wrap gap-2">
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={() => setMode('approve')}
-            className="inline-flex items-center gap-1.5 rounded-[9px] border border-[var(--ui-ok)]/35 px-3.5 py-1.5 text-[12.5px] font-medium text-[var(--ui-ok)] hover:bg-[var(--ui-ok)]/10"
+            className="border-[var(--ui-ok)]/40 text-[var(--ui-ok)] hover:text-[var(--ui-ok)]"
           >
-            <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+            <CheckCircle2 aria-hidden="true" />
             Approve
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('changes')}
-            className="inline-flex items-center gap-1.5 rounded-[9px] border border-[var(--ui-line-strong)] px-3.5 py-1.5 text-[12.5px] text-muted-foreground hover:border-[var(--ui-warn)]/40 hover:text-[var(--ui-warn)]"
-          >
-            <XCircle className="h-3.5 w-3.5" aria-hidden="true" />
+          </Button>
+          <Button type="button" variant="outline" onClick={() => setMode('changes')}>
+            <XCircle aria-hidden="true" />
             Request changes
-          </button>
+          </Button>
         </div>
       ) : (
         <div className="mt-3 flex flex-col gap-2">
           <label
             htmlFor={`review-note-${row.id}`}
-            className="text-[12px] font-medium text-[var(--ui-soft)]"
+            className="text-[13px] font-semibold text-foreground"
           >
             {mode === 'approve' ? 'Note (optional)' : 'What needs to change (required)'}
           </label>
-          <input
+          <Input
             id={`review-note-${row.id}`}
             value={note}
             onChange={(e) => setNote(e.target.value)}
             placeholder={mode === 'changes' ? `At least ${CHANGES_NOTE_MIN} characters` : undefined}
             maxLength={NOTE_MAX_LENGTH}
-            className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            aria-invalid={mode === 'changes' && !changesReady ? true : undefined}
           />
           {mode === 'changes' && !changesReady ? (
-            <p className="text-[11.5px] text-[var(--ui-warn)]">
+            <p className="text-[12.5px] text-[var(--ui-warn)]">
               Write at least {CHANGES_NOTE_MIN} characters.
             </p>
           ) : null}
-          <div className="flex gap-2">
-            <button
+          <div className="flex flex-wrap gap-2">
+            <Button
               type="button"
               disabled={
                 (mode === 'approve' ? approveMut.isPending : changesMut.isPending) ||
                 (mode === 'changes' && !changesReady)
               }
               onClick={() => (mode === 'approve' ? approveMut.mutate() : changesMut.mutate())}
-              className="inline-flex items-center gap-1.5 rounded-[9px] bg-primary px-3.5 py-1.5 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
             >
               {(mode === 'approve' ? approveMut.isPending : changesMut.isPending) ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                <Loader2 className="animate-spin" aria-hidden="true" />
               ) : null}
               {mode === 'approve' ? 'Confirm approval' : 'Send back'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => {
                 setMode(null);
                 setNote('');
               }}
-              className="rounded-[9px] border border-border px-3.5 py-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
-    </GlassCard>
+    </Card>
   );
 }
 
@@ -172,39 +218,52 @@ export function QuestionReviewQueue({
 
   if (queue.isLoading) {
     return (
-      <p className="mt-6 flex items-center gap-2 text-[13px] text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-        Loading…
-      </p>
+      <div className="flex flex-col gap-3" aria-busy="true">
+        <span className="sr-only">Loading…</span>
+        <Skeleton className="h-28 rounded-card" />
+        <Skeleton className="h-28 rounded-card" />
+      </div>
     );
   }
   if (queue.isError) {
     return (
-      <p className="mt-6 text-[13px] text-[var(--ui-danger)]">
-        Could not load the question review queue.
-      </p>
+      <div role="alert" className="flex flex-wrap items-center gap-3">
+        <p className="text-[14px] text-[var(--ui-danger)]">
+          Could not load the question review queue.
+        </p>
+        <Button type="button" variant="outline" onClick={() => void queue.refetch()}>
+          Try again
+        </Button>
+      </div>
     );
   }
   const rows = queue.data ?? [];
   if (rows.length === 0) {
     return (
-      <GlassCard className="mt-6 p-6 text-center">
-        <p className="text-[13.5px] text-foreground">Nothing is waiting for review.</p>
-        <p className="mt-1 text-[12.5px] text-muted-foreground">{emptyHint}</p>
-      </GlassCard>
+      <EmptyState
+        icon={ClipboardCheck}
+        title="Nothing is waiting for review."
+        description={emptyHint}
+      />
     );
   }
   return (
-    <div className="mt-6 flex flex-col gap-3">
-      {rows.map((row) => (
+    <ProgressiveList
+      items={rows}
+      initial={5}
+      noun="questions"
+      aria-label="Questions waiting for review"
+      className="flex flex-col gap-3"
+      getKey={(row) => row.id}
+      renderItem={(row, i) => (
         <ReviewRow
-          key={row.id}
           row={row}
           approve={approve}
           requestChanges={requestChanges}
           invalidate={invalidate}
+          openContent={i === 0}
         />
-      ))}
-    </div>
+      )}
+    />
   );
 }

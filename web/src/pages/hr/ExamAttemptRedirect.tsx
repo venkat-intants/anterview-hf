@@ -28,6 +28,7 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import { listAttempts, listExams } from '@/api/exams';
 import { GlassCard } from '@/design/components/primitives';
 import { ArrowLeft, Loader2 } from '@/design/components/icons';
+import { Page } from '@/design/components/page';
 
 const NOT_FOUND_TEXT =
   'That exam attempt is not in this company’s exams. It may have been deleted, or it ' +
@@ -70,15 +71,15 @@ export default function ExamAttemptRedirect(): JSX.Element {
   const searching = exams.isLoading || attemptLists.some((q) => q.isLoading || q.isFetching);
 
   return (
-    <div className="mx-auto max-w-[720px] px-6 py-8 lg:px-8">
+    <Page width="form">
       <Link
         to="/hr/exams"
-        className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
+        className="inline-flex self-start items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft size={15} aria-hidden="true" /> Back to exams
       </Link>
 
-      <GlassCard className="mt-4 p-6">
+      <GlassCard className="p-6">
         {searching ? (
           <p
             role="status"
@@ -99,6 +100,6 @@ export default function ExamAttemptRedirect(): JSX.Element {
           </>
         )}
       </GlassCard>
-    </div>
+    </Page>
   );
 }

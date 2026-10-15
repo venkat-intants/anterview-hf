@@ -51,6 +51,7 @@ persisted.
 
 from __future__ import annotations
 
+import json
 import uuid as _uuid_mod
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -81,6 +82,14 @@ DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
 # Guard against an abusive/buggy client flooding a single request.
 _MAX_EVENTS_PER_BATCH = 200
 
+# Per-event caps (L5). The batch is capped at 200 events but each event's
+# `metadata` was an arbitrary dict, so one request could still carry megabytes
+# into the JSONB column. Real metadata is a handful of scalars ({'confidence':
+# 0.7}); 2 KB serialised is generous. An oversize blob is REPLACED, not rejected:
+# a 422 would throw away the whole batch of genuine proctoring events with it.
+_MAX_EVENT_METADATA_BYTES = 2048
+_MAX_EVENT_TYPE_CHARS = 64
+
 
 class IntegrityEventIn(BaseModel):
     """One flagged event from the client."""
@@ -97,8 +106,21 @@ class IntegrityEventIn(BaseModel):
     @field_validator("type")
     @classmethod
     def _known_type(cls, v: str) -> str:
-        # Accept unknown types too (forward-compatible) but normalise.
-        return v.strip()
+        # Accept unknown types too (forward-compatible) but normalise and bound.
+        return v.strip()[:_MAX_EVENT_TYPE_CHARS]
+
+    @field_validator("metadata")
+    @classmethod
+    def _bounded_metadata(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
+        if v is None:
+            return v
+        try:
+            size = len(json.dumps(v, default=str).encode("utf-8"))
+        except (TypeError, ValueError):
+            return {"_dropped": "unserialisable"}
+        if size > _MAX_EVENT_METADATA_BYTES:
+            return {"_dropped": "oversize", "bytes": size}
+        return v
 
 
 class IntegrityBatchIn(BaseModel):

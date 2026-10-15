@@ -3,248 +3,292 @@
 @tailwind utilities;
 
 @layer base {
-  /* Superwhisper dark theme — the app is forced dark (see <html class="dark">).
-   * shadcn semantic tokens are remapped to the dark palette:
-   *   --primary  = WHITE  (the action colour; chromatic CTAs are forbidden)
-   *   --ring     = electric-signal #0088ff (focus glow is the one signal blue)
-   *   surfaces   = midnight #000 / obsidian #0f0f10 / charcoal #1c1d1f
-   */
-  /* ── Apple "MacBook Neo" LIGHT theme (the app default) ────────────────────
-   * Gallery-white canvas, value-only elevation (NO shadows), Ink text,
-   * Graphite secondary, and Azure #0071e3 rationed to the primary CTA only.
-   * The dark values live under `.dark` and are scoped to the live interview. */
-  /* ── AntHire aurora-dark theme (the SINGLE app theme) ───────────────────
-   * Forced dark everywhere (html.dark is always set; :root mirrors it so there
-   * is never a light flash). Palette aligned to the landing design:
-   *   bg = midnight #000 · cards = obsidian #0f0f10 · surfaces = charcoal
-   *   #1c1d1f · text = #f5f5f7 / ash · primary action = WHITE pill · ring =
-   *   electric #0088ff. */
+  /* ── AntHire palette ───────────────────────────────────────────────────────
+   * Two modes, one set of token names. Light is the default and the design the
+   * product is drawn in: a cool neutral canvas, white cards, slate ink, and one
+   * blue that does the work — it is the primary action, the focus ring, links,
+   * and (as a pale tint) the "you are here" highlight. Colour beyond that blue
+   * is reserved for status. Dark keeps the same roles on a deep navy canvas.
+   *
+   * `:root` carries the dark values so that `.dark` and an attribute-less
+   * document agree; `html[data-mode='light']` (set before first paint by the
+   * script in index.html, then owned by lib/useThemeMode.ts) overrides them.
+   *
+   * A page written against bg-card / text-foreground / border-border and the
+   * --ui-* tokens below needs no change to work in both modes. */
   :root,
   .dark {
-    --background: 0 0% 0%; /* midnight #000 — page canvas */
-    --foreground: 240 11% 96%; /* #f5f5f7 — primary text */
+    --background: 222 40% 6%; /* #090d16 — page canvas */
+    --foreground: 214 32% 95%; /* #eef2f7 — primary text */
 
-    --card: 240 4% 6%; /* obsidian #0f0f10 — card surface */
-    --card-foreground: 240 11% 96%;
+    --card: 222 30% 10%; /* #121722 — card surface */
+    --card-foreground: 214 32% 95%;
 
-    --popover: 240 5% 9%; /* charcoal-lift — dropdowns/menus read above cards */
-    --popover-foreground: 240 11% 96%;
+    --popover: 222 28% 13%; /* menus read above cards */
+    --popover-foreground: 214 32% 95%;
 
-    --primary: 0 0% 100%; /* WHITE — the sole action color (white pill, black text) */
-    --primary-foreground: 0 0% 0%;
+    /* The action colour. On the dark canvas the blue is lifted and carries ink
+       text: white on a blue this light is 3.2:1, ink on it is 7:1. */
+    --primary: 217 91% 68%;
+    --primary-foreground: 222 47% 8%;
 
-    --secondary: 240 5% 11%; /* charcoal #1c1d1f — quiet surface / input fill */
-    --secondary-foreground: 240 11% 96%;
+    --secondary: 222 22% 15%; /* quiet surface / input fill */
+    --secondary-foreground: 214 32% 95%;
 
-    --muted: 240 5% 10%; /* recessed inset */
-    --muted-foreground: 225 5% 60%; /* ash #888b91 — secondary text */
+    --muted: 222 22% 13%; /* recessed inset */
+    --muted-foreground: 218 14% 68%; /* secondary text */
 
     /* Named --surface-accent, NOT --accent. This is shadcn's hover/active
      * SURFACE, an HSL triple consumed as `hsl(var(...))` by Tailwind's `accent`
-     * colour. The brand SIGNAL further down is a hex, and it used to share the
-     * name --accent in this same block — so the hex won and broke each mode:
-     *   dark  — `bg-accent` compiled to hsl(#0088ff), which is not a colour, so
-     *           ghost/outline button hovers and every dropdown-item hover
-     *           rendered nothing.
-     *   light — the light block re-declared --accent as an HSL triple, so every
-     *           `var(--accent)` brand usage became a bare triple and dropped out.
-     * Renamed on the side with ~10 consumers, not the side with ~226. */
-    --surface-accent: 240 5% 14%; /* subtle hover/active surface */
-    --surface-accent-foreground: 240 11% 96%;
+     * colour. The brand SIGNAL further down is a hex. They once shared the name
+     * --accent, the hex won, and `bg-accent` compiled to hsl(#hex) — not a
+     * colour — so every ghost-button and menu-item hover rendered nothing.
+     * AccentTokens.test.tsx holds the two apart. */
+    --surface-accent: 222 22% 18%;
+    --surface-accent-foreground: 214 32% 95%;
 
-    --destructive: 0 72% 55%;
+    --destructive: 4 74% 58%; /* as text on the dark canvas */
+    /* As a FILL under white text the value above is 3.8:1. The solid token is
+       darker (4.7:1); it stays separate because lowering --destructive itself
+       would dim every `text-destructive` on the dark canvas. */
+    --destructive-solid: 4 74% 50%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 240 5% 15%; /* hairline borders ≈ white/8 on black */
-    --input: 240 5% 18%;
-    --ring: 208 100% 50%; /* electric #0088ff — the one signal blue */
+    --border: 222 18% 19%;
+    --input: 220 10% 45%; /* a field's only boundary: 3:1 against --card */
+    --ring: 217 91% 68%;
 
-    --radius: 0.875rem; /* 14px base (cards override to rounded-card / pill) */
+    --radius: 0.625rem; /* 10px — inputs and small controls; cards use rounded-card */
 
-    /* ── Themeable signal accent ──────────────────────────────────────────────
-     * One source of truth for the brand signal colour. The user-facing theme
-     * toggle swaps these via html[data-theme=...] below. Components reference
-     * them as var(--accent) / rgba(var(--accent-rgb),A); Tailwind's electric*
-     * and lavender* colours are wired to --accent-rgb-sp / --accent-2-rgb-sp.
-     *   --accent      : solid hex (bg/border/ring/text + gradient stops)
-     *   --accent-rgb  : "R,G,B" for rgba(var(--accent-rgb), A)
+    /* ── Signal accent ────────────────────────────────────────────────────────
+     * One source of truth for the brand signal. The header's accent picker
+     * swaps these (and --primary) via html[data-theme=...] below.
+     *   --accent        : solid hex (bg/border/ring/text + gradient stops)
+     *   --accent-rgb    : "R,G,B" for rgba(var(--accent-rgb), A)
      *   --accent-rgb-sp : "R G B" for rgb(var(--accent-rgb-sp) / <alpha>)
-     *   --accent-2    : the gradient partner (headlines, glows)
-     * Default below = electric blue (the original look). */
-    --accent: #0088ff;
-    --accent-rgb: 0, 136, 255;
-    --accent-rgb-sp: 0 136 255;
-    --accent-2: #b855e7;
-    --accent-2-rgb-sp: 184 85 231;
+     *   --accent-2      : the gradient partner */
+    --accent: #6ea0ff;
+    --accent-rgb: 110, 160, 255;
+    --accent-rgb-sp: 110 160 255;
+    --accent-2: #5cc8ff;
+    --accent-2-rgb-sp: 92 200 255;
 
-    /* recharts palette — dark */
-    --chart-text: #9a9aa0;
-    --chart-grid: #2c2c2e;
-    --chart-primary: #0088ff;
-    --chart-strong: #f5f5f7;
-    --chart-tooltip-bg: #1c1c1e;
+    /* recharts palette */
+    --chart-text: #9aa3b5;
+    --chart-grid: #222a3a;
+    --chart-primary: #6ea0ff;
+    --chart-strong: #eef2f7;
+    --chart-tooltip-bg: #171d2b;
   }
 
-
-  /* ── AntHire LIGHT mode ────────────────────────────────────────────────────
-   * The second of the two designs. Applied by `html[data-mode='light']`, which
-   * `lib/useThemeMode.ts` sets on every route. Nothing is pinned: the live
-   * interview's video player paints its own surface in its own markup, which is
-   * a component decision, not a palette hole.
-   *
-   * Same shape as the dark palette above, same token names — a page written
-   * against `bg-card` / `text-foreground` / `border-border` needs no change to
-   * work in both. Canvas is grey and cards are white (never the reverse): the
-   * page must stay a shade off the card or elevation disappears. */
   html[data-mode='light'] {
-    --background: 228 27% 96%; /* #f4f5f8 — grey canvas */
-    --foreground: 223 14% 10%; /* #16181d — ink */
+    --background: 220 23% 97%; /* #f5f7fa — cool neutral canvas */
+    --foreground: 222 47% 11%; /* #0f172a — slate ink */
 
-    --card: 0 0% 100%; /* white cards sit ON the grey */
-    --card-foreground: 223 14% 10%;
+    --card: 0 0% 100%; /* white cards sit ON the canvas, never the reverse */
+    --card-foreground: 222 47% 11%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 223 14% 10%;
+    --popover-foreground: 222 47% 11%;
 
-    --primary: 223 14% 10%; /* the action colour inverts: ink pill, white text */
+    --primary: 221 79% 46%; /* #194fd2 — white on it is 6.6:1 */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 225 20% 94%; /* #eceef3 — quiet surface / input fill */
-    --secondary-foreground: 223 14% 10%;
+    --secondary: 220 18% 93%; /* quiet surface / input fill */
+    --secondary-foreground: 222 47% 11%;
 
-    --muted: 228 22% 95%;
-    --muted-foreground: 221 10% 40%; /* #5b6170 — secondary text */
+    --muted: 220 18% 94%;
+    --muted-foreground: 220 10% 37%; /* secondary text */
 
-    /* Surface only — see the note in the dark block. Calling this --accent
-     * overrode the brand signal hex on every light-mode page. */
-    --surface-accent: 226 20% 92%; /* hover/active surface */
-    --surface-accent-foreground: 223 14% 10%;
+    --surface-accent: 220 18% 91%;
+    --surface-accent-foreground: 222 47% 11%;
 
-    --destructive: 0 72% 45%;
+    --destructive: 4 70% 44%;
+    --destructive-solid: 4 70% 44%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 224 18% 90%;
-    --input: 223 16% 85%;
-    /* --ring stays the signal blue: focus is the same affordance in both modes */
+    --border: 220 16% 89%;
+    --input: 220 9% 52%; /* 3:1 against --card and --background */
+    --ring: 221 79% 46%;
 
-    /* recharts palette — light */
-    --chart-text: #5b6170;
-    --chart-grid: #e2e4ea;
-    --chart-strong: #16181d;
+    --accent: #1d4ed8; /* safe as text as well as fill */
+    --accent-rgb: 29, 78, 216;
+    --accent-rgb-sp: 29 78 216;
+    --accent-2: #0e7fd6;
+    --accent-2-rgb-sp: 14 127 214;
+
+    --chart-text: #566074;
+    --chart-grid: #e1e5ec;
+    --chart-primary: #1d4ed8;
+    --chart-strong: #0f172a;
     --chart-tooltip-bg: #ffffff;
   }
 
-  /* ── Status colours ────────────────────────────────────────────────────────
-   * The four hexes the candidate pages had hardcoded. They need different
-   * values per mode: #27c93f and #ffb764 are legible on #000 and illegible on
-   * white, so a single value cannot serve both. */
+  /* ── Supporting tokens ─────────────────────────────────────────────────────
+   * Text tiers below --foreground / --muted-foreground, translucent insets and
+   * hairlines (rgba so a card, a dialog and the page can share one value), and
+   * the status colours. Status needs a value per mode: a green legible on navy
+   * is illegible on white. */
   :root,
   .dark {
-    /* Text tiers below --foreground / --muted-foreground, and the translucent
-       insets and hairlines the pages use for elevation. They are rgba rather
-       than solid so a card, a modal and the page can share one value. */
-    --ui-soft: #b8babf;
-    --ui-faint: #70757c;
-    --ui-inset-soft: rgba(255, 255, 255, 0.025);
-    --ui-inset: rgba(255, 255, 255, 0.05);
-    --ui-inset-strong: rgba(255, 255, 255, 0.09);
-    --ui-line-strong: rgba(255, 255, 255, 0.18);
+    --ui-soft: #c4cbd9;
+    --ui-faint: #959dae;
+    --ui-inset-soft: rgba(255, 255, 255, 0.03);
+    --ui-inset: rgba(255, 255, 255, 0.055);
+    --ui-inset-strong: rgba(255, 255, 255, 0.1);
+    --ui-line-strong: rgba(255, 255, 255, 0.2);
 
-    /* The auth brand panel's gradient. Shares the landing hero's shape; its
-       dark terminus lifts in light mode so the panel is a coloured card on a
-       grey page rather than a black slab beside a white form. */
-    --auth-gradient: linear-gradient(160deg, #000000 0%, #112d72 30%, #4b52aa 50%, #a887dc 72%, #e6c4e7 96%, #fcdbef 107%);
-    /* The "featured" surface — GlassCard feature, the sidebar promo. A tinted
-       panel that carries ink text, so it inverts with the mode (unlike the
-       PromoBanner, which is a fixed dark gradient card in both). */
-    --ui-grad-feature: linear-gradient(160deg, #001b33, #030719);
+    /* The highlight: the active nav item, the current step, a selected row. A
+       tinted FILL with its own ink, valued per mode — never a text colour, and
+       never assumed to be light: put `bg-primary` controls on it, not fixed
+       dark ones. */
+    --ui-highlight: #1a2c58;
+    --ui-highlight-ink: #d9e6ff;
+    --ui-highlight-wash: rgba(110, 160, 255, 0.14);
 
-    /* Role labels in the sidebar. One hue per tier so the tier is readable at a
-       glance; the light values are darkened to hold contrast on a white ground. */
+    /* The brand surface: the logo mark, the auth panel, the promo card. A FIXED
+       deep-blue fill in both modes, always carrying --ui-brand-ink (white). */
+    --ui-grad-brand: linear-gradient(140deg, #0b1f4d 0%, #1447c4 62%, #1f62d6 100%);
+    --ui-brand-ink: #ffffff;
+    --auth-gradient: linear-gradient(155deg, #081a42 0%, #123fae 58%, #1d5fd0 100%);
+
+    /* The "featured" surface — GlassCard feature, the hero card on a console. */
+    --ui-grad-feature: linear-gradient(155deg, #15223f, #0f1420);
+
+    /* The fill under white initials (avatars). Fixed in both modes; white on
+       every stop is 5.8:1 or better. */
+    --ui-grad-avatar: linear-gradient(135deg, #1d4ed8, #4338ca);
+
+    /* Role labels in the sidebar: one hue per tier. */
     --ui-role-platform: #f0a6c8;
-    --ui-role-super: #c89ce8;
-    --ui-role-admin: #60a5fa;
-    --ui-role-hr: #27c93f;
+    --ui-role-super: #c7a8f5;
+    --ui-role-admin: #7db4ff;
+    --ui-role-hr: #5fd47a;
 
-    /* Card elevation. The landing page has its own --lp-shadow-card scoped to
-       its root, so app pages referencing that var silently fell back to a
-       dark-mode shadow — a heavy black halo under a white card. */
-    --ui-shadow-card: 0 24px 80px rgba(0, 0, 0, 0.5);
+    /* Elevation. --ui-shadow-soft is the resting card; --ui-shadow-card is a
+       raised panel (dialogs, the auth card, popovers). */
+    --ui-shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --ui-shadow-card: 0 24px 64px -16px rgba(0, 0, 0, 0.6);
+    /* A hovered interactive card: one step above the resting card. */
+    --shadow-lift: 0 8px 24px -8px rgba(0, 0, 0, 0.5);
 
-    --ui-lavender: #a887dc;
-    --ui-lavender-wash: rgba(168, 135, 220, 0.18);
+    --ui-lavender: #b9a2f2;
+    --ui-lavender-wash: rgba(185, 162, 242, 0.16);
 
-    --ui-ok: #27c93f;
-    --ui-ok-wash: rgba(39, 201, 63, 0.16);
+    --ui-ok: #4cd06a;
+    --ui-ok-wash: rgba(76, 208, 106, 0.15);
     --ui-warn: #ffb764;
-    --ui-warn-wash: rgba(255, 183, 100, 0.16);
-    --ui-danger: #e6714f;
-    --ui-danger-wash: rgba(230, 113, 79, 0.16);
-    --ui-info: #60a5fa;
-    --ui-info-wash: rgba(96, 165, 250, 0.16);
+    --ui-warn-wash: rgba(255, 183, 100, 0.15);
+    --ui-danger: #f0806a;
+    --ui-danger-wash: rgba(240, 128, 106, 0.15);
+    --ui-info: #8fb4ff;
+    --ui-info-wash: rgba(110, 160, 255, 0.16);
   }
   html[data-mode='light'] {
-    --ui-soft: #3b4049;
-    --ui-faint: #7b8191;
-    --ui-inset-soft: rgba(15, 18, 26, 0.025);
-    --ui-inset: rgba(15, 18, 26, 0.045);
-    --ui-inset-strong: rgba(15, 18, 26, 0.075);
-    --ui-line-strong: rgba(15, 18, 26, 0.16);
+    --ui-soft: #334155;
+    --ui-faint: #5c6577;
+    --ui-inset-soft: rgba(15, 23, 42, 0.025);
+    --ui-inset: rgba(15, 23, 42, 0.045);
+    --ui-inset-strong: rgba(15, 23, 42, 0.08);
+    --ui-line-strong: rgba(15, 23, 42, 0.18);
 
-    --auth-gradient: linear-gradient(160deg, #1b2a6b 0%, #2f4ea8 30%, #5c65c4 50%, #a887dc 72%, #e6c4e7 96%, #fcdbef 107%);
-    --ui-grad-feature: linear-gradient(160deg, #e9f1ff, #f8fafe);
+    --ui-highlight: #e3ecff;
+    --ui-highlight-ink: #153a94;
+    --ui-highlight-wash: rgba(29, 78, 216, 0.08);
+
+    --ui-grad-feature: linear-gradient(155deg, #edf3ff, #fbfcff);
 
     --ui-role-platform: #b02a66;
     --ui-role-super: #6d4aa8;
-    --ui-role-admin: #1d6fd0;
-    --ui-role-hr: #148a35;
+    --ui-role-admin: #1d5fc4;
+    --ui-role-hr: #0f6d33;
 
-    --ui-shadow-card: 0 18px 46px rgba(15, 18, 26, 0.08);
+    --ui-shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 16px -10px rgba(15, 23, 42, 0.1);
+    --ui-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05), 0 24px 56px -20px rgba(15, 23, 42, 0.22);
+    --shadow-lift: 0 2px 4px rgba(15, 23, 42, 0.06), 0 12px 24px -12px rgba(15, 23, 42, 0.16);
 
     --ui-lavender: #6d4aa8;
     --ui-lavender-wash: rgba(109, 74, 168, 0.1);
 
-    --ui-ok: #148a35;
-    --ui-ok-wash: rgba(20, 138, 53, 0.1);
-    --ui-warn: #a86213;
-    --ui-warn-wash: rgba(168, 98, 19, 0.1);
-    --ui-danger: #c04527;
-    --ui-danger-wash: rgba(192, 69, 39, 0.1);
-    --ui-info: #1d6fd0;
-    --ui-info-wash: rgba(29, 111, 208, 0.1);
+    --ui-ok: #0f6d33;
+    --ui-ok-wash: rgba(15, 109, 51, 0.1);
+    --ui-warn: #8a500d;
+    --ui-warn-wash: rgba(138, 80, 13, 0.1);
+    --ui-danger: #b83a22;
+    --ui-danger-wash: rgba(184, 58, 34, 0.09);
+    --ui-info: #1a44c2;
+    --ui-info-wash: rgba(29, 78, 216, 0.08);
   }
 
-  /* ── Theme palettes (user-selectable via the header toggle) ─────────────────
-   * data-theme lives on <html>; a pre-paint script in index.html sets it from
-   * localStorage so there is never a colour flash. html[data-theme=...] beats
-   * the :root defaults on specificity. Only the SIGNAL accent changes — the
-   * midnight surfaces/text stay constant across all three. */
-  html[data-theme='blue'] {
-    --accent: #0088ff;
-    --accent-rgb: 0, 136, 255;
-    --accent-rgb-sp: 0 136 255;
-    --accent-2: #b855e7;
-    --accent-2-rgb-sp: 184 85 231;
-    --ring: 208 100% 50%;
-    --chart-primary: #0088ff;
+  /* ── Accent picker (html[data-theme]) ──────────────────────────────────────
+   * `blue` is the default and needs no rule — it is the values above. The
+   * other two recolour the signal AND the primary action, each with a dark
+   * value and a darker light-mode value, because a colour bright enough to
+   * read on navy fails contrast as text on white.
+   * A pre-paint script in index.html sets the attribute from localStorage. */
+  html[data-theme='violet'] {
+    --primary: 250 100% 76%;
+    --primary-foreground: 250 40% 9%;
+    --accent: #9d8cff;
+    --accent-rgb: 157, 140, 255;
+    --accent-rgb-sp: 157 140 255;
+    --accent-2: #c58bff;
+    --accent-2-rgb-sp: 197 139 255;
+    --ring: 250 100% 76%;
+    --chart-primary: #9d8cff;
+    --ui-info: #b3a6ff;
+    --ui-info-wash: rgba(157, 140, 255, 0.16);
+    --ui-highlight: #27215a;
+    --ui-highlight-ink: #e2ddff;
+    --ui-highlight-wash: rgba(157, 140, 255, 0.14);
   }
-  html[data-theme='purple'] {
-    --accent: #a855f7;
-    --accent-rgb: 168, 85, 247;
-    --accent-rgb-sp: 168 85 247;
-    --accent-2: #e879f9;
-    --accent-2-rgb-sp: 232 121 249;
-    --ring: 271 91% 65%;
-    --chart-primary: #a855f7;
+  html[data-mode='light'][data-theme='violet'] {
+    --primary: 251 86% 58%;
+    --primary-foreground: 0 0% 100%;
+    --accent: #5b38f0;
+    --accent-rgb: 91, 56, 240;
+    --accent-rgb-sp: 91 56 240;
+    --accent-2: #9b5cff;
+    --accent-2-rgb-sp: 155 92 255;
+    --ring: 251 86% 58%;
+    --chart-primary: #5b38f0;
+    --ui-info: #4a2fd6;
+    --ui-info-wash: rgba(91, 56, 240, 0.09);
+    --ui-highlight: #ebe6ff;
+    --ui-highlight-ink: #3a1fb0;
+    --ui-highlight-wash: rgba(91, 56, 240, 0.08);
   }
   html[data-theme='black'] {
-    --accent: #9aa3af;
-    --accent-rgb: 154, 163, 175;
-    --accent-rgb-sp: 154 163 175;
-    --accent-2: #d4d4d8;
-    --accent-2-rgb-sp: 212 212 216;
-    --ring: 214 12% 65%;
-    --chart-primary: #9aa3af;
+    --primary: 0 0% 100%;
+    --primary-foreground: 222 47% 8%;
+    --accent: #a8b0c0;
+    --accent-rgb: 168, 176, 192;
+    --accent-rgb-sp: 168 176 192;
+    --accent-2: #d5dae4;
+    --accent-2-rgb-sp: 213 218 228;
+    --ring: 218 14% 70%;
+    --chart-primary: #a8b0c0;
+    --ui-info: #c4cbd9;
+    --ui-info-wash: rgba(168, 176, 192, 0.16);
+    --ui-highlight: #242b3a;
+    --ui-highlight-ink: #eef2f7;
+    --ui-highlight-wash: rgba(168, 176, 192, 0.14);
+  }
+  html[data-mode='light'][data-theme='black'] {
+    --primary: 222 47% 11%;
+    --primary-foreground: 0 0% 100%;
+    --accent: #3b4557;
+    --accent-rgb: 59, 69, 87;
+    --accent-rgb-sp: 59 69 87;
+    --accent-2: #66708a;
+    --accent-2-rgb-sp: 102 112 138;
+    --ring: 218 19% 29%;
+    --chart-primary: #3b4557;
+    --ui-info: #334155;
+    --ui-info-wash: rgba(59, 69, 87, 0.09);
+    --ui-highlight: #e6e9ef;
+    --ui-highlight-ink: #0f172a;
+    --ui-highlight-wash: rgba(15, 23, 42, 0.06);
   }
 }
 
@@ -253,10 +297,10 @@
     @apply border-border;
   }
   html {
-    background-color: #000000; /* dark is the default; light overrides below */
+    background-color: #090d16; /* matches --background; light overrides below */
   }
   html[data-mode='light'] {
-    background-color: #f4f5f8; /* grey canvas — matches --background */
+    background-color: #f5f7fa;
   }
   body {
     @apply bg-background text-foreground;
@@ -264,16 +308,336 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
+  /* Headings take the display face. Devanagari and Telugu are not in it, so
+     those glyphs fall through to the system face — which is the intent: a
+     heading in हिन्दी or తెలుగు must render, not match. */
+  h1,
+  h2,
+  h3 {
+    font-family: 'Plus Jakarta Sans', Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-feature-settings: normal;
+  }
   ::selection {
-    background: hsl(var(--ring) / 0.22); /* signal-accent wash (themeable) */
+    background: hsl(var(--ring) / 0.22);
+  }
+  /* One focus ring for anything that does not draw its own. */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
   }
 }
 
-/* ── Superwhisper keyframes ───────────────────────────────────────────────────
- * Defined globally (not in the Tailwind keyframes map) so both the
- * `animate-*` utilities AND HeroCinematic's raw `animation: voice-bar ...`
- * inline style resolve against them.
- */
+/* ── Dropdown controls ────────────────────────────────────────────────────────
+ * ONE closed-state design for every dropdown trigger: native <select>, the Radix
+ * SelectTrigger (ui/select.tsx) and date/time inputs all read as the same control.
+ *   height 40px (36px with data-size='sm') · radius 10px · 1px border (--input, the
+ *   3:1 boundary; hover strengthens it) · card fill · 14px text · 16px chevron with
+ *   a 12px inset · accent focus ring · disabled + aria-invalid states.
+ *
+ * The base rules are written `select:where(…)`: specificity (0,0,1) — equal to Tailwind
+ * preflight's own `select {}` reset, which they follow, so they win over it — but below any
+ * class, so a
+ * Tailwind class a call site already passes (h-11, rounded-[12px], bg-secondary,
+ * text-[13px], border-border …) still wins and nothing needs migrating. The one
+ * exception is the right padding that keeps text clear of the chevron: that must
+ * beat a call site's `px-3`, so it is a normal-specificity rule.
+ *
+ * The chevron is two diagonal gradient strokes, not an SVG data-URI: an SVG used as
+ * a background cannot read currentColor, so it could not follow light/dark/accent.
+ * Gradients can, and carry no hex.
+ *
+ * select[multiple] and select[size] are listboxes, not dropdowns; they are
+ * excluded and keep the platform look. */
+@layer base {
+  select:where(:not([multiple]):not([size])) {
+    appearance: none;
+    -webkit-appearance: none;
+    box-sizing: border-box;
+    height: 2.5rem;
+    min-width: 0;
+    max-width: 100%;
+    padding-block: 0;
+    padding-inline-start: 0.75rem;
+    border: 1px solid hsl(var(--input));
+    border-radius: 10px;
+    background-color: hsl(var(--card));
+    color: hsl(var(--foreground));
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    cursor: pointer;
+    /* Long values truncate with an ellipsis instead of being clipped. */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease,
+      background-color 0.15s ease;
+    /* Chevron: "\" + "/" strokes, 1.6px thick, 10x5px overall. The first
+       declaration is the fallback for a browser without color-mix(). */
+    background-image:
+      linear-gradient(to bottom left, transparent calc(50% - 0.8px), currentColor calc(50% - 0.8px), currentColor calc(50% + 0.8px), transparent calc(50% + 0.8px)),
+      linear-gradient(to bottom right, transparent calc(50% - 0.8px), currentColor calc(50% - 0.8px), currentColor calc(50% + 0.8px), transparent calc(50% + 0.8px));
+    background-image:
+      linear-gradient(to bottom left, transparent calc(50% - 0.8px), color-mix(in srgb, currentColor 62%, transparent) calc(50% - 0.8px), color-mix(in srgb, currentColor 62%, transparent) calc(50% + 0.8px), transparent calc(50% + 0.8px)),
+      linear-gradient(to bottom right, transparent calc(50% - 0.8px), color-mix(in srgb, currentColor 62%, transparent) calc(50% - 0.8px), color-mix(in srgb, currentColor 62%, transparent) calc(50% + 0.8px), transparent calc(50% + 0.8px));
+    background-repeat: no-repeat;
+    background-size: 5px 5px, 5px 5px;
+    /* 16px icon box, 12px from the edge: the V is centred in it. */
+    background-position: right 20px center, right 15px center;
+  }
+  /* Keeps the text clear of the chevron; beats a call site's px-*. */
+  select:not([multiple]):not([size]) {
+    padding-inline-end: 2.25rem;
+  }
+  select:where(:not([multiple]):not([size])[data-size='sm']) {
+    height: 2.25rem;
+    font-size: 0.8125rem;
+  }
+  /* Right-to-left: the chevron moves to the left edge. */
+  select:where(:not([multiple]):not([size]):dir(rtl)) {
+    background-position: left 15px center, left 20px center;
+  }
+  select:where(:not([multiple]):not([size]):not(:disabled):hover) {
+    border-color: color-mix(in srgb, hsl(var(--input)) 55%, hsl(var(--foreground)));
+  }
+  select:where(:not([multiple]):not([size])):focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.2);
+  }
+  select:where(:not([multiple]):not([size]):disabled) {
+    cursor: not-allowed;
+    opacity: 0.55;
+    background-color: hsl(var(--muted));
+  }
+  select:where(:not([multiple]):not([size])[aria-invalid='true']) {
+    border-color: var(--ui-danger);
+  }
+  select:where(:not([multiple]):not([size])[aria-invalid='true']):focus-visible {
+    border-color: var(--ui-danger);
+    box-shadow: 0 0 0 3px var(--ui-danger-wash);
+  }
+  /* Placeholder tone: a required select still sitting on its empty option. */
+  select:where(:not([multiple]):not([size]):required:has(> option[value='']:checked)) {
+    color: hsl(var(--muted-foreground));
+  }
+  /* The OS list (Firefox, Safari, and Chromium before base-select) paints its
+     own rows; give them the popover colours so dark mode is not a white box. */
+  select option,
+  select optgroup {
+    background-color: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
+  }
+
+  /* Date / time inputs line up with the select beside them. Inputs that wrap
+     themselves (bg-transparent, e.g. inside <Field>) are left alone so a field is
+     never boxed twice. Number inputs join only when the call site gives them a
+     border, for the same reason. */
+  input:where([type='date'], [type='time'], [type='datetime-local'], [type='month'], [type='week']):where(:not(.bg-transparent)),
+  input:where([type='number'][class*='border']) {
+    box-sizing: border-box;
+    min-height: 2.5rem;
+    padding-inline: 0.75rem;
+    border: 1px solid hsl(var(--input));
+    border-radius: 10px;
+    background-color: hsl(var(--card));
+    color: hsl(var(--foreground));
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    transition:
+      border-color 0.15s ease,
+      box-shadow 0.15s ease;
+  }
+  input:where([type='date'], [type='time'], [type='datetime-local'], [type='month'], [type='week'], [type='number'][class*='border']):not(:disabled):hover {
+    border-color: color-mix(in srgb, hsl(var(--input)) 55%, hsl(var(--foreground)));
+  }
+  input:where([type='date'], [type='time'], [type='datetime-local'], [type='month'], [type='week'], [type='number'][class*='border']):focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.2);
+  }
+  input:where([type='date'], [type='time'], [type='datetime-local'], [type='month'], [type='week'])[aria-invalid='true'] {
+    border-color: var(--ui-danger);
+  }
+  /* The picker glyph follows color-scheme (set on <html> by useThemeMode); this
+     softens it and gives it a hit target. */
+  input::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.65;
+    border-radius: 4px;
+    padding: 2px;
+    transition: opacity 0.15s ease, background-color 0.15s ease;
+  }
+  input::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+    background-color: var(--ui-inset);
+  }
+}
+
+/* ── Customizable <select> (progressive enhancement) ─────────────────────────
+ * Chromium 135+ / Edge: `appearance: base-select` lets the OPEN list be styled
+ * like our menus. Firefox and Safari do not support it yet: the @supports below
+ * is false there, so they keep the refined CLOSED state above and the OS list.
+ * That is the intended fallback, not a gap.
+ * The masks carry no colour (only their alpha is used), so the icons follow
+ * currentColor / the accent. */
+@supports (appearance: base-select) {
+  /* Deliberately NOT inside @layer: Tailwind hoists an @layer out of an @supports,
+     which silently drops the condition and ships these rules to Firefox/Safari,
+     where they would strip the chevron. Plain CSS keeps the @supports intact
+     through the build (checked: dist css still contains it). */
+  select:not([multiple]):not([size]),
+  select:not([multiple]):not([size])::picker(select) {
+    appearance: base-select;
+  }
+  select:where(:not([multiple]):not([size])) {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  select:not([multiple]):not([size]) {
+    /* The UA's own ::picker-icon replaces the gradient chevron, so the 12px inset
+       is plain padding. Known limit: Chromium does not ellipsize <select> text, so
+       a value wider than the control is clipped and can push the icon out of view;
+       give a narrow select a width that fits its longest option. */
+    padding-inline-end: 0.75rem;
+    background-image: none;
+  }
+  select:not([multiple]):not([size])::picker-icon {
+    content: '';
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    margin-inline-start: auto;
+    background-color: color-mix(in srgb, currentColor 62%, transparent);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+    transition: rotate 0.15s ease;
+  }
+  select:not([multiple]):not([size]):open::picker-icon {
+    rotate: 180deg;
+  }
+
+  /* The open list. */
+  select:not([multiple]):not([size])::picker(select) {
+    box-sizing: border-box;
+    min-inline-size: max(anchor-size(width), 11rem);
+    max-block-size: min(20rem, 60vh);
+    margin-block: 6px;
+    padding: 4px;
+    overflow-y: auto;
+    border: 1px solid var(--ui-line-strong);
+    border-radius: 12px;
+    background: hsl(var(--popover));
+    color: hsl(var(--popover-foreground));
+    box-shadow: var(--ui-shadow-card);
+    /* Entrance: 140ms fade + 4px drop. */
+    opacity: 0;
+    translate: 0 -4px;
+    transition:
+      opacity 0.14s ease,
+      translate 0.14s ease,
+      overlay 0.14s allow-discrete,
+      display 0.14s allow-discrete;
+  }
+  select:not([multiple]):not([size]):open::picker(select) {
+    opacity: 1;
+    translate: 0 0;
+  }
+  @starting-style {
+    select:not([multiple]):not([size]):open::picker(select) {
+      opacity: 0;
+      translate: 0 -4px;
+    }
+  }
+
+  select:not([multiple]):not([size]) option {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-height: 2.25rem;
+    padding: 0.4375rem 0.625rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    cursor: pointer;
+    white-space: normal;
+    background-color: transparent;
+    color: hsl(var(--popover-foreground));
+    transition: background-color 0.1s ease;
+  }
+  select:not([multiple]):not([size]) option:hover,
+  select:not([multiple]):not([size]) option:focus,
+  select:not([multiple]):not([size]) option:focus-visible {
+    outline: none;
+    background-color: var(--ui-inset-strong);
+  }
+  select:not([multiple]):not([size]) option:checked {
+    font-weight: 600;
+    background-color: var(--ui-highlight-wash);
+  }
+  select:not([multiple]):not([size]) option:checked:hover,
+  select:not([multiple]):not([size]) option:checked:focus {
+    background-color: var(--ui-inset-strong);
+  }
+  select:not([multiple]):not([size]) option:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    background-color: transparent;
+  }
+  /* Check mark at the end of the row, in the accent. */
+  select:not([multiple]):not([size]) option::checkmark {
+    content: '';
+    order: 1;
+    flex: none;
+    width: 1rem;
+    height: 1rem;
+    margin-inline-start: auto;
+    background-color: var(--accent);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+  }
+  /* optgroup labels: small uppercase eyebrows. */
+  select:not([multiple]):not([size]) optgroup {
+    padding: 0;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+    background-color: transparent;
+  }
+  select:not([multiple]):not([size]) optgroup > legend {
+    padding: 0.5rem 0.625rem 0.25rem;
+  }
+  select:not([multiple]):not([size]) optgroup > option {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 0.875rem;
+    font-weight: 400;
+  }
+  select:not([multiple]):not([size]) optgroup > option:checked {
+    font-weight: 600;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    select:not([multiple]):not([size])::picker(select),
+    select:not([multiple]):not([size])::picker-icon {
+      transition: none;
+    }
+  }
+}
+
+/* Radix popper content (menus, popovers, the Select list) honours reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  [data-radix-popper-content-wrapper] > [data-state] {
+    animation: none !important;
+  }
+}
+
+/* ── Global keyframes ─────────────────────────────────────────────────────────
+ * Defined here (not in the Tailwind keyframes map) so both the `animate-*`
+ * utilities AND raw inline `animation:` styles resolve against them. */
 @keyframes aurora-drift {
   0%,
   100% {
@@ -316,20 +680,6 @@
   }
 }
 
-/* Cluely landing — buoyant float for the floating interview mockup */
-@keyframes cluely-float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-12px);
-  }
-}
-
-/* ── Futuristic redesign — decorative keyframes (Wave 1) ──────────────────────
- * Defined here (not the Tailwind map) so the raw names also resolve when used in
- * inline `animation:` styles or arbitrary `[animation:...]` utilities. */
 @keyframes sheen {
   0% {
     transform: translateX(-120%) skewX(-12deg);
@@ -360,36 +710,35 @@
   }
 }
 
-/* ── Dark-mode recharts legibility ────────────────────────────────────────────
- * Chart series colors are baked into the components (azure + categorical, fine
- * on both themes); only the neutral grid/axis/tooltip need a dark override.
- * CSS fill/stroke DO apply to SVG, so we retint recharts' own classes. */
-.dark .recharts-cartesian-grid line,
-.dark .recharts-cartesian-axis-line,
-.dark .recharts-cartesian-axis-tick-line,
-.dark .recharts-polar-grid line,
-.dark .recharts-polar-angle-axis-tick-line {
-  stroke: #2c2c2e;
+/* ── recharts neutrals ────────────────────────────────────────────────────────
+ * Series colours are set by the components; the grid, axes and tooltip follow
+ * the mode through the --chart-* tokens. CSS fill/stroke DO apply to SVG. */
+.recharts-cartesian-grid line,
+.recharts-cartesian-axis-line,
+.recharts-cartesian-axis-tick-line,
+.recharts-polar-grid line,
+.recharts-polar-angle-axis-tick-line {
+  stroke: var(--chart-grid);
 }
-.dark .recharts-text,
-.dark .recharts-cartesian-axis-tick-value,
-.dark .recharts-polar-angle-axis-tick-value tspan {
-  fill: #9a9aa0;
+.recharts-text,
+.recharts-cartesian-axis-tick-value,
+.recharts-polar-angle-axis-tick-value tspan {
+  fill: var(--chart-text);
 }
-.dark .recharts-default-tooltip {
-  background: #1c1c1e !important;
-  border-color: #2c2c2e !important;
-  color: #f5f5f7 !important;
+.recharts-default-tooltip {
+  background: var(--chart-tooltip-bg) !important;
+  border-color: var(--chart-grid) !important;
+  border-radius: 12px !important;
+  color: var(--chart-strong) !important;
 }
-.dark .recharts-default-tooltip .recharts-tooltip-label,
-.dark .recharts-default-tooltip .recharts-tooltip-item {
-  color: #f5f5f7 !important;
+.recharts-default-tooltip .recharts-tooltip-label,
+.recharts-default-tooltip .recharts-tooltip-item {
+  color: var(--chart-strong) !important;
 }
 
-/* ── Futuristic redesign — reusable effect utilities (Wave 1) ─────────────────
- * Theme-aware via the HSL tokens so every utility works in both light + dark. */
+/* ── Effect utilities ─────────────────────────────────────────────────────────
+ * Theme-aware via the HSL tokens so every utility works in both modes. */
 @layer utilities {
-  /* Animated gradient text — the signature "futuristic" headline treatment. */
   .text-gradient {
     background-image: linear-gradient(
       110deg,
@@ -411,7 +760,6 @@
     color: transparent;
   }
 
-  /* Frosted glass surfaces. */
   .glass {
     background-color: hsl(var(--card) / 0.6);
     backdrop-filter: blur(16px) saturate(160%);
@@ -425,7 +773,6 @@
     border: 1px solid hsl(var(--border) / 0.8);
   }
 
-  /* Subtle technical backdrops. */
   .bg-grid {
     background-image: linear-gradient(hsl(var(--border) / 0.6) 1px, transparent 1px),
       linear-gradient(90deg, hsl(var(--border) / 0.6) 1px, transparent 1px);
@@ -441,7 +788,6 @@
     mask-image: radial-gradient(ellipse at center, #000 35%, transparent 78%);
   }
 
-  /* Animated gradient border (wrap content in an inner element). */
   .border-gradient {
     position: relative;
     background:
@@ -452,14 +798,13 @@
     animation: border-flow 4s ease infinite;
   }
 
-  /* Hover-reactive lift + ring glow used across cards/tiles. */
   .lift {
     transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1),
       box-shadow 0.3s cubic-bezier(0.22, 1, 0.36, 1),
       border-color 0.3s ease;
   }
   .lift:hover {
-    transform: translateY(-3px);
+    transform: translateY(-2px);
   }
 
   /* Sweep of light across a surface on hover (add `group` to the parent). */
@@ -491,7 +836,6 @@
   .animate-aurora-drift,
   .animate-silhouette-float,
   .animate-laptop-float,
-  .animate-cluely-float,
   .animate-voice-bar,
   .animate-fade-up,
   .animate-fade-in,

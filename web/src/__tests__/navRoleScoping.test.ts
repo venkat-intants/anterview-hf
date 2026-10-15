@@ -40,20 +40,47 @@ describe('nav role scoping', () => {
   it('exposes every section through the table, so none can bypass scoping', () => {
     // If a section is rendered from JSX rather than NAV_SECTIONS it escapes both
     // visibleNavSections and this test — which is the failure mode being pinned.
-    expect(ALL_SECTION_IDS).toEqual(['candidate', 'hr', 'admin', 'platform', 'company', 'interviewer']);
+    expect(ALL_SECTION_IDS).toEqual([
+      'candidate',
+      'practice',
+      'hr',
+      'admin',
+      'platform',
+      'company',
+      'interviewer',
+    ]);
     for (const section of NAV_SECTIONS) {
       expect(typeof section.visibleTo).toBe('function');
       expect(section.items.length).toBeGreaterThan(0);
     }
   });
 
-  it('gives a plain candidate the candidate section and nothing else', () => {
-    expect(idsFor(['candidate'])).toEqual(['candidate']);
+  it('gives a plain candidate the two candidate groups and nothing else', () => {
+    // Where they stand, then the practice tools: one section each.
+    expect(idsFor(['candidate'])).toEqual(['candidate', 'practice']);
   });
 
   it('treats a user with no roles as a candidate rather than showing nothing', () => {
     // A brand-new account mid-provisioning must still be able to navigate.
-    expect(idsFor([])).toEqual(['candidate']);
+    expect(idsFor([])).toEqual(['candidate', 'practice']);
+  });
+
+  it('orders the candidate nav as Dashboard, My applications, Jobs, then Practice', () => {
+    const [main, practice] = visibleNavSections(['candidate']);
+    expect(main.label).toBeUndefined();
+    expect(main.items.map((i) => i.to)).toEqual(['/dashboard', '/applications', '/jobs']);
+    expect(practice.labelKey).toBe('nav.practice');
+    expect(practice.items.map((i) => i.to)).toEqual(['/start', '/history', '/resume']);
+    // Every candidate label is a translated key; none is a literal.
+    for (const item of [...main.items, ...practice.items]) {
+      expect(item.labelKey, item.to).toMatch(/^nav\./);
+      expect(item.label).toBeUndefined();
+    }
+  });
+
+  it('keeps Dashboard under its own name', () => {
+    const [main] = visibleNavSections(['candidate']);
+    expect(main.items[0]).toMatchObject({ to: '/dashboard', labelKey: 'nav.dashboard' });
   });
 
   it('shows a guest session no candidate section', () => {
@@ -168,6 +195,7 @@ describe('nav role scoping', () => {
     // otherwise reproduce the original bug exactly.
     for (const staff of ['hr_manager', 'super_admin', 'platform_owner', 'admin', 'interviewer']) {
       expect(idsFor(['candidate', staff])).not.toContain('candidate');
+      expect(idsFor(['candidate', staff])).not.toContain('practice');
     }
   });
 

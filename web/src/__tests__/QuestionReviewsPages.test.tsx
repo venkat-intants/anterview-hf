@@ -14,7 +14,8 @@ const requestBankQuestionChanges = vi.fn();
 const listAdminQuestionReviews = vi.fn();
 const approveBankQuestionAdmin = vi.fn();
 const requestBankQuestionChangesAdmin = vi.fn();
-vi.mock('../api/questionBanks', () => ({
+vi.mock('../api/questionBanks', async (importActual) => ({
+  ...(await importActual<typeof import('../api/questionBanks')>()),
   listBankReviewQueue: (...a: unknown[]) => listBankReviewQueue(...a) as unknown,
   approveBankQuestion: (...a: unknown[]) => approveBankQuestion(...a) as unknown,
   requestBankQuestionChanges: (...a: unknown[]) => requestBankQuestionChanges(...a) as unknown,
@@ -24,12 +25,18 @@ vi.mock('../api/questionBanks', () => ({
     requestBankQuestionChangesAdmin(...a) as unknown,
 }));
 
+import { MemoryRouter } from 'react-router-dom';
 import HrQuestionReviews from '../pages/hr/QuestionReviews';
 import SuperAdminQuestionReviews from '../pages/superadmin/QuestionReviews';
 
 function renderWith(node: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+  // The HR page carries breadcrumbs, which are router links.
+  return render(
+    <MemoryRouter>
+      <QueryClientProvider client={client}>{node}</QueryClientProvider>
+    </MemoryRouter>,
+  );
 }
 
 beforeEach(() => {

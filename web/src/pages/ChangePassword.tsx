@@ -1,33 +1,19 @@
 // ChangePassword — forced bootstrap-password reset (HR workflow).
 // Shown when the account has must_change_password=true (e.g. an HR manager who
 // just logged in with the default '1234'). Standalone page (no shell, no escape).
-// Design: aurora-dark GlassCard + Field + strength meter. Logic UNCHANGED.
+// Design: CenteredCard + PasswordField + strength meter. Logic UNCHANGED.
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
 import { changePassword } from '@/api/auth';
 import { homePathFor } from '@/components/layout/navSections';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from '@/lib/toast';
-import { AuroraField } from '@/design/components/AuroraField';
-import { Field, Pill } from '@/design/components/primitives';
+import { CenteredCard, FormError, PasswordField, PasswordStrength } from '@/components/layout/AuthLayout';
+import { Pill } from '@/design/components/primitives';
 import { ShieldCheck, Lock } from '@/design/components/icons';
-
-/** 0–4 password-strength score (presentation only). */
-function strengthOf(pw: string): number {
-  let s = 0;
-  if (pw.length >= 8) s++;
-  if (pw.length >= 12) s++;
-  if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) s++;
-  if (/\d/.test(pw) && /[^A-Za-z0-9]/.test(pw)) s++;
-  return Math.min(4, s);
-}
-
-const STRENGTH_COLOR = ['#e6714f', '#e6714f', '#ffb764', 'var(--accent)', '#27c93f'];
-const STRENGTH_LABEL = ['Too weak', 'Weak', 'Fair', 'Good', 'Strong'];
 
 export default function ChangePassword() {
   const { t } = useTranslation();
@@ -65,87 +51,58 @@ export default function ChangePassword() {
     mutation.mutate();
   }
 
-  const strength = strengthOf(pw);
-
   return (
-    <main className="relative flex min-h-screen items-center justify-center bg-background px-4 py-12 font-sans text-foreground">
-      <AuroraField />
-      <motion.div
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4 }}
-        className="relative z-10 w-full max-w-md"
-      >
-        <div className="rounded-[24px] border border-border bg-card p-8">
-          <div className="mb-6 flex flex-col items-center text-center">
-            <span className="inline-flex h-12 w-12 items-center justify-center rounded-[14px] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]">
-              <ShieldCheck className="h-6 w-6" aria-hidden="true" />
-            </span>
-            <h1 className="mt-5 text-[20px] font-semibold tracking-[-0.4px] text-foreground">
-              {t('changePassword.title')}
-            </h1>
-            <p className="mt-2 text-[13.5px] text-muted-foreground">{t('changePassword.desc')}</p>
-          </div>
+    <CenteredCard>
+      <div className="mb-6 flex flex-col items-center text-center">
+        <span className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[var(--ui-info-wash)] text-[var(--ui-info)]">
+          <ShieldCheck className="h-6 w-6" aria-hidden="true" />
+        </span>
+        <h1 className="mt-5 text-[24px] font-bold leading-tight tracking-[-0.5px] text-foreground">
+          {t('changePassword.title')}
+        </h1>
+        <p className="mt-2 text-[14px] leading-relaxed text-muted-foreground">{t('changePassword.desc')}</p>
+      </div>
 
-          <form onSubmit={onSubmit} noValidate className="space-y-4" aria-label="Change password form">
-            <div className="space-y-2">
-              <Field
-                id="cp-new"
-                label={t('changePassword.newPassword')}
-                type="password"
-                autoComplete="new-password"
-                icon={<Lock size={15} aria-hidden="true" />}
-                value={pw}
-                onChange={(e) => setPw(e.target.value)}
-                placeholder={t('changePassword.newPlaceholder')}
-              />
-              {/* Strength meter — presentation only */}
-              {pw.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <div className="flex flex-1 gap-1">
-                    {[0, 1, 2, 3].map((i) => (
-                      <span
-                        key={i}
-                        className="h-1 flex-1 rounded-full transition-colors"
-                        style={{ background: i < strength ? STRENGTH_COLOR[strength] : 'rgba(255,255,255,0.08)' }}
-                      />
-                    ))}
-                  </div>
-                  <span className="text-[11px]" style={{ color: STRENGTH_COLOR[strength] }}>
-                    {STRENGTH_LABEL[strength]}
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <Field
-              id="cp-confirm"
-              label={t('changePassword.confirmPassword')}
-              type="password"
-              autoComplete="new-password"
-              icon={<Lock size={15} aria-hidden="true" />}
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              placeholder={t('changePassword.confirmPlaceholder')}
-            />
-
-            {error && (
-              <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
-                {error}
-              </p>
-            )}
-
-            <Pill
-              type="submit"
-              disabled={mutation.isPending}
-              aria-busy={mutation.isPending}
-              className="w-full"
-            >
-              {mutation.isPending ? t('changePassword.saving') : t('changePassword.submit')}
-            </Pill>
-          </form>
+      <form onSubmit={onSubmit} noValidate className="flex flex-col gap-4" aria-label="Change password form">
+        <div className="space-y-2">
+          <PasswordField
+            id="cp-new"
+            label={t('changePassword.newPassword')}
+            autoComplete="new-password"
+            icon={<Lock size={15} aria-hidden="true" />}
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            placeholder={t('changePassword.newPlaceholder')}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={error ? 'cp-error' : undefined}
+          />
+          {/* Strength meter — presentation only */}
+          <PasswordStrength password={pw} />
         </div>
-      </motion.div>
-    </main>
+
+        <PasswordField
+          id="cp-confirm"
+          label={t('changePassword.confirmPassword')}
+          autoComplete="new-password"
+          icon={<Lock size={15} aria-hidden="true" />}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          placeholder={t('changePassword.confirmPlaceholder')}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'cp-error' : undefined}
+        />
+
+        <FormError id="cp-error">{error}</FormError>
+
+        <Pill
+          type="submit"
+          disabled={mutation.isPending}
+          aria-busy={mutation.isPending}
+          className="min-h-11 w-full py-3"
+        >
+          {mutation.isPending ? t('changePassword.saving') : t('changePassword.submit')}
+        </Pill>
+      </form>
+    </CenteredCard>
   );
 }

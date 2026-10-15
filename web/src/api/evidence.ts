@@ -13,7 +13,7 @@
 // it. Nothing here is ever called "supported by".
 
 import { apiGet } from './client';
-import { pathId } from './pathId';
+import { pathId, pathInt } from './pathId';
 
 // ---------------------------------------------------------------------------
 // Closed vocabularies
@@ -226,7 +226,7 @@ export interface DecisionTrace {
 }
 
 export function getDecisionTrace(decisionId: number): Promise<DecisionTrace> {
-  return apiGet<DecisionTrace>(`/hr/decisions/${decisionId}/trace`);
+  return apiGet<DecisionTrace>(`/hr/decisions/${pathInt(decisionId)}/trace`);
 }
 
 // ---------------------------------------------------------------------------

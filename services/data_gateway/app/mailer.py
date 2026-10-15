@@ -316,30 +316,84 @@ async def _record_failure(
     )
 
 
+# Attempts, and the pause between them, for writing a delivery OUTCOME back. The
+# write is cheap and idempotent (a plain UPDATE by id), and losing it after a
+# successful SMTP hand-off is the expensive case: the row stays 'sending', the
+# visibility timeout expires, and the recipient gets the same message again.
+_RECORD_ATTEMPTS = 3
+_RECORD_RETRY_PAUSE_SECONDS = 0.5
+
+
+async def _record_outcome(
+    factory: async_sessionmaker[AsyncSession],
+    row_id: uuid.UUID,
+    *,
+    sent: bool,
+    attempts: int,
+    max_attempts: int,
+    err: str = "",
+) -> bool:
+    """Write one row's delivery outcome in its OWN session, retrying. Never raises.
+
+    A fresh session per attempt IS the rollback: the delivery used to be recorded
+    on the session that had just failed, so when the COMMIT of "sent" failed, the
+    failure was then written on that same broken, un-rolled-back session, which
+    raised out of ``_drain`` and aborted the rest of the batch. Returns False
+    when the outcome could not be recorded.
+    """
+    for attempt in range(1, _RECORD_ATTEMPTS + 1):
+        try:
+            async with factory() as db:
+                if sent:
+                    await _record_sent(db, row_id)
+                else:
+                    await _record_failure(db, row_id, attempts, max_attempts, err)
+                await db.commit()
+            return True
+        except Exception as exc:  # noqa: BLE001 — one row must never abort the batch
+            log.warning(
+                "email.record_failed",
+                id=str(row_id), sent=sent, attempt=attempt, error=str(exc),
+            )
+            if attempt < _RECORD_ATTEMPTS:
+                await asyncio.sleep(_RECORD_RETRY_PAUSE_SECONDS)
+    return False
+
+
 async def _drain(factory: async_sessionmaker[AsyncSession]) -> int:
     async with factory() as db:
         batch = await _claim_batch(db)
     if not batch:
         return 0
     for row_id, to_email, subject, body_html, body_text, attempts, max_attempts, from_name in batch:
-        async with factory() as db:
-            try:
-                await deliver_smtp(
-                    to=to_email, subject=subject, html=body_html or "", text=body_text,
-                    from_name=from_name,
-                )
-                await _record_sent(db, row_id)
-                await db.commit()
-                log.info("email.delivered", id=str(row_id), attempt=attempts)
-            except Exception as exc:  # noqa: BLE001 — record + retry, never crash worker
-                await _record_failure(
-                    db, row_id, int(attempts), int(max_attempts), str(exc)
-                )
-                await db.commit()
-                log.warning(
-                    "email.delivery_failed",
-                    id=str(row_id), attempt=attempts, max=max_attempts, error=str(exc),
-                )
+        # Delivery and bookkeeping are separate steps with separate failure
+        # handling. Only a failed DELIVERY is recorded as a delivery failure; a
+        # delivered message whose "sent" write failed must not be written down as
+        # failed (that would schedule a resend of mail the recipient already has).
+        try:
+            await deliver_smtp(
+                to=to_email, subject=subject, html=body_html or "", text=body_text,
+                from_name=from_name,
+            )
+        except Exception as exc:  # noqa: BLE001 — record + retry, never crash worker
+            await _record_outcome(
+                factory, row_id, sent=False,
+                attempts=int(attempts), max_attempts=int(max_attempts), err=str(exc),
+            )
+            log.warning(
+                "email.delivery_failed",
+                id=str(row_id), attempt=attempts, max=max_attempts, error=str(exc),
+            )
+            continue
+        if await _record_outcome(
+            factory, row_id, sent=True, attempts=int(attempts), max_attempts=int(max_attempts)
+        ):
+            log.info("email.delivered", id=str(row_id), attempt=attempts)
+        else:
+            # Delivered but unrecorded: the row stays 'sending' and the visibility
+            # timeout will re-queue it. Said loudly because it is the one path
+            # that can send a recipient a duplicate.
+            log.error("email.delivered_unrecorded", id=str(row_id), attempt=attempts)
     return len(batch)
 
 

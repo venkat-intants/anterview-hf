@@ -338,7 +338,7 @@ describe('Applicants — list', () => {
     renderPage();
 
     await screen.findByText('Bhavya Nair');
-    const row = screen.getByRole('button', { name: /open details for bhavya nair/i });
+    const row = screen.getByRole('row', { name: /bhavya nair/i });
     expect(within(row).getByText('bhavya@example.com')).toBeInTheDocument();
     expect(within(row).getByText('84')).toBeInTheDocument();
   });
@@ -349,7 +349,7 @@ describe('Applicants — list', () => {
     renderPage();
 
     await screen.findByText('Chetan Iyer');
-    const row = screen.getByRole('button', { name: /open details for chetan iyer/i });
+    const row = screen.getByRole('row', { name: /chetan iyer/i });
     expect(within(row).getByText('No email')).toBeInTheDocument();
   });
 
@@ -477,7 +477,7 @@ describe('Applicants — per-applicant actions', () => {
     renderPage();
 
     // Bhavya is 'new', so Shortlist is live for her and only her.
-    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
     await user.click(await screen.findByRole('button', { name: /^shortlist$/i }));
 
     // With the application it is about (B5).
@@ -532,7 +532,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
     await user.click(await screen.findByRole('button', { name: /shortlist for staff nurse/i }));
     await waitFor(() =>
       expect(updateApplicantStatus).toHaveBeenCalledWith('ap-1', 'shortlisted', 'en-nu'),
@@ -547,7 +547,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /open details for chetan iyer/i }));
+    await user.click(await screen.findByRole('button', { name: /^chetan iyer$/i }));
 
     expect(await screen.findByRole('button', { name: /^shortlist$/i })).toBeDisabled();
     expect(screen.getByRole('button', { name: /^reject$/i })).toBeEnabled();
@@ -557,7 +557,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
     await user.click(await screen.findByRole('button', { name: /^re-score$/i }));
 
     await waitFor(() => expect(rescoreApplicant).toHaveBeenCalledWith('ap-1'));
@@ -569,7 +569,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
     // Rejecting now always needs a structured reason AND free text (O4).
     await user.click(await screen.findByRole('button', { name: /^reject$/i }));
     await user.selectOptions(await screen.findByLabelText('Reason'), 'weak-fit');
@@ -583,7 +583,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
     await user.click(await screen.findByRole('button', { name: /^reject$/i }));
 
     const confirm = await screen.findByRole('button', { name: /confirm reject/i });
@@ -596,7 +596,7 @@ describe('Applicants — per-applicant actions', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByRole('button', { name: /open details for bhavya nair/i }));
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
     await user.click(await screen.findByRole('button', { name: /^reject$/i }));
     await user.selectOptions(await screen.findByLabelText('Reason'), 'weak-fit');
     await user.type(screen.getByLabelText(/^why/i), 'Did not meet the bar in screening.');

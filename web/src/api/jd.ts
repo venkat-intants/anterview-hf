@@ -4,6 +4,7 @@
 // Does NOT set Content-Type — the browser sets multipart/form-data boundary.
 
 import { uploadWithProgress } from './client';
+import { pathId } from './pathId';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -32,7 +33,7 @@ export function uploadJd(
   const formData = new FormData();
   formData.append('file', file);
   return uploadWithProgress<JdUploadResponse>(
-    `${API_BASE}/jobs/${jobId}/jd-document`,
+    `${API_BASE}/jobs/${pathId(jobId)}/jd-document`,
     formData,
     onProgress,
   );

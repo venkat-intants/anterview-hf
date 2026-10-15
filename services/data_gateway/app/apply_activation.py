@@ -52,6 +52,7 @@ from app.auth_tokens import hash_token, mint_token
 from app.config import settings
 from app.mailer import enqueue_email
 from app.rediscovery import REDISCOVERY_CONSENT_TYPE
+from app.roles import holds_non_candidate_role
 
 log = structlog.get_logger(__name__)
 
@@ -232,14 +233,45 @@ async def activate(
         {"em": address, "uid": user_id},
     )
 
-    await _consume(db, raw_token, now)
+    # One conditional UPDATE decides who consumed the token (L10): two concurrent
+    # submissions both pass the read in _live_token_user, but only one UPDATE can
+    # flip consumed_at, so only one proceeds. A loser gets the same "invalid or
+    # expired" answer as a stale link.
+    await _consume(db, user_id, raw_token, now)
 
     if existing is not None:
+        target_id = uuid.UUID(str(existing))
+        takeover = await _is_takeover_target(db, target_id)
+        if takeover:
+            # The row at this address was never proven to belong to whoever made
+            # it: registration issues a session without checking the address, so
+            # "an account with this email exists" is not evidence its holder owns
+            # the mailbox. The person who just used the emailed link DID prove
+            # control, so they take the account over: their password replaces
+            # whatever was set (a pre-registered attacker's included) and every
+            # session issued before this moment is revoked by the caller.
+            await db.execute(
+                text(
+                    "UPDATE users SET password_hash = :pw,"
+                    " email_verified_at = COALESCE(email_verified_at, :now),"
+                    " must_change_password = false, updated_at = :now"
+                    " WHERE id = :uid"
+                ),
+                {"pw": password_hash, "now": now, "uid": target_id},
+            )
+            log.warning("apply.activation.unverified_account_taken_over", user_id=str(target_id))
         await _link_to_existing(
-            db, guest_user_id=user_id, target_user_id=uuid.UUID(str(existing)), now=now
+            db, guest_user_id=user_id, target_user_id=target_id, now=now
         )
-        log.info("apply.activation.linked", user_id=str(existing))
-        return {"email": address, "linked": "existing"}
+        log.info("apply.activation.linked", user_id=str(target_id))
+        return {
+            "email": address,
+            "linked": "existing",
+            # Non-empty only when sessions on that account must be revoked after
+            # commit (activate() has no Redis handle; the router owns that).
+            "revoke_sessions_for": str(target_id) if takeover else "",
+            "password_replaced": "yes" if takeover else "",
+        }
 
     await _promote_guest(
         db,
@@ -276,14 +308,71 @@ async def _live_token_user(db: AsyncSession, raw_token: str) -> uuid.UUID:
     return uuid.UUID(str(row.user_id))
 
 
-async def _consume(db: AsyncSession, raw_token: str, now: datetime) -> None:
+async def _consume(
+    db: AsyncSession, user_id: uuid.UUID, raw_token: str, now: datetime
+) -> None:
+    """Atomically consume the token, or raise ActivationError if it is not live.
+
+    Check-then-set (a SELECT, then an UPDATE that ignored its own rowcount) let
+    two concurrent submissions both succeed. The predicate lives in the UPDATE
+    now, and RETURNING says whether this call won. On success the user's other
+    outstanding tokens of the same kind die with it: a reset or activation link
+    that was mailed earlier must not outlive the one that was just used.
+    """
+    won = (
+        await db.execute(
+            text(
+                "UPDATE auth_tokens SET consumed_at = :now"
+                " WHERE token_hash = :th AND kind = :kind"
+                "   AND consumed_at IS NULL AND expires_at > :now"
+                " RETURNING id"
+            ),
+            {"now": now, "th": hash_token(raw_token, _TOKEN_KIND), "kind": _TOKEN_KIND},
+        )
+    ).first()
+    if won is None:
+        raise ActivationError(
+            "This link is invalid or has expired. Ask the hiring team for a new one."
+        )
     await db.execute(
         text(
             "UPDATE auth_tokens SET consumed_at = :now"
-            " WHERE token_hash = :th AND kind = :kind AND consumed_at IS NULL"
+            " WHERE user_id = :uid AND kind = :kind AND consumed_at IS NULL"
         ),
-        {"now": now, "th": hash_token(raw_token, _TOKEN_KIND), "kind": _TOKEN_KIND},
+        {"now": now, "uid": user_id, "kind": _TOKEN_KIND},
     )
+
+
+async def _is_takeover_target(db: AsyncSession, target_id: uuid.UUID) -> bool:
+    """True when the account at this address was never proven to belong to anyone.
+
+    That is: it has a password (so it was made by self-registration, which does
+    not check the address), it has no verified address, and it holds no staff
+    role. Staff accounts are provisioned by an administrator, not by whoever
+    typed the address first, so they cannot have been pre-registered by an
+    attacker and are linked as before rather than rewritten. A verified account,
+    or one with no password at all (SSO-only), is linked as before too.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT u.password_hash, u.email_verified_at,"
+                " COALESCE(array_agg(r.name) FILTER (WHERE r.name IS NOT NULL),"
+                "          ARRAY[]::text[]) AS roles"
+                "  FROM users u"
+                "  LEFT JOIN user_roles ur ON ur.user_id = u.id"
+                "  LEFT JOIN roles r ON r.id = ur.role_id"
+                " WHERE u.id = :uid"
+                " GROUP BY u.id"
+            ),
+            {"uid": target_id},
+        )
+    ).first()
+    if row is None:
+        return False
+    if row.password_hash is None or row.email_verified_at is not None:
+        return False
+    return not holds_non_candidate_role(row.roles or [])
 
 
 async def _promote_guest(

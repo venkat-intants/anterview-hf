@@ -7,42 +7,38 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { GlassCard } from '@/design/components/primitives';
-import { CheckCircle2 } from '@/design/components/icons';
-import { getSlaBoard, type SlaBoardRow } from '@/api/stageSla';
+import { useStagesAtRisk } from '@/hooks/useHrHomeQueries';
+import { SectionCard } from '@/design/components/page';
+import { Skeleton } from '@/components/ui/skeleton';
+import { CheckCircle2, Clock } from '@/design/components/icons';
+import type { SlaBoardRow } from '@/api/stageSla';
 import AtRiskRow from '@/components/AtRiskRow';
 import CandidateDrawer from '@/components/CandidateDrawer';
 
 const VISIBLE = 6;
 
-export default function StagesAtRiskWidget(): JSX.Element {
+export default function StagesAtRiskWidget({
+  className,
+  bare = false,
+}: {
+  className?: string;
+  /** Only the list: no card, title or count badge, and each row without its own
+   *  box, for a page that supplies the frame (the HR home). */
+  bare?: boolean;
+}): JSX.Element {
   const [open, setOpen] = useState<SlaBoardRow | null>(null);
-  const board = useQuery({
-    queryKey: ['hr', 'stage-sla', 'at-risk'],
-    queryFn: () => getSlaBoard({ state: ['overdue', 'due_soon'] }),
-    staleTime: 60_000,
-    retry: false,
-    throwOnError: false,
-  });
+  const board = useStagesAtRisk();
 
   const rows = board.data ?? [];
 
-  return (
-    <GlassCard className="p-5">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h3 className="text-[15px] font-semibold text-foreground">Stages at risk</h3>
-        {rows.length > 0 ? (
-          <span className="text-[12px] text-muted-foreground">{rows.length}</span>
-        ) : null}
-      </div>
-
-      {board.isLoading ? (
-        <div className="h-[58px] animate-pulse rounded-[12px] bg-[var(--ui-inset-soft)]" />
-      ) : null}
+  const body = (
+    <>
+      {board.isLoading ? <Skeleton className="h-[58px] rounded-[12px]" /> : null}
 
       {board.isError ? (
-        <p className="text-[13px] text-muted-foreground">Could not check stage SLAs just now.</p>
+        <p role="alert" className="text-[13px] text-muted-foreground">
+          Could not check stage SLAs just now.
+        </p>
       ) : null}
 
       {!board.isLoading && !board.isError && rows.length === 0 ? (
@@ -53,7 +49,13 @@ export default function StagesAtRiskWidget(): JSX.Element {
       ) : null}
 
       {rows.length > 0 ? (
-        <ul className="flex flex-col gap-2">
+        <ul
+          className={
+            bare
+              ? 'flex flex-col divide-y divide-border [&_button]:rounded-none [&_button]:border-0 [&_button]:bg-transparent [&_button]:px-0 [&_button]:py-3'
+              : 'flex flex-col gap-2'
+          }
+        >
           {rows.slice(0, VISIBLE).map((r) => (
             <li key={r.enrolment_id}>
               <AtRiskRow row={r} onOpen={setOpen} />
@@ -65,7 +67,7 @@ export default function StagesAtRiskWidget(): JSX.Element {
       {rows.length > 0 ? (
         <Link
           to="/hr/stages-at-risk"
-          className="mt-3 inline-block text-[12px] text-[var(--ui-info)] hover:underline"
+          className="mt-3 inline-flex min-h-10 items-center text-[13px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {rows.length > VISIBLE ? `View all ${rows.length}` : 'View the full list'}
         </Link>
@@ -76,6 +78,25 @@ export default function StagesAtRiskWidget(): JSX.Element {
         enrolmentId={open?.enrolment_id ?? null}
         onClose={() => setOpen(null)}
       />
-    </GlassCard>
+    </>
+  );
+
+  if (bare) return <div className={className}>{body}</div>;
+
+  return (
+    <SectionCard
+      title="Stages at risk"
+      icon={Clock}
+      className={className}
+      action={
+        rows.length > 0 ? (
+          <span className="rounded-full bg-[var(--ui-inset-strong)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ui-soft)]">
+            {rows.length}
+          </span>
+        ) : null
+      }
+    >
+      {body}
+    </SectionCard>
   );
 }

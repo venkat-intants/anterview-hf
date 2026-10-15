@@ -23,6 +23,13 @@ vi.mock('../api/sessions', () => ({
   listSessions: (...args: unknown[]) => mockListSessions(...args),
 }));
 
+// The page reads only the signed-in user's roles; a mutable holder lets one
+// test render it as an invited guest.
+const authState: { roles: string[] } = { roles: ['candidate'] };
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ user: { roles: authState.roles } }),
+}));
+
 const mockNavigate = vi.fn();
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -91,6 +98,7 @@ function renderCompleteWithState(
 describe('InterviewComplete page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authState.roles = ['candidate'];
     // Default: session exists but scorecard_id is still null (generating)
     mockListSessions.mockResolvedValue({
       items: [
@@ -109,6 +117,52 @@ describe('InterviewComplete page', () => {
       total: 1,
       page: 1,
       per_page: 20,
+    });
+  });
+
+  it('offers an invited guest no links into the account area', async () => {
+    authState.roles = ['guest_candidate'];
+    renderComplete();
+    await waitFor(() => {
+      expect(screen.getByText(/preparing your scorecard/i)).toBeInTheDocument();
+    });
+    // The server refuses a guest token on all of these.
+    expect(screen.queryByRole('link', { name: /dashboard/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /history/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /new interview/i })).not.toBeInTheDocument();
+  });
+
+  it('says the scorecard to come is feedback, not a hiring decision', () => {
+    renderComplete();
+    expect(screen.getByTestId('not-a-decision')).toHaveTextContent(
+      'This is practice feedback, not a hiring decision.',
+    );
+  });
+
+  it('words it for an invited guest without calling their interview practice', () => {
+    authState.roles = ['guest_candidate'];
+    renderComplete();
+    const note = screen.getByTestId('not-a-decision');
+    expect(note).toHaveTextContent('This is feedback on your interview, not a hiring decision.');
+    expect(note).not.toHaveTextContent(/practice/i);
+  });
+
+  it('does not promise feedback after an early exit', () => {
+    renderCompleteWithState('sess-abc-123', { endedEarly: true });
+    expect(screen.queryByTestId('not-a-decision')).not.toBeInTheDocument();
+  });
+
+  it('still sends an invited guest to their scorecard when it is ready', async () => {
+    authState.roles = ['guest_candidate'];
+    mockListSessions.mockResolvedValue({
+      items: [{ session_id: 'sess-abc-123', scorecard_id: 'sc-guest-1' }],
+      total: 1,
+      page: 1,
+      per_page: 20,
+    });
+    renderComplete();
+    await waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/scorecard/sc-guest-1', { replace: true });
     });
   });
 

@@ -6,7 +6,7 @@ import { useSyncExternalStore } from 'react';
 // the concrete hex through this hook instead of var(--accent), and re-render
 // when the theme changes (ThemeToggle dispatches 'intants:themechange').
 
-const FALLBACK = '#0088ff';
+const FALLBACK = '#1d4ed8';
 export const THEME_CHANGE_EVENT = 'intants:themechange';
 
 function read(): string {

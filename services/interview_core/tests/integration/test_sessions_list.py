@@ -333,3 +333,109 @@ async def test_list_sessions_includes_scorecard_id(client: AsyncClient) -> None:
     assert resp.status_code == 200, resp.text
     item = resp.json()["items"][0]
     assert item["scorecard_id"] == scorecard_uuid_str
+
+
+# ---------------------------------------------------------------------------
+# Magic-link guests: one bound session, never the whole list
+# ---------------------------------------------------------------------------
+
+
+def _guest_token(session_id: str | None) -> str:
+    return str(
+        issue_access_token(
+            user_id=str(uuid.uuid4()),
+            roles=["guest_candidate"],
+            secret=settings.jwt_secret,
+            algorithm=settings.jwt_algorithm,
+            extra_claims={"session_id": session_id} if session_id else None,
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_guest_is_scoped_to_bound_session(client: AsyncClient) -> None:
+    """A guest token lists, and every query it runs is pinned to its session id."""
+    bound = uuid.uuid4()
+    seen: list[str] = []
+
+    inner = _patch_list_db(total=1, rows=[_make_session_mapping(str(uuid.uuid4()))])
+
+    async def _recording() -> AsyncGenerator[AsyncSession, None]:
+        async for db in inner():
+            real = db.execute
+
+            async def _execute(stmt: Any, *a: Any, _real: Any = real, **k: Any) -> Any:
+                seen.append(str(stmt.compile(compile_kwargs={"literal_binds": True})))
+                return await _real(stmt, *a, **k)
+
+            db.execute = _execute  # type: ignore[method-assign]
+            yield db
+
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = _recording
+    try:
+        resp = await client.get(
+            "/api/sessions",
+            headers={"Authorization": f"Bearer {_guest_token(str(bound))}"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total"] == 1
+    # The count and the page query both carry the bound session id; the hex form
+    # covers dialects that render a UUID literal without dashes.
+    session_queries = [q for q in seen if "scorecard" not in q.lower()]
+    assert len(session_queries) >= 2
+    for q in session_queries:
+        assert str(bound) in q or bound.hex in q, q
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_mixed_role_guest_without_session_claim_is_refused(
+    client: AsyncClient,
+) -> None:
+    """guest_candidate PLUS another role is still a guest (changed 2026-10-12).
+
+    It used to read as an unrestricted account and listed every session of the
+    sub; it must now be bound to its session claim, and refused without one.
+    """
+    override = _patch_list_db(total=3, rows=[])
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    token = str(
+        issue_access_token(
+            user_id=str(uuid.uuid4()),
+            roles=["candidate", "guest_candidate"],
+            secret=settings.jwt_secret,
+            algorithm=settings.jwt_algorithm,
+        )
+    )
+    try:
+        resp = await client.get("/api/sessions", headers={"Authorization": f"Bearer {token}"})
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 403, resp.text
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_guest_without_session_claim_is_refused(
+    client: AsyncClient,
+) -> None:
+    """A guest token that names no session gets 403, not the guest's whole list."""
+    override = _patch_list_db(total=3, rows=[])
+    from app.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = override
+    try:
+        resp = await client.get(
+            "/api/sessions",
+            headers={"Authorization": f"Bearer {_guest_token(None)}"},
+        )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 403, resp.text

@@ -15,7 +15,7 @@
 //     team" and NOTHING else — no score, no reviewer, no note.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -39,6 +39,11 @@ vi.mock('../api/publicTask', () => ({
   removeTaskArtifact: (...a: unknown[]) => removeTaskArtifact(...a) as unknown,
   downloadTaskMaterial: (...a: unknown[]) => downloadTaskMaterial(...a) as unknown,
   withdrawTaskConsent: (...a: unknown[]) => withdrawTaskConsent(...a) as unknown,
+}));
+
+// The finish states read the session (to decide whether to offer a sign-in link).
+vi.mock('../context/AuthContext', () => ({
+  useAuth: () => ({ isAuthenticated: false, isInitializing: false, user: null }),
 }));
 
 import PublicTask from '../pages/PublicTask';
@@ -484,6 +489,9 @@ describe('PublicTask — after submitting', () => {
     expect(screen.queryByText(/score/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/reviewer/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Describe your approach.')).not.toBeInTheDocument();
+    const next = screen.getByRole('heading', { name: 'What happens next' }).closest('section') as HTMLElement;
+    expect(within(next).getByText(/A person makes that decision/)).toBeInTheDocument();
+    expect(within(next).getByRole('link', { name: 'Track this in My applications' })).toHaveAttribute('href', '/login');
   });
 
   // Security review, PH4-D4 wave 5: POST /task/consent/withdraw now succeeds

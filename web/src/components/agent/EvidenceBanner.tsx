@@ -45,7 +45,7 @@ export default function EvidenceBanner({
 }: EvidenceBannerProps): JSX.Element {
   const Icon = ICON[citationState];
   return (
-    <p className={cn('flex items-start gap-1.5 text-xs opacity-60', className)}>
+    <p className={cn('flex items-start gap-1.5 text-xs text-muted-foreground', className)}>
       <Icon className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
       <span>{COPY[citationState]}</span>
     </p>

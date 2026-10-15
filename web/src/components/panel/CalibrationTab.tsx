@@ -191,11 +191,11 @@ function CriteriaTable({
         <table className="w-full min-w-[640px] border-collapse text-left text-[12.5px]">
           <thead>
             <tr className="border-b border-border">
-              <th className="py-2 pr-3 font-medium text-[var(--ui-faint)]">Criterion</th>
-              <th className="py-2 pr-3 font-medium text-[var(--ui-faint)]">Round</th>
-              <th className="py-2 pr-3 font-medium text-[var(--ui-faint)]">Distribution (1–5)</th>
-              <th className="py-2 pr-3 font-medium text-[var(--ui-faint)]">Mean</th>
-              <th className="py-2 pr-3 font-medium text-[var(--ui-faint)]">Disagreement</th>
+              <th className="py-2 pr-3 font-medium text-muted-foreground">Criterion</th>
+              <th className="py-2 pr-3 font-medium text-muted-foreground">Round</th>
+              <th className="py-2 pr-3 font-medium text-muted-foreground">Distribution (1–5)</th>
+              <th className="py-2 pr-3 font-medium text-muted-foreground">Mean</th>
+              <th className="py-2 pr-3 font-medium text-muted-foreground">Disagreement</th>
             </tr>
           </thead>
           <tbody>
@@ -207,13 +207,13 @@ function CriteriaTable({
                   {c.workflow_version ? ` (v${c.workflow_version})` : ''}
                 </td>
                 {c.suppressed ? (
-                  <td colSpan={3} className="py-2 pr-3 text-[var(--ui-faint)]">
+                  <td colSpan={3} className="py-2 pr-3 text-muted-foreground">
                     too few to compare ({c.candidates} of the {minCandidates} needed)
                   </td>
                 ) : (
                   <>
                     <td className="py-2 pr-3">
-                      <div className="flex items-center gap-2 text-[11.5px] text-[var(--ui-soft)]">
+                      <div className="flex items-center gap-2 text-[12px] text-[var(--ui-soft)]">
                         {(['1', '2', '3', '4', '5'] as const).map((k) => (
                           <span key={k}>
                             {k}: {c.distribution?.[k] ?? 0}
@@ -230,7 +230,7 @@ function CriteriaTable({
                         ) : null}
                       </div>
                       {disagreementSentence(c) ? (
-                        <p className="mt-1 max-w-[260px] text-[11px] leading-relaxed text-muted-foreground">
+                        <p className="mt-1 max-w-[260px] text-[12px] leading-relaxed text-muted-foreground">
                           {disagreementSentence(c)}
                         </p>
                       ) : null}
@@ -282,7 +282,7 @@ function CalibrationRowCard({
           <button
             type="button"
             onClick={() => onShowJudgements(undefined)}
-            className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+            className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             Show judgements
           </button>
@@ -291,19 +291,19 @@ function CalibrationRowCard({
 
       <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-[12.5px] sm:grid-cols-4">
         <div>
-          <dt className="text-[var(--ui-faint)]">Scorecards</dt>
+          <dt className="text-muted-foreground">Scorecards</dt>
           <dd className="text-foreground">{row.scorecards}</dd>
         </div>
         <div>
-          <dt className="text-[var(--ui-faint)]">Average of everything scored</dt>
+          <dt className="text-muted-foreground">Average of everything scored</dt>
           <dd className="text-foreground">{row.mean ?? '—'}</dd>
         </div>
         <div>
-          <dt className="text-[var(--ui-faint)]">Shared judgements</dt>
+          <dt className="text-muted-foreground">Shared judgements</dt>
           <dd className="text-foreground">{row.pairs}</dd>
         </div>
         <div>
-          <dt className="text-[var(--ui-faint)]">vs panel (paired)</dt>
+          <dt className="text-muted-foreground">vs panel (paired)</dt>
           <dd className="text-foreground">
             {row.mean_delta === null ? '—' : signed(row.mean_delta)}
           </dd>
@@ -323,7 +323,7 @@ function CalibrationRowCard({
       ) : null}
 
       {row.distribution ? (
-        <div className="mt-2.5 flex items-center gap-3 text-[11.5px] text-[var(--ui-soft)]">
+        <div className="mt-2.5 flex items-center gap-3 text-[12px] text-[var(--ui-soft)]">
           {(['1', '2', '3', '4', '5'] as const).map((k) => (
             <span key={k}>
               {k}: {row.distribution?.[k] ?? 0}
@@ -336,9 +336,7 @@ function CalibrationRowCard({
 
       {row.by_criterion.length > 0 ? (
         <div className="mt-3 border-t border-border pt-2.5">
-          <p className="text-[11px] uppercase tracking-wide text-[var(--ui-faint)]">
-            Per criterion
-          </p>
+          <p className="text-[12px] uppercase tracking-wide text-muted-foreground">Per criterion</p>
           <ul className="mt-1.5 flex flex-col gap-1.5">
             {row.by_criterion.map((g) => {
               const label = criterionLabels[g.criterion_key] ?? g.criterion_key;
@@ -355,7 +353,7 @@ function CalibrationRowCard({
                   <button
                     type="button"
                     onClick={() => onShowJudgements(g.criterion_key)}
-                    className="shrink-0 text-[11.5px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+                    className="shrink-0 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   >
                     Show
                   </button>
@@ -438,7 +436,7 @@ export default function CalibrationTab(): JSX.Element {
           <button
             type="button"
             onClick={() => setShowInfo(true)}
-            className="mt-2 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+            className="mt-2 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             How is this calculated?
           </button>
@@ -457,7 +455,7 @@ export default function CalibrationTab(): JSX.Element {
             id="calib-period"
             value={period}
             onChange={(e) => setPeriod(Number(e.target.value) as Period)}
-            className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             {PERIODS.map((p) => (
               <option key={p.key} value={p.key}>
@@ -480,7 +478,7 @@ export default function CalibrationTab(): JSX.Element {
               setRequisitionId(e.target.value);
               setRoundId('');
             }}
-            className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <option value="">All openings</option>
             {(openings.data ?? []).map((r) => (
@@ -502,7 +500,7 @@ export default function CalibrationTab(): JSX.Element {
             value={roundId}
             onChange={(e) => setRoundId(e.target.value)}
             disabled={!requisitionId}
-            className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-50"
+            className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             <option value="">All rounds</option>
             {rounds.map((r) => (
@@ -512,7 +510,7 @@ export default function CalibrationTab(): JSX.Element {
             ))}
           </select>
           {hiddenArchivedCount > 0 ? (
-            <p className="mt-1 text-[11px] text-[var(--ui-faint)]">
+            <p className="mt-1 text-[12px] text-muted-foreground">
               {hiddenArchivedCount} older archived{' '}
               {hiddenArchivedCount === 1 ? 'version is' : 'versions are'} not listed.
             </p>

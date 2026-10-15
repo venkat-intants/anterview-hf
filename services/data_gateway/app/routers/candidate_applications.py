@@ -123,14 +123,21 @@ _MAX_OPEN_ROLES = 24
 # rejected}. These are the words the candidate reads. Mapped in one place
 # rather than in the frontend so the reasoning above lives next to the strings
 # it produced, and so a new internal status cannot leak out untranslated.
-_STAGE_LABELS: dict[str, str] = {
-    "new": "Application received",
-    "shortlisted": "Shortlisted",
-    "interviewed": "Interview complete",
-    "held": "Under review",
-    "hired": "Selected",
-    "rejected": "Not progressing",
+#
+# ONE table, internal status -> (candidate-facing code, English label). The code
+# is the stable vocabulary a client translates from; it is one-to-one with the
+# label and, like the label, never the raw status (``held`` -> ``under_review``).
+# Both are derived from this table so they cannot drift apart.
+_STAGES: dict[str, tuple[str, str]] = {
+    "new": ("received", "Application received"),
+    "shortlisted": ("shortlisted", "Shortlisted"),
+    "interviewed": ("interview_complete", "Interview complete"),
+    "held": ("under_review", "Under review"),
+    "hired": ("selected", "Selected"),
+    "rejected": ("not_progressing", "Not progressing"),
 }
+_STAGE_LABELS: dict[str, str] = {k: label for k, (_code, label) in _STAGES.items()}
+_STAGE_CODES: dict[str, str] = {k: code for k, (code, _label) in _STAGES.items()}
 
 # What the candidate should do next, if anything. Every value here is either an
 # action they can take or an honest statement that the ball is not in their
@@ -156,6 +163,10 @@ class ApplicationOut(BaseModel):
     applied_at: str
     updated_at: str
     stage: str  # candidate-facing label, never the raw status
+    # Candidate-facing code for `stage` (received, shortlisted, interview_complete,
+    # under_review, selected, not_progressing) so a client can translate it. Null
+    # for a status this build has no wording for; never the raw status.
+    stage_code: str | None = None
     next_step: str
     closed: bool
     # Progress through the workflow, when the opening has one published and the
@@ -195,6 +206,7 @@ class StageEventOut(BaseModel):
     """One step in this application's history, as the candidate may see it."""
 
     stage: str
+    stage_code: str | None = None  # same vocabulary as ApplicationOut.stage_code
     occurred_at: str
     by_a_person: bool
 
@@ -361,6 +373,7 @@ def _to_out(row: Any) -> dict[str, Any]:
         "applied_at": row.created_at.isoformat(),
         "updated_at": row.updated_at.isoformat(),
         "stage": _STAGE_LABELS.get(status_, "In progress"),
+        "stage_code": _STAGE_CODES.get(status_),
         "next_step": _next_step_for(row, status_),
         "closed": status_ in _CLOSED,
         "current_round_title": row.round_title,
@@ -458,6 +471,7 @@ async def get_my_application(
         history=[
             StageEventOut(
                 stage=_STAGE_LABELS.get(e.to_status, "In progress"),
+                stage_code=_STAGE_CODES.get(e.to_status),
                 occurred_at=e.occurred_at.isoformat(),
                 by_a_person=not e.automated,
             )

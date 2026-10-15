@@ -95,6 +95,24 @@ async def token_epoch_check(user_id: str, iat: Any, *, source: str) -> None:
         raise UNAUTHORIZED
 
 
+GUEST_ROLE = "guest_candidate"
+
+
+def is_guest_token(payload: dict[str, Any]) -> bool:
+    """True for an interview magic-link token (data_gateway ``_issue_guest_token``).
+
+    Such a token's ``sub`` is the applicant's REAL user id (their account once
+    activated), carries the role ``guest_candidate`` and a ``session_id`` claim
+    binding it to the one interview it was redeemed for. Either marker is enough:
+    a token with a ``session_id`` claim but no role is still session-bound and
+    must not be treated as the account. ``require_jwt`` cannot refuse these
+    itself — the single-scorecard route legitimately serves the guest their own
+    just-finished scorecard — so each route decides.
+    """
+    roles = payload.get("roles") or []
+    return GUEST_ROLE in roles or payload.get("session_id") is not None
+
+
 async def require_jwt(
     credentials: Annotated[
         HTTPAuthorizationCredentials | None,

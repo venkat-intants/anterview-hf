@@ -45,20 +45,20 @@ export default function GroupComparisonTable({
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] border-collapse text-left text-[12.5px]">
-        <thead>
+      <table className="w-full min-w-[720px] border-collapse text-left text-[13px]">
+        <thead className="sticky top-0 z-10 bg-card">
           <tr className="border-b border-border">
-            <th className="py-2 pr-3 font-medium text-[var(--ui-faint)]">
+            <th className="py-2 pr-3 font-semibold text-muted-foreground">
               {groupBy === 'source' ? 'Source' : 'Opening'}
             </th>
-            <th className="py-2 pr-3 font-medium text-[var(--ui-faint)]">In progress</th>
+            <th className="py-2 pr-3 font-semibold text-muted-foreground">In progress</th>
             {names.map((name) => {
               // A column header names one metric shared across every row —
               // no single group's result to pin a version against, so this
               // reads the definition presently in force.
               const def = findDefinition(definitions, name);
               return (
-                <th key={name} className="py-2 pr-3 font-medium text-[var(--ui-faint)]">
+                <th key={name} className="py-2 pr-3 font-semibold text-muted-foreground">
                   {metricLabel(name, def)}
                 </th>
               );
@@ -74,7 +74,10 @@ export default function GroupComparisonTable({
             const groupSrc =
               groupBy === 'source' ? (group.key ?? undefined) : filters.source || undefined;
             return (
-              <tr key={group.key ?? 'all'} className="border-b border-border last:border-0">
+              <tr
+                key={group.key ?? 'all'}
+                className="border-b border-border last:border-0 hover:bg-[var(--ui-inset-soft)]"
+              >
                 <td className="py-2 pr-3 font-medium text-foreground">{group.label}</td>
                 <td className="py-2 pr-3 text-muted-foreground">{group.in_progress}</td>
                 {names.map((name) => {

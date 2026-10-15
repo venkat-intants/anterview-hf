@@ -33,12 +33,8 @@ export function ConfirmDeleteButton({
 
   if (armed) {
     return (
-      <span
-        className="flex items-center gap-1.5"
-        role="group"
-        aria-label={confirmGroupLabel}
-      >
-        <span className="text-[11px] text-muted-foreground">Sure?</span>
+      <span className="flex items-center gap-1.5" role="group" aria-label={confirmGroupLabel}>
+        <span className="text-[13px] text-muted-foreground">Sure?</span>
         <button
           type="button"
           onClick={(e) => {
@@ -47,7 +43,7 @@ export function ConfirmDeleteButton({
           }}
           disabled={pending}
           aria-busy={pending}
-          className="rounded-[7px] bg-[#e6714f]/20 px-2 py-1 text-[11px] font-semibold text-[#ff8a66] transition-colors hover:bg-[#e6714f]/30 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6714f]"
+          className="min-h-10 rounded-full bg-destructive-solid px-3.5 text-[13px] font-semibold text-destructive-foreground transition-colors hover:brightness-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-danger)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
           {pending ? '…' : confirmText}
         </button>
@@ -57,7 +53,7 @@ export function ConfirmDeleteButton({
             e.stopPropagation();
             setArmed(false);
           }}
-          className="rounded-[7px] bg-[var(--ui-inset)] px-2 py-1 text-[11px] font-medium text-[var(--ui-soft)] transition-colors hover:bg-[var(--ui-inset-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="min-h-10 rounded-full bg-[var(--ui-inset)] px-3.5 text-[13px] font-semibold text-[var(--ui-soft)] transition-colors hover:bg-[var(--ui-inset-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           Cancel
         </button>
@@ -73,9 +69,9 @@ export function ConfirmDeleteButton({
           e.stopPropagation();
           setArmed(true);
         }}
-        className="inline-flex items-center gap-1.5 rounded-[9px] border border-[#e6714f]/30 bg-[#e6714f]/10 px-3 py-1.5 text-[12.5px] font-medium text-[#ff8a66] transition-colors hover:bg-[#e6714f]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6714f]"
+        className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] px-3.5 text-[13px] font-semibold text-[var(--ui-danger)] transition-colors hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-danger)]"
       >
-        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+        <Trash2 className="h-4 w-4" aria-hidden="true" />
         {label}
       </button>
     );
@@ -90,9 +86,9 @@ export function ConfirmDeleteButton({
       }}
       title={title}
       aria-label={title}
-      className="rounded-[7px] p-1.5 text-[var(--ui-faint)] transition-colors hover:bg-[#e6714f]/15 hover:text-[#ff8a66] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e6714f]"
+      className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-danger)]"
     >
-      <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+      <Trash2 className="h-4 w-4" aria-hidden="true" />
     </button>
   );
 }

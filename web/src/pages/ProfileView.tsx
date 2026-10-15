@@ -1,18 +1,22 @@
 // ProfileView — read-only view of another user's profile.
 // Reached at /u/:userId. The backend (GET /users/{id}/profile) only answers for
 // HR managers, admins and super-admins, so candidates can't browse each other.
+// The read-only twin of the Profile page: same header card, same section cards.
 
+import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 
 import { getUserProfile } from '@/api/profile';
-import { Reveal } from '@/design/components/Reveal';
-import { GlassCard, Avatar, Pill } from '@/design/components/primitives';
-import { Badge, type TrustChip, TrustStrip } from '@/design/components/banners';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Avatar, StatusTag } from '@/design/components/primitives';
+import { safeAvatarSrc } from '@/lib/safeUrl';
+import { EmptyState, Page, SectionCard } from '@/design/components/page';
 import { initialsOf, gradientFor } from '@/design/data/shared';
 import {
-  ArrowLeft, Loader2, Mail, Building2, MapPin, GraduationCap, Briefcase,
-  FileText, Link2, AlertCircle, Phone, Globe,
+  ArrowLeft, Mail, Building2, MapPin, GraduationCap, Briefcase,
+  FileText, Link2, AlertCircle, Phone, Globe, User,
 } from '@/design/components/icons';
 
 function roleLabel(roles: string[]): { label: string; tone: 'electric' | 'forest' | 'lavender' } {
@@ -48,6 +52,29 @@ function safeExternalUrl(raw: string | null | undefined): string | null {
   }
 }
 
+function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <Button type="button" variant="ghost" size="sm" onClick={onClick} className="-ml-3 self-start">
+      <ArrowLeft aria-hidden="true" /> Back
+    </Button>
+  );
+}
+
+function InfoRow({ label, icon: Icon, children }: { label: string; icon: typeof Mail; children: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[12px] font-semibold text-muted-foreground">{label}</dt>
+      <dd className="mt-1 flex min-w-0 items-center gap-2 text-[14px] text-foreground">
+        <Icon size={15} className="flex-none text-[var(--ui-faint)]" aria-hidden="true" />
+        <span className="min-w-0 break-words">{children}</span>
+      </dd>
+    </div>
+  );
+}
+
+const LINK_CLS =
+  'inline-flex min-h-10 items-center gap-2 rounded-full border border-border bg-card px-4 text-[14px] font-medium text-foreground transition-colors hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+
 export default function ProfileView() {
   const { userId = '' } = useParams<{ userId: string }>();
   const navigate = useNavigate();
@@ -61,9 +88,13 @@ export default function ProfileView() {
 
   if (isLoading) {
     return (
-      <div className="mx-auto flex max-w-[900px] items-center justify-center px-6 py-24">
-        <Loader2 className="h-6 w-6 animate-spin text-[var(--ui-info)]" aria-hidden="true" />
-      </div>
+      <Page width="form">
+        <div aria-busy="true" aria-label="Loading profile" className="flex flex-col gap-6">
+          <Skeleton className="h-9 w-24 rounded-full" />
+          <Skeleton className="h-60 w-full rounded-card" />
+          <Skeleton className="h-32 w-full rounded-card" />
+        </div>
+      </Page>
     );
   }
 
@@ -71,21 +102,22 @@ export default function ProfileView() {
     const msg = error instanceof Error ? error.message : 'Could not load this profile.';
     const forbidden = /403|forbidden/i.test(msg);
     return (
-      <div className="mx-auto max-w-[900px] px-6 py-16">
-        <button
-          type="button"
-          onClick={() => void navigate(-1)}
-          className="mb-6 inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft size={15} aria-hidden="true" /> Back
-        </button>
-        <GlassCard className="flex flex-col items-center gap-3 py-16 text-center">
-          <AlertCircle className="h-9 w-9 text-[var(--ui-danger)]" aria-hidden="true" />
-          <p className="text-[14px] text-[var(--ui-soft)]">
-            {forbidden ? "You don't have access to this profile." : 'Profile not found.'}
-          </p>
-        </GlassCard>
-      </div>
+      <Page width="form">
+        <BackButton onClick={() => void navigate(-1)} />
+        <div role="alert">
+          <EmptyState
+            size="page"
+            icon={AlertCircle}
+            title={forbidden ? "You don't have access to this profile." : 'Profile not found.'}
+            description={
+              forbidden
+                ? 'Only HR managers and admins can view other people’s profiles.'
+                : 'The link may be out of date, or the person may have left. Go back and try another.'
+            }
+            action={<Button type="button" variant="outline" onClick={() => void navigate(-1)}>Go back</Button>}
+          />
+        </div>
+      </Page>
     );
   }
 
@@ -97,133 +129,136 @@ export default function ProfileView() {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-
-  const links: TrustChip[] = [];
-  if (p.location) links.push({ icon: MapPin, label: p.location });
-  if (p.phone) links.push({ icon: Phone, label: p.phone });
-  if (p.official_email) links.push({ icon: Mail, label: p.official_email });
-  if (p.company_name) links.push({ icon: Building2, label: p.company_name });
+  const linkedin = safeExternalUrl(p.linkedin_url);
+  const github = safeExternalUrl(p.github_url);
+  const hasContact = Boolean(p.phone || p.official_email);
 
   return (
-    <div className="mx-auto max-w-[900px] px-6 py-8 lg:px-8 space-y-5">
-      <button
-        type="button"
-        onClick={() => void navigate(-1)}
-        className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground transition-colors hover:text-foreground"
-      >
-        <ArrowLeft size={15} aria-hidden="true" /> Back
-      </button>
+    <Page width="form">
+      <BackButton onClick={() => void navigate(-1)} />
 
-      {/* Identity */}
-      <Reveal>
-        <GlassCard feature className="p-6">
-          <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
-            {p.avatar_url ? (
+      {/* Header card */}
+      <section aria-label="Profile summary" className="overflow-hidden rounded-card border border-border bg-card shadow-card">
+        <div className="h-24 bg-[image:var(--ui-grad-brand)] sm:h-28" aria-hidden="true" />
+        <div className="px-6 pb-6">
+          <div className="-mt-12">
+            {safeAvatarSrc(p.avatar_url) ? (
               <img
-                src={p.avatar_url}
+                src={safeAvatarSrc(p.avatar_url) ?? undefined}
                 alt={name}
-                className="h-[92px] w-[92px] shrink-0 rounded-full border border-[var(--ui-line-strong)] object-cover"
+                className="h-24 w-24 rounded-full border-4 border-card bg-card object-cover"
               />
             ) : (
-              <Avatar initials={initials} gradient={gradient} size={92} />
+              <Avatar initials={initials} gradient={gradient} size={96} className="border-4 border-card" />
             )}
-            <div className="min-w-0 flex-1">
-              <div className="mb-2 flex flex-wrap items-center gap-2.5">
-                <h1 className="text-[24px] font-semibold tracking-[-0.6px]">{name}</h1>
-                <Badge tone={role.tone}>{role.label}</Badge>
-                {p.employment_status && STATUS_LABEL[p.employment_status] && (
-                  <Badge tone="electric">{STATUS_LABEL[p.employment_status]}</Badge>
+          </div>
+          <div className="mt-4 min-w-0">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <h1 className="break-words text-[24px] font-bold tracking-[-0.4px] text-foreground">{name}</h1>
+              <StatusTag tone={role.tone}>{role.label}</StatusTag>
+              {p.employment_status && STATUS_LABEL[p.employment_status] && (
+                <StatusTag tone="neutral">{STATUS_LABEL[p.employment_status]}</StatusTag>
+              )}
+            </div>
+            {p.headline && <p className="mt-1 text-[15px] text-[var(--ui-soft)]">{p.headline}</p>}
+            {(p.location || p.company_name) && (
+              <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-[13.5px] text-muted-foreground">
+                {p.location && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <MapPin size={14} aria-hidden="true" /> {p.location}
+                  </span>
+                )}
+                {p.company_name && (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Building2 size={14} aria-hidden="true" /> {p.company_name}
+                  </span>
                 )}
               </div>
-              {p.headline && <p className="text-[14.5px] text-[var(--ui-soft)]">{p.headline}</p>}
-              {(p.location || p.phone || p.official_email || p.company_name) && (
-                <TrustStrip className="mt-3" items={links} />
-              )}
-            </div>
+            )}
           </div>
-        </GlassCard>
-      </Reveal>
+        </div>
+      </section>
 
-      {/* About */}
-      {p.bio && (
-        <Reveal>
-          <GlassCard className="p-6">
-            <h3 className="mb-3 text-[15px] font-semibold">Summary</h3>
-            <p className="whitespace-pre-line text-[14px] leading-relaxed text-[var(--ui-soft)]">{p.bio}</p>
-          </GlassCard>
-        </Reveal>
-      )}
+      <div className="space-y-5">
+        {/* About */}
+        <SectionCard title="Summary" icon={User}>
+          {p.bio ? (
+            <p className="whitespace-pre-line text-[14.5px] leading-relaxed text-foreground">{p.bio}</p>
+          ) : (
+            <p className="text-[14px] text-muted-foreground">{name} hasn&apos;t added a summary yet.</p>
+          )}
+        </SectionCard>
 
-      {/* Candidate details */}
-      {(desired.length > 0 || p.has_resume) && (
-        <Reveal>
-          <GlassCard className="p-6">
-            <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold">
-              <GraduationCap size={16} className="text-[var(--ui-info)]" aria-hidden="true" /> Career
-            </h3>
-            {desired.length > 0 && (
-              <div className="mb-4">
-                <span className="mb-2 block text-[12px] font-medium text-[var(--ui-soft)]">Desired roles</span>
-                <div className="flex flex-wrap gap-1.5">
-                  {desired.map((r) => (
-                    <span
-                      key={r}
-                      className="inline-flex items-center gap-1 rounded-full border border-border bg-[var(--ui-inset)] px-2.5 py-1 text-[12px] text-[var(--ui-soft)]"
-                    >
-                      <Briefcase size={11} className="text-[var(--ui-info)]" aria-hidden="true" /> {r}
-                    </span>
-                  ))}
+        {/* Candidate details */}
+        {(desired.length > 0 || p.has_resume) && (
+          <SectionCard title="Career" icon={GraduationCap}>
+            <dl className="space-y-5">
+              {desired.length > 0 && (
+                <div>
+                  <dt className="text-[12px] font-semibold text-muted-foreground">Desired roles</dt>
+                  <dd className="mt-2">
+                    <ul className="flex flex-wrap gap-2">
+                      {desired.map((r) => (
+                        <li
+                          key={r}
+                          className="inline-flex items-center gap-1.5 rounded-full border border-border bg-[var(--ui-inset)] px-3 py-1 text-[13px] text-foreground"
+                        >
+                          <Briefcase size={12} aria-hidden="true" /> {r}
+                        </li>
+                      ))}
+                    </ul>
+                  </dd>
                 </div>
+              )}
+              <div>
+                <dt className="text-[12px] font-semibold text-muted-foreground">Resume</dt>
+                <dd className="mt-1 flex items-center gap-2 text-[14px]">
+                  <FileText
+                    size={15}
+                    className={p.has_resume ? 'text-[var(--ui-ok)]' : 'text-[var(--ui-faint)]'}
+                    aria-hidden="true"
+                  />
+                  <span className={p.has_resume ? 'text-foreground' : 'text-muted-foreground'}>
+                    {p.has_resume ? 'Resume on file' : 'No resume uploaded'}
+                  </span>
+                </dd>
+              </div>
+            </dl>
+          </SectionCard>
+        )}
+
+        {/* Contact & links */}
+        {(hasContact || linkedin || github) && (
+          <SectionCard title="Contact & links" icon={Link2}>
+            {hasContact && (
+              <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+                {p.phone && <InfoRow label="Phone" icon={Phone}>{p.phone}</InfoRow>}
+                {p.official_email && <InfoRow label="Official email" icon={Mail}>{p.official_email}</InfoRow>}
+              </dl>
+            )}
+            {(linkedin || github) && (
+              <div className={hasContact ? 'mt-5 flex flex-wrap gap-2.5' : 'flex flex-wrap gap-2.5'}>
+                {linkedin && (
+                  <a href={linkedin} target="_blank" rel="noreferrer" className={LINK_CLS}>
+                    <Globe size={15} aria-hidden="true" /> LinkedIn
+                  </a>
+                )}
+                {github && (
+                  <a href={github} target="_blank" rel="noreferrer" className={LINK_CLS}>
+                    <Globe size={15} aria-hidden="true" /> GitHub
+                  </a>
+                )}
               </div>
             )}
-            <div className="flex items-center gap-2 text-[13.5px]">
-              <FileText size={15} className={p.has_resume ? 'text-[var(--ui-ok)]' : 'text-[var(--ui-faint)]'} aria-hidden="true" />
-              <span className={p.has_resume ? 'text-foreground' : 'text-muted-foreground'}>
-                {p.has_resume ? 'Resume on file' : 'No resume uploaded'}
-              </span>
-            </div>
-          </GlassCard>
-        </Reveal>
-      )}
+          </SectionCard>
+        )}
 
-      {/* Links */}
-      {(p.linkedin_url || p.github_url) && (
-        <Reveal>
-          <GlassCard className="p-6">
-            <h3 className="mb-3 flex items-center gap-2 text-[15px] font-semibold">
-              <Link2 size={16} className="text-[var(--ui-info)]" aria-hidden="true" /> Links
-            </h3>
-            <div className="flex flex-wrap gap-2.5">
-              {safeExternalUrl(p.linkedin_url) && (
-                <a
-                  href={safeExternalUrl(p.linkedin_url) as string}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-2 text-[13px] text-[var(--ui-soft)] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] hover:text-foreground"
-                >
-                  <Globe size={14} aria-hidden="true" /> LinkedIn
-                </a>
-              )}
-              {safeExternalUrl(p.github_url) && (
-                <a
-                  href={safeExternalUrl(p.github_url) as string}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-2 text-[13px] text-[var(--ui-soft)] transition-colors hover:border-[rgba(var(--accent-rgb),0.4)] hover:text-foreground"
-                >
-                  <Globe size={14} aria-hidden="true" /> GitHub
-                </a>
-              )}
-            </div>
-          </GlassCard>
-        </Reveal>
-      )}
-
-      <div className="flex justify-end pb-2">
-        <Pill variant="ghost" type="button" onClick={() => void navigate(-1)} className="px-5 py-2.5">
-          Done
-        </Pill>
+        <div className="flex justify-end pb-2">
+          <Button type="button" variant="outline" onClick={() => void navigate(-1)}>
+            Done
+          </Button>
+        </div>
       </div>
-    </div>
+    </Page>
   );
 }

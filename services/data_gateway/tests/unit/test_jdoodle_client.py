@@ -12,6 +12,7 @@ import pytest
 
 import app.jdoodle_client as jc
 from app.jdoodle_client import ExecResult, _parse, run_code
+from app.piston_client import RUNNER_UNAVAILABLE_MESSAGE
 
 
 def _set_creds(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -32,7 +33,8 @@ def test_parse_timeout_detected_from_output() -> None:
 
 def test_parse_error_status_without_output_is_runner_error() -> None:
     r = _parse({"output": "", "statusCode": 401})
-    assert r.error is not None and "401" in r.error
+    # The provider status is logged, not handed to an anonymous exam taker.
+    assert r.error == RUNNER_UNAVAILABLE_MESSAGE
 
 
 # --- run_code guards -------------------------------------------------------
@@ -47,7 +49,7 @@ async def test_run_code_missing_credentials_returns_error(monkeypatch: pytest.Mo
     monkeypatch.setattr(jc.settings, "jdoodle_client_id", "", raising=False)
     monkeypatch.setattr(jc.settings, "jdoodle_client_secret", "", raising=False)
     r = await run_code(language="python", source="print(1)", stdin="")
-    assert r.error is not None and "credentials" in r.error
+    assert r.error == RUNNER_UNAVAILABLE_MESSAGE  # config state is not for candidates
 
 
 # --- run_code HTTP paths (httpx mocked) ------------------------------------
@@ -92,4 +94,28 @@ async def test_run_code_daily_limit_returns_error(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(jc.httpx, "AsyncClient", lambda *a, **k: _FakeClient(resp))
 
     r = await run_code(language="python", source="x", stdin="")
-    assert r.error is not None and "daily limit" in r.error
+    assert r.error == RUNNER_UNAVAILABLE_MESSAGE  # quota state is not for candidates
+
+
+@pytest.mark.asyncio
+async def test_unreachable_runner_error_never_carries_the_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The defect: `runner unreachable: <httpx error incl. internal URL>` reached candidates."""
+    _set_creds(monkeypatch)
+    monkeypatch.setattr(jc, "_BACKOFF_BASE_SECONDS", 0)
+
+    class _Boom:
+        async def __aenter__(self) -> _Boom:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+        async def post(self, *a: object, **k: object) -> None:
+            raise jc.httpx.ConnectError("[Errno 111] connect to piston.internal.corp:2000")
+
+    monkeypatch.setattr(jc.httpx, "AsyncClient", lambda *a, **k: _Boom())
+    r = await run_code(language="python", source="x", stdin="")
+    assert r.error == RUNNER_UNAVAILABLE_MESSAGE
+    assert "internal" not in (r.error or "") and "Errno" not in (r.error or "")

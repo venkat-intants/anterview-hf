@@ -31,11 +31,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.avatars import resolve_avatar, valid_avatar_ids
+from app.config import settings
 from app.consent_guard import has_active_consent
 from app.database import get_db_session
-from app.dependencies import NonGuestUserDep
+from app.dependencies import CurrentUserDep, NonGuestUserDep
 from app.models import Job
 from app.models import Session as InterviewSession
+from app.rate_limit import enforce_user_rate_limit
 
 log = structlog.get_logger(__name__)
 
@@ -111,6 +113,45 @@ class SessionListResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _guest_bound_session_id(current_user: dict[str, object]) -> uuid.UUID | None:
+    """The one session a guest token may see, or ``None`` for a normal account.
+
+    A magic-link interview guest used to be refused here outright, on the
+    reasoning that a leaked guest token must not enumerate sessions. That left
+    the guest with no way to learn their own scorecard id: the "interview
+    complete" page finds it by listing sessions, so every HR-invited candidate
+    waited out a 90-second timer and was told to "check again" against an
+    endpoint that could only ever answer 403. feedback_billing already lets a
+    guest read the scorecard of their own session; they simply could not find it.
+
+    The enumeration concern is real and is kept: the guest is narrowed to the
+    ``session_id`` its token was minted for. One guest identity can own several
+    sessions (the same guest ``users`` row is reused across invites — see
+    ``get_guest_bound_user``), so filtering on ``user_id`` alone would show a
+    token for invite B the session from invite A.
+
+    A guest token with no usable ``session_id`` claim is refused rather than
+    widened to "all of this user's sessions".
+    """
+    roles = current_user.get("roles") or []
+    if not isinstance(roles, list):
+        roles = []
+    # ANY token carrying guest_candidate is a guest, whatever else it holds —
+    # the same predicate as get_guest_bound_user, feedback_billing's
+    # is_guest_token and data_gateway's reject_role. A mixed-role token must
+    # never read as an unrestricted account (it would list every session).
+    if "guest_candidate" not in roles:
+        return None
+    claim = current_user.get("session_id")
+    try:
+        return uuid.UUID(str(claim))
+    except (ValueError, TypeError):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This interview link is not bound to a session.",
+        ) from None
+
+
 @router.get(
     "/sessions",
     response_model=SessionListResponse,
@@ -122,11 +163,13 @@ class SessionListResponse(BaseModel):
         "and optional ``status`` filter. "
         "Each item includes a ``scorecard_id`` field if a scorecard exists for "
         "that session (resolved via a LEFT JOIN on the scorecards table). "
-        "Only the caller's own sessions are returned — AUTHZ enforced."
+        "Only the caller's own sessions are returned — AUTHZ enforced. "
+        "A magic-link guest token sees exactly ONE session: the one named by "
+        "its ``session_id`` claim."
     ),
 )
 async def list_sessions(
-    current_user: NonGuestUserDep,
+    current_user: CurrentUserDep,
     db: Annotated[AsyncSession, Depends(get_db_session)],
     page: int = Query(default=1, ge=1, description="Page number, 1-indexed."),
     per_page: int = Query(default=20, ge=1, le=100, description="Items per page (max 100)."),
@@ -141,9 +184,12 @@ async def list_sessions(
     """List the authenticated user's interview sessions, newest-first.
 
     Authz: ``session.user_id`` must equal the JWT ``sub`` — enforced by the
-    WHERE clause; no side-channel that reveals other users' sessions.
+    WHERE clause; no side-channel that reveals other users' sessions. A guest
+    token is narrowed further, to its one bound session (see
+    ``_guest_bound_session_id``).
     """
     user_id = uuid.UUID(current_user["sub"])
+    bound_session_id = _guest_bound_session_id(current_user)
 
     # ------------------------------------------------------------------
     # Build the base filter
@@ -156,6 +202,8 @@ async def list_sessions(
     filters = [
         InterviewSession.user_id == user_id,
     ]
+    if bound_session_id is not None:
+        filters.append(InterviewSession.id == bound_session_id)
     if status is not None:
         filters.append(InterviewSession.status == status)
 
@@ -288,6 +336,10 @@ async def create_session(
     Returns the session_id, job_title, and confirmed language.
     """
     user_id_str: str = current_user["sub"]
+
+    # Per-user cap (M3): a row is cheap, but a script minting sessions then asking
+    # for tokens is how the expensive part (rooms.py) gets abused.
+    await enforce_user_rate_limit("session_create", user_id_str, settings.session_create_per_minute)
 
     # ------------------------------------------------------------------
     # Validate job exists and is active

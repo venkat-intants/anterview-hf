@@ -35,6 +35,7 @@
 //
 // English-only by design (CLAUDE.md — staff consoles are not translated).
 
+import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -108,20 +109,21 @@ export function ExternalLinkGate({ href }: { href: string }) {
         <strong className="text-foreground">{hostname}</strong>.
       </p>
       <div className="flex items-center gap-2">
-        <a
-          href={safeHref}
-          target="_blank"
-          rel="noopener noreferrer nofollow"
-          onClick={() => setConfirming(false)}
-          className="inline-flex items-center gap-1.5 rounded-[8px] bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground"
-        >
-          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-          Open {hostname}
-        </a>
+        <Button asChild size="sm">
+          <a
+            href={safeHref}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            onClick={() => setConfirming(false)}
+          >
+            <ExternalLink aria-hidden="true" />
+            Open {hostname}
+          </a>
+        </Button>
         <button
           type="button"
           onClick={() => setConfirming(false)}
-          className="text-[12px] text-muted-foreground hover:text-foreground"
+          className="min-h-10 rounded-full px-3 text-[13px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           Cancel
         </button>
@@ -174,7 +176,7 @@ function FileDownload({
         )}
         {response.original_name ?? 'Download file'}
       </button>
-      {error ? <p className="mt-1 text-[11.5px] text-ember">{error}</p> : null}
+      {error ? <p className="mt-1 text-[12px] text-ember">{error}</p> : null}
     </div>
   );
 }
@@ -225,7 +227,7 @@ function MaterialRow({
         )}
         {material.title}
       </button>
-      {error ? <p className="mt-1 text-[11.5px] text-ember">{error}</p> : null}
+      {error ? <p className="mt-1 text-[12px] text-ember">{error}</p> : null}
     </li>
   );
 }
@@ -307,8 +309,8 @@ export default function SubmissionPanel({ scorecardId }: { scorecardId: string }
   if (data.status !== 'submitted') {
     return (
       <p className="py-6 text-[13px] text-muted-foreground">
-        Not yet submitted ({data.status.replace('_', ' ')}) — nothing to show the reviewer until
-        the candidate submits.
+        Not yet submitted ({data.status.replace('_', ' ')}) — nothing to show the reviewer until the
+        candidate submits.
       </p>
     );
   }
@@ -376,7 +378,7 @@ export default function SubmissionPanel({ scorecardId }: { scorecardId: string }
         </section>
       ) : null}
 
-      <p className="flex items-start gap-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
+      <p className="flex items-start gap-1.5 text-[12px] leading-relaxed text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
         This is evidence, not a verdict — score it against the checklist in the Scorecard tab.
       </p>

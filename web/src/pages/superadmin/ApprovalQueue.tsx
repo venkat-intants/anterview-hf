@@ -23,12 +23,15 @@ import {
   type PendingApproval,
 } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
-import { GlassCard, Pill } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
-import { AlertCircle, Loader2 } from '@/design/components/icons';
+import { GlassCard } from '@/design/components/primitives';
+import { DataList, Page, PageHeader } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
+import { AlertCircle, CheckCircle2, XCircle } from '@/design/components/icons';
+import { ReviewQueueState } from '@/components/superadmin/ReviewParts';
+import { waitingText } from '@/components/superadmin/waitingText';
 
 const INPUT =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none';
+  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
 
 const BASIS_LABEL: Record<string, string> = {
   per_hire: 'per hire',
@@ -54,14 +57,6 @@ function budgetLine(row: PendingApproval): string | null {
   const basis = row.budget_basis ? BASIS_LABEL[row.budget_basis] : '';
   const period = row.budget_period ? PERIOD_LABEL[row.budget_period] : '';
   return `${money(row.budget_amount, row.budget_currency)} ${basis} ${period}`.trim();
-}
-
-function waiting(iso: string | null): string {
-  if (!iso) return '';
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
-  if (Number.isNaN(days)) return '';
-  if (days <= 0) return 'Submitted today';
-  return days === 1 ? 'Waiting 1 day' : `Waiting ${days} days`;
 }
 
 function Row({ row }: { row: PendingApproval }): JSX.Element {
@@ -91,52 +86,48 @@ function Row({ row }: { row: PendingApproval }): JSX.Element {
   const budget = budgetLine(row);
 
   return (
-    <GlassCard className="p-4">
+    <GlassCard className="p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <Link
             to={`/superadmin/requisitions/${row.id}`}
-            className="text-[15px] font-semibold text-white hover:underline"
+            className="text-[16px] font-bold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             {row.title}
           </Link>
-          <p className="mt-0.5 text-[12.5px] text-[#888b91]">
+          <p className="mt-0.5 text-[13px] text-muted-foreground">
             {[row.level, row.department, row.location].filter(Boolean).join(' · ')}
           </p>
         </div>
-        <div className="text-right">
-          <p className="text-[12px] text-[#b8babf]">{waiting(row.submitted_at)}</p>
+        <div className="text-left sm:text-right">
+          <p className="text-[13px] font-medium text-foreground">{waitingText(row.submitted_at)}</p>
           {row.submitted_by_name ? (
-            <p className="text-[11.5px] text-[#6f7379]">by {row.submitted_by_name}</p>
+            <p className="text-[12px] text-muted-foreground">by {row.submitted_by_name}</p>
           ) : null}
         </div>
       </div>
 
-      <dl className="mt-3 grid gap-2 sm:grid-cols-2">
-        <div>
-          <dt className="text-[11.5px] text-[#6f7379]">Budget</dt>
-          <dd className="text-[13px] text-[#d5d7da]">
-            {budget ?? (
-              <span className="flex items-center gap-1.5 text-[#d6a23d]">
-                <AlertCircle size={12} aria-hidden="true" />
+      <DataList
+        className="mt-4"
+        items={[
+          {
+            label: 'Budget',
+            value: budget ?? (
+              <span className="flex items-center gap-1.5 text-[var(--ui-warn)]">
+                <AlertCircle size={14} aria-hidden="true" />
                 No budget recorded
               </span>
-            )}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-[11.5px] text-[#6f7379]">Headcount</dt>
-          <dd className="text-[13px] text-[#d5d7da]">
-            {row.target_hires ?? 'Not specified'}
-          </dd>
-        </div>
-      </dl>
+            ),
+          },
+          { label: 'Headcount', value: row.target_hires ?? 'Not specified' },
+        ]}
+      />
 
       {row.budget_notes ? (
-        <p className="mt-2 text-[12px] text-[#888b91]">{row.budget_notes}</p>
+        <p className="mt-2 text-[13px] text-muted-foreground">{row.budget_notes}</p>
       ) : null}
       {row.note ? (
-        <p className="mt-2 rounded-[10px] border border-white/[0.07] bg-white/[0.02] px-3 py-2 text-[12.5px] text-[#b8babf]">
+        <p className="mt-2 rounded-[12px] bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[13px] text-foreground">
           {row.note}
         </p>
       ) : null}
@@ -149,52 +140,50 @@ function Row({ row }: { row: PendingApproval }): JSX.Element {
           id={`note-${row.id}`}
           value={note}
           onChange={(e) => setNote(e.target.value)}
-          placeholder={
-            rejecting ? 'What needs to change?' : 'Note (optional)'
-          }
+          placeholder={rejecting ? 'What needs to change? (optional)' : 'Note (optional)'}
           maxLength={1000}
           className={INPUT}
         />
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2.5">
-        <Pill
+      <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border pt-4">
+        <Button
+          type="button"
           onClick={() => approve.mutate()}
           disabled={approve.isPending || reject.isPending}
-          className="px-4 py-2"
         >
+          <CheckCircle2 aria-hidden="true" />
           {approve.isPending ? 'Approving…' : 'Approve'}
-        </Pill>
-        <button
-          type="button"
-          onClick={() => {
-            // Two clicks, on purpose: sending an opening back is the action
-            // that costs somebody a week, and it deserves a beat in which to
-            // write down why.
-            if (!rejecting) {
-              setRejecting(true);
-              return;
-            }
-            reject.mutate();
-          }}
-          disabled={approve.isPending || reject.isPending}
-          className="rounded-[10px] border border-white/[0.1] px-3 py-2 text-[12.5px] text-[#b8babf] hover:text-white disabled:opacity-40"
-        >
-          {reject.isPending
-            ? 'Sending back…'
-            : rejecting
-              ? 'Confirm — send back'
-              : 'Request changes'}
-        </button>
-        {rejecting && !reject.isPending ? (
-          <button
+        </Button>
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          {rejecting && !reject.isPending ? (
+            <Button type="button" variant="ghost" onClick={() => setRejecting(false)}>
+              Cancel
+            </Button>
+          ) : null}
+          <Button
             type="button"
-            onClick={() => setRejecting(false)}
-            className="text-[12px] text-[#6f7379] hover:text-[#b8babf]"
+            variant={rejecting ? 'destructive' : 'outline'}
+            onClick={() => {
+              // Two clicks, on purpose: sending an opening back is the action
+              // that costs somebody a week, and it deserves a beat in which to
+              // write down why.
+              if (!rejecting) {
+                setRejecting(true);
+                return;
+              }
+              reject.mutate();
+            }}
+            disabled={approve.isPending || reject.isPending}
           >
-            Cancel
-          </button>
-        ) : null}
+            {!rejecting ? <XCircle aria-hidden="true" /> : null}
+            {reject.isPending
+              ? 'Sending back…'
+              : rejecting
+                ? 'Confirm — send back'
+                : 'Request changes'}
+          </Button>
+        </div>
       </div>
     </GlassCard>
   );
@@ -205,40 +194,28 @@ export default function ApprovalQueue(): JSX.Element {
     queryKey: ['pending-approvals'],
     queryFn: listPendingApprovals,
   });
+  const rows = queue.data ?? [];
 
   return (
-    <div className="mx-auto w-full max-w-[860px] px-4 py-8">
-      <Reveal>
-        <h1 className="text-[22px] font-semibold text-white">Openings awaiting approval</h1>
-        <p className="mt-1 text-[13px] text-[#888b91]">
-          An opening cannot accept public applications until it is approved. Oldest request
-          first.
-        </p>
-      </Reveal>
-
-      {queue.isLoading ? (
-        <p className="mt-6 flex items-center gap-2 text-[13px] text-[#888b91]">
-          <Loader2 size={14} aria-hidden="true" className="animate-spin" />
-          Loading…
-        </p>
-      ) : queue.isError ? (
-        <p className="mt-6 text-[13px] text-[var(--ui-danger)]">
-          Could not load the approval queue.
-        </p>
-      ) : (queue.data ?? []).length === 0 ? (
-        <GlassCard className="mt-6 p-6 text-center">
-          <p className="text-[13.5px] text-[#b8babf]">Nothing is waiting on you.</p>
-          <p className="mt-1 text-[12.5px] text-[#6f7379]">
-            Openings your HR managers submit for approval appear here.
-          </p>
-        </GlassCard>
-      ) : (
-        <div className="mt-6 flex flex-col gap-3">
-          {(queue.data ?? []).map((row) => (
-            <Row key={row.id} row={row} />
-          ))}
-        </div>
-      )}
-    </div>
+    <Page width="form">
+      <PageHeader
+        title="Openings awaiting approval"
+        description="An opening cannot accept public applications until it is approved. Oldest request first."
+      />
+      <ReviewQueueState
+        loading={queue.isLoading}
+        error={queue.isError}
+        errorText="Could not load the approval queue."
+        onRetry={() => void queue.refetch()}
+        count={rows.length}
+        emptyDescription="Openings your HR managers submit for approval appear here."
+      >
+        {rows.map((row) => (
+          <li key={row.id}>
+            <Row row={row} />
+          </li>
+        ))}
+      </ReviewQueueState>
+    </Page>
   );
 }

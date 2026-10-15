@@ -102,13 +102,11 @@ test.describe('a coding round', () => {
     // standalone coding page has its own — a spec that clicks that one waits
     // forever for a button this page never renders.
     await candidatePage.getByRole('button', { name: 'Submit exam' }).click();
-    await expect(candidatePage.getByText(/You passed|Not this time/)).toBeVisible({
+    // The screen no longer says pass or fail (a person decides). That the hidden
+    // tests passed is asserted below, by the candidate reaching the decision queue.
+    await expect(candidatePage.getByTestId('exam-submitted')).toBeVisible({
       timeout: 60_000,
     });
-    await expect(
-      candidatePage.getByText('You passed'),
-      'the hidden tests ran too — a correct solution passes all three',
-    ).toBeVisible();
     await candidateContext.close();
 
     // ── Which moves them, exactly like any other round ──────────────────────

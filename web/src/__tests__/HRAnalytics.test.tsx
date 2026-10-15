@@ -144,12 +144,18 @@ describe('HRAnalytics — funnel', () => {
     expect(await screen.findByText(/no pipeline data yet/i)).toBeInTheDocument();
   });
 
-  it('declares the not-yet-backed charts empty instead of faking them', async () => {
+  it('does not render charts that have no data source', async () => {
+    // Language mix, score distribution and trend were backed by empty constants
+    // and could only ever say "no data yet". They are gone rather than faked.
     renderWith(<HRAnalytics />);
 
-    expect(await screen.findByText(/no language data yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/no score data yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/no trend data yet/i)).toBeInTheDocument();
+    await screen.findByText(/hiring funnel/i);
+    expect(screen.queryByText(/language mix/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/score distribution/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/interviews & avg score/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no language data yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no score data yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/no trend data yet/i)).not.toBeInTheDocument();
   });
 });
 

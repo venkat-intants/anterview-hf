@@ -22,8 +22,84 @@ from app.remote import describe_unreachable
 log = structlog.get_logger(__name__)
 
 
+#: The ONLY sentence a browser is told when generation fails. The specifics
+#: (service origin, how to start it, the provider's response body) are logged
+#: server-side by this module and never put in an HTTP response.
+GENERATION_UNAVAILABLE = (
+    "The AI question generator is not available right now. Please try again in a minute."
+)
+
+
 class ExamGenerationError(Exception):
-    """Raised when the AI generator cannot be reached or returns an error."""
+    """Raised when the AI generator cannot be reached or returns an error.
+
+    ``str(exc)`` is the INTERNAL description (may hold an upstream body
+    excerpt) — for logs, never for a response. ``hint`` is a short, body-free
+    developer note (the unreachable-service description). Route code answers
+    with :func:`client_message`.
+    """
+
+    def __init__(self, internal: str, *, hint: str | None = None) -> None:
+        super().__init__(internal)
+        self.hint = hint
+
+
+def client_message(exc: ExamGenerationError) -> str:
+    """What the HR browser is told. Fixed, plus the developer hint ONLY when
+    ``APP_ENV`` is ``development`` (the origin and start command are of use
+    to nobody else, and they describe our internal topology)."""
+    if settings.app_env == "development" and exc.hint:
+        return f"{GENERATION_UNAVAILABLE} (dev: {exc.hint})"
+    return GENERATION_UNAVAILABLE
+
+
+def _questions_from(resp: httpx.Response, *, what: str) -> list[dict[str, Any]]:
+    """The ``questions`` list from a 200 response, or ``ExamGenerationError``.
+
+    A 200 whose body is not JSON, is not an object, or whose ``questions`` is
+    not a list of objects is a broken upstream, not a caller error: it used to
+    raise ``JSONDecodeError`` / ``AttributeError`` out of the route as a 500.
+    """
+    try:
+        data = resp.json()
+    except ValueError as exc:  # json.JSONDecodeError and UnicodeDecodeError are ValueErrors
+        log.error("exam_ai.bad_response", what=what, problem="not_json", error_type=type(exc).__name__)
+        raise ExamGenerationError(f"{what} returned a body that is not JSON") from exc
+    if not isinstance(data, dict):
+        log.error("exam_ai.bad_response", what=what, problem="not_an_object")
+        raise ExamGenerationError(f"{what} returned JSON that is not an object")
+    questions = data.get("questions")
+    if questions is None:
+        return []
+    if not isinstance(questions, list):
+        log.error("exam_ai.bad_response", what=what, problem="questions_not_a_list")
+        raise ExamGenerationError(f"{what} returned a 'questions' value of the wrong shape")
+    objects = [q for q in questions if isinstance(q, dict)]
+    if questions and not objects:
+        log.error("exam_ai.bad_response", what=what, problem="questions_not_objects")
+        raise ExamGenerationError(f"{what} returned 'questions' that are not objects")
+    if len(objects) != len(questions):
+        # One stray scalar must not cost the caller the good items beside it.
+        log.warning("exam_ai.items_discarded", what=what, count=len(questions) - len(objects))
+    return objects
+
+
+def _unreachable(exc: httpx.RequestError, *, what: str, url: str) -> ExamGenerationError:
+    detail = describe_unreachable(exc, what=what, url=url)
+    # Specifics to the log (origin and error class; no secrets are in either).
+    log.error("exam_ai.unreachable", what=what, error_type=type(exc).__name__, detail=detail)
+    return ExamGenerationError(detail, hint=detail)
+
+
+def _http_error(resp: httpx.Response, *, what: str) -> ExamGenerationError:
+    # The body excerpt goes to the log only; it never reaches a response.
+    log.error(
+        "exam_ai.upstream_error", what=what, status=resp.status_code, body=resp.text[:160]
+    )
+    return ExamGenerationError(
+        f"{what} returned HTTP {resp.status_code}: {resp.text[:160]}",
+        hint=f"{what} returned HTTP {resp.status_code}",
+    )
 
 
 # The service identity this process presents to feedback_billing. It must be
@@ -105,16 +181,10 @@ async def generate_exam_questions_remote(
                 },
             )
     except httpx.RequestError as exc:
-        raise ExamGenerationError(
-            describe_unreachable(exc, what="Exam generation", url=url)
-        ) from exc
+        raise _unreachable(exc, what="Exam generation", url=url) from exc
     if resp.status_code != 200:
-        raise ExamGenerationError(
-            f"exam generator returned HTTP {resp.status_code}: {resp.text[:160]}"
-        )
-    data: dict[str, Any] = resp.json()
-    questions: list[dict[str, Any]] = data.get("questions") or []
-    return questions
+        raise _http_error(resp, what="exam generator")
+    return _questions_from(resp, what="exam generator")
 
 
 async def generate_coding_questions_remote(
@@ -160,13 +230,7 @@ async def generate_coding_questions_remote(
                 },
             )
     except httpx.RequestError as exc:
-        raise ExamGenerationError(
-            describe_unreachable(exc, what="Coding-question generation", url=url)
-        ) from exc
+        raise _unreachable(exc, what="Coding-question generation", url=url) from exc
     if resp.status_code != 200:
-        raise ExamGenerationError(
-            f"coding generator returned HTTP {resp.status_code}: {resp.text[:160]}"
-        )
-    data: dict[str, Any] = resp.json()
-    questions: list[dict[str, Any]] = data.get("questions") or []
-    return questions
+        raise _http_error(resp, what="coding generator")
+    return _questions_from(resp, what="coding generator")

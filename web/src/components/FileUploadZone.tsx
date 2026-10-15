@@ -124,7 +124,7 @@ export default function FileUploadZone({
     <div className="w-full">
       {/* Existing file notice */}
       {existingFileLabel && uploadState.status !== 'success' && (
-        <p className="mb-3 text-body-sm text-emerald-400 flex items-center gap-1.5">
+        <p className="mb-3 flex items-center gap-1.5 text-body-sm font-medium text-[var(--ui-ok)]">
           <svg
             aria-hidden="true"
             xmlns="http://www.w3.org/2000/svg"
@@ -144,13 +144,13 @@ export default function FileUploadZone({
 
       {/* Success state */}
       {uploadState.status === 'success' && (
-        <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/15 p-4 flex items-start gap-3">
+        <div className="flex items-start gap-3 rounded-[16px] border border-[var(--ui-ok)]/30 bg-[var(--ui-ok-wash)] p-4">
           <svg
             aria-hidden="true"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"
-            className="h-5 w-5 text-emerald-400 shrink-0 mt-0.5"
+            className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ui-ok)]"
           >
             <path
               fillRule="evenodd"
@@ -168,7 +168,7 @@ export default function FileUploadZone({
             <button
               type="button"
               onClick={handleRetry}
-              className="mt-1 text-caption text-emerald-400 underline underline-offset-2 hover:text-emerald-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+              className="mt-1 rounded text-caption font-medium text-[var(--ui-ok)] underline underline-offset-2 hover:brightness-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {t('fileUpload.uploadDifferent')}
             </button>
@@ -180,14 +180,14 @@ export default function FileUploadZone({
       {uploadState.status === 'error' && (
         <div
           role="alert"
-          className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 flex items-start gap-3 mb-3"
+          className="mb-3 flex items-start gap-3 rounded-[16px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-wash)] p-4"
         >
           <svg
             aria-hidden="true"
             xmlns="http://www.w3.org/2000/svg"
             viewBox="0 0 20 20"
             fill="currentColor"
-            className="h-5 w-5 text-destructive shrink-0 mt-0.5"
+            className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ui-danger)]"
           >
             <path
               fillRule="evenodd"
@@ -196,11 +196,13 @@ export default function FileUploadZone({
             />
           </svg>
           <div className="flex-1">
-            <p className="text-body-sm text-destructive">{uploadState.message}</p>
+            <p className="text-body-sm font-medium text-[var(--ui-danger)]">
+              {uploadState.message}
+            </p>
             <button
               type="button"
               onClick={handleRetry}
-              className="mt-1 text-caption text-destructive underline underline-offset-2 hover:text-destructive/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+              className="mt-1 rounded text-caption font-medium text-[var(--ui-danger)] underline underline-offset-2 hover:brightness-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {t('fileUpload.tryAgain')}
             </button>
@@ -235,10 +237,10 @@ export default function FileUploadZone({
             onKeyDown={handleKeyDown}
             onClick={() => !isUploading && inputRef.current?.click()}
             className={[
-              'group relative flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed bg-secondary px-6 py-10 text-center transition-colors cursor-pointer',
+              'group relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-[16px] border-2 border-dashed px-6 py-10 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
               isDraggingOver
-                ? 'border-primary/40 bg-accent'
-                : 'border-border hover:border-primary/40 hover:bg-accent',
+                ? 'border-[var(--accent)] bg-[var(--ui-highlight-wash)]'
+                : 'border-[var(--ui-line-strong)] bg-[var(--ui-inset-soft)] hover:border-[var(--accent)] hover:bg-[var(--ui-inset)]',
               isUploading ? 'cursor-not-allowed opacity-70' : '',
             ]
               .filter(Boolean)
@@ -252,7 +254,7 @@ export default function FileUploadZone({
               fill="none"
               stroke="currentColor"
               strokeWidth={1.5}
-              className="h-10 w-10 text-primary transition-transform duration-300 group-hover:-translate-y-0.5"
+              className="h-10 w-10 text-foreground transition-transform duration-300 group-hover:-translate-y-0.5"
             >
               <path
                 strokeLinecap="round"
@@ -273,17 +275,17 @@ export default function FileUploadZone({
             {/* Progress bar */}
             {isUploading && (
               <div className="w-full max-w-xs" aria-label={t('fileUpload.uploadProgress')}>
-                <div className="h-2 w-full rounded-full bg-border overflow-hidden">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
                   <div
                     role="progressbar"
                     aria-valuenow={uploadState.progress}
                     aria-valuemin={0}
                     aria-valuemax={100}
-                    className="h-2 rounded-full bg-primary transition-all duration-200"
+                    className="h-2 rounded-full bg-[var(--accent)] transition-all duration-200"
                     style={{ width: `${uploadState.progress}%` }}
                   />
                 </div>
-                <p className="mt-1 text-caption text-primary text-center tabular-nums">
+                <p className="mt-1 text-center text-caption font-medium tabular-nums text-foreground">
                   {uploadState.progress}%
                 </p>
               </div>
@@ -291,10 +293,7 @@ export default function FileUploadZone({
           </div>
 
           {/* Visible label linked to the input for screen readers */}
-          <label
-            htmlFor={inputId}
-            className="sr-only"
-          >
+          <label htmlFor={inputId} className="sr-only">
             {label}
           </label>
         </>

@@ -536,7 +536,10 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     _catchup_jobs.append(("applicant_identity_index", timedelta(hours=6),
                           _applicant_identity_index))
-    start_catchup(_factory, _catchup_jobs)
+    if settings.scheduler_catchup_enabled:
+        start_catchup(_factory, _catchup_jobs)
+    else:
+        log.info("scheduler.catchup.disabled")
 
     # Determine next-run time for the startup log (may be None if no jobs yet).
     next_run_job = scheduler.get_job("retention_purge")

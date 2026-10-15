@@ -45,11 +45,12 @@ import { StatusTag } from '@/design/components/primitives';
 import { Clock, Info, Loader2 } from '@/design/components/icons';
 
 const inputCls =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] ' +
-  'focus:outline-none disabled:opacity-60';
-const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
-const noteWarnCls = 'mt-1 flex items-start gap-1.5 text-[11.5px] leading-relaxed text-[var(--ui-faint)]';
+  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] ' +
+  'text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
+const labelCls = 'text-[13px] font-semibold text-foreground';
+const noteWarnCls =
+  'mt-1 flex items-start gap-1.5 text-[12px] leading-relaxed text-muted-foreground';
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -104,14 +105,18 @@ function scopeLabel(row: Accommodation, rounds: Round[]): string {
   return 'Whole applicant';
 }
 
-function adjustmentSummary(row: Pick<
-  Accommodation,
-  'extra_time_percent' | 'deadline_extension_days' | 'relax_auto_submit' | 'other_adjustment'
->): string[] {
+function adjustmentSummary(
+  row: Pick<
+    Accommodation,
+    'extra_time_percent' | 'deadline_extension_days' | 'relax_auto_submit' | 'other_adjustment'
+  >,
+): string[] {
   const parts: string[] = [];
   if (row.extra_time_percent) parts.push(`+${row.extra_time_percent}% time`);
   if (row.deadline_extension_days) {
-    parts.push(`+${row.deadline_extension_days} day${row.deadline_extension_days === 1 ? '' : 's'} deadline`);
+    parts.push(
+      `+${row.deadline_extension_days} day${row.deadline_extension_days === 1 ? '' : 's'} deadline`,
+    );
   }
   if (row.relax_auto_submit) parts.push('Auto-submit relaxed');
   if (row.other_adjustment) parts.push('Other adjustment');
@@ -147,7 +152,8 @@ function emptyFields(): FieldsState {
 function fieldsFromRow(row: Accommodation): FieldsState {
   return {
     extraTimePercent: row.extra_time_percent != null ? String(row.extra_time_percent) : '',
-    deadlineExtensionDays: row.deadline_extension_days != null ? String(row.deadline_extension_days) : '',
+    deadlineExtensionDays:
+      row.deadline_extension_days != null ? String(row.deadline_extension_days) : '',
     relaxAutoSubmit: row.relax_auto_submit,
     otherAdjustment: row.other_adjustment ?? '',
     interviewerNote: row.interviewer_note ?? '',
@@ -164,7 +170,10 @@ function fieldsFromRow(row: Accommodation): FieldsState {
 
 function hasAnyAdjustment(f: FieldsState): boolean {
   return Boolean(
-    f.extraTimePercent.trim() || f.deadlineExtensionDays.trim() || f.relaxAutoSubmit || f.otherAdjustment.trim(),
+    f.extraTimePercent.trim() ||
+    f.deadlineExtensionDays.trim() ||
+    f.relaxAutoSubmit ||
+    f.otherAdjustment.trim(),
   );
 }
 
@@ -239,8 +248,8 @@ function AdjustmentFields({
         />
         <p className={noteWarnCls}>
           <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-          HR only. The candidate is told only that an adjustment was recorded, never this text —
-          and an interviewer never sees it either.
+          HR only. The candidate is told only that an adjustment was recorded, never this text — and
+          an interviewer never sees it either.
         </p>
       </label>
 
@@ -428,9 +437,9 @@ function RecordForm({
           One exam round
         </label>
         {!hasApplication ? (
-          <p className="text-[11.5px] text-[var(--ui-faint)]">
-            Open this from a specific application to scope an adjustment to a round — a
-            round-scoped adjustment needs an application.
+          <p className="text-[12px] text-muted-foreground">
+            Open this from a specific application to scope an adjustment to a round — a round-scoped
+            adjustment needs an application.
           </p>
         ) : null}
       </fieldset>
@@ -444,9 +453,7 @@ function RecordForm({
             className={inputCls}
             aria-label="Workflow round"
           >
-            <option value="">
-              {roundsLoading ? 'Loading rounds…' : 'Choose a round…'}
-            </option>
+            <option value="">{roundsLoading ? 'Loading rounds…' : 'Choose a round…'}</option>
             {rounds.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.title}
@@ -465,9 +472,7 @@ function RecordForm({
             className={inputCls}
             aria-label="Exam round"
           >
-            <option value="">
-              {roundsLoading ? 'Loading rounds…' : 'Choose an exam round…'}
-            </option>
+            <option value="">{roundsLoading ? 'Loading rounds…' : 'Choose an exam round…'}</option>
             {examRounds.map((r) => (
               <option key={r.id} value={r.exam_round_id as string}>
                 {r.title}
@@ -475,14 +480,19 @@ function RecordForm({
             ))}
           </select>
           {!roundsLoading && examRounds.length === 0 ? (
-            <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+            <p className="mt-1 text-[12px] text-muted-foreground">
               No exam-backed round found on this application&rsquo;s published workflow.
             </p>
           ) : null}
         </label>
       ) : null}
 
-      <AdjustmentFields uidPrefix="record" fields={fields} onChange={setFields} disabled={recordMut.isPending} />
+      <AdjustmentFields
+        uidPrefix="record"
+        fields={fields}
+        onChange={setFields}
+        disabled={recordMut.isPending}
+      />
 
       <fieldset className="flex flex-col gap-1.5">
         <legend className={labelCls}>Basis</legend>
@@ -504,9 +514,9 @@ function RecordForm({
           />
           Candidate request — the candidate asked HR for this
         </label>
-        <p className="text-[11.5px] text-[var(--ui-faint)]">
-          Either way, this is not treated as consent captured through the product — it only
-          records why HR is holding this adjustment.
+        <p className="text-[12px] text-muted-foreground">
+          Either way, this is not treated as consent captured through the product — it only records
+          why HR is holding this adjustment.
         </p>
       </fieldset>
 
@@ -523,9 +533,11 @@ function RecordForm({
         <button
           type="submit"
           disabled={recordMut.isPending}
-          className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
         >
-          {recordMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+          {recordMut.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : null}
           Record accommodation
         </button>
       </div>
@@ -590,10 +602,10 @@ function ReviseForm({
       className="mt-2 flex flex-col gap-3 rounded-[10px] border border-[var(--ui-line-strong)] bg-[var(--ui-inset-soft)] p-3"
       aria-label="Revise this accommodation"
     >
-      <p className="text-[11.5px] text-[var(--ui-faint)]">
+      <p className="text-[12px] text-muted-foreground">
         The scope and basis stay the same — a revision replaces the parameters, not what this
-        adjustment applies to. The current record is kept, not edited: anything already taken
-        under it keeps what it had.
+        adjustment applies to. The current record is kept, not edited: anything already taken under
+        it keeps what it had.
       </p>
       <AdjustmentFields
         uidPrefix={`revise-${row.id}`}
@@ -613,9 +625,11 @@ function ReviseForm({
         <button
           type="submit"
           disabled={reviseMut.isPending}
-          className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
         >
-          {reviseMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+          {reviseMut.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : null}
           Save revision
         </button>
       </div>
@@ -667,7 +681,7 @@ function HistoryRow({
         {parts.length > 0 ? parts.join(' · ') : 'No structured adjustment recorded'}
       </p>
 
-      <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+      <p className="mt-1 text-[12px] text-muted-foreground">
         {row.basis === 'candidate_request' ? 'Candidate request' : 'HR-initiated'} · Recorded{' '}
         {formatDate(row.created_at)}
         {row.recorded_by_name ? ` by ${row.recorded_by_name}` : ''}
@@ -676,24 +690,24 @@ function HistoryRow({
 
       {row.other_adjustment ? (
         <p className="mt-1.5 text-[12px] text-[var(--ui-soft)]">
-          <span className="text-[var(--ui-faint)]">Other adjustment (HR only): </span>
+          <span className="text-muted-foreground">Other adjustment (HR only): </span>
           {row.other_adjustment}
         </p>
       ) : null}
       {row.interviewer_note ? (
         <p className="mt-1 text-[12px] text-[var(--ui-soft)]">
-          <span className="text-[var(--ui-faint)]">Interviewer note: </span>
+          <span className="text-muted-foreground">Interviewer note: </span>
           {row.interviewer_note}
         </p>
       ) : null}
       {row.internal_note ? (
         <p className="mt-1 text-[12px] text-[var(--ui-soft)]">
-          <span className="text-[var(--ui-faint)]">Internal note (HR only): </span>
+          <span className="text-muted-foreground">Internal note (HR only): </span>
           {row.internal_note}
         </p>
       ) : null}
       {row.status === 'revoked' ? (
-        <p className="mt-1 text-[11.5px] text-muted-foreground">
+        <p className="mt-1 text-[12px] text-muted-foreground">
           {row.revoked_at ? `Revoked ${formatDate(row.revoked_at)}` : 'Revoked'}
           {row.revoked_by_name
             ? ` by ${row.revoked_by_name}`
@@ -702,7 +716,7 @@ function HistoryRow({
         </p>
       ) : null}
       {row.superseded_at ? (
-        <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+        <p className="mt-1 text-[12px] text-muted-foreground">
           Revised {formatDate(row.superseded_at)} — see the newer record.
         </p>
       ) : null}
@@ -715,7 +729,7 @@ function HistoryRow({
             <button
               type="button"
               onClick={() => setRevising(true)}
-              className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+              className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               Revise
             </button>
@@ -726,7 +740,7 @@ function HistoryRow({
               maxLength={500}
               placeholder="Revoke reason (optional)"
               aria-label={`Revoke reason for ${scopeLabel(row, rounds)}`}
-              className="w-full max-w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+              className="w-full max-w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
             <ConfirmDeleteButton
               label="Revoke"
@@ -761,9 +775,11 @@ export default function AccommodationsSection({
     queryFn: () => listAccommodations(applicantId),
   });
 
-  const { rounds, examRounds, isLoading: roundsLoading } = useApplicationRounds(
-    requisitionId ?? null,
-  );
+  const {
+    rounds,
+    examRounds,
+    isLoading: roundsLoading,
+  } = useApplicationRounds(requisitionId ?? null);
 
   // A quick "what applies right now" line for this application, when one is
   // open — never the notes or the basis (EffectiveAccommodation carries
@@ -777,26 +793,28 @@ export default function AccommodationsSection({
   const rows = useMemo(() => list.data ?? [], [list.data]);
 
   return (
-    <div className="mt-5">
+    <div className="mt-6 border-t border-border pt-5">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+        <h3 className="flex items-center gap-1.5 text-[15px] font-bold text-foreground">
           <Clock size={13} aria-hidden="true" />
           Accommodations{rows.length > 0 ? ` (${rows.length})` : ''}
         </h3>
         <button
           type="button"
           onClick={() => setRecording((v) => !v)}
-          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {recording ? 'Close' : 'Record adjustment'}
         </button>
       </div>
 
       {enrolmentId && effective.data?.effective ? (
-        <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
+        <p className="mt-1 text-[12px] text-muted-foreground">
           Currently effective on this application:{' '}
           {[
-            effective.data.extra_time_percent ? `+${effective.data.extra_time_percent}% time` : null,
+            effective.data.extra_time_percent
+              ? `+${effective.data.extra_time_percent}% time`
+              : null,
             effective.data.deadline_extension_days
               ? `+${effective.data.deadline_extension_days} day${effective.data.deadline_extension_days === 1 ? '' : 's'}`
               : null,

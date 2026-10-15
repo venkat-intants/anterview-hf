@@ -19,7 +19,7 @@ export default function BankProvenanceChip({
 }): JSX.Element | null {
   if (!rootId) return null;
   return (
-    <StatusTag tone="electric" className="text-[10px]">
+    <StatusTag tone="electric" className="text-[12px]">
       From bank{version != null ? ` · v${version}` : ''}
     </StatusTag>
   );

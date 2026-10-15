@@ -1,32 +1,88 @@
-import { useState } from 'react'
-import { Play, Check } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Check } from 'lucide-react'
+import { buttonVariants } from '@/components/ui/button'
+import { cn } from '../../lib/cn'
 import { Reveal } from '../../components/Reveal'
-import { FEATURES, AVATARS, LANGUAGES, AUDIENCES, type AudienceKey } from '../../data/landing'
+import { Card, Chip, SectionHeading } from '../../components/primitives'
+import { ShotFrame } from '../../components/ShotFrame'
+import { PortraitTile } from '../../components/PortraitTile'
+import { HiringPreview } from './HiringPreview'
+import { AUDIENCES, AVATARS, CANDIDATE_POINTS, LANGUAGES_LIVE, SHOTS, mailto, type AudienceKey } from '../../data/landing'
 
-export function FeatureBento() {
+export function ForCandidates() {
   return (
-    <section id="features" className="relative z-10 mx-auto max-w-[1200px] px-6 py-20">
-      <div className="mb-12 text-center">
-        <div className="mb-3.5 text-xs uppercase tracking-[1.5px] text-electric">The platform</div>
-        <Reveal><h2 className="text-[48px] font-semibold tracking-heading">Everything an interview needs.</h2></Reveal>
-      </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-6" style={{ gridAutoRows: '180px' }}>
-        {FEATURES.map((f, i) => {
-          const Icon = f.icon
-          return (
-            <div key={i} style={{ gridColumn: `span ${f.cols}`, gridRow: `span ${f.rows}`, background: f.bg, borderColor: 'var(--lp-line)' }}
-              className="relative overflow-hidden rounded-card border transition-transform duration-300 hover:-translate-y-1.5 hover:border-electric/45">
-              <Reveal kind={i % 2 ? 'right' : 'left'} amount={0.2} className="flex h-full flex-col justify-between gap-4 p-6.5">
-                <span className="inline-flex h-10 w-10 items-center justify-center rounded-[11px] border" style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-inset)' }}>
-                  <Icon size={20} className="text-[var(--lp-text)]" aria-hidden="true" />
+    <section id="candidates" aria-labelledby="cand-title" className="mx-auto max-w-[1200px] scroll-mt-20 px-4 py-12 sm:px-6 sm:py-16">
+      <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
+        <Reveal>
+          <p className="mb-3 text-sm font-semibold text-[var(--ui-info)]">For candidates</p>
+          <h2 id="cand-title" className="text-[clamp(28px,4vw,40px)] font-bold leading-[1.12] tracking-[-0.02em] text-[var(--lp-text)]">
+            Know where you stand, then get better.
+          </h2>
+          <p className="mt-4 max-w-[480px] text-base leading-relaxed text-[var(--lp-text-muted)]">
+            Reading answers in your head is not the same as saying them. Practise with someone who never gets tired of asking again, and see exactly what to work on.
+          </p>
+          <ul className="mt-6 flex flex-col gap-3">
+            {CANDIDATE_POINTS.map((pt) => (
+              <li key={pt} className="flex items-start gap-3 text-[15px] leading-snug text-[var(--lp-text)]">
+                <span className="mt-0.5 flex h-6 w-6 flex-none items-center justify-center rounded-full bg-[var(--ui-info-wash)] text-[var(--ui-info)]">
+                  <Check size={14} strokeWidth={2.5} aria-hidden="true" />
                 </span>
-                <div>
-                  <div className="text-[clamp(26px,2.6vw,46px)] font-semibold leading-none tracking-[-1px] text-[var(--lp-text)]">{f.big}</div>
-                  <h3 className="mt-2.5 text-[15px] font-semibold text-[var(--lp-text)]">{f.title}</h3>
-                  <p className="mt-1.5 text-[13.5px] leading-snug text-[var(--lp-text-muted)]">{f.desc}</p>
-                </div>
-              </Reveal>
-            </div>
+                {pt}
+              </li>
+            ))}
+          </ul>
+          <Link to="/register" className={cn(buttonVariants({ size: 'lg' }), 'mt-8')}>Start a mock interview</Link>
+        </Reveal>
+        <Reveal>
+          <figure className="m-0">
+            <ShotFrame shot={SHOTS.history} />
+            <figcaption className="mt-3 text-center text-sm text-[var(--lp-text-muted)]">Every session is kept, so you can open an earlier scorecard and compare.</figcaption>
+          </figure>
+        </Reveal>
+      </div>
+    </section>
+  )
+}
+
+const AUDIENCE_ORDER: AudienceKey[] = ['colleges', 'hr', 'gov']
+
+export function Audiences() {
+  return (
+    <section id="audience" aria-labelledby="aud-title" className="mx-auto max-w-[1200px] scroll-mt-20 px-4 py-20 sm:px-6 sm:py-24">
+      <SectionHeading
+        id="aud-title"
+        eyebrow="For institutions"
+        title="Built for the people who run interviews at scale."
+        lede="Whether you place students, hire for a company or run a skilling programme, AntHire gives every candidate the same structured first round."
+      />
+      <Reveal className="mx-auto mb-10 max-w-[960px]">
+        <HiringPreview />
+      </Reveal>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {AUDIENCE_ORDER.map((k) => {
+          const a = AUDIENCES[k]
+          const Icon = a.icon
+          return (
+            <Reveal key={k} className="h-full">
+              <Card className="flex h-full flex-col p-6 sm:p-7">
+                <span className="mb-5 flex h-11 w-11 items-center justify-center rounded-full bg-[var(--ui-info-wash)] text-[var(--ui-info)]">
+                  <Icon size={20} aria-hidden="true" />
+                </span>
+                <h3 className="text-xl font-bold leading-snug text-[var(--lp-text)]">{a.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-[var(--lp-text-muted)]">{a.sub}</p>
+                <ul className="mt-5 flex flex-1 flex-col gap-2.5">
+                  {a.points.map((pt) => (
+                    <li key={pt} className="flex items-start gap-2.5 text-sm leading-snug text-[var(--lp-text)]">
+                      <Check size={16} strokeWidth={2.5} className="mt-0.5 flex-none text-[var(--ui-ok)]" aria-hidden="true" />
+                      {pt}
+                    </li>
+                  ))}
+                </ul>
+                <a href={mailto(a.subject)} className={cn(buttonVariants({ variant: 'outline' }), 'mt-7 w-full')}>
+                  {a.cta}
+                </a>
+              </Card>
+            </Reveal>
           )
         })}
       </div>
@@ -36,127 +92,68 @@ export function FeatureBento() {
 
 export function Avatars() {
   return (
-    <section className="relative z-10 mx-auto max-w-[1200px] px-6 py-15">
-      <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="mb-3.5 text-xs uppercase tracking-[1.5px] text-electric">Meet the avatars</div>
-          <h2 className="text-[40px] font-semibold tracking-[-2px]">Six interviewers. One fair bar.</h2>
-        </div>
-        <p className="max-w-[320px] text-[15px] text-[var(--lp-text-muted)]">Pick a voice and persona that fits the role. Every avatar scores on the same rubric.</p>
-      </div>
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-        {AVATARS.map((av, i) => (
-          <Reveal key={i} kind="zoom" amount={0.2} className="group overflow-hidden rounded-[20px] border transition-transform hover:-translate-y-1.5" style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-surface)' }}>
-            <div className="relative h-[150px] overflow-hidden" style={{ background: av.bg }}>
-              {/* Real Tavus avatar replica — a still frame of the same face the
-                  live interview uses (self-hosted image; no video, no lag). */}
-              <img
-                src={av.image}
-                alt={`${av.name}, AI interviewer`}
-                loading="lazy"
-                className="h-full w-full object-cover object-[center_20%] transition-transform duration-500 group-hover:scale-105"
-              />
-              {/* fade the avatar into the card body */}
-              <div className="absolute inset-0" style={{ background: 'linear-gradient(0deg, var(--lp-surface) 0%, transparent 55%)' }} />
-            </div>
-            <div className="p-4">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="text-[15px] font-semibold">{av.name}</div>
-                <button className="inline-flex items-center gap-1.5 rounded-pill border border-electric/35 bg-electric/15 px-2.5 py-1 text-[11px] text-sky"><Play size={9} fill="currentColor" /> voice</button>
+    <section id="avatars" aria-labelledby="av-title" className="mx-auto max-w-[1200px] scroll-mt-20 px-4 py-12 sm:px-6 sm:py-16">
+      <SectionHeading
+        id="av-title"
+        eyebrow="Meet your interviewers"
+        title="Six interviewers. One rubric."
+        lede="Pick the face and voice you are most comfortable with. The scoring does not change with the interviewer."
+      />
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
+        {AVATARS.map((av) => (
+          <li key={av.name} className="h-full">
+            <Card className="h-full overflow-hidden">
+              <div className="aspect-[4/5] overflow-hidden bg-[var(--lp-surface-alt)]">
+                <PortraitTile
+                  src={av.image}
+                  alt={`${av.name}, AI interviewer`}
+                  name={av.name}
+                  width={240}
+                  height={300}
+                  imgClassName="object-[center_20%]"
+                  initialsClassName="text-5xl"
+                />
               </div>
-              <div className="mb-2.5 text-xs text-[var(--lp-text-muted)]">{av.role}</div>
-              <div className="flex flex-wrap gap-1.5">
-                {av.langs.map((l) => <span key={l} className="rounded-pill px-1.5 py-0.5 text-[10px] text-[var(--lp-text-muted)]" style={{ background: 'var(--lp-chip)' }}>{l}</span>)}
+              <div className="p-3.5">
+                <div className="text-[15px] font-bold leading-tight text-[var(--lp-text)]">{av.name}</div>
+                <div className="mt-0.5 text-xs text-[var(--lp-text-muted)]">{av.tone}</div>
               </div>
-            </div>
-          </Reveal>
+            </Card>
+          </li>
         ))}
-      </div>
+      </ul>
+      <p className="mx-auto mt-6 flex max-w-[640px] flex-wrap items-center justify-center gap-x-2 gap-y-2 text-center text-sm text-[var(--lp-text-muted)]">
+        <span>Interview in</span>
+        {LANGUAGES_LIVE.map((l) => (
+          <Chip key={l.name}>
+            <span lang={l.name === 'Hindi' ? 'hi' : l.name === 'Telugu' ? 'te' : 'en'}>{l.native}</span>
+          </Chip>
+        ))}
+        <span>with any of them. Hear a short preview of each in the interviewer picker once you sign in.</span>
+      </p>
     </section>
   )
 }
 
 export function Languages() {
   return (
-    <section id="languages" className="relative z-10 mx-auto max-w-[1100px] px-6 py-20">
-      <div className="mb-11 text-center">
-        <div className="mb-3.5 text-xs uppercase tracking-[1.5px] text-electric">22 official languages</div>
-        <Reveal><h2 className="mb-3 text-[48px] font-semibold tracking-heading">Interview in your mother tongue.</h2></Reveal>
-        <p className="mx-auto max-w-[500px] text-base text-[var(--lp-text-muted)]">English, Hindi &amp; Telugu are <span className="text-forest">live today</span>. The rest of the Eighth Schedule is rolling out through 2026.</p>
-      </div>
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-        {LANGUAGES.map((lang, i) => (
-          <div key={i} className="rounded-[12px] p-3.5 transition-transform hover:-translate-y-[3px]" style={{ background: lang.bg, border: `1px solid ${lang.bd}` }}>
-            <div className="text-[18px] font-semibold tracking-[-0.4px] text-[var(--lp-text)]">{lang.native}</div>
-            <div className="mt-1 flex items-center justify-between">
-              <span className="text-[11px] text-[var(--lp-text-muted)]">{lang.name}</span>
-              <span className="rounded-pill px-1.5 py-0.5 text-[9px] font-semibold tracking-[0.5px]" style={{ background: lang.tagBg, color: lang.tagC }}>{lang.tag}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  )
-}
-
-export function AudienceTabs() {
-  const [key, setKey] = useState<AudienceKey>('colleges')
-  const a = AUDIENCES[key]
-  const Icon = a.icon
-  return (
-    <section id="audience" className="relative z-10 mx-auto max-w-[1100px] px-6 py-15">
-      <div className="mb-9 text-center">
-        <div className="mb-3.5 text-xs uppercase tracking-[1.5px] text-electric">Built for three worlds</div>
-        <h2 className="text-[40px] font-semibold tracking-[-2px]">One platform. Every hiring mission.</h2>
-      </div>
-      <div className="mb-9 flex flex-wrap justify-center gap-2">
-        {(Object.keys(AUDIENCES) as AudienceKey[]).map((k) => (
-          <button key={k} onClick={() => setKey(k)}
-            className="rounded-pill border px-5.5 py-2.5 text-sm font-medium transition-all"
-            style={key === k
-              ? { background: 'var(--lp-btn)', color: 'var(--lp-btn-text)', borderColor: 'var(--lp-btn)' }
-              : { background: 'var(--lp-surface-soft)', color: 'var(--lp-text-muted)', borderColor: 'var(--lp-line)' }}>
-            {AUDIENCES[k].label}
-          </button>
-        ))}
-      </div>
-      <div className="relative overflow-hidden rounded-card border border-electric/[0.18]" style={{ background: 'var(--lp-grad-deep)' }}>
-        {/* Premium image banner — copyright-free Pexels photo + dark gradient scrim */}
-        <div className="relative h-48 w-full overflow-hidden md:h-56">
-          <img
-            key={a.image}
-            src={a.image}
-            alt={a.title}
-            loading="lazy"
-            className="h-full w-full animate-[fade-in_0.6s_ease] object-cover"
-          />
-          <div className="absolute inset-0" style={{ background: 'linear-gradient(180deg, rgba(3,7,25,0.25) 28%, rgba(3,7,25,0.94) 100%)' }} />
-          <div className="absolute bottom-4 left-6 flex items-center gap-2.5">
-            <span className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-white/15 bg-white/10 backdrop-blur">
-              <Icon size={18} className="text-white" />
-            </span>
-            <span className="rounded-pill border border-white/20 bg-black/40 px-3 py-1 text-[12px] font-medium text-white backdrop-blur">
-              {a.label}
-            </span>
-          </div>
-        </div>
-
-        <div className="relative grid grid-cols-1 items-center gap-10 p-10 md:grid-cols-2">
-          <div>
-            <h3 className="mb-3 text-[30px] font-semibold tracking-heading text-[var(--lp-on-deep)]">{a.title}</h3>
-            <p className="mb-6 text-base leading-normal text-[var(--lp-on-deep-muted)]">{a.sub}</p>
-            <a href={`mailto:support@intants.com?subject=${encodeURIComponent('AntHire — ' + a.label)}`} className="inline-flex items-center gap-2 rounded-[9px] px-5.5 py-3 text-sm font-semibold transition-transform hover:-translate-y-0.5" style={{ background: 'var(--lp-btn)', color: 'var(--lp-btn-text)' }}>{a.cta} →</a>
-          </div>
-          <div className="flex flex-col gap-3">
-            {a.points.map((pt) => (
-              <div key={pt} className="flex items-start gap-3 rounded-[14px] border p-4 transition-colors hover:border-electric/30" style={{ borderColor: 'var(--lp-line)', background: 'var(--lp-surface-soft)' }}>
-                <span className="inline-flex h-6 w-6 flex-none items-center justify-center rounded-[7px] bg-electric/[0.16]"><Check size={13} className="text-electric" strokeWidth={2.5} /></span>
-                <div className="text-[14.5px] leading-snug text-[var(--lp-on-deep)]">{pt}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+    <section id="languages" aria-labelledby="lang-title" className="mx-auto max-w-[1200px] scroll-mt-20 px-4 py-20 sm:px-6 sm:py-24">
+      <Card className="px-6 py-12 text-center sm:px-12 sm:py-16">
+        <SectionHeading
+          id="lang-title"
+          eyebrow="Languages"
+          title="Interview in the language you think in."
+          lede="Practise in English, Hindi or Telugu, out loud. More Indian languages are planned."
+        />
+        <ul className="mx-auto grid max-w-[640px] grid-cols-1 gap-3 sm:grid-cols-3">
+          {LANGUAGES_LIVE.map((l) => (
+            <li key={l.name} className="rounded-[16px] border border-[var(--lp-line)] bg-[var(--lp-surface-alt)] px-4 py-5">
+              <div lang={l.name === 'Hindi' ? 'hi' : l.name === 'Telugu' ? 'te' : 'en'} className="font-display text-2xl font-bold text-[var(--lp-text)]">{l.native}</div>
+              <div className="mt-1 text-sm text-[var(--lp-text-muted)]">{l.name}</div>
+            </li>
+          ))}
+        </ul>
+      </Card>
     </section>
   )
 }

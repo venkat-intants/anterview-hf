@@ -59,7 +59,7 @@ from app.config import settings
 from app.exam_link import hash_exam_token, mint_exam_token
 from app.mailer import candidate_language, enqueue_email
 from app.notifications_util import create_notification
-from app.requisitions import record_round_move, record_transition
+from app.requisitions import TERMINAL_STATUSES, record_round_move, record_transition
 from app.workflows import (
     AI_GRADED_KINDS,
     EXAM_BACKED_KINDS,
@@ -240,6 +240,8 @@ async def enrolment_awaiting_exam_round(
                 " WHERE e.applicant_id = :a"
                 "   AND wr.exam_round_id = :er"
                 "   AND e.deleted_at IS NULL"
+                "   AND e.status NOT IN ('hired','rejected')"
+                " ORDER BY e.created_at DESC, e.id"
                 " LIMIT 1"
             ),
             {"a": applicant_id, "er": exam_round_id},
@@ -281,7 +283,15 @@ async def sole_live_enrolment(
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
-async def _load_enrolment(db: AsyncSession, enrolment_id: uuid.UUID) -> dict[str, Any] | None:
+async def _load_enrolment(
+    db: AsyncSession, enrolment_id: uuid.UUID, *, lock: bool = False
+) -> dict[str, Any] | None:
+    """The enrolment plus its applicant's name/email.
+
+    ``lock`` takes ``FOR UPDATE OF e`` (the enrolment row only, not the
+    applicant) so a caller that is about to check-then-write on the enrolment's
+    status or round is serialised against a concurrent decision.
+    """
     row = (
         await db.execute(
             text(
@@ -291,6 +301,7 @@ async def _load_enrolment(db: AsyncSession, enrolment_id: uuid.UUID) -> dict[str
                 "  FROM enrolments e"
                 "  JOIN applicants a ON a.id = e.applicant_id"
                 " WHERE e.id = :i AND e.deleted_at IS NULL"
+                + (" FOR UPDATE OF e" if lock else "")
             ),
             {"i": enrolment_id},
         )
@@ -675,9 +686,26 @@ async def record_result(
     A repeat call supersedes the previous result rather than overwriting it, so
     an earlier attempt stays readable for an appeal or an audit.
     """
-    enrolment = await _load_enrolment(db, enrolment_id)
+    # Locked, so the guards below and the writes after them are one serialised
+    # step: a final decision landing between the check and the hold cannot be
+    # overwritten by a late result.
+    enrolment = await _load_enrolment(db, enrolment_id, lock=True)
     if enrolment is None:
         return RunnerOutcome(action="noop", reason="enrolment not found")
+    # A result for a candidacy a person has already ended, or for a round the
+    # candidate is no longer on (a late or replayed submit), must not write a
+    # round_results row or move anyone. _advance has always had the round guard;
+    # the hold paths did not, so a late exam submit could pull a rejected
+    # enrolment back to held, and for a hired one record_transition's 409 escaped
+    # past the exam submit handler and the graded attempt was never saved.
+    # (A final decision also clears current_round_id, but the pipeline board's
+    # status change does not, so the status check is not redundant.)
+    if str(enrolment["status"]) in TERMINAL_STATUSES:
+        return RunnerOutcome(action="noop", enrolment_id=str(enrolment_id),
+                             reason="candidacy already decided")
+    if str(enrolment["current_round_id"] or "") != str(round_id):
+        return RunnerOutcome(action="noop", enrolment_id=str(enrolment_id),
+                             reason="not the candidate's current round")
     round_ = await _load_round(db, round_id)
     if round_ is None:
         return RunnerOutcome(action="noop", enrolment_id=str(enrolment_id),

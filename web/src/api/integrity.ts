@@ -3,6 +3,7 @@
 // leaves the browser; only these lightweight events are transmitted.
 
 import { interviewGet, interviewPost } from './client';
+import { pathId } from './pathId';
 
 export type IntegrityEventType =
   | 'gaze_away'
@@ -49,7 +50,7 @@ export async function postIntegrityEvents(
 ): Promise<IntegrityBatchResult | null> {
   try {
     return await interviewPost<IntegrityBatchResult>(
-      `/api/sessions/${sessionId}/integrity-events`,
+      `/api/sessions/${pathId(sessionId)}/integrity-events`,
       { events },
     );
   } catch {
@@ -94,7 +95,7 @@ export async function getSessionIntegrity(
   sessionId: string,
 ): Promise<IntegrityReport | null> {
   try {
-    return await interviewGet<IntegrityReport>(`/api/sessions/${sessionId}/integrity`);
+    return await interviewGet<IntegrityReport>(`/api/sessions/${pathId(sessionId)}/integrity`);
   } catch {
     return null;
   }

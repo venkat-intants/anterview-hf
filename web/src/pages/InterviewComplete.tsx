@@ -6,33 +6,31 @@
 //   3. After SCORECARD_POLL_TIMEOUT_MS, stops polling and shows a timeout state
 //      with a manual "Check again" retry and a back-to-dashboard CTA.
 //
-// Visual: design-kit dark-glass treatment with the 4-step "preparing" animation
+// Visual: a calm centred card with the 4-step "preparing" list
 // (presentation only — real redirect source of truth is the poll, not the steps).
-// The early-exit branch renders an amber warning card.
-// Bare content inside AppShell — no shell/AuroraField imported here.
+// The early-exit branch renders a warm warning card.
+// Bare content inside AppShell — no shell is imported here.
 
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { motion } from 'framer-motion';
 import {
   CheckCircle2,
   Clock,
   LayoutDashboard,
-  History,
   ArrowRight,
   RefreshCw,
   XCircle,
   Sparkles,
 } from '@/design/components/icons';
 import { listSessions } from '@/api/sessions';
+import { useAuth } from '@/context/AuthContext';
+import { isGuestOnly } from '@/lib/guest';
 import { cn } from '@/lib/utils';
-import {
-  GlassCard,
-  StatusTag,
-} from '@/design/components/primitives';
-import { staggerParent, staggerChild, springSoft } from '@/design/lib/motion';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { StatusTag } from '@/design/components/primitives';
+import { Breadcrumbs } from '@/design/components/page';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -42,11 +40,11 @@ const POLL_INTERVAL_MS = 3_000;
 const SCORECARD_POLL_TIMEOUT_MS = 90_000;
 
 /** Animated steps shown while the scorecard is preparing (presentation-only). */
-const PREPARING_STEPS = [
-  'Transcribing your answers',
-  'Scoring competencies',
-  'Benchmarking against role',
-  'Generating scorecard',
+const PREPARING_STEP_KEYS = [
+  'interviewComplete.stepTranscribing',
+  'interviewComplete.stepScoring',
+  'interviewComplete.stepBenchmarking',
+  'interviewComplete.stepGenerating',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -63,7 +61,8 @@ interface LocationState {
 // Small presentational sub-components
 // ---------------------------------------------------------------------------
 
-/** Single step row rendered while polling for the scorecard. */
+/** Single step row rendered while polling for the scorecard. The state reads
+ *  from the icon's shape (check / spinner / empty ring), not its colour. */
 function StepRow({
   label,
   state,
@@ -72,15 +71,14 @@ function StepRow({
   state: 'pending' | 'active' | 'done';
 }) {
   return (
-    <motion.div
-      variants={staggerChild}
+    <li
       className={cn(
-        'flex items-center gap-3 rounded-[12px] border px-4 py-3 transition-colors',
+        'flex items-center gap-3 rounded-[12px] px-4 py-3 transition-colors',
         state === 'done'
-          ? 'border-[rgba(39,201,63,0.22)] bg-[rgba(39,201,63,0.04)]'
+          ? 'bg-[var(--ui-ok-wash)]'
           : state === 'active'
-            ? 'border-[rgba(var(--accent-rgb),0.22)] bg-[rgba(var(--accent-rgb),0.04)]'
-            : 'border-border bg-[var(--ui-inset-soft)]',
+            ? 'bg-[var(--ui-info-wash)]'
+            : 'bg-[var(--ui-inset-soft)]',
       )}
     >
       <span
@@ -90,27 +88,27 @@ function StepRow({
             ? 'text-[var(--ui-ok)]'
             : state === 'active'
               ? 'text-[var(--ui-info)]'
-              : 'text-[var(--ui-faint)]',
+              : 'text-muted-foreground',
         )}
         aria-hidden="true"
       >
         {state === 'done' ? (
-          <CheckCircle2 size={17} />
+          <CheckCircle2 size={18} />
         ) : state === 'active' ? (
-          <span className="block h-[15px] w-[15px] animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[#60a5fa]" />
+          <span className="block h-4 w-4 animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[var(--accent)]" />
         ) : (
-          <span className="block h-[15px] w-[15px] rounded-full border border-[var(--ui-line-strong)]" />
+          <span className="block h-4 w-4 rounded-full border border-[var(--ui-line-strong)]" />
         )}
       </span>
       <span
         className={cn(
-          'text-[13.5px]',
-          state === 'pending' ? 'text-[var(--ui-faint)]' : 'text-foreground',
+          'text-[14px]',
+          state === 'pending' ? 'text-muted-foreground' : 'font-medium text-foreground',
         )}
       >
         {label}
       </span>
-    </motion.div>
+    </li>
   );
 }
 
@@ -123,6 +121,11 @@ export default function InterviewComplete() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  // A candidate invited by link has no dashboard, history or self-serve
+  // interviews — the server refuses a guest token on all three — so this page
+  // offers them only what they can open: the scorecard, when it is ready.
+  const { user } = useAuth();
+  const isGuest = isGuestOnly(user?.roles);
 
   const state = location.state as LocationState | null;
   const message = state?.message ?? t('interviewComplete.defaultMessage');
@@ -134,7 +137,7 @@ export default function InterviewComplete() {
   const startTimeRef = useRef(Date.now());
 
   // ── Animated step state (presentation) ────────────────────────────────────
-  // Advances through PREPARING_STEPS while polling is live.
+  // Advances through PREPARING_STEP_KEYS while polling is live.
   // Deliberately does NOT gate the redirect — the real poll does.
   const [visualStep, setVisualStep] = useState(0);
 
@@ -172,7 +175,7 @@ export default function InterviewComplete() {
   // Advance the visual step every ~900 ms, cycling slowly
   useEffect(() => {
     if (!pollingActive) return;
-    if (visualStep >= PREPARING_STEPS.length) return;
+    if (visualStep >= PREPARING_STEP_KEYS.length) return;
     const id = setTimeout(() => setVisualStep((s) => s + 1), 900);
     return () => clearTimeout(id);
   }, [pollingActive, visualStep]);
@@ -193,71 +196,73 @@ export default function InterviewComplete() {
 
   return (
     <div className="flex min-h-[calc(100vh-4rem)] items-center justify-center px-4 py-12">
-      <div className="w-full max-w-[460px]">
+      <div className="w-full max-w-[480px]">
+        {/* History is reached through this trail, so it is not repeated below. */}
+        {!isGuest && (
+          <Breadcrumbs
+            className="mb-6"
+            items={[
+              { label: t('nav.history'), to: '/history' },
+              { label: t('interviewComplete.crumb') },
+            ]}
+          />
+        )}
+
         {/* ── Hero icon ──────────────────────────────────────────────────── */}
         <div className="flex justify-center">
-          <motion.span
+          <span
             className={cn(
               'flex h-20 w-20 items-center justify-center rounded-full',
               endedEarly
-                ? 'border border-[rgba(255,183,100,0.3)] bg-[rgba(255,183,100,0.1)]'
-                : 'border border-[rgba(var(--accent-rgb),0.25)] bg-[linear-gradient(135deg,rgba(var(--accent-rgb),0.18),rgba(168,135,220,0.18))]',
+                ? 'bg-[var(--ui-warn-wash)] text-[var(--ui-warn)]'
+                : 'bg-highlight text-highlight-foreground',
             )}
-            initial={{ scale: 0.7, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={springSoft}
           >
             {endedEarly ? (
-              <XCircle size={38} className="text-[var(--ui-warn)]" aria-hidden="true" />
+              <XCircle size={38} aria-hidden="true" />
             ) : (
-              <CheckCircle2 size={38} className="text-[var(--ui-info)]" aria-hidden="true" />
+              <CheckCircle2 size={38} aria-hidden="true" />
             )}
-          </motion.span>
+          </span>
         </div>
 
         {/* ── Heading + subtitle ─────────────────────────────────────────── */}
-        <motion.div
-          className="mt-6 text-center"
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, ease: [0.2, 0.7, 0.2, 1], delay: 0.08 }}
-        >
-          <h1 className="text-[26px] font-semibold tracking-[-0.8px] text-foreground">
+        <div className="mt-6 text-center">
+          <h1 className="text-[28px] font-bold tracking-[-0.6px] text-foreground">
             {endedEarly ? t('interviewComplete.titleEarly') : t('interviewComplete.title')}
           </h1>
-          <p className="mt-2 text-[14px] leading-relaxed text-muted-foreground">{message}</p>
+          <p className="mt-2 text-[15px] leading-relaxed text-muted-foreground">{message}</p>
+          {/* The scorecard that follows is feedback, not an outcome. Said here
+              too, before the number appears. Not shown after an early exit,
+              where no feedback is coming. */}
+          {!endedEarly && (
+            <p data-testid="not-a-decision" className="mt-1.5 text-[13px] text-muted-foreground">
+              {isGuest ? t('practice.notDecisionGuest') : t('practice.notDecision')}
+            </p>
+          )}
 
           {sessionId && (
-            <p className="mt-1.5 font-mono text-[11.5px] text-[var(--ui-faint)] break-all">
+            <p className="mt-1.5 break-all font-mono text-[12px] text-muted-foreground">
               {t('interviewComplete.sessionLabel', { id: sessionId })}
             </p>
           )}
-        </motion.div>
+        </div>
 
-        <motion.div
-          className="mt-8 flex flex-col gap-3"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.45, ease: [0.2, 0.7, 0.2, 1], delay: 0.18 }}
-        >
+        <div className="mt-8 flex flex-col gap-3">
           {/* ── Early-exit card ─────────────────────────────────────────── */}
           {endedEarly && (
-            <div data-testid="early-exit-card">
-            <GlassCard
-              className="rounded-[20px] border-[rgba(255,183,100,0.18)] bg-[rgba(255,183,100,0.04)] p-5 text-center"
+            <div
+              data-testid="early-exit-card"
+              className="rounded-card border border-border bg-card p-5 text-center shadow-card"
             >
-              <div
-                className="flex flex-col items-center gap-2"
-                aria-live="polite"
-              >
+              <div className="flex flex-col items-center gap-2" aria-live="polite">
                 <StatusTag tone="amber" dot>
                   {t('interviewComplete.earlyExitTitle')}
                 </StatusTag>
-                <p className="mt-1 text-[13px] text-muted-foreground">
+                <p className="mt-1 text-[14px] text-muted-foreground">
                   {t('interviewComplete.earlyExitDesc')}
                 </p>
               </div>
-            </GlassCard>
             </div>
           )}
 
@@ -265,146 +270,85 @@ export default function InterviewComplete() {
           {!endedEarly && (
             <>
               {isPreparing && (
-                <GlassCard className="rounded-[20px] p-5">
-                  <div
-                    className="mb-4 flex items-center justify-between"
-                    aria-live="polite"
-                  >
-                    <span className="text-[13px] font-medium text-[var(--ui-info)]">
+                <section className="rounded-card border border-border bg-card p-5 shadow-card">
+                  <div className="mb-4 flex items-center justify-between" aria-live="polite">
+                    <h2 className="text-[15px] font-bold text-foreground">
                       {t('interviewComplete.preparingScorecard')}
-                    </span>
+                    </h2>
                     <span
-                      className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[#60a5fa]"
+                      className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[var(--accent)]"
                       aria-hidden="true"
                     />
                   </div>
 
-                  {/* 4-step preparing animation (presentation) */}
-                  <motion.div
-                    className="flex flex-col gap-2"
-                    variants={staggerParent}
-                    initial="hidden"
-                    animate="show"
-                  >
-                    {PREPARING_STEPS.map((step, i) => {
+                  {/* 4-step preparing list (presentation) */}
+                  <ol className="flex flex-col gap-2">
+                    {PREPARING_STEP_KEYS.map((key, i) => {
                       const stepState =
-                        i < visualStep
-                          ? 'done'
-                          : i === visualStep
-                            ? 'active'
-                            : 'pending';
-                      return (
-                        <StepRow key={step} label={step} state={stepState} />
-                      );
+                        i < visualStep ? 'done' : i === visualStep ? 'active' : 'pending';
+                      return <StepRow key={key} label={t(key)} state={stepState} />;
                     })}
-                  </motion.div>
+                  </ol>
 
-                  <p className="mt-4 text-center text-[12px] text-[var(--ui-faint)]">
+                  <p className="mt-4 text-center text-[13px] text-muted-foreground">
                     {t('interviewComplete.scorecardDesc')}
                   </p>
-                </GlassCard>
+                </section>
               )}
 
               {hasTimedOut && (
-                <GlassCard className="rounded-[20px] p-5 text-center">
-                  <div
-                    className="flex flex-col items-center gap-3"
-                    aria-live="polite"
-                  >
-                    <Clock
-                      size={30}
-                      className="text-[var(--ui-faint)]"
-                      aria-hidden="true"
-                    />
+                <div className="rounded-card border border-border bg-card p-5 text-center shadow-card">
+                  <div className="flex flex-col items-center gap-3" aria-live="polite">
+                    <Clock size={30} className="text-muted-foreground" aria-hidden="true" />
                     <div>
-                      <p className="text-[14px] font-medium text-foreground">
+                      <p className="text-[15px] font-semibold text-foreground">
                         {t('interviewComplete.scorecardTimeout')}
                       </p>
-                      <p className="mt-1 text-[13px] text-muted-foreground">
+                      <p className="mt-1 text-[14px] text-muted-foreground">
                         {t('interviewComplete.scorecardTimeoutDesc')}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleCheckAgain}
-                      className={cn(
-                        'inline-flex items-center gap-1.5 rounded-[9999px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-foreground',
-                        'bg-[var(--ui-inset)] transition-colors hover:bg-[var(--ui-inset-strong)]',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-                      )}
-                    >
-                      <RefreshCw size={14} aria-hidden="true" />
+                    <Button type="button" variant="outline" onClick={handleCheckAgain}>
+                      <RefreshCw aria-hidden="true" />
                       {t('interviewComplete.checkAgain')}
-                    </button>
+                    </Button>
                   </div>
-                </GlassCard>
+                </div>
               )}
             </>
           )}
 
           {/* ── Navigation CTAs ─────────────────────────────────────────── */}
-          <Link
-            to="/dashboard"
-            className={cn(
-              'flex w-full items-center justify-center gap-2 rounded-[12px] border border-border',
-              'bg-primary px-5 py-3 text-[14px] font-semibold text-primary-foreground',
-              'transition-colors hover:bg-primary/90',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            )}
-          >
-            <LayoutDashboard size={16} aria-hidden="true" />
-            {t('interviewComplete.backToDashboard')}
-          </Link>
+          {!isGuest && (
+            <>
+              <Link to="/dashboard" className={cn(buttonVariants({ size: 'lg' }), 'w-full')}>
+                <LayoutDashboard aria-hidden="true" />
+                {t('interviewComplete.backToDashboard')}
+              </Link>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Link
-              to="/history"
-              className={cn(
-                'flex items-center justify-center gap-1.5 rounded-[12px] border border-border',
-                'bg-[var(--ui-inset)] px-4 py-2.5 text-[13.5px] font-medium text-[var(--ui-soft)]',
-                'transition-colors hover:bg-[var(--ui-inset-strong)] hover:text-foreground',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-              )}
-            >
-              <History size={15} aria-hidden="true" />
-              {t('interviewComplete.history')}
-            </Link>
+              <Link to="/start" className={cn(buttonVariants({ variant: 'outline' }), 'w-full')}>
+                <ArrowRight aria-hidden="true" />
+                {t('interviewComplete.newInterview')}
+              </Link>
+            </>
+          )}
 
-            <Link
-              to="/start"
-              className={cn(
-                'flex items-center justify-center gap-1.5 rounded-[12px] border border-border',
-                'bg-[var(--ui-inset)] px-4 py-2.5 text-[13.5px] font-medium text-[var(--ui-soft)]',
-                'transition-colors hover:bg-[var(--ui-inset-strong)] hover:text-foreground',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-              )}
-            >
-              <ArrowRight size={15} aria-hidden="true" />
-              {t('interviewComplete.newInterview')}
-            </Link>
-          </div>
-
-          {/* ── "View scorecard" Pill — shown when visual steps are done
-                but real redirect hasn't fired yet (edge: fast poll hit
-                between step 4 and redirect). Also shown as a convenience
-                link if the user is waiting. Presentation only — the real
-                navigate() fires the moment scorecardId arrives. ─────── */}
-          {!endedEarly && visualStep >= PREPARING_STEPS.length && !hasTimedOut && (
+          {/* Shown when the visual steps are done but the real redirect hasn't
+              fired yet (edge: fast poll hit between step 4 and redirect).
+              Presentation only — the real navigate() fires the moment
+              scorecardId arrives. */}
+          {!endedEarly && visualStep >= PREPARING_STEP_KEYS.length && !hasTimedOut && (
             <div className="flex justify-center pt-1">
               <span
-                className={cn(
-                  'inline-flex items-center gap-2 rounded-[9999px] px-6 py-3 text-[14px] font-semibold',
-                  'bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)] border border-[rgba(var(--accent-rgb),0.35)]',
-                  'animate-pulse',
-                )}
+                className="inline-flex items-center gap-2 rounded-full bg-[var(--ui-info-wash)] px-6 py-3 text-[14px] font-semibold text-[var(--ui-info)] motion-safe:animate-pulse"
                 aria-live="polite"
               >
                 <Sparkles size={15} aria-hidden="true" />
-                Redirecting to your scorecard…
+                {t('interviewComplete.redirecting')}
               </span>
             </div>
           )}
-        </motion.div>
+        </div>
       </div>
     </div>
   );

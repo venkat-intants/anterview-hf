@@ -16,8 +16,8 @@
 //     back about that one?" is the question this page exists to answer.
 //   • the history is fetched only when asked for.
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -60,6 +60,15 @@ vi.mock('../lib/toast', () => ({
 const listMyInterviewLoops = vi.fn();
 vi.mock('../api/scheduling', () => ({
   listMyInterviewLoops: (...a: unknown[]) => listMyInterviewLoops(...a) as unknown,
+}));
+
+// Offers are fetched alongside the loops (the action queue reads both), so the
+// page always touches this too. Empty by default; the placement tests set it.
+const listMyOffers = vi.fn();
+const getMyOfferLink = vi.fn();
+vi.mock('../api/offers', () => ({
+  listMyOffers: (...a: unknown[]) => listMyOffers(...a) as unknown,
+  getMyOfferLink: (...a: unknown[]) => getMyOfferLink(...a) as unknown,
 }));
 
 // PH5-E3 — "Your rediscovery" (YourRediscovery.tsx) also mounts above the
@@ -114,18 +123,22 @@ function app(over: Partial<MyApplication> = {}): MyApplication {
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <Applications />
-      </MemoryRouter>
-    </QueryClientProvider>,
-  );
+  return {
+    ...render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Applications />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    ),
+    client,
+  };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   listMyInterviewLoops.mockResolvedValue([]);
+  listMyOffers.mockResolvedValue([]);
   listMyRediscovery.mockResolvedValue({ companies: [], consent_months: 12 });
   listMyApplications.mockResolvedValue([app()]);
   getMyApplication.mockResolvedValue({
@@ -160,7 +173,11 @@ describe('Applications', () => {
       }),
     ]);
     renderPage();
-    expect(await screen.findByText('Round 2 of 4 · Coding Round')).toBeInTheDocument();
+    // The track's middle step: the count as its label, the round's own title
+    // under it. (Below `sm` the Stepper folds both into one line.)
+    expect(await screen.findByText('Round 2 of 4')).toBeInTheDocument();
+    expect(screen.getByText('Coding Round')).toBeInTheDocument();
+    expect(screen.getByText('Step 2 of 3 · Round 2 of 4 · Coding Round')).toBeInTheDocument();
   });
 
   it('omits the progress line entirely before a round is assigned', async () => {
@@ -199,7 +216,8 @@ describe('Applications', () => {
       app({ id: 'done', job_title: 'Data Analyst', stage: 'Not progressing', closed: true }),
     ]);
     renderPage();
-    expect(await screen.findByText('Closed')).toBeInTheDocument();
+    // Under its own heading: not mixed in with the live ones.
+    expect(await screen.findByRole('heading', { name: /^Closed/ })).toBeInTheDocument();
     // Kept, not hidden.
     expect(screen.getByText('Data Analyst')).toBeInTheDocument();
     expect(screen.getByText('Backend Engineer')).toBeInTheDocument();
@@ -583,5 +601,352 @@ describe('Applications — rediscovery', () => {
     await screen.findByText('Keep my profile for future openings at Acme Test Co');
     expect(screen.getByText(/for up to 12 months/)).toBeInTheDocument();
     expect(screen.getByText(/turn it off at any time/)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// UX round 3 — whose move it is, the order of the page, translated stages
+// ---------------------------------------------------------------------------
+
+const headings = (): string[] =>
+  screen.getAllByRole('heading', { level: 2 }).map((h) => (h.textContent ?? '').replace(/\s*\d+$/, ''));
+
+describe('Applications — order and turn', () => {
+  it('orders the sections: Your move, With the hiring team, Closed, then the rest', async () => {
+    listMyApplications.mockResolvedValue([
+      app({ id: 'closed', job_title: 'Clerk', stage: 'Not progressing', closed: true }),
+      app({ id: 'quiet', job_title: 'Sales Associate' }),
+      app({ id: 'mine', job_title: 'Data Analyst', interview_invite_id: 'inv-1' }),
+    ]);
+    listMyRediscovery.mockResolvedValue({
+      companies: [rediscoveryCompany()],
+      consent_months: 12,
+    });
+    renderPage();
+    await screen.findByText('Data Analyst');
+    await screen.findByText('Privacy and future openings');
+
+    expect(headings()).toEqual([
+      'Your move',
+      'With the hiring team',
+      'Closed',
+      'Privacy and future openings',
+    ]);
+  });
+
+  it('says "Your move" exactly when an action is waiting', async () => {
+    listMyApplications.mockResolvedValue([
+      app({ id: 'mine', job_title: 'Data Analyst', exam_assignment_id: 'asn-1' }),
+      app({ id: 'quiet', job_title: 'Sales Associate' }),
+      app({ id: 'closed', job_title: 'Clerk', stage: 'Not progressing', closed: true }),
+    ]);
+    renderPage();
+    const mine = await screen.findByTestId('application-mine');
+    expect(within(mine).getByText('Your move')).toBeInTheDocument();
+    expect(within(screen.getByTestId('application-quiet')).getByText('With the hiring team')).toBeInTheDocument();
+    expect(within(screen.getByTestId('application-quiet')).queryByText('Your move')).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('application-closed')).getByText('Closed')).toBeInTheDocument();
+  });
+
+  it('gives each application one action row; the rest wait under “Also waiting”', async () => {
+    listMyApplications.mockResolvedValue([
+      app({
+        exam_assignment_id: 'asn-1',
+        exam_in_progress: true,
+        interview_invite_id: 'inv-1',
+        task_submission_id: 'sub-1',
+      }),
+    ]);
+    renderPage();
+    const card = await screen.findByTestId('application-enr-1');
+
+    // The assessment under way is the one in front...
+    expect(within(card).getByRole('button', { name: 'Resume assessment' })).toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: 'Start interview' })).not.toBeInTheDocument();
+
+    // ...and nothing was removed: the others are one press away.
+    await userEvent.click(within(card).getByRole('button', { name: /Also waiting/ }));
+    expect(within(card).getByRole('button', { name: 'Start interview' })).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: 'Open task' })).toBeInTheDocument();
+  });
+
+  it('draws the track as Applied → round → Decision, with the position in words', async () => {
+    listMyApplications.mockResolvedValue([
+      app({ stage: 'Shortlisted', current_round_title: 'Coding Round', round_number: 2, total_rounds: 4 }),
+    ]);
+    renderPage();
+    const track = await screen.findByRole('navigation', { name: 'Application progress' });
+    const steps = within(track).getAllByRole('listitem').filter((li) => li.getAttribute('aria-hidden') !== 'true');
+    expect(steps.map((s) => s.textContent)).toEqual([
+      expect.stringContaining('Applied'),
+      expect.stringContaining('Round 2 of 4'),
+      expect.stringContaining('Decision'),
+    ]);
+    expect(steps[1]).toHaveAttribute('aria-current', 'step');
+  });
+
+  it('puts a closed application on “Decision”', async () => {
+    listMyApplications.mockResolvedValue([app({ stage: 'Selected', closed: true })]);
+    renderPage();
+    const track = await screen.findByRole('navigation', { name: 'Application progress' });
+    const current = within(track).getAllByRole('listitem').find((li) => li.getAttribute('aria-current') === 'step');
+    expect(current?.textContent).toContain('Decision');
+  });
+
+  it('shows no pass, fail or outcome wording for any payload', async () => {
+    // The server owns the words; this page must add none of its own. Walk every
+    // shape the page can take and read all of its text.
+    const payloads: MyApplication[][] = [
+      [app()],
+      [app({ stage: 'Under review', closed: false })],
+      [app({ stage: 'Selected', closed: true })],
+      [app({ stage: 'Not progressing', closed: true })],
+      [app({ exam_assignment_id: 'a', exam_in_progress: true, round_number: 1, total_rounds: 3, current_round_title: 'Aptitude' })],
+      [app({ interview_invite_id: 'i' }), app({ id: 'b', task_submission_id: 't' })],
+      [app({ stage: 'Something New', stage_code: 'something_new' })],
+    ];
+    for (const apps of payloads) {
+      listMyApplications.mockResolvedValue(apps);
+      const { container, unmount } = renderPage();
+      await screen.findAllByRole('article');
+      const text = container.textContent ?? '';
+      expect(text, JSON.stringify(apps.map((a) => a.stage))).not.toMatch(
+        /\b(pass(ed)?|fail(ed|ure)?|reject(ed)?|hired|rank(ed)?|score[sd]?|threshold|held|percent)\b|\d\s*%/i,
+      );
+      unmount();
+    }
+  });
+});
+
+describe('Applications — stage text', () => {
+  const setLanguage = async (lng: 'en' | 'hi' | 'te') => {
+    const { default: i18n } = await import('../lib/i18n');
+    await i18n.changeLanguage(lng);
+  };
+  afterEach(async () => {
+    await setLanguage('en');
+  });
+
+  it.each([
+    ['Application received', 'आवेदन प्राप्त हुआ'],
+    ['Shortlisted', 'शॉर्टलिस्ट किया गया'],
+    ['Interview complete', 'इंटरव्यू पूरा हुआ'],
+    ['Under review', 'समीक्षा में'],
+    ['Selected', 'चयनित'],
+    ['Not progressing', 'आगे नहीं बढ़ा'],
+  ])('translates the known server label “%s”', async (label, hindi) => {
+    await setLanguage('hi');
+    listMyApplications.mockResolvedValue([app({ stage: label })]);
+    renderPage();
+    const card = await screen.findByTestId('application-enr-1');
+    expect(within(card).getAllByText(hindi).length).toBeGreaterThan(0);
+    // The English label the server sent is not what the reader sees.
+    expect(within(card).queryByText(label)).not.toBeInTheDocument();
+  });
+
+  it('translates the what-happens-next sentence too', async () => {
+    await setLanguage('te');
+    listMyApplications.mockResolvedValue([app()]);
+    renderPage();
+    expect(await screen.findByText(/హైరింగ్ టీమ్ దరఖాస్తులను సమీక్షిస్తోంది/)).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing to do for now/)).not.toBeInTheDocument();
+  });
+
+  it('falls through to the server’s own words for a stage it has never heard of', async () => {
+    await setLanguage('hi');
+    listMyApplications.mockResolvedValue([
+      app({ stage: 'Awaiting references', next_step: 'Send us two references.' }),
+    ]);
+    renderPage();
+    expect(await screen.findByText('Awaiting references')).toBeInTheDocument();
+    expect(screen.getByText('Send us two references.')).toBeInTheDocument();
+  });
+
+  it('prefers stage_code when the server sends it', async () => {
+    await setLanguage('hi');
+    // The label disagrees on purpose: the code is the stable vocabulary.
+    listMyApplications.mockResolvedValue([app({ stage: 'Shortlisted', stage_code: 'under_review' })]);
+    renderPage();
+    const card = await screen.findByTestId('application-enr-1');
+    expect(within(card).getAllByText('समीक्षा में').length).toBeGreaterThan(0);
+    expect(within(card).queryByText('शॉर्टलिस्ट किया गया')).not.toBeInTheDocument();
+  });
+
+  it('ignores a stage_code it does not know and uses the label', async () => {
+    listMyApplications.mockResolvedValue([app({ stage: 'Shortlisted', stage_code: 'brand_new_code' })]);
+    renderPage();
+    expect(await screen.findByText('Shortlisted')).toBeInTheDocument();
+  });
+
+  it('translates the history entries', async () => {
+    await setLanguage('hi');
+    getMyApplication.mockResolvedValue({
+      ...app(),
+      history: [
+        { stage: 'Application received', stage_code: 'received', occurred_at: '2026-09-01T10:00:00Z', by_a_person: false },
+        { stage: 'Mystery', occurred_at: '2026-09-02T10:00:00Z', by_a_person: true },
+      ],
+    } satisfies MyApplicationDetail);
+    listMyApplications.mockResolvedValue([app()]);
+    renderPage();
+    const toggle = await screen.findByRole('button', { expanded: false });
+    await userEvent.click(toggle);
+    // A stage it has never heard of is shown as the server wrote it.
+    expect(await screen.findByText(/Mystery/)).toBeInTheDocument();
+    expect(screen.getAllByText(/आवेदन प्राप्त हुआ/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('Applications — interviews and offers', () => {
+  function offerRow(over: Record<string, unknown> = {}) {
+    return {
+      id: 'off-1',
+      status: 'sent',
+      company: 'Acme Test Co',
+      job_title: 'Backend Engineer',
+      base_salary: null,
+      currency: null,
+      expires_at: '2026-10-20T00:00:00Z',
+      responded_at: null,
+      preboarding_completed_at: null,
+      ...over,
+    };
+  }
+  function loopRow(over: Record<string, unknown> = {}) {
+    return {
+      id: 'loop-1',
+      title: 'Panel round',
+      job_title: 'Backend Engineer',
+      status: 'draft',
+      timezone: 'Asia/Kolkata',
+      self_schedule: true,
+      sessions: [],
+      ...over,
+    };
+  }
+
+  it('hides the interviews-and-offers section when there are none', async () => {
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    expect(screen.queryByText('Scheduled interviews and offers')).not.toBeInTheDocument();
+  });
+
+  it('puts an offer on its application card when the server sent application_id', async () => {
+    listMyApplications.mockResolvedValue([app({ id: 'one' }), app({ id: 'two', job_title: 'Backend Engineer' })]);
+    listMyOffers.mockResolvedValue([offerRow({ application_id: 'two' })]);
+    renderPage();
+    const two = await screen.findByTestId('application-two');
+    expect(await within(two).findByText('Respond to your offer')).toBeInTheDocument();
+    // On the card, so there is no separate section for it...
+    expect(screen.queryByText('Scheduled interviews and offers')).not.toBeInTheDocument();
+    // ...and not on the other opening that shares its title.
+    expect(within(screen.getByTestId('application-one')).queryByText('Respond to your offer')).not.toBeInTheDocument();
+    // The card is the candidate's move.
+    expect(within(two).getByText('Your move')).toBeInTheDocument();
+  });
+
+  it('renders the separate section when application_id is absent (older server)', async () => {
+    listMyApplications.mockResolvedValue([app()]);
+    listMyOffers.mockResolvedValue([offerRow()]);
+    renderPage();
+    expect(await screen.findByText('Scheduled interviews and offers')).toBeInTheDocument();
+    // Never guessed onto the card by job title, though the title matches.
+    expect(within(screen.getByTestId('application-enr-1')).queryByText('Respond to your offer')).not.toBeInTheDocument();
+    expect(within(screen.getByTestId('application-enr-1')).getByText('With the hiring team')).toBeInTheDocument();
+  });
+
+  it('puts the section after Closed and before the consent section', async () => {
+    listMyApplications.mockResolvedValue([app({ closed: true, stage: 'Not progressing' })]);
+    listMyOffers.mockResolvedValue([offerRow({ status: 'declined' })]);
+    listMyRediscovery.mockResolvedValue({ companies: [rediscoveryCompany()], consent_months: 12 });
+    renderPage();
+    await screen.findByText('Privacy and future openings');
+    await screen.findByText('Scheduled interviews and offers');
+    expect(headings().slice(0, 2)).toEqual(['Closed', 'Scheduled interviews and offers']);
+    const all = headings();
+    expect(all[all.length - 1]).toBe('Privacy and future openings');
+  });
+
+  it('places a loop on its card by application_id and keeps its controls', async () => {
+    listMyApplications.mockResolvedValue([app({ id: 'one' })]);
+    listMyInterviewLoops.mockResolvedValue([loopRow({ application_id: 'one' })]);
+    renderPage();
+    const card = await screen.findByTestId('application-one');
+    expect(await within(card).findByText('Panel round')).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: /calendar/i })).toBeInTheDocument();
+    expect(screen.queryByText('Scheduled interviews and offers')).not.toBeInTheDocument();
+  });
+
+  it('keeps a loop with no application_id in its own section', async () => {
+    listMyApplications.mockResolvedValue([app()]);
+    listMyInterviewLoops.mockResolvedValue([loopRow()]);
+    renderPage();
+    expect(await screen.findByText('Scheduled interviews and offers')).toBeInTheDocument();
+    expect(screen.getByText('Backend Engineer', { selector: 'h3' })).toBeInTheDocument();
+  });
+
+  it('does not ask for an offer link until the candidate presses Open offer', async () => {
+    listMyApplications.mockResolvedValue([app({ id: 'one' })]);
+    listMyOffers.mockResolvedValue([offerRow({ application_id: 'one' })]);
+    renderPage();
+    await screen.findByText('Respond to your offer');
+    expect(getMyOfferLink).not.toHaveBeenCalled();
+  });
+});
+
+describe('Applications — offers and interviews do not depend on the applications list', () => {
+  const sentOffer = {
+    id: 'off-9',
+    status: 'sent',
+    company: 'Acme Test Co',
+    job_title: 'Backend Engineer',
+    base_salary: null,
+    currency: null,
+    expires_at: '2026-10-20T00:00:00Z',
+    responded_at: null,
+    preboarding_completed_at: null,
+  };
+
+  it('still shows an offer when the applications list is empty', async () => {
+    listMyApplications.mockResolvedValue([]);
+    listMyOffers.mockResolvedValue([sentOffer]);
+    renderPage();
+    expect(await screen.findByText('Scheduled interviews and offers')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Open offer' })).toBeInTheDocument();
+    expect(listMyOffers).toHaveBeenCalled();
+    expect(listMyInterviewLoops).toHaveBeenCalled();
+  });
+
+  it('still shows an offer when the applications call failed', async () => {
+    listMyApplications.mockRejectedValue(new Error('Network down'));
+    listMyOffers.mockResolvedValue([sentOffer]);
+    renderPage();
+    expect(await screen.findByText('Could not load your applications')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Open offer' })).toBeInTheDocument();
+  });
+});
+
+describe('Applications — a 409 question belongs to the action that asked it', () => {
+  it('drops the "open it here" question when the top action changes', async () => {
+    mintMyExamLink.mockRejectedValue(
+      new ApiError('This assessment is already open in another tab.', 409),
+    );
+    listMyApplications.mockResolvedValue([
+      app({ exam_assignment_id: 'asn-1', exam_expires_at: '2026-09-25T00:00:00Z' }),
+    ]);
+    const { client } = renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Start assessment' }));
+    expect(await screen.findByRole('button', { name: 'Open it here' })).toBeInTheDocument();
+
+    // The assessment is gone and an interview invitation is now the top item.
+    act(() => {
+      client.setQueryData(
+        ['my-applications'],
+        [app({ interview_invite_id: 'inv-1', exam_assignment_id: null })],
+      );
+    });
+    await screen.findByRole('button', { name: /start interview/i });
+    expect(screen.queryByRole('button', { name: 'Open it here' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/already open in another tab/)).not.toBeInTheDocument();
   });
 });

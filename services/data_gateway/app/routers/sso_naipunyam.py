@@ -157,6 +157,74 @@ def _require_naipunyam_provider() -> None:
         )
 
 
+async def _upsert_naipunyam_user(
+    db: AsyncSession,
+    *,
+    user_id: uuid.UUID,
+    email: str,
+    naipunyam_uid: str,
+    profile: Any,
+    now_utc: datetime,
+) -> uuid.UUID:
+    """Find-or-create the account for a Naipunyam identity.
+
+    The row is looked up FIRST. ``ON CONFLICT (naipunyam_id)`` cannot tell a live
+    row from a soft-deleted or suspended one, so it used to write
+    ``is_active = true`` over both: a DPDP-erased or admin-suspended account came
+    back to life on the next SSO sign-in. Now a deleted or suspended account is
+    refused with the same detail the privileged-account gate uses (so the response
+    does not say which), and the conflict clause no longer touches ``is_active``.
+    """
+    existing = (
+        await db.execute(
+            text("SELECT id, deleted_at, is_active FROM users WHERE naipunyam_id = :nid"),
+            {"nid": naipunyam_uid},
+        )
+    ).first()
+    if existing is not None and (existing.deleted_at is not None or existing.is_active is False):
+        log.warning("naipunyam.sso.callback.account_not_usable", uid=naipunyam_uid)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="NAIPUNYAM_SIGNIN_CANDIDATES_ONLY",
+        )
+
+    stmt = (
+        pg_insert(User)
+        .values(
+            id=user_id,
+            email=email,
+            password_hash=None,
+            full_name=profile.name or None,
+            phone=profile.phone or None,
+            preferred_language=profile.preferred_language or "en",
+            naipunyam_id=naipunyam_uid,
+            is_active=True,
+            created_at=now_utc,
+            updated_at=now_utc,
+        )
+        .on_conflict_do_update(
+            index_elements=["naipunyam_id"],
+            # No is_active here, on purpose (see docstring).
+            set_={
+                "full_name": profile.name or None,
+                "phone": profile.phone or None,
+                "preferred_language": profile.preferred_language or "en",
+                "updated_at": now_utc,
+            },
+        )
+        .returning(User.id)
+    )
+    row = (await db.execute(stmt)).fetchone()
+    if row is None:
+        log.error("naipunyam.sso.upsert.no_row_returned", uid=naipunyam_uid)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="NAIPUNYAM_UNAVAILABLE",
+        )
+    result_id: uuid.UUID = row[0]
+    return result_id
+
+
 def _require_naipunyam_configured() -> None:
     """Raise HTTP 503 if the Naipunyam base URL is not configured."""
     if not settings.naipunyam_api_base_url.strip():
@@ -544,42 +612,14 @@ async def callback(
                 detail="NAIPUNYAM_SIGNIN_CANDIDATES_ONLY",
             )
 
-        stmt = (
-            pg_insert(User)
-            .values(
-                id=intants_user_id,
-                email=email,
-                password_hash=None,
-                full_name=profile.name or None,
-                phone=profile.phone or None,
-                preferred_language=profile.preferred_language or "en",
-                naipunyam_id=naipunyam_uid,
-                is_active=True,
-                created_at=now_utc,
-                updated_at=now_utc,
-            )
-            .on_conflict_do_update(
-                index_elements=["naipunyam_id"],
-                set_={
-                    "full_name": profile.name or None,
-                    "phone": profile.phone or None,
-                    "preferred_language": profile.preferred_language or "en",
-                    "updated_at": now_utc,
-                    "is_active": True,
-                },
-            )
-            .returning(User.id)
+        final_user_id = await _upsert_naipunyam_user(
+            db,
+            user_id=intants_user_id,
+            email=email,
+            naipunyam_uid=naipunyam_uid,
+            profile=profile,
+            now_utc=now_utc,
         )
-
-        result = await db.execute(stmt)
-        row = result.fetchone()
-        if row is None:
-            log.error("naipunyam.sso.upsert.no_row_returned", uid=naipunyam_uid)
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="NAIPUNYAM_UNAVAILABLE",
-            )
-        final_user_id: uuid.UUID = row[0]
         await db.commit()
 
         log.info(

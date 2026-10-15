@@ -18,20 +18,20 @@ export default function CheckinDueCard({
   onOpen: (row: CheckinDueRow) => void;
 }): JSX.Element {
   return (
-    <div className="mt-5 rounded-[14px] border border-border p-4">
-      <h3 className="text-[13px] font-semibold text-foreground">Check-ins due</h3>
-      <p className="mt-1 text-[11.5px] text-muted-foreground">
+    <div className="mt-5 rounded-[16px] border border-border p-4">
+      <h3 className="text-[15px] font-bold text-foreground">Check-ins due</h3>
+      <p className="mt-1 text-[12px] text-muted-foreground">
         Hires at least 80 days in with no check-in recorded yet, oldest first.
       </p>
       <div className="mt-3">
         {isLoading ? (
-          <p className="text-[12.5px] text-muted-foreground">Loading…</p>
+          <p className="text-[13px] text-muted-foreground">Loading…</p>
         ) : isError ? (
-          <p className="text-[12.5px] text-[var(--ui-danger)]">
+          <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
             Could not load check-ins due just now.
           </p>
         ) : rows.length === 0 ? (
-          <p className="text-[12.5px] text-muted-foreground">No check-ins due.</p>
+          <p className="text-[13px] text-muted-foreground">No check-ins due.</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {rows.map((row) => (
@@ -39,17 +39,17 @@ export default function CheckinDueCard({
                 <button
                   type="button"
                   onClick={() => onOpen(row)}
-                  className="flex w-full items-center justify-between gap-3 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-2.5 text-left transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
+                  className="flex w-full items-center justify-between gap-3 min-h-12 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3 text-left transition-colors hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 >
                   <span className="min-w-0">
-                    <span className="block truncate text-[12.5px] font-medium text-foreground">
+                    <span className="block truncate text-[13px] font-semibold text-foreground">
                       {row.full_name}
                     </span>
-                    <span className="block truncate text-[11px] text-muted-foreground">
+                    <span className="block truncate text-[12px] text-muted-foreground">
                       {row.job_title}
                     </span>
                   </span>
-                  <span className="shrink-0 text-right text-[11px] text-[var(--ui-faint)]">
+                  <span className="shrink-0 text-right text-[12px] text-muted-foreground">
                     started {formatDate(row.employment_start)}
                     <br />
                     {row.days_since_start}d ago

@@ -1,59 +1,55 @@
-// RequisitionDashboard — one opening, end to end. Group E, E1.
+// RequisitionDashboard — the opening hub. One opening, end to end.
 //
-// The Openings list answers "which of these needs me?". This answers "what is
-// actually happening inside this one?", which is a different question and
-// needs a different shape.
+// Two tabs, carried in `?tab=`:
 //
-// What this page is for, in the order it is laid out:
+//   SETUP     The ordered journey to a live opening: role and posting, hiring
+//             process, budget and approval, go live, preboarding documents. Every
+//             tick is a fact the server holds (see lib/openingSetup.ts). The next
+//             stage's action is the page's single primary button.
 //
-//   WHO IS WAITING ON A PERSON. Leading the page, because under D-05 nothing
-//   advances those candidates without a human and a queue nobody opens is the
-//   one backlog that cannot clear itself.
+//   PIPELINE  What is happening inside the opening once people are in it: who is
+//             waiting on a person, what needs attention, where candidates are per
+//             round of the PUBLISHED workflow, who is held (by name — held is not
+//             rejected), and what the automation did versus a person.
 //
-//   WHAT NEEDS ATTENTION HERE. The problems in this opening — held candidates,
-//   links about to lapse, scoring that gave up, no live workflow — rather than
-//   the company-wide list, where this opening's problems would be one line
-//   among many.
+// The default is Pipeline whenever anyone has applied (a recruiter with forty
+// live candidates should not land on setup the day someone pauses applications)
+// and Setup for an opening nobody has entered yet.
 //
-//   WHERE PEOPLE ARE, per round of the PUBLISHED workflow rather than per
-//   status, so two openings with different workflows show different rounds.
-//   "Shortlisted" is the same word whether someone is waiting for round one or
-//   sitting between rounds three and four.
-//
-//   WHO IS HELD, by name. A held candidate is paused below a threshold and
-//   waiting on you; the page says so rather than letting "held" read as
-//   "rejected".
-//
-//   WHAT THE AUTOMATION DID, and when — told apart from what a person did — and
-//   WHAT WAITS FOR YOU ON PURPOSE, so nobody mistakes a human gate for a stall.
-//
-// It refreshes itself on the shared live interval.
+// REQUEST DISCIPLINE. Only the dashboard query polls. Everything Setup needs is
+// fetched while the Setup tab is open and not otherwise (useOpeningSetup).
 
-import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
-  ArrowLeft,
   CheckCircle2,
   ChevronRight,
-  Copy,
-  ExternalLink,
   Globe,
   Info,
   Loader2,
   Pause,
   Users,
 } from '@/design/components/icons';
-import { GlassCard, StatCard, StatusTag, ToggleSwitch } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
+import { StatusTag, SegTabs } from '@/design/components/primitives';
+import { Breadcrumbs, Page, PageBody, PageHeader } from '@/design/components/page';
+import { Card } from '@/design/components/card';
+import { Section } from '@/design/components/rows';
+import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
+import { useIsDesktop } from '@/hooks/useIsDesktop';
+import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
+import { Stat, StatGroup } from '@/design/components/stat-group';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
+import { queryKeys } from '@/lib/queryKeys';
+import { defaultStageKey, primaryAction, type StageKey } from '@/lib/openingSetup';
 import {
   getRequisitionDashboard,
   setRequisitionStatus,
-  updateRequisition,
   UnresolvedCandidatesError,
   type ActivityEntry,
   type AttentionSeverity,
@@ -62,9 +58,18 @@ import {
   type RequisitionStatus,
   type RoundProgress,
 } from '@/api/requisitions';
-import OpeningDetails from '@/components/OpeningDetails';
-import DocumentRequirementsSection from '@/components/DocumentRequirementsSection';
 import { getCompanyRequisitionDashboard } from '@/api/companyBoard';
+import { appPath } from '@/lib/safeUrl';
+import ApprovalPill from '@/components/hr/opening/ApprovalPill';
+import SetupTab, { type RoleStepRequest } from '@/components/hr/opening/SetupTab';
+import { useOpeningSetup } from '@/components/hr/opening/useOpeningSetup';
+
+type Tab = 'setup' | 'pipeline';
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'setup', label: 'Setup' },
+  { key: 'pipeline', label: 'Pipeline' },
+];
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
@@ -89,7 +94,10 @@ function ago(iso: string): string {
 /* ── Open / pause / close, with the AC-12 prompt ────────────────────────── */
 
 /**
- * Status control for one opening.
+ * Status change for one opening, split in two so the header can lay them out
+ * separately: the buttons sit with the page actions, and the close-anyway
+ * question renders as its own panel under the header (it is a full-width
+ * decision, not a button).
  *
  * Closing is the only transition that can strand anybody, so it is the only
  * one that asks. The server refuses a close while candidates are mid-process
@@ -101,31 +109,23 @@ function ago(iso: string): string {
  * stay exactly where they are and remain in the decision queue. The panel says
  * so, because "close anyway" otherwise reads as "discard these people".
  */
-function StatusControl({
-  requisitionId,
-  status,
-  title,
-}: {
-  requisitionId: string;
-  status: string;
-  title: string;
-}) {
+function useStatusChange(requisitionId: string) {
   const qc = useQueryClient();
   const [pendingClose, setPendingClose] = useState<number | null>(null);
 
   const mut = useMutation({
-    mutationFn: (v: { next: RequisitionStatus; ack?: boolean }) =>
+    mutationFn: (v: { next: RequisitionStatus; title: string; ack?: boolean }) =>
       setRequisitionStatus(requisitionId, v.next, { acknowledgeUnresolved: v.ack }),
     onSuccess: (_r, v) => {
       setPendingClose(null);
       toast.success(
         v.next === 'closed'
-          ? `Closed “${title}”`
+          ? `Closed “${v.title}”`
           : v.next === 'paused'
-            ? `Paused “${title}”`
-            : `Reopened “${title}”`,
+            ? `Paused “${v.title}”`
+            : `Reopened “${v.title}”`,
       );
-      void qc.invalidateQueries({ queryKey: ['hr', 'requisition', requisitionId] });
+      void qc.invalidateQueries({ queryKey: queryKeys.requisition(requisitionId) });
       void qc.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
       void qc.invalidateQueries({ queryKey: ['hr', 'requisition-dashboard', requisitionId] });
     },
@@ -137,107 +137,101 @@ function StatusControl({
       toast.error(errText(e, 'Could not change the status'));
     },
   });
+  return { mut, pendingClose, setPendingClose };
+}
 
-  const btn =
-    'rounded-[10px] border border-[var(--ui-line-strong)] px-3.5 py-2 text-[12.5px] text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)] hover:text-foreground disabled:opacity-40';
+type StatusChange = ReturnType<typeof useStatusChange>;
 
+/** Pause / Reopen / Close — quiet ghost buttons: they are rare, not the next step. */
+function StatusButtons({
+  status,
+  title,
+  change,
+}: {
+  status: string;
+  title: string;
+  change: StatusChange;
+}) {
+  const { mut } = change;
+  const btn = (label: string, next: RequisitionStatus) => (
+    <Button
+      type="button"
+      variant="ghost"
+      disabled={mut.isPending}
+      onClick={() => mut.mutate({ next, title })}
+    >
+      {label}
+    </Button>
+  );
   return (
     <>
       {status === 'open' ? (
         <>
-          <button
-            type="button"
-            className={btn}
-            disabled={mut.isPending}
-            onClick={() => mut.mutate({ next: 'paused' })}
-          >
-            Pause
-          </button>
-          <button
-            type="button"
-            className={btn}
-            disabled={mut.isPending}
-            onClick={() => mut.mutate({ next: 'closed' })}
-          >
-            Close
-          </button>
+          {btn('Pause', 'paused')}
+          {btn('Close', 'closed')}
         </>
       ) : null}
       {status === 'paused' ? (
         <>
-          <button
-            type="button"
-            className={btn}
-            disabled={mut.isPending}
-            onClick={() => mut.mutate({ next: 'open' })}
-          >
-            Reopen
-          </button>
-          <button
-            type="button"
-            className={btn}
-            disabled={mut.isPending}
-            onClick={() => mut.mutate({ next: 'closed' })}
-          >
-            Close
-          </button>
+          {btn('Reopen', 'open')}
+          {btn('Close', 'closed')}
         </>
       ) : null}
-      {status === 'closed' ? (
-        <button
-          type="button"
-          className={btn}
-          disabled={mut.isPending}
-          onClick={() => mut.mutate({ next: 'open' })}
-        >
-          Reopen
-        </button>
-      ) : null}
-
-      {pendingClose !== null ? (
-        <div
-          role="alertdialog"
-          aria-labelledby="close-unresolved-title"
-          className="mt-3 w-full rounded-[14px] border border-[var(--ui-warn)]/30 bg-[rgba(240,180,41,0.06)] p-4"
-        >
-          <h3
-            id="close-unresolved-title"
-            className="flex items-center gap-1.5 text-[13.5px] font-semibold text-foreground"
-          >
-            <AlertTriangle className="h-4 w-4 text-[var(--ui-warn)]" aria-hidden="true" />
-            {pendingClose} candidate{pendingClose === 1 ? '' : 's'} still undecided
-          </h3>
-          <p className="mt-1.5 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
-            Closing does not reject them. They stay in the decision queue exactly as
-            they are — nothing here ends a candidacy without you. Decide on them now,
-            or close the opening and come back to them.
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Link
-              to={`/hr/requisitions/${requisitionId}/decisions`}
-              className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-3.5 py-2 text-[12.5px] font-medium text-primary-foreground hover:opacity-90"
-            >
-              <Users className="h-3.5 w-3.5" aria-hidden="true" />
-              Review {pendingClose}
-            </Link>
-            <button
-              type="button"
-              className={btn}
-              disabled={mut.isPending}
-              onClick={() => mut.mutate({ next: 'closed', ack: true })}
-            >
-              {mut.isPending ? (
-                <Loader2 className="mr-1.5 inline h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              ) : null}
-              Close anyway
-            </button>
-            <button type="button" className={btn} onClick={() => setPendingClose(null)}>
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : null}
+      {status === 'closed' ? btn('Reopen', 'open') : null}
     </>
+  );
+}
+
+function CloseUnresolvedPanel({
+  requisitionId,
+  title,
+  change,
+}: {
+  requisitionId: string;
+  title: string;
+  change: StatusChange;
+}) {
+  const { mut, pendingClose, setPendingClose } = change;
+  if (pendingClose === null) return null;
+  return (
+    <div
+      role="alertdialog"
+      aria-labelledby="close-unresolved-title"
+      className="w-full rounded-[16px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn-wash)] p-4"
+    >
+      <h3
+        id="close-unresolved-title"
+        className="flex items-center gap-1.5 text-[15px] font-bold text-foreground"
+      >
+        <AlertTriangle className="h-4 w-4 text-[var(--ui-warn)]" aria-hidden="true" />
+        {pendingClose} candidate{pendingClose === 1 ? '' : 's'} still undecided
+      </h3>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-foreground">
+        Closing does not reject them. They stay in the decision queue exactly as they are — nothing
+        here ends a candidacy without you. Decide on them now, or close the opening and come back to
+        them.
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button asChild>
+          <Link to={`/hr/requisitions/${requisitionId}/decisions`}>
+            <Users aria-hidden="true" />
+            Review {pendingClose}
+          </Link>
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={mut.isPending}
+          onClick={() => mut.mutate({ next: 'closed', ack: true, title })}
+        >
+          {mut.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+          Close anyway
+        </Button>
+        <Button type="button" variant="outline" onClick={() => setPendingClose(null)}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -256,51 +250,67 @@ function AttentionRow({ item }: { item: DashboardAttention }) {
     <div className="flex items-start gap-2.5">
       <tone.Icon className={cn('mt-0.5 h-4 w-4 shrink-0', tone.tint)} aria-hidden="true" />
       <div className="min-w-0 flex-1">
-        <p className="text-[13.5px] font-medium text-foreground">
+        <p className="text-[13.5px] font-medium leading-snug text-foreground">
           <span className="sr-only">{tone.word}: </span>
           {item.title}
         </p>
-        <p className="mt-0.5 text-[12.5px] leading-relaxed text-muted-foreground">{item.body}</p>
+        <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-muted-foreground">
+          {item.body}
+        </p>
       </div>
       {item.link ? (
-        <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
+        <ChevronRight
+          className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+          aria-hidden="true"
+        />
       ) : null}
     </div>
   );
-  const shell = 'block rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3';
-  return item.link ? (
-    <Link to={item.link} className={cn(shell, 'hover:border-[var(--ui-line-strong)]')}>
-      {inner}
-    </Link>
-  ) : (
-    <div className={shell}>{inner}</div>
+  // An inset fill, not a box inside the card.
+  const shell =
+    'block min-h-10 rounded-[12px] bg-[var(--ui-inset-soft)] px-3 py-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+  return (
+    <li>
+      {item.link ? (
+        <Link to={appPath(item.link, '/')} className={cn(shell, 'hover:bg-[var(--ui-inset)]')}>
+          {inner}
+        </Link>
+      ) : (
+        <div className={shell}>{inner}</div>
+      )}
+    </li>
   );
 }
 
 function NeedsAttention({ items }: { items: DashboardAttention[] }) {
   return (
-    <GlassCard className="mb-5 p-5" data-testid="needs-attention">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-[15px] font-semibold text-foreground">Needs attention</h2>
-        {items.length ? (
-          <span className="text-[12px] text-muted-foreground">
+    <Section
+      title="Needs attention"
+      data-testid="needs-attention"
+      actions={
+        items.length ? (
+          <span className="rounded-full bg-[var(--ui-warn-wash)] px-2.5 py-1 text-[12px] font-semibold text-[var(--ui-warn)]">
             {items.length} {items.length === 1 ? 'item' : 'items'}
           </span>
-        ) : null}
-      </div>
+        ) : null
+      }
+    >
       {items.length === 0 ? (
         <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
           <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
           Nothing in this opening needs attention right now.
         </p>
       ) : (
-        <div className="flex flex-col gap-2">
-          {items.map((i) => (
-            <AttentionRow key={i.key} item={i} />
-          ))}
-        </div>
+        <ProgressiveList
+          items={items}
+          initial={3}
+          noun="items"
+          getKey={(i) => i.key}
+          renderItem={(i) => <AttentionRow item={i} />}
+          className="flex flex-col gap-1.5"
+        />
       )}
-    </GlassCard>
+    </Section>
   );
 }
 
@@ -318,23 +328,23 @@ function RoundBar({ round, widest }: { round: RoundProgress; widest: number }) {
         <span className="min-w-0 truncate text-[13px] text-foreground">
           {round.position + 1}. {round.title}
         </span>
-        <span className="shrink-0 text-[11.5px] text-muted-foreground">
+        <span className="shrink-0 text-[12px] text-muted-foreground">
           {round.at_this_round > 0 ? `${round.at_this_round} here now · ` : ''}
           {round.attempted} sat
         </span>
       </div>
       <div className="mt-1.5 flex items-center gap-2">
-        <span className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--ui-inset)]">
+        <span className="h-2 flex-1 overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
           <span
-            className="block h-full rounded-full bg-[var(--accent)]/70"
+            className="block h-full rounded-full bg-[var(--accent)]"
             style={{ width: `${pct}%` }}
           />
         </span>
         <span
           className={cn(
-            'w-[86px] shrink-0 text-right text-[11.5px] tabular-nums',
+            'w-[86px] shrink-0 text-right text-[12px] tabular-nums',
             round.pass_rate === null
-              ? 'text-[var(--ui-faint)]'
+              ? 'text-muted-foreground'
               : suspicious
                 ? 'text-[var(--ui-warn)]'
                 : 'text-[var(--ui-ok)]',
@@ -344,110 +354,11 @@ function RoundBar({ round, widest }: { round: RoundProgress; widest: number }) {
         </span>
       </div>
       {suspicious ? (
-        <p className="mt-1 text-[11.5px] text-[var(--ui-warn)]">
+        <p className="mt-1 text-[12px] text-[var(--ui-warn)]">
           Almost nobody clears this. Worth checking the threshold before the questions.
         </p>
       ) : null}
     </li>
-  );
-}
-
-/* ── Public apply ───────────────────────────────────────────────────────── */
-
-function PublicApplyCard({
-  requisitionId,
-  enabled,
-  status,
-  hasWorkflow,
-}: {
-  requisitionId: string;
-  enabled: boolean;
-  status: string;
-  /** No published workflow: the link refuses applications until there is one. */
-  hasWorkflow: boolean;
-}) {
-  const qc = useQueryClient();
-  const link = `${window.location.origin}/apply/${requisitionId}`;
-
-  const mut = useMutation({
-    mutationFn: (next: boolean) =>
-      updateRequisition(requisitionId, { public_apply_enabled: next }),
-    onSuccess: (_r, next) => {
-      toast.success(next ? 'Applications are open' : 'Applications closed');
-      void qc.invalidateQueries({ queryKey: ['hr', 'requisition-dashboard', requisitionId] });
-      void qc.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
-    },
-    onError: (e) => toast.error(errText(e, 'Could not change that')),
-  });
-
-  return (
-    <GlassCard className="p-5">
-      <div className="flex items-start gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <Globe className="h-4 w-4 text-[var(--ui-faint)]" aria-hidden="true" />
-            <span className="text-[14px] font-medium text-foreground">Accept applications</span>
-          </div>
-          <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-            Publishes a page anyone with the link can apply through. Off by default — a
-            link that leaks should not open a channel you did not choose to open.
-          </p>
-        </div>
-        <ToggleSwitch
-          checked={enabled}
-          onChange={(next) => mut.mutate(next)}
-          label="Accept public applications"
-        />
-      </div>
-
-      {enabled ? (
-        status === 'open' && !hasWorkflow ? (
-          // Said here so HR does not share a link that turns everyone away.
-          <p
-            className="mt-3 flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]"
-            data-testid="apply-needs-workflow"
-          >
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            The link will not accept applications until a workflow is published, so nobody is
-            taken into a process that does not exist yet.
-          </p>
-        ) : status === 'open' ? (
-          <div className="mt-3 flex items-center gap-2 rounded-[10px] border border-border bg-black/25 px-3 py-2">
-            <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-[var(--ui-soft)]">
-              {link}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard?.writeText(link);
-                toast.success('Link copied');
-              }}
-              className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground"
-              aria-label="Copy the application link"
-            >
-              <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-            <a
-              href={link}
-              target="_blank"
-              rel="noreferrer"
-              className="shrink-0 rounded p-1 text-muted-foreground hover:text-foreground"
-              aria-label="Open the application page"
-            >
-              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-            </a>
-          </div>
-        ) : (
-          // The toggle is on but the opening is paused or closed, so the page
-          // 404s. Saying so beats letting someone share a dead link.
-          <p className="mt-3 flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            This opening is {status}, so the link will not accept applications until you
-            reopen it.
-          </p>
-        )
-      ) : null}
-    </GlassCard>
   );
 }
 
@@ -457,85 +368,95 @@ function HeldPool({
   data,
   requisitionId,
   readOnly = false,
+  className,
 }: {
   data: Dashboard;
   requisitionId: string;
   readOnly?: boolean;
+  className?: string;
 }) {
   const { held_pool: pool, progress } = data;
   return (
-    <GlassCard className="p-5" data-testid="held-pool">
-      <div className="flex items-baseline justify-between gap-3">
-        <h2 className="flex items-center gap-1.5 text-[15px] font-semibold text-foreground">
-          <Pause className="h-4 w-4 text-[var(--ui-warn)]" aria-hidden="true" />
-          Held for your decision
-        </h2>
-        <span className="text-[12px] tabular-nums text-muted-foreground">{progress.held}</span>
-      </div>
-      <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-        Below a round&rsquo;s threshold. Held, not rejected — they wait here until a person
-        lets them continue or decides.
-      </p>
+    <Section
+      title="Held for your decision"
+      className={className}
+      data-testid="held-pool"
+      description="Below a round’s threshold. Held, not rejected — they wait for a person."
+      actions={
+        <span className="rounded-full bg-[var(--ui-inset-strong)] px-2.5 py-1 text-[12px] font-semibold tabular-nums text-[var(--ui-soft)]">
+          <Pause className="mr-1 inline h-3 w-3" aria-hidden="true" />
+          {progress.held}
+        </span>
+      }
+    >
       {pool.length === 0 ? (
-        <p className="mt-3 text-[12.5px] text-[var(--ui-faint)]">Nobody is held.</p>
+        <p className="text-[13px] text-muted-foreground">Nobody is held.</p>
       ) : (
-        <ul className="mt-3 flex flex-col divide-y divide-white/[0.05]">
-          {pool.map((h) => (
-            <li key={h.enrolment_id} className="py-2">
+        <ProgressiveList
+          items={pool}
+          initial={3}
+          noun="held"
+          getKey={(h) => h.enrolment_id}
+          className="flex flex-col divide-y divide-border"
+          renderItem={(h) => (
+            <li className="py-2">
               <div className="flex items-baseline justify-between gap-3">
                 <span className="min-w-0 truncate text-[13px] text-foreground">{h.full_name}</span>
-                <span className="shrink-0 text-[11.5px] text-muted-foreground">
+                <span className="shrink-0 text-[12px] text-muted-foreground">
                   {h.round_title ? `${h.round_title} · ` : ''}
                   {h.held_days !== null ? `${days(h.held_days)} held` : ''}
                 </span>
               </div>
               {h.held_reason ? (
-                <p className="mt-0.5 text-[12px] text-[var(--ui-soft)]">{h.held_reason}</p>
+                <p className="mt-0.5 line-clamp-2 text-[12.5px] text-[var(--ui-soft)]">
+                  {h.held_reason}
+                </p>
               ) : null}
             </li>
-          ))}
-        </ul>
+          )}
+        />
       )}
       {progress.held > pool.length ? (
-        <p className="mt-2 text-[12px] text-muted-foreground">
+        <p className="mt-2 text-[13px] text-muted-foreground">
           and {progress.held - pool.length} more
         </p>
       ) : null}
       {progress.held > 0 && !readOnly ? (
         <Link
           to={`/hr/requisitions/${requisitionId}/decisions`}
-          className="mt-3 inline-block text-[12.5px] text-[var(--accent)] hover:underline"
+          className="mt-3 inline-flex min-h-10 items-center text-[13px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           Review them in the decision queue →
         </Link>
       ) : null}
-    </GlassCard>
+    </Section>
   );
 }
 
 function ManualSteps({ data }: { data: Dashboard }) {
   return (
-    <GlassCard className="p-5" data-testid="manual-steps">
-      <h2 className="text-[15px] font-semibold text-foreground">Waiting on you, by design</h2>
-      <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-        The steps a person takes. Nothing here is stuck for want of automation.
-      </p>
+    <Section
+      title="Waiting on you, by design"
+      titleAs="h2"
+      data-testid="manual-steps"
+      description="The steps a person takes. Nothing here is stuck for want of automation."
+    >
       {data.manual_steps.length === 0 ? (
-        <p className="mt-3 text-[12.5px] text-[var(--ui-faint)]">Nothing waiting on you.</p>
+        <p className="text-[13px] text-muted-foreground">Nothing waiting on you.</p>
       ) : (
-        <ul className="mt-3 flex flex-col gap-1.5">
+        <ul className="flex flex-col gap-1.5">
           {data.manual_steps.map((s) => (
             <li key={s.key}>
               {s.link ? (
                 <Link
-                  to={s.link}
-                  className="flex items-baseline justify-between gap-3 rounded-[8px] px-1 py-0.5 text-[12.5px] hover:bg-[var(--ui-inset-soft)]"
+                  to={appPath(s.link, '/')}
+                  className="flex min-h-9 items-center justify-between gap-3 rounded-[8px] px-1 py-0.5 text-[13px] hover:bg-[var(--ui-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 >
                   <span className="text-[var(--ui-soft)]">{s.label}</span>
                   <span className="tabular-nums text-foreground">{s.count}</span>
                 </Link>
               ) : (
-                <div className="flex items-baseline justify-between gap-3 px-1 py-0.5 text-[12.5px]">
+                <div className="flex items-baseline justify-between gap-3 px-1 py-0.5 text-[13px]">
                   <span className="text-[var(--ui-soft)]">{s.label}</span>
                   <span className="tabular-nums text-foreground">{s.count}</span>
                 </div>
@@ -544,34 +465,33 @@ function ManualSteps({ data }: { data: Dashboard }) {
           ))}
         </ul>
       )}
-    </GlassCard>
+    </Section>
   );
 }
 
 function TimingAndScores({ data }: { data: Dashboard }) {
   const { stage_timing: timing, scores } = data;
   return (
-    <GlassCard className="p-5" data-testid="timing">
-      <h2 className="text-[15px] font-semibold text-foreground">How long it takes</h2>
-      <p className="mt-1 text-[12px] text-muted-foreground">
-        Median time from applying, from the stage history.
-      </p>
-      <ul className="mt-3 flex flex-col gap-1.5">
+    <Section
+      title="How long it takes"
+      className="pt-6"
+      data-testid="timing"
+      description="Median time from applying, from the stage history."
+    >
+      <ul className="flex flex-col gap-1.5">
         {timing.map((t) => (
-          <li key={t.key} className="flex items-baseline justify-between gap-3 text-[12.5px]">
+          <li key={t.key} className="flex items-baseline justify-between gap-3 text-[13px]">
             <span className="min-w-0 truncate text-[var(--ui-soft)]">{t.label}</span>
             <span className="shrink-0 tabular-nums text-foreground">
               {t.median_days === null ? 'nobody yet' : days(t.median_days)}
-              {t.count > 0 ? (
-                <span className="text-[var(--ui-faint)]"> · {t.count}</span>
-              ) : null}
+              {t.count > 0 ? <span className="text-muted-foreground"> · {t.count}</span> : null}
             </span>
           </li>
         ))}
       </ul>
       <div className="mt-4 border-t border-border pt-3">
-        <h3 className="text-[13px] font-medium text-foreground">Scores, as summaries</h3>
-        <div className="mt-1.5 flex flex-col gap-1 text-[12.5px]">
+        <h3 className="text-[15px] font-bold text-foreground">Scores, as summaries</h3>
+        <div className="mt-1.5 flex flex-col gap-1 text-[13px]">
           <div className="flex justify-between gap-3">
             <span className="text-[var(--ui-soft)]">Average resume match</span>
             <span className="tabular-nums text-foreground">
@@ -585,11 +505,11 @@ function TimingAndScores({ data }: { data: Dashboard }) {
             </span>
           </div>
         </div>
-        <p className="mt-1.5 text-[11.5px] text-[var(--ui-faint)]">
+        <p className="mt-1.5 text-[12px] text-muted-foreground">
           Scores rank and explain. Every decision is a person&rsquo;s.
         </p>
       </div>
-    </GlassCard>
+    </Section>
   );
 }
 
@@ -605,36 +525,214 @@ function describe(a: ActivityEntry): string {
 
 function Activity({ data }: { data: Dashboard }) {
   const { activity, activity_summary: summary } = data;
+  const persistKey = useScopedPersistKey('hub-activity');
+  const newest = activity.reduce<ActivityEntry | null>(
+    (n, a) => (n === null || a.occurred_at > n.occurred_at ? a : n),
+    null,
+  );
   return (
-    <GlassCard className="p-5" data-testid="activity">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-[15px] font-semibold text-foreground">Activity</h2>
-        <span className="text-[12px] text-muted-foreground">
-          last 7 days: {summary.automated_7d} automated · {summary.manual_7d} by people
-          {summary.last_automated_at ? ` · automation last ran ${ago(summary.last_automated_at)}` : ''}
-        </span>
-      </div>
+    <Collapsible
+      variant="card"
+      title="Activity"
+      count={activity.length}
+      noun="event"
+      latest={newest ? `${describe(newest)}, ${ago(newest.occurred_at)}` : undefined}
+      persistKey={persistKey}
+      data-testid="activity"
+    >
+      <p className="mb-2 text-[12.5px] text-muted-foreground">
+        last 7 days: {summary.automated_7d} automated · {summary.manual_7d} by people
+        {summary.last_automated_at ? ` · automation last ran ${ago(summary.last_automated_at)}` : ''}
+      </p>
       {activity.length === 0 ? (
-        <p className="mt-3 text-[12.5px] text-[var(--ui-faint)]">Nothing has happened yet.</p>
+        <p className="text-[13px] text-muted-foreground">Nothing has happened yet.</p>
       ) : (
-        <ul className="mt-3 flex flex-col divide-y divide-white/[0.05]">
-          {activity.map((a, i) => (
-            <li key={`${a.enrolment_id}-${a.occurred_at}-${i}`} className="py-2">
+        <ProgressiveList
+          items={activity}
+          initial={5}
+          noun="events"
+          getKey={(a) => `${a.enrolment_id}-${a.occurred_at}`}
+          className="flex flex-col divide-y divide-border"
+          renderItem={(a) => (
+            <li className="py-2">
               <div className="flex items-baseline justify-between gap-3">
-                <span className="min-w-0 text-[12.5px] text-foreground">{describe(a)}</span>
-                <span className="shrink-0 text-[11.5px] text-muted-foreground">{ago(a.occurred_at)}</span>
+                <span className="min-w-0 text-[13px] text-foreground">{describe(a)}</span>
+                <span className="shrink-0 text-[12px] text-muted-foreground">
+                  {ago(a.occurred_at)}
+                </span>
               </div>
-              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[11.5px]">
+              <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[12px]">
                 <StatusTag tone={a.automated ? 'electric' : 'lavender'}>
-                  {a.automated ? 'Automated' : a.actor ?? 'A person'}
+                  {a.automated ? 'Automated' : (a.actor ?? 'A person')}
                 </StatusTag>
-                {a.reason ? <span className="text-[var(--ui-faint)]">{a.reason}</span> : null}
+                {a.reason ? <span className="text-muted-foreground">{a.reason}</span> : null}
               </div>
             </li>
-          ))}
-        </ul>
+          )}
+        />
       )}
-    </GlassCard>
+    </Collapsible>
+  );
+}
+
+/* ── Pipeline tab ───────────────────────────────────────────────────────── */
+
+function PipelineTab({
+  data,
+  requisitionId,
+  readOnly,
+  onOpenSetup,
+}: {
+  data: Dashboard;
+  requisitionId: string;
+  readOnly: boolean;
+  onOpenSetup: () => void;
+}) {
+  const { requisition: req, rounds, still_being_read, progress, workflow_state: wf } = data;
+  const widest = Math.max(1, ...rounds.map((r) => r.attempted));
+  const target = progress.target_hires;
+  const hirePct = target ? Math.min(100, Math.round((progress.hired / target) * 100)) : null;
+  const decisions = readOnly ? undefined : `/hr/requisitions/${requisitionId}/decisions`;
+  const desktop = useIsDesktop();
+  const asideKey = useScopedPersistKey('hub-pipeline-aside');
+
+  const asideBody = (
+    <div className="flex flex-col gap-6">
+      <ManualSteps data={data} />
+      <TimingAndScores data={data} />
+      <Section
+        title={`Public applications ${req.public_apply_enabled ? 'on' : 'off'}`}
+        className="pt-6"
+      >
+        <p className="flex items-start gap-1.5 text-[13px] text-muted-foreground">
+          <Globe className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {readOnly
+            ? 'Read-only — HR controls whether this opening takes applications.'
+            : 'Switch this on or off, and schedule it, from the Setup tab.'}
+        </p>
+        {readOnly ? null : (
+          <Button type="button" variant="outline" className="mt-3" onClick={onOpenSetup}>
+            Open Setup
+          </Button>
+        )}
+      </Section>
+    </div>
+  );
+  // At lg+ the process, timing and applications sit in the aside, always in
+  // view. Below it they would be a second screen of scrolling after everything
+  // else, so they fold into one closed section.
+  const aside = desktop ? (
+    <Card density="compact">{asideBody}</Card>
+  ) : (
+    <Collapsible
+      variant="card"
+      headingLevel="h2"
+      title="Process, timing and applications"
+      summary="Steps waiting on you, how long it takes, public applications"
+      persistKey={asideKey}
+      data-testid="pipeline-aside"
+    >
+      {asideBody}
+    </Collapsible>
+  );
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Awaiting-you leads, because it is the only number here that nothing
+          else in the system will clear. */}
+      <div>
+        <StatGroup aria-label="Pipeline summary" data-testid="pipeline-stats">
+          <Stat label="Awaiting your decision" value={progress.awaiting_decision} to={decisions} />
+          <Stat label="Held, not rejected" value={progress.held} />
+          <Stat label="In a round now" value={progress.in_progress} />
+          <Stat label="Applications" value={progress.applications} />
+          <Stat
+            label="Hired"
+            value={target ? `${progress.hired} of ${target}` : String(progress.hired)}
+          />
+        </StatGroup>
+        {hirePct !== null ? (
+          <div className="mt-3" aria-label={`Hiring progress: ${progress.hired} of ${target}`}>
+            <span className="block h-1.5 overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
+              <span
+                className="block h-full rounded-full bg-[var(--ui-ok)]"
+                style={{ width: `${hirePct}%` }}
+              />
+            </span>
+          </div>
+        ) : null}
+      </div>
+
+      <PageBody aside={aside} asideLabel="Process and timing">
+        {/* The one raised region: where everybody is. */}
+        <Card
+          as="section"
+          emphasis="raised"
+          density="compact"
+          title="Where candidates are"
+          data-testid="funnel"
+        >
+          {rounds.length === 0 ? (
+            <div>
+              <p className="text-[13px] leading-relaxed text-muted-foreground">
+                No published workflow yet, so nobody is being moved through anything automatically.
+              </p>
+              {readOnly ? null : (
+                <Link
+                  to={`/hr/requisitions/${requisitionId}/workflow`}
+                  className="mt-3 inline-flex min-h-10 items-center text-[14px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                >
+                  Build the hiring process →
+                </Link>
+              )}
+            </div>
+          ) : (
+            <>
+              <p className="text-[13px] text-muted-foreground">
+                The rounds of workflow v{wf.published_version ?? '?'}, in order.
+                {progress.not_started > 0
+                  ? ` ${progress.not_started} applied and not yet shortlisted.`
+                  : ''}
+                {progress.on_older_version > 0
+                  ? ` ${progress.on_older_version} still finishing an earlier version.`
+                  : ''}
+              </p>
+              <ul className="mt-2 flex list-none flex-col divide-y divide-border">
+                {rounds.map((r) => (
+                  <RoundBar key={r.round_id} round={r} widest={widest} />
+                ))}
+              </ul>
+            </>
+          )}
+          {still_being_read > 0 && !data.attention.some((a) => /being read/i.test(a.title)) ? (
+            <p className="mt-4 flex items-center gap-2 border-t border-border pt-3 text-[13px] text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
+              {still_being_read} CV{still_being_read === 1 ? '' : 's'} still being read and scored.
+              Their names and fit scores fill in shortly.
+            </p>
+          ) : null}
+        </Card>
+
+        {/* What needs a person, grouped: the open items and the people held. */}
+        <Card density="compact">
+          <div className="grid gap-6 md:grid-cols-2 md:gap-0 md:divide-x md:divide-border">
+            <div className="md:pr-6">
+              <NeedsAttention items={data.attention} />
+            </div>
+            <div className="border-t border-border pt-6 md:border-t-0 md:pl-6 md:pt-0">
+              <HeldPool
+                data={data}
+                requisitionId={requisitionId}
+                readOnly={readOnly}
+                className="!border-t-0 !pt-0"
+              />
+            </div>
+          </div>
+        </Card>
+
+        <Activity data={data} />
+      </PageBody>
+    </div>
   );
 }
 
@@ -652,7 +750,12 @@ export default function RequisitionDashboard({
   readOnly?: boolean;
 }): JSX.Element {
   const { requisitionId = '' } = useParams();
+  const [params, setParams] = useSearchParams();
+  const [pickedStage, setPickedStage] = useState<StageKey | null>(null);
+  const [roleStepRequest, setRoleStepRequest] = useState<RoleStepRequest | undefined>(undefined);
+  const statusChange = useStatusChange(requisitionId);
 
+  // The ONLY polling query on this page.
   const dash = useQuery({
     queryKey: [readOnly ? 'superadmin' : 'hr', 'requisition-dashboard', requisitionId],
     queryFn: () =>
@@ -663,21 +766,72 @@ export default function RequisitionDashboard({
     refetchInterval: LIVE_POLL_MS,
   });
 
+  // The default tab is decided once, from the first payload: if it were
+  // recomputed on every poll, the first application to arrive would pull a
+  // recruiter out of Setup in the middle of editing.
+  const defaultTab = useRef<Tab | null>(null);
+  if (defaultTab.current === null && dash.data) {
+    defaultTab.current = dash.data.requisition.total_enrolments > 0 ? 'pipeline' : 'setup';
+  }
+  const asked = params.get('tab');
+  const tab: Tab =
+    asked === 'setup' || asked === 'pipeline' ? asked : (defaultTab.current ?? 'pipeline');
+
+  const [setupOpened, setSetupOpened] = useState(false);
+  if (tab === 'setup' && !setupOpened) setSetupOpened(true);
+
+  const setup = useOpeningSetup({
+    requisitionId,
+    dashboard: dash.data,
+    dashboardUpdatedAt: dash.dataUpdatedAt,
+    enabled: tab === 'setup' && Boolean(dash.data),
+    readOnly,
+  });
+
+  // The open stage is PINNED once it is shown. It used to follow
+  // defaultStageKey on every render, so the 15s dashboard poll, or finishing a
+  // stage, swapped the panel out from under someone working in it. The default
+  // is resolved once, only after the facts that decide it have loaded; a stage
+  // the user picks wins and stays until they pick another.
+  const [resolvedStage, setResolvedStage] = useState<StageKey | null>(null);
+  const defaultStage =
+    setup.ready && setup.stages.length > 0 ? defaultStageKey(setup.stages) : null;
+  useEffect(() => {
+    if (resolvedStage === null && defaultStage !== null) setResolvedStage(defaultStage);
+  }, [resolvedStage, defaultStage]);
+
+  function chooseTab(next: string): void {
+    setParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.set('tab', next);
+        return p;
+      },
+      { replace: true },
+    );
+  }
+
   if (dash.isLoading) {
     return (
-      <div className="flex items-center gap-2 p-8 text-[13px] text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-        Loading…
-      </div>
+      <Page>
+        <div className="flex flex-col gap-4" role="status">
+          <Skeleton className="h-10 w-72 rounded-[12px]" />
+          <Skeleton className="h-24 rounded-card" />
+          <Skeleton className="h-48 rounded-card" />
+          <span className="sr-only">Loading…</span>
+        </div>
+      </Page>
     );
   }
   if (dash.isError || !dash.data) {
     return (
-      <div className="mx-auto max-w-[1100px] p-8">
-        <GlassCard className="p-6 text-[13.5px] text-[var(--ui-danger)]">
-          {errText(dash.error, 'Could not load this opening')}
-        </GlassCard>
-      </div>
+      <Page>
+        <Card>
+          <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
+            {errText(dash.error, 'Could not load this opening')}
+          </p>
+        </Card>
+      </Page>
     );
   }
 
@@ -689,190 +843,172 @@ export default function RequisitionDashboard({
         manual_steps: dash.data.manual_steps.map((s) => ({ ...s, link: null })),
       }
     : dash.data;
-  const { requisition: req, rounds, still_being_read, progress, workflow_state: wf } = data;
-  const widest = Math.max(1, ...rounds.map((r) => r.attempted));
-  const target = progress.target_hires;
-  const hirePct = target ? Math.min(100, Math.round((progress.hired / target) * 100)) : null;
+  // The freshest copy: after a panel saves, the record query is newer than the poll.
+  const req = setup.requisition ?? data.requisition;
+  const wf = data.workflow_state;
+
+  const stageKey = pickedStage ?? resolvedStage ?? defaultStage;
+  const next = tab === 'setup' && !readOnly ? primaryAction(setup.stages) : null;
 
   return (
-    <div className="mx-auto w-full max-w-[1100px] px-4 py-8">
-      <Reveal>
-        <header className="mb-6">
-          <Link
-            to={readOnly ? '/superadmin/board' : '/hr/requisitions'}
-            className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            {readOnly ? 'Hiring board' : 'All openings'}
-          </Link>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h1 className="truncate text-[26px] font-semibold tracking-[-0.8px] text-foreground">
-                {req.title}
-              </h1>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
-                <StatusTag
-                  tone={req.status === 'open' ? 'forest' : req.status === 'paused' ? 'amber' : 'neutral'}
-                  dot={req.status === 'open'}
-                >
-                  {req.status}
-                </StatusTag>
-                <span>{req.level}</span>
-                {req.department ? <span>{req.department}</span> : null}
-                {req.location ? <span>{req.location}</span> : null}
-                {req.closes_at ? (
-                  <span>closes {new Date(req.closes_at).toLocaleDateString()}</span>
-                ) : null}
-                {req.owner_name ? <span>owner {req.owner_name}</span> : null}
-                <span data-testid="workflow-state">
-                  {wf.published_version
-                    ? `workflow v${wf.published_version} live`
-                    : 'no live workflow'}
-                  {wf.draft_version ? ` · v${wf.draft_version} draft` : ''}
-                </span>
-              </div>
-            </div>
-            {readOnly ? (
-              <span className="rounded-full border border-border px-3 py-1 text-[12px] text-muted-foreground">
-                Read-only
-              </span>
-            ) : (
-            <div className="flex flex-wrap gap-2">
-              <Link
-                to={`/hr/requisitions/${requisitionId}/workflow`}
-                className="rounded-[10px] border border-[var(--ui-line-strong)] px-3.5 py-2 text-[12.5px] text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)] hover:text-foreground"
-              >
-                Workflow
-              </Link>
-              <Link
-                to={`/hr/requisitions/${requisitionId}/decisions`}
-                className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-3.5 py-2 text-[12.5px] font-medium text-primary-foreground hover:opacity-90"
-              >
-                <Users className="h-3.5 w-3.5" aria-hidden="true" />
-                Decisions
-              </Link>
-              <StatusControl
-                requisitionId={requisitionId}
-                status={req.status}
-                title={req.title}
-              />
-            </div>
-            )}
-          </div>
-          <p className="mt-2 text-[11.5px] text-[var(--ui-faint)]">
-            Live — refreshes on its own
-            {dash.dataUpdatedAt ? ` · updated ${ago(new Date(dash.dataUpdatedAt).toISOString())}` : ''}
-          </p>
-        </header>
-      </Reveal>
-
-      {/* Awaiting-you leads, because it is the only number here that nothing
-          else in the system will clear. */}
-      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <StatCard
-          label="Awaiting your decision"
-          value={String(progress.awaiting_decision)}
-          feature={progress.awaiting_decision > 0}
-        />
-        <StatCard label="Held, not rejected" value={String(progress.held)} />
-        <StatCard label="In a round now" value={String(progress.in_progress)} />
-        <StatCard label="Applications" value={String(progress.applications)} />
-        <StatCard
-          label="Hired"
-          value={target ? `${progress.hired} of ${target}` : String(progress.hired)}
-        />
-      </div>
-      {hirePct !== null ? (
-        <div className="-mt-3 mb-5" aria-label={`Hiring progress: ${progress.hired} of ${target}`}>
-          <span className="block h-1.5 overflow-hidden rounded-full bg-[var(--ui-inset)]">
-            <span
-              className="block h-full rounded-full bg-[var(--ui-ok)]/70"
-              style={{ width: `${hirePct}%` }}
-            />
+    <Page>
+      <PageHeader
+        compact
+        breadcrumbs={
+          <Breadcrumbs
+            items={[
+              {
+                label: readOnly ? 'Hiring board' : 'Openings',
+                to: readOnly ? '/superadmin/board' : '/hr/requisitions',
+              },
+              { label: 'Opening dashboard' },
+            ]}
+          />
+        }
+        title={req.title}
+        badges={
+          <>
+            <StatusTag
+              tone={
+                req.status === 'open' ? 'forest' : req.status === 'paused' ? 'amber' : 'neutral'
+              }
+              dot={req.status === 'open'}
+            >
+              {req.status}
+            </StatusTag>
+            <ApprovalPill status={req.approval_status} />
+          </>
+        }
+        meta={
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-muted-foreground">
+            <span>{req.level}</span>
+            {req.department ? <span>{req.department}</span> : null}
+            {req.location ? <span>{req.location}</span> : null}
+            {req.closes_at ? (
+              <span>closes {new Date(req.closes_at).toLocaleDateString()}</span>
+            ) : null}
+            {req.owner_name ? <span>owner {req.owner_name}</span> : null}
+            <span data-testid="workflow-state">
+              {wf.published_version ? `workflow v${wf.published_version} live` : 'no live workflow'}
+              {wf.draft_version ? ` · v${wf.draft_version} draft` : ''}
+            </span>
           </span>
-        </div>
-      ) : null}
-
-      <NeedsAttention items={data.attention} />
-
-      {readOnly ? null : <OpeningDetails requisition={req} />}
-      {/* PH4-A4 — what a candidate who accepts an offer for this opening must
-          upload during preboarding. */}
-      {readOnly ? null : <DocumentRequirementsSection requisitionId={requisitionId} />}
-
-      {still_being_read > 0 ? (
-        <div className="mb-5 flex items-center gap-2 rounded-[14px] border border-border bg-black/25 px-4 py-3 text-[12.5px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          {still_being_read} CV{still_being_read === 1 ? '' : 's'} still being read and
-          scored. Their names and fit scores fill in shortly.
-        </div>
-      ) : null}
-
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="flex flex-col gap-5">
-          <GlassCard className="p-5" data-testid="funnel">
-            <h2 className="text-[15px] font-semibold text-foreground">Where candidates are</h2>
-            {rounds.length === 0 ? (
-              <div className="mt-3">
-                <p className="text-[13px] leading-relaxed text-muted-foreground">
-                  No published workflow yet, so nobody is being moved through anything
-                  automatically.
-                </p>
-                {readOnly ? null : (
-                  <Link
-                    to={`/hr/requisitions/${requisitionId}/workflow`}
-                    className="mt-3 inline-block text-[13px] text-[var(--accent)] hover:underline"
-                  >
-                    Build the hiring process →
-                  </Link>
-                )}
-              </div>
-            ) : (
-              <>
-                <p className="mt-1 text-[12px] text-muted-foreground">
-                  The rounds of workflow v{wf.published_version ?? '?'}, in order.
-                  {progress.not_started > 0
-                    ? ` ${progress.not_started} applied and not yet shortlisted.`
-                    : ''}
-                  {progress.on_older_version > 0
-                    ? ` ${progress.on_older_version} still finishing an earlier version.`
-                    : ''}
-                </p>
-                <ul className="mt-2 flex list-none flex-col divide-y divide-white/[0.05]">
-                  {rounds.map((r) => (
-                    <RoundBar key={r.round_id} round={r} widest={widest} />
-                  ))}
-                </ul>
-              </>
-            )}
-          </GlassCard>
-
-          <HeldPool data={data} requisitionId={requisitionId} readOnly={readOnly} />
-          <Activity data={data} />
-        </div>
-
-        <div className="flex flex-col gap-5">
-          <ManualSteps data={data} />
-          <TimingAndScores data={data} />
-          {readOnly ? (
-            <GlassCard className="p-5">
-              <div className="flex items-center gap-2">
-                <Globe className="h-4 w-4 text-[var(--ui-faint)]" aria-hidden="true" />
-                <span className="text-[14px] font-medium text-foreground">
-                  Public applications {req.public_apply_enabled ? 'on' : 'off'}
-                </span>
-              </div>
-            </GlassCard>
+        }
+        actions={
+          readOnly ? (
+            <span className="rounded-full border border-border px-3 py-1 text-[13px] font-semibold text-muted-foreground">
+              Read-only
+            </span>
           ) : (
-            <PublicApplyCard
-              requisitionId={requisitionId}
-              enabled={req.public_apply_enabled}
-              status={req.status}
-              hasWorkflow={data.has_published_workflow}
-            />
-          )}
-        </div>
+            <>
+              <StatusButtons status={req.status} title={req.title} change={statusChange} />
+              <Button asChild variant="outline">
+                <Link to={`/hr/requisitions/${requisitionId}/workflow`}>Workflow</Link>
+              </Button>
+              {next ? (
+                <Button asChild variant="outline">
+                  <Link to={`/hr/requisitions/${requisitionId}/decisions`}>
+                    <Users aria-hidden="true" />
+                    Decisions
+                  </Link>
+                </Button>
+              ) : null}
+              {next ? (
+                next.to ? (
+                  <Button asChild>
+                    <Link to={next.to}>{next.label}</Link>
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      setPickedStage(next.stageKey);
+                      // Stage 1's next action is about the job description, so
+                      // open on that sub-step rather than on the first.
+                      if (next.stageKey === 'role') {
+                        setRoleStepRequest((r) => ({ step: 'jd', n: (r?.n ?? 0) + 1 }));
+                      }
+                    }}
+                  >
+                    {next.label}
+                  </Button>
+                )
+              ) : (
+                <Button asChild>
+                  <Link to={`/hr/requisitions/${requisitionId}/decisions`}>
+                    <Users aria-hidden="true" />
+                    Decisions
+                  </Link>
+                </Button>
+              )}
+            </>
+          )
+        }
+      />
+
+      {readOnly ? null : (
+        <CloseUnresolvedPanel
+          requisitionId={requisitionId}
+          title={req.title}
+          change={statusChange}
+        />
+      )}
+
+      {/* Sticky, so the tabs are always one click away however far the page is
+          scrolled. top-16 clears the shell's own sticky top bar. */}
+      <div
+        data-testid="hub-subheader"
+        className="sticky top-16 z-20 -mx-4 -my-2 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 bg-background/90 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10"
+      >
+        <SegTabs tabs={TABS} active={tab} onChange={chooseTab} />
+        {/* Demoted: a quiet freshness note, not a header line of its own. */}
+        <p className="text-[12px] text-muted-foreground">
+          Live — refreshes on its own
+          {dash.dataUpdatedAt
+            ? ` · updated ${ago(new Date(dash.dataUpdatedAt).toISOString())}`
+            : ''}
+        </p>
       </div>
-    </div>
+
+      {/* Setup stays mounted (hidden) once it has been opened, so a trip to
+          Pipeline does not throw away what was typed and not yet saved. */}
+      {tab === 'setup' || setupOpened ? (
+        <div role="tabpanel" aria-label="Setup" hidden={tab !== 'setup'}>
+          {setup.stages.length > 0 && stageKey === null ? (
+            // Not mounting any stage until the default is known: stage 1's four
+            // panels would fire their requests just to be replaced.
+            <div className="flex flex-col gap-4" role="status" data-testid="setup-loading">
+              <Skeleton className="h-24 rounded-card" />
+              <Skeleton className="h-48 rounded-card" />
+              <span className="sr-only">Loading setup…</span>
+            </div>
+          ) : setup.stages.length > 0 && stageKey !== null ? (
+            <SetupTab
+              stages={setup.stages}
+              activeKey={stageKey}
+              onSelect={setPickedStage}
+              requisition={req}
+              hasPublishedWorkflow={data.has_published_workflow}
+              readOnly={readOnly}
+              roleStepRequest={roleStepRequest}
+            />
+          ) : null}
+        </div>
+      ) : null}
+
+      {tab === 'setup' ? null : (
+        <div role="tabpanel" aria-label="Pipeline">
+          <PipelineTab
+            data={data}
+            requisitionId={requisitionId}
+            readOnly={readOnly}
+            onOpenSetup={() => {
+              setPickedStage('golive');
+              chooseTab('setup');
+            }}
+          />
+        </div>
+      )}
+    </Page>
   );
 }

@@ -4,12 +4,16 @@ Auth: JWT required (HS256, same jwt_secret as other services).
       No admin role required — this is an internal service-to-service call.
 
 Idempotency: the scorecards table has a UNIQUE constraint on session_id.
-             A second call for the same session_id returns HTTP 409.
+             A second call for the same session_id returns HTTP 409 — and, since
+             the LLM call is the expensive part, it is answered BEFORE that call
+             when the scorecard already exists (``_existing_scorecard_id``), not
+             after paying for a second run and losing the INSERT race.
 """
 
 from __future__ import annotations
 
 import contextlib
+import uuid
 from typing import Annotated, Any, Literal
 
 import structlog
@@ -139,6 +143,43 @@ def _parse_role_profile(raw: dict[str, Any] | None, session_id: str) -> RoleProf
             error=str(exc)[:300],
             fallback="legacy_fixed_rubric",
         )
+        return None
+
+
+async def _existing_scorecard_id(db: AsyncSession, session_id: str) -> str | None:
+    """The scorecard already written for this session, or None. Never raises.
+
+    The cheap half of idempotency. Without it a repeat request (the worker's
+    retry, the reconciler, a double close) ran the whole LLM scoring call and only
+    then lost the UNIQUE(session_id) INSERT, so the duplicate was paid for. This
+    cannot close the window where the FIRST request is still running (nothing is
+    committed yet) — that is the caller's job, by not retrying a timeout.
+
+    An optimisation, not a guard: any failure answers None and scoring proceeds,
+    where the UNIQUE constraint remains the arbiter. The read transaction is
+    ended before returning, for the reason given in ``_lookup_candidate_name``.
+    """
+    try:
+        found = await db.scalar(
+            sa_text("SELECT scorecard_id FROM scorecards WHERE session_id = :session_id"),
+            {"session_id": session_id},
+        )
+    except Exception as exc:  # noqa: BLE001 — the constraint still protects us
+        with contextlib.suppress(Exception):
+            await db.rollback()
+        log.warning(
+            "score.existing_lookup_failed",
+            session_id=session_id,
+            error_type=type(exc).__name__,
+        )
+        return None
+    with contextlib.suppress(Exception):
+        await db.rollback()
+    if found is None:
+        return None
+    try:
+        return str(uuid.UUID(str(found)))
+    except ValueError:
         return None
 
 
@@ -397,6 +438,14 @@ async def internal_score(
         502 if Gemini fails (ScoringError).
     """
     turns_dicts = [{"role": t.role, "text": t.text} for t in body.turns]
+
+    existing_id = await _existing_scorecard_id(db, body.session_id)
+    if existing_id is not None:
+        log.info("score.already_scored", session_id=body.session_id, scorecard_id=existing_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Scorecard already exists for session_id {body.session_id!r}",
+        )
 
     # Both are what actually switch the PDF scorecard on: score_session skips
     # rendering without a candidate name, and cannot write report_pdf_key back

@@ -66,7 +66,7 @@ would be the worse outcome.
 | 4 | An authorized approver can approve or reject | ✅ | `…/approval/approve` and `…/reject`; `smoke` |
 | 5 | Approval actions are auditable | ✅ | `AuditLog` on submit, approve and reject, with the note; `unit` |
 | 6 | Records who approved/rejected and when | ✅ | `approval_decided_by_user_id` + `approval_decided_at`, CHECK-tied so they cannot disagree; `db` |
-| 7 | Budget information can be associated with a requisition | ✅ | `budget_amount / currency / basis / period / notes` |
+| 7 | Budget information can be associated with a requisition | ✅ | `budget_amount / currency / basis / period / notes`; settable on `POST /hr/requisitions` as well as `PATCH` (2026-10-13), one shared validator (`BudgetFields`) |
 | 8 | Budget constraints do not replace `target_hires` | ✅ | separate columns, both retained; `unit` |
 | 9 | Publishing respects the approval state | ✅ | the gate is in `app/publishing.py`, so all three public surfaces get it at once; `smoke` proves the board, the posting and the draft endpoint all refuse |
 | 10 | Unauthorized users cannot approve | ✅ | the approve/reject routes require `super_admin`; an `hr_manager` fails the dependency before the handler runs |

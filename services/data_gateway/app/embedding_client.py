@@ -23,8 +23,34 @@ from app.remote import describe_unreachable
 log = structlog.get_logger(__name__)
 
 
+#: The ONLY sentences a browser is told when the embedding service fails.
+#: Specifics (service origin, start command, the upstream body) are logged here
+#: and never put in an HTTP response. Same pattern as ``exam_ai_client``.
+SEARCH_UNAVAILABLE = "Search is not available right now. Please try again in a minute."
+EXPLANATION_UNAVAILABLE = (
+    "The match explanation is not available right now. Please try again in a minute."
+)
+
+
 class EmbeddingError(Exception):
-    """Raised when the embedding service cannot be reached or returns an error."""
+    """Raised when the embedding service cannot be reached or returns an error.
+
+    ``str(exc)`` is the INTERNAL description (may hold an upstream body
+    excerpt) — for logs, never for a response. ``hint`` is a short, body-free
+    developer note. Route code answers with :func:`client_message`.
+    """
+
+    def __init__(self, internal: str, *, hint: str | None = None) -> None:
+        super().__init__(internal)
+        self.hint = hint
+
+
+def client_message(exc: EmbeddingError, *, fixed: str = SEARCH_UNAVAILABLE) -> str:
+    """What the HR browser is told: ``fixed``, plus the developer hint ONLY when
+    ``APP_ENV`` is ``development``."""
+    if settings.app_env == "development" and exc.hint:
+        return f"{fixed} (dev: {exc.hint})"
+    return fixed
 
 
 # The service identity this process presents to feedback_billing. It must be
@@ -90,11 +116,15 @@ async def embed_texts_remote(
                 json={"texts": texts, "task_type": task_type},
             )
     except httpx.RequestError as exc:
-        raise EmbeddingError(
-            describe_unreachable(exc, what="Semantic search indexing", url=url)
-        ) from exc
+        detail = describe_unreachable(exc, what="Semantic search indexing", url=url)
+        log.error("embedding.unreachable", error_type=type(exc).__name__, detail=detail)
+        raise EmbeddingError(detail, hint=detail) from exc
     if resp.status_code != 200:
-        raise EmbeddingError(f"embedding service returned HTTP {resp.status_code}: {resp.text[:160]}")
+        log.error("embedding.upstream_error", status=resp.status_code, body=resp.text[:160])
+        raise EmbeddingError(
+            f"embedding service returned HTTP {resp.status_code}: {resp.text[:160]}",
+            hint=f"embedding service returned HTTP {resp.status_code}",
+        )
     vectors: list[list[float]] = resp.json().get("embeddings", [])
     return vectors
 
@@ -121,11 +151,15 @@ async def why_match_remote(*, resume_text: str, query: str, acting_user_id: str)
                 json={"resume_text": resume_text, "query": query},
             )
     except httpx.RequestError as exc:
-        raise EmbeddingError(
-            describe_unreachable(exc, what="Match explanation", url=url)
-        ) from exc
+        detail = describe_unreachable(exc, what="Match explanation", url=url)
+        log.error("why_match.unreachable", error_type=type(exc).__name__, detail=detail)
+        raise EmbeddingError(detail, hint=detail) from exc
     if resp.status_code != 200:
-        raise EmbeddingError(f"match-reason service returned HTTP {resp.status_code}: {resp.text[:160]}")
+        log.error("why_match.upstream_error", status=resp.status_code, body=resp.text[:160])
+        raise EmbeddingError(
+            f"match-reason service returned HTTP {resp.status_code}: {resp.text[:160]}",
+            hint=f"match-reason service returned HTTP {resp.status_code}",
+        )
     reason: str = resp.json().get("reason", "")
     return reason
 

@@ -91,20 +91,32 @@ class JobCreateCustom(BaseModel):
     of (or before) uploading a PDF via POST /jobs/{id}/jd-document.
     """
 
-    title: str = Field(min_length=1, description="Job title, e.g. 'Backend Engineer'")
-    company_name: str = Field(default="", description="Hiring company name")
-    department: str = Field(default="", description="Department or team name")
-    jd_text: str = Field(default="", description="Plain-text job description (optional)")
+    # Length caps (L5): this body comes from ANY authenticated user and is stored
+    # and later fed to the interview LLM, so it was an unbounded write. The caps
+    # sit far above anything legitimate: the form has no maxLength and a real job
+    # description is a few thousand characters; jd_text allows 50,000 (the PDF
+    # route's own ceiling is 400,000 after extraction, but that path is a file).
+    title: str = Field(
+        min_length=1, max_length=200, description="Job title, e.g. 'Backend Engineer'"
+    )
+    company_name: str = Field(default="", max_length=200, description="Hiring company name")
+    department: str = Field(default="", max_length=200, description="Department or team name")
+    jd_text: str = Field(
+        default="", max_length=50_000, description="Plain-text job description (optional)"
+    )
     level: str = Field(
         default="entry",
+        max_length=32,
         description="Experience tier: 'entry' | 'mid' | 'senior'",
     )
     interview_type: str = Field(
         default="screening",
+        max_length=32,
         description="Interview style: 'screening' | 'technical' | 'hr'",
     )
     description: str = Field(
         default="",
+        max_length=10_000,
         description=(
             "Human-readable description shown in the UI. "
             "Defaults to the job title when left blank."

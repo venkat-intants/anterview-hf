@@ -59,7 +59,10 @@ export default function CodeEditor({
 
   return (
     <div
-      className="overflow-auto rounded-[12px] border border-border bg-[#0b0c0e]"
+      // The editor is dark in both colour modes on purpose: the Prism "tomorrow"
+      // theme it highlights with is a dark-on-dark palette, so it reads as a
+      // code surface rather than a page surface.
+      className="overflow-auto rounded-[16px] border border-border bg-[#0b0c0e] focus-within:ring-2 focus-within:ring-[var(--accent)]"
       style={{ maxHeight: 560 }}
     >
       <Editor

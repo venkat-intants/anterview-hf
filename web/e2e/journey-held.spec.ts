@@ -52,7 +52,7 @@ test.describe('a candidate below the bar', () => {
 
     // ── They sit the exam and fail it ───────────────────────────────────────
     const verdict = await sitTheExam(candidatePage, candidate, { answerCorrectly: false });
-    expect(verdict).toContain('Not this time');
+    expect(verdict).toContain('Assessment submitted');
     await candidateContext.close();
 
     // ── Held, not rejected ──────────────────────────────────────────────────
@@ -82,12 +82,15 @@ test.describe('a candidate below the bar', () => {
     // ── On the screen: a person is offered both ways out ────────────────────
     await page.goto(`/hr/requisitions/${opening.id}/decisions`);
     await expect(page.getByText(candidate.name).first()).toBeVisible();
+    // The queue is a master-detail workspace: the first candidate is selected,
+    // and the panel goes Evidence -> Decision -> Reason & confirm.
+    await page.getByTestId('to-decision').click();
     await expect(
       page.getByRole('button', { name: 'Let them continue' }),
       'a person can overrule the score and let a held candidate carry on',
     ).toBeVisible();
 
-    await page.getByRole('button', { name: 'Reject', exact: true }).click();
+    await page.getByRole('button', { name: /^Reject/ }).click();
     await expect(page.getByText('Choose a reason above first.')).toBeVisible();
     const confirm = page.getByRole('button', { name: 'Confirm' });
     await expect(confirm, 'rejecting without a reason is refused too').toBeDisabled();

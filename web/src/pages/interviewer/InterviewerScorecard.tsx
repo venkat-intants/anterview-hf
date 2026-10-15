@@ -12,18 +12,12 @@
 // English-only by design (CLAUDE.md — staff consoles are not translated).
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  AlertTriangle,
-  ArrowLeft,
-  CheckCircle2,
-  Info,
-  Lock,
-  Loader2,
-} from '@/design/components/icons';
+import { AlertTriangle, Check, CheckCircle2, Info, Lock, Loader2 } from '@/design/components/icons';
 import { GlassCard, SegTabs, StatusTag, ToggleSwitch } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
+import { Breadcrumbs, PageHeader, Page } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { ApiError } from '@/api/client';
@@ -171,14 +165,14 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
           <div key={c.competency_id} className="rounded-[14px] border border-border p-3.5">
             <div className="flex items-baseline justify-between gap-3">
               <span className="text-[13.5px] font-medium text-foreground">{c.competency_name}</span>
-              <span className="text-[11px] text-[var(--ui-faint)]">
+              <span className="text-[12px] text-[var(--ui-faint)]">
                 weight {c.weight.toFixed(2)}
               </span>
             </div>
 
             {c.what_to_evaluate.length > 0 ? (
               <div className="mt-2">
-                <p className="text-[11px] font-medium text-[var(--ui-faint)]">What to evaluate</p>
+                <p className="text-[12px] font-medium text-[var(--ui-faint)]">What to evaluate</p>
                 <ul className="mt-1 list-disc pl-4 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
                   {c.what_to_evaluate.map((x, i) => (
                     <li key={i}>{x}</li>
@@ -189,7 +183,7 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
 
             {c.look_for.length > 0 ? (
               <div className="mt-2">
-                <p className="text-[11px] font-medium text-[var(--ui-faint)]">Look for</p>
+                <p className="text-[12px] font-medium text-[var(--ui-faint)]">Look for</p>
                 <ul className="mt-1 list-disc pl-4 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
                   {c.look_for.map((x, i) => (
                     <li key={i}>{x}</li>
@@ -200,7 +194,7 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
 
             {c.frozen_probes.length > 0 || c.probes.length > 0 ? (
               <div className="mt-2">
-                <p className="text-[11px] font-medium text-[var(--ui-faint)]">
+                <p className="text-[12px] font-medium text-[var(--ui-faint)]">
                   Suggested probes &mdash; guidance, not mandatory questions
                 </p>
                 <ul className="mt-1 list-disc pl-4 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
@@ -215,7 +209,7 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
               <dl className="mt-2.5 grid grid-cols-1 gap-1.5 border-t border-border pt-2 sm:grid-cols-3">
                 {(['low', 'mid', 'high'] as const).map((band) => (
                   <div key={band}>
-                    <dt className="text-[10.5px] font-medium uppercase tracking-wide text-[var(--ui-faint)]">
+                    <dt className="text-[12px] font-medium uppercase tracking-wide text-[var(--ui-faint)]">
                       {band === 'low' ? 'Weak' : band === 'mid' ? 'Adequate' : 'Strong'}
                     </dt>
                     <dd className="mt-0.5 text-[12px] leading-relaxed text-[var(--ui-soft)]">
@@ -249,22 +243,23 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
               onChange={(e) => setNotes(e.target.value)}
               rows={6}
               placeholder="Jot anything down while you interview — only you can see this."
-              className="mt-2 w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
+              className="mt-2 w-full resize-y rounded-[10px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
             <div className="mt-2 flex items-center justify-between">
-              <span className="text-[11px] text-[var(--ui-faint)]">
+              <span className="text-[12px] text-[var(--ui-faint)]">
                 {notesQuery.data?.updated_at
                   ? `Saved ${new Date(notesQuery.data.updated_at).toLocaleString()}`
                   : 'Not saved yet'}
               </span>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={() => saveNotes.mutate()}
                 disabled={saveNotes.isPending}
-                className="rounded-[10px] border border-[var(--ui-line-strong)] px-3 py-1.5 text-[12px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-50"
               >
                 {saveNotes.isPending ? 'Saving…' : 'Save notes'}
-              </button>
+              </Button>
             </div>
           </>
         )}
@@ -308,42 +303,58 @@ function ScoreControl({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <div
-        role="radiogroup"
-        aria-label={`Score — ${competencyName}`}
-        className="flex items-center gap-1.5"
-      >
-        {[1, 2, 3, 4, 5].map((n) => {
-          const checked = !value.not_assessed && value.score === n;
-          return (
-            <button
-              key={n}
-              ref={(el) => {
-                buttons.current[n - 1] = el;
-              }}
-              type="button"
-              role="radio"
-              aria-checked={checked}
-              aria-label={`Score ${n}`}
-              tabIndex={n === tabStop ? 0 : -1}
-              disabled={disabled || value.not_assessed}
-              onKeyDown={(e) => onKeyDown(e, n)}
-              onClick={() => onChange({ score: n, not_assessed: false })}
-              className={cn(
-                'flex h-9 w-9 items-center justify-center rounded-[10px] border text-[13.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-                checked
-                  ? 'border-[var(--accent)] bg-[rgba(var(--accent-rgb),0.16)] text-foreground'
-                  : 'border-border text-[var(--ui-soft)] hover:border-[var(--ui-line-strong)]',
-                (disabled || value.not_assessed) && 'cursor-not-allowed opacity-40',
-              )}
-            >
-              {n}
-            </button>
-          );
-        })}
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+      <div>
+        <div
+          role="radiogroup"
+          aria-label={`Score — ${competencyName}`}
+          aria-required={!value.not_assessed}
+          className="flex items-center gap-2"
+        >
+          {[1, 2, 3, 4, 5].map((n) => {
+            const checked = !value.not_assessed && value.score === n;
+            return (
+              <button
+                key={n}
+                ref={(el) => {
+                  buttons.current[n - 1] = el;
+                }}
+                type="button"
+                role="radio"
+                aria-checked={checked}
+                aria-label={`Score ${n}`}
+                tabIndex={n === tabStop ? 0 : -1}
+                disabled={disabled || value.not_assessed}
+                onKeyDown={(e) => onKeyDown(e, n)}
+                onClick={() => onChange({ score: n, not_assessed: false })}
+                className={cn(
+                  'relative flex h-11 w-11 items-center justify-center rounded-[10px] border text-[15px] font-semibold tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  // Selected is a fill, a heavier ring AND a check mark, so it
+                  // does not depend on telling two blues apart.
+                  checked
+                    ? 'border-primary bg-primary text-primary-foreground ring-2 ring-primary/30'
+                    : 'border-input bg-card text-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
+                  (disabled || value.not_assessed) && 'cursor-not-allowed opacity-40',
+                )}
+              >
+                {n}
+                {checked ? (
+                  <span
+                    aria-hidden="true"
+                    className="absolute -right-1.5 -top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-card text-primary ring-1 ring-primary"
+                  >
+                    <Check size={10} strokeWidth={3} />
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-1.5 text-[12px] text-muted-foreground" aria-hidden="true">
+          1 = lowest · 5 = highest
+        </p>
       </div>
-      <label className="flex items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
+      <label className="flex min-h-10 items-center gap-2 text-[13px] text-foreground">
         <ToggleSwitch
           checked={value.not_assessed}
           onChange={(next) => onChange({ score: next ? null : value.score, not_assessed: next })}
@@ -353,6 +364,17 @@ function ScoreControl({
       </label>
     </div>
   );
+}
+
+const TEXTAREA =
+  'mt-1.5 w-full resize-y rounded-[10px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:bg-[var(--ui-inset-soft)] disabled:opacity-70';
+
+/** How many criteria are settled — scored, or explicitly marked not assessed. */
+function settledCount(detail: ScorecardDetail, scores: ScoreState): number {
+  return detail.criteria.filter((c) => {
+    const v = scores[c.competency_id];
+    return v ? v.not_assessed || v.score != null : false;
+  }).length;
 }
 
 function ScorecardPanel({
@@ -371,25 +393,60 @@ function ScorecardPanel({
   readOnly: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
+      {readOnly ? null : (
+        <p className="flex items-start gap-2 text-[13px] leading-relaxed text-muted-foreground">
+          <Info className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
+          <span>
+            <span aria-hidden="true" className="font-semibold text-[var(--ui-danger)]">
+              *
+            </span>{' '}
+            Required to submit: give every criterion a score, or mark it Not assessed. At least one
+            criterion needs a score. Evidence and the summary are optional.
+          </span>
+        </p>
+      )}
+
       {detail.criteria.map((c) => {
         const v = scores[c.competency_id] ?? { score: null, not_assessed: false, evidence: '' };
         return (
-          <div key={c.competency_id} className="rounded-[14px] border border-border p-4">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="text-[13.5px] font-medium text-foreground">{c.competency_name}</span>
-              <span className="text-[11px] text-[var(--ui-faint)]">
+          <section
+            key={c.competency_id}
+            aria-labelledby={`crit-${c.competency_id}`}
+            className="rounded-[14px] border border-border bg-card p-5"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+              <h3 id={`crit-${c.competency_id}`} className="text-[15px] font-bold text-foreground">
+                {c.competency_name}
+              </h3>
+              <span className="text-[12.5px] tabular-nums text-muted-foreground">
                 weight {c.weight.toFixed(2)}
               </span>
             </div>
             {c.anchors ? (
-              <p className="mt-1 text-[11.5px] leading-relaxed text-muted-foreground">
-                Weak: {c.anchors.low} &middot; Adequate: {c.anchors.mid} &middot; Strong:{' '}
-                {c.anchors.high}
-              </p>
+              <dl className="mt-3 grid gap-2 rounded-[10px] bg-[var(--ui-inset-soft)] p-3 sm:grid-cols-3">
+                {(['low', 'mid', 'high'] as const).map((band) => (
+                  <div key={band}>
+                    <dt className="text-[12px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {band === 'low' ? 'Weak' : band === 'mid' ? 'Adequate' : 'Strong'}
+                    </dt>
+                    <dd className="mt-0.5 text-[12.5px] leading-relaxed text-foreground">
+                      {c.anchors ? c.anchors[band] : ''}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
             ) : null}
 
-            <div className="mt-3">
+            <div className="mt-4">
+              <p className="mb-2 text-[13px] font-medium text-foreground">
+                Score
+                {readOnly ? null : (
+                  <span aria-hidden="true" className="ml-0.5 text-[var(--ui-danger)]">
+                    *
+                  </span>
+                )}
+              </p>
               <ScoreControl
                 competencyName={c.competency_name}
                 value={v}
@@ -398,10 +455,10 @@ function ScorecardPanel({
               />
             </div>
 
-            <div className="mt-3">
+            <div className="mt-4">
               <label
                 htmlFor={`evidence-${c.competency_id}`}
-                className="text-[12px] font-medium text-[var(--ui-soft)]"
+                className="text-[13px] font-medium text-foreground"
               >
                 Evidence
               </label>
@@ -414,29 +471,27 @@ function ScorecardPanel({
                   setScores({ ...scores, [c.competency_id]: { ...v, evidence: e.target.value } })
                 }
                 rows={2}
-                className="mt-1 w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+                className={TEXTAREA}
               />
             </div>
-          </div>
+          </section>
         );
       })}
 
-      <div>
-        <label
-          htmlFor="scorecard-summary"
-          className="text-[12px] font-medium text-[var(--ui-soft)]"
-        >
+      <section className="rounded-[14px] border border-border bg-card p-5">
+        <label htmlFor="scorecard-summary" className="text-[15px] font-bold text-foreground">
           Overall summary
         </label>
+        <p className="mt-0.5 text-[12.5px] text-muted-foreground">Optional.</p>
         <textarea
           id="scorecard-summary"
           value={summary}
           disabled={readOnly}
           onChange={(e) => setSummary(e.target.value)}
           rows={4}
-          className="mt-1 w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-60"
+          className={TEXTAREA}
         />
-      </div>
+      </section>
     </div>
   );
 }
@@ -544,19 +599,21 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
 
   if (detailQuery.isLoading) {
     return (
-      <div className="mx-auto flex w-full max-w-[900px] items-center gap-2 px-4 py-16 text-[13px] text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-        Loading scorecard…
-      </div>
+      <Page width="form">
+        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Loading scorecard…
+        </div>
+      </Page>
     );
   }
   if (detailQuery.isError || !detail) {
     return (
-      <div className="mx-auto w-full max-w-[900px] px-4 py-8">
+      <Page width="form">
         <GlassCard className="p-6 text-[13.5px] text-[var(--ui-danger)]">
           {errOrWithdrawn(detailQuery.error, 'Could not load this scorecard')}
         </GlassCard>
-      </div>
+      </Page>
     );
   }
 
@@ -566,38 +623,34 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
     correctionReason.trim().length <= MAX_CORRECTION_REASON;
 
   return (
-    <div className="mx-auto w-full max-w-[900px] px-4 py-8">
-      <Reveal>
-        <header className="mb-6">
-          <Link
-            to="/interviewer"
-            className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            My interviews
-          </Link>
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-[24px] font-semibold tracking-[-0.8px] text-foreground">
-              {detail.candidate_name}
-            </h1>
-            <StatusTag tone={detail.status === 'submitted' ? 'forest' : 'amber'} dot>
-              {detail.status === 'submitted'
-                ? 'Submitted'
-                : detail.state === 'late'
-                  ? 'Late'
-                  : 'In progress'}
-            </StatusTag>
-          </div>
-          <p className="mt-1 text-[13px] text-muted-foreground">
+    <Page width="form">
+      <PageHeader
+        breadcrumbs={
+          <Breadcrumbs
+            items={[{ label: 'My interviews', to: '/interviewer' }, { label: 'Scorecard' }]}
+          />
+        }
+        title={detail.candidate_name}
+        description={
+          <>
             {detail.job_title} &middot; {detail.round_title}
-          </p>
-        </header>
-      </Reveal>
+          </>
+        }
+        actions={
+          <StatusTag tone={detail.status === 'submitted' ? 'forest' : 'amber'} dot>
+            {detail.status === 'submitted'
+              ? 'Submitted'
+              : detail.state === 'late'
+                ? 'Late'
+                : 'In progress'}
+          </StatusTag>
+        }
+      />
 
       {detail.superseded ? (
         <div
           role="status"
-          className="mb-5 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
+          className="flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
         >
           <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           This scorecard was corrected. It is kept for the record and is read-only.
@@ -605,7 +658,7 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
       ) : null}
 
       {detail.is_correction && detail.correction_reason ? (
-        <div className="mb-5 flex items-start gap-2 rounded-[12px] border border-[var(--ui-lavender)]/30 bg-[var(--ui-lavender-wash)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
+        <div className="flex items-start gap-2 rounded-[12px] border border-[var(--ui-lavender)]/30 bg-[var(--ui-lavender-wash)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-lavender)]" aria-hidden="true" />
           Correcting the earlier scorecard: {detail.correction_reason}
         </div>
@@ -620,7 +673,7 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
         <div
           role="note"
           aria-label="Adjustments"
-          className="mb-5 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
+          className="flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
         >
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />
           <span>
@@ -633,7 +686,7 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
       {formError ? (
         <div
           role="alert"
-          className="mb-5 flex items-start gap-2 rounded-[12px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-wash)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
+          className="flex items-start gap-2 rounded-[12px] border border-[var(--ui-danger)]/30 bg-[var(--ui-danger-wash)] p-3 text-[12.5px] leading-relaxed text-[var(--ui-soft)]"
         >
           <AlertTriangle
             className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]"
@@ -674,12 +727,12 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
 
             {readOnly ? (
               detail.can_correct ? (
-                <div className="mt-5 border-t border-border pt-4">
+                <div className="mt-6 border-t border-border pt-4">
                   {correcting ? (
                     <div className="flex flex-col gap-2">
                       <label
                         htmlFor="correction-reason"
-                        className="text-[12px] font-medium text-[var(--ui-soft)]"
+                        className="text-[13px] font-medium text-foreground"
                       >
                         Why does this need correcting? (10&ndash;1000 characters)
                       </label>
@@ -689,91 +742,88 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
                         onChange={(e) => setCorrectionReason(e.target.value)}
                         maxLength={MAX_CORRECTION_REASON}
                         rows={3}
-                        className="w-full resize-y rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                        className={TEXTAREA}
                       />
-                      <div className="flex items-center gap-2">
-                        <button
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <Button
                           type="button"
-                          onClick={() => correctionMut.mutate()}
-                          disabled={!correctionReasonReady || correctionMut.isPending}
-                          className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
-                        >
-                          {correctionMut.isPending ? 'Starting…' : 'Start correction'}
-                        </button>
-                        <button
-                          type="button"
+                          variant="ghost"
                           onClick={() => {
                             setCorrecting(false);
                             setCorrectionReason('');
                           }}
-                          className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground"
                         >
                           Cancel
-                        </button>
+                        </Button>
+                        <Button
+                          type="button"
+                          onClick={() => correctionMut.mutate()}
+                          disabled={!correctionReasonReady || correctionMut.isPending}
+                        >
+                          {correctionMut.isPending ? 'Starting…' : 'Start correction'}
+                        </Button>
                       </div>
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => setCorrecting(true)}
-                      className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground"
-                    >
+                    <Button type="button" variant="outline" onClick={() => setCorrecting(true)}>
                       Request correction
-                    </button>
+                    </Button>
                   )}
                 </div>
               ) : null
             ) : (
-              <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border pt-4">
-                <button
-                  type="button"
-                  onClick={() => saveMut.mutate()}
-                  disabled={saveMut.isPending || submitMut.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-50"
-                >
-                  {saveMut.isPending ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                  ) : null}
-                  Save draft
-                </button>
-
+              <div className="sticky bottom-0 z-20 -mx-5 -mb-5 mt-6 rounded-b-card border-t border-border bg-card/95 px-5 py-3 backdrop-blur">
                 {confirmSubmit ? (
-                  <div className="flex w-full flex-wrap items-center gap-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3">
-                    <span className="flex-1 text-[12.5px] text-[var(--ui-soft)]">
+                  <div
+                    role="group"
+                    aria-label="Confirm submission"
+                    className="mb-3 flex flex-wrap items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3"
+                  >
+                    <span className="min-w-0 flex-1 text-[13px] text-foreground">
                       Submitted scorecards can&rsquo;t be edited — only corrected, with a reason,
                       and the original is kept.
                     </span>
-                    <button
+                    <Button type="button" variant="ghost" onClick={() => setConfirmSubmit(false)}>
+                      Cancel
+                    </Button>
+                    <Button
                       type="button"
                       onClick={() => submitMut.mutate()}
                       disabled={submitMut.isPending}
-                      className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
                     >
                       {submitMut.isPending ? 'Submitting…' : 'Confirm submit'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirmSubmit(false)}
-                      className="rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground"
-                    >
-                      Cancel
-                    </button>
+                    </Button>
                   </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setConfirmSubmit(true)}
-                    className="inline-flex items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground hover:opacity-90"
-                  >
-                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                    Submit scorecard
-                  </button>
-                )}
+                ) : null}
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                  <p className="text-[13px] tabular-nums text-muted-foreground" role="status">
+                    {settledCount(detail, scores)} of {detail.criteria.length} criteria settled
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => saveMut.mutate()}
+                      disabled={saveMut.isPending || submitMut.isPending}
+                    >
+                      {saveMut.isPending ? (
+                        <Loader2 className="animate-spin" aria-hidden="true" />
+                      ) : null}
+                      Save draft
+                    </Button>
+                    {confirmSubmit ? null : (
+                      <Button type="button" onClick={() => setConfirmSubmit(true)}>
+                        <CheckCircle2 aria-hidden="true" />
+                        Submit scorecard
+                      </Button>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </>
         )}
       </GlassCard>
-    </div>
+    </Page>
   );
 }

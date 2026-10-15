@@ -92,7 +92,7 @@ export default function CandidatePreview({
             <li key={round.id} className="rounded-[12px] border border-border p-3">
               <p className="text-[13px] font-medium text-foreground">
                 Round {i + 1} of {ordered.length} · {round.title}
-                <span className="ml-2 text-[11.5px] font-normal text-[var(--ui-faint)]">
+                <span className="ml-2 text-[12px] font-normal text-[var(--ui-faint)]">
                   {ROUND_KIND_META[round.kind].label}
                 </span>
               </p>

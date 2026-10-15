@@ -120,6 +120,14 @@ class Settings(BaseSettings):
     # Reduce in staging/testing; never below 60 s in prod.
     erasure_poll_interval_seconds: int = 900
 
+    # Off switch for the poll itself. Slowing a poller does not stop a serverless
+    # Postgres being woken (see data_gateway's email_poll_interval_seconds), only
+    # not polling does. With this false NOTHING physically purges erased
+    # candidates' data: requests are still accepted and consent is still revoked
+    # at request time, but they sit 'pending' until it is re-enabled, so this
+    # must not be left off past the DPDP retention window. Default true.
+    erasure_executor_enabled: bool = True
+
     # Peer microservice base URLs — used by the /admin/system/health aggregator.
     # Defaults to localhost dev ports; override in cloud via env. All optional so a
     # stale .env never crashes startup.

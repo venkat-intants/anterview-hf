@@ -26,7 +26,10 @@ import {
   type SimulationScenario,
 } from '@/api/workflowReview';
 
-const STATUS_META: Record<SimulationResult['status'], { label: string; tone: 'forest' | 'amber' | 'ember' }> = {
+const STATUS_META: Record<
+  SimulationResult['status'],
+  { label: string; tone: 'forest' | 'amber' | 'ember' }
+> = {
   passed: { label: 'Passed', tone: 'forest' },
   warnings: { label: 'Needs attention', tone: 'amber' },
   failed: { label: 'Failed', tone: 'ember' },
@@ -58,7 +61,7 @@ function RoundRow({ round }: { round: SimulationRound }) {
         </span>
         {/* The word, not only the icon — a colour-blind reviewer must not have
             to guess what a check mark and a triangle disagree about. */}
-        <span className="text-[11px] text-muted-foreground">{STATE_WORD[round.state]}</span>
+        <span className="text-[12px] text-muted-foreground">{STATE_WORD[round.state]}</span>
       </div>
       {round.findings.length > 0 ? (
         <ul className="mt-2 flex flex-col gap-1 pl-6">
@@ -70,7 +73,7 @@ function RoundRow({ round }: { round: SimulationRound }) {
                 f.severity === 'error' ? 'text-[var(--ui-danger)]' : 'text-[var(--ui-warn)]',
               )}
             >
-              <span className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide">
+              <span className="mt-0.5 shrink-0 text-[12px] font-semibold uppercase tracking-wide">
                 {f.severity}
               </span>
               {f.message}
@@ -109,7 +112,7 @@ function ScenarioRow({ scenario }: { scenario: SimulationScenario }) {
         <span className="min-w-0 truncate text-[12.5px] text-foreground">
           {scenario.id} — {scenario.description}
         </span>
-        <span className="flex shrink-0 items-center gap-2 text-[11.5px] text-muted-foreground">
+        <span className="flex shrink-0 items-center gap-2 text-[12px] text-muted-foreground">
           {endLabel}
           <ChevronDown
             className={cn('h-3.5 w-3.5 transition-transform', open && 'rotate-180')}
@@ -176,9 +179,9 @@ export default function DryRunPanel({ workflowId }: { workflowId: string }): JSX
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-[13px] font-medium text-foreground">Dry run</h3>
-          <p className="mt-0.5 text-[11.5px] leading-relaxed text-muted-foreground">
-            Walks synthetic candidates through this version&rsquo;s actual routing. A passing
-            dry run publishes nothing.
+          <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
+            Walks synthetic candidates through this version&rsquo;s actual routing. A passing dry
+            run publishes nothing.
           </p>
         </div>
         <button
@@ -187,7 +190,9 @@ export default function DryRunPanel({ workflowId }: { workflowId: string }): JSX
           disabled={runMut.isPending}
           className="inline-flex shrink-0 items-center gap-1.5 rounded-[10px] bg-primary px-3.5 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
         >
-          {runMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+          {runMut.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : null}
           {result ? 'Run again' : 'Run dry run'}
         </button>
       </div>
@@ -208,7 +213,10 @@ export default function DryRunPanel({ workflowId }: { workflowId: string }): JSX
               role="status"
               className="flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-warn)]/30 bg-[var(--ui-warn)]/[0.06] px-3 py-2 text-[12px] text-[var(--ui-soft)]"
             >
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
+              <AlertTriangle
+                className="h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]"
+                aria-hidden="true"
+              />
               Stale — the workflow changed since this run.
             </p>
           ) : null}
@@ -221,7 +229,7 @@ export default function DryRunPanel({ workflowId }: { workflowId: string }): JSX
               warning{result.warnings === 1 ? '' : 's'}
             </span>
             {result.run_by_name ? (
-              <span className="text-[11.5px] text-[var(--ui-faint)]">by {result.run_by_name}</span>
+              <span className="text-[12px] text-[var(--ui-faint)]">by {result.run_by_name}</span>
             ) : null}
           </div>
 
@@ -235,7 +243,7 @@ export default function DryRunPanel({ workflowId }: { workflowId: string }): JSX
                     f.severity === 'error' ? 'text-[var(--ui-danger)]' : 'text-[var(--ui-warn)]',
                   )}
                 >
-                  <span className="mt-0.5 shrink-0 text-[10px] font-semibold uppercase tracking-wide">
+                  <span className="mt-0.5 shrink-0 text-[12px] font-semibold uppercase tracking-wide">
                     {f.severity}
                   </span>
                   {f.message}

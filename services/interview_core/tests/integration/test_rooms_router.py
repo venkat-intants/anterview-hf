@@ -62,6 +62,7 @@ def _patch_db(
     scorecard_exists: bool = False,
     has_consent: bool = True,
     job_title: str = "Junior Java Developer",
+    other_active_sessions: int = 0,
 ) -> Any:
     """Yield a mock AsyncSession wired for ``create_room_token``.
 
@@ -72,6 +73,7 @@ def _patch_db(
       - scorecard existence check -> "SCORECARDS" in the raw SQL text
       - worker Job lookup         -> "FROM JOBS" in the compiled ORM select
       - DPDP consent check        -> "DPDP_CONSENT_LEDGER" in the raw SQL text
+      - other-running-session probe -> "ACTIVE_SESSION_PROBE" (a count column alias)
     """
     session_row = None
     if session_user_id is not None:
@@ -96,8 +98,13 @@ def _patch_db(
     consent_result = MagicMock()
     consent_result.scalar_one_or_none.return_value = 1 if has_consent else None
 
+    probe_result = MagicMock()
+    probe_result.scalar_one_or_none.return_value = other_active_sessions
+
     def _execute_side_effect(stmt: Any, *a: Any, **k: Any) -> Any:
         sql = str(stmt).upper()
+        if "ACTIVE_SESSION_PROBE" in sql:
+            return probe_result
         if "DPDP_CONSENT_LEDGER" in sql:
             return consent_result
         if "SCORECARDS" in sql:

@@ -100,3 +100,75 @@ export function coverageVerdict(share: number | null | undefined): string | null
   if (pct >= 75) return `Reasonable coverage: the rounds assess ${pct}% of what this role weighs.`;
   return `Thin coverage: the rounds assess only ${pct}% of what this role weighs — check the gaps below.`;
 }
+
+/* ── The approval track and the one next action (UX round 3, stream B) ───────
+ *
+ * `stepStates()` above is the older five-step read and stays exported as it was
+ * (the opening hub imports it). The builder's track has the five steps the
+ * owner named — Rounds valid, Dry run, Submitted for review, Approved,
+ * Published — and the header's single primary follows from the same inputs, so
+ * the two can never disagree about what comes next.
+ */
+
+export type TrackStep = 'rounds' | 'dryRun' | 'submitted' | 'approved' | 'published';
+export type TrackState = 'done' | 'current' | 'todo' | 'returned';
+
+export interface TrackInput extends LifecycleInput {
+  /** How many rounds the version has. An empty version has nothing to validate. */
+  roundCount: number;
+  /**
+   * Another version of this opening is already a draft. The server allows ONE
+   * draft per opening (workflows.create_draft refuses a second with "This
+   * opening already has a draft workflow"), so cloning cannot succeed then.
+   */
+  draftExists?: boolean;
+}
+
+/**
+ * Where a version stands on the path to live. `returned` (the reviewer asked
+ * for changes) sits on the submission step: that is the step that was sent
+ * back. At most one step is `current`.
+ */
+export function trackStates(i: TrackInput): Record<TrackStep, TrackState> {
+  if (i.status !== 'draft') {
+    return { rounds: 'done', dryRun: 'done', submitted: 'done', approved: 'done', published: 'done' };
+  }
+  if (i.reviewStatus === 'approved') {
+    return { rounds: 'done', dryRun: 'done', submitted: 'done', approved: 'done', published: 'current' };
+  }
+  if (i.reviewStatus === 'in_review') {
+    return { rounds: 'done', dryRun: 'done', submitted: 'done', approved: 'current', published: 'todo' };
+  }
+  // 'draft' or 'changes_requested' - still being authored.
+  const roundsValid = i.roundCount > 0 && i.publishable;
+  const returned = i.reviewStatus === 'changes_requested';
+  return {
+    rounds: roundsValid ? 'done' : 'current',
+    dryRun: i.simulated ? 'done' : roundsValid ? 'current' : 'todo',
+    submitted: returned ? 'returned' : roundsValid && i.simulated ? 'current' : 'todo',
+    approved: 'todo',
+    published: 'todo',
+  };
+}
+
+export type NextAction = 'dry_run' | 'submit' | 'publish' | 'edit_new_version';
+
+/**
+ * The one legal next action, or null when there is none to offer (an empty
+ * draft; a version waiting on its reviewer, whose only moves — withdraw — are
+ * quiet ones). Dry run is the next action until one exists for the CURRENT
+ * content; the server runs its own on submit, but the track says dry run comes
+ * first and so does the button.
+ *
+ * "Edit as new version" is offered only where it can succeed: for the live
+ * version while no draft exists. An archived version has been superseded, and a
+ * second draft is refused by the server, so neither gets a primary.
+ */
+export function nextAction(i: TrackInput): NextAction | null {
+  if (i.status === 'archived') return null;
+  if (i.status === 'published') return i.draftExists ? null : 'edit_new_version';
+  if (i.reviewStatus === 'approved') return 'publish';
+  if (i.reviewStatus === 'in_review') return null;
+  if (i.roundCount === 0) return null;
+  return i.simulated ? 'submit' : 'dry_run';
+}

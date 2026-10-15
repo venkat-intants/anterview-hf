@@ -1,8 +1,11 @@
 // HRConsole — HR manager landing page.
-// Layout: faithfully reproduces anterview-pages/src/screens/hr/HRConsole.tsx
-//   (stat strip, activity feed, quick-actions panel, cost card).
-// Behavior: live getMe query for greeting; stat strip uses real HR_STATS shape
-//   mapped from the live query; activity feed is empty-safe.
+// Layout: ONE raised region, "Needs you today" (attention findings and stages at
+//   risk, each with its real count); then the openings still in setup, each
+//   linking to its setup tab; then the funnel as one stat group whose cells
+//   link to their lists; then recent activity. Shortcuts and the careers link
+//   sit in the aside.
+// Behavior: live getMe query for greeting; the stat group maps the live
+//   analytics query; the activity feed is empty-safe.
 // No AppShell wrapper — the app shell is provided by the route.
 
 import { useQuery } from '@tanstack/react-query';
@@ -10,37 +13,53 @@ import { Link } from 'react-router-dom';
 import { getMe } from '@/api/auth';
 import { getHrAnalytics } from '@/api/hr';
 import { listNotifications, type NotificationItem } from '@/api/notifications';
+import { listRequisitions } from '@/api/requisitions';
 import AttentionPanel from '@/components/AttentionPanel';
 import CareersLinkCard from '@/components/hr/CareersLinkCard';
 import StagesAtRiskWidget from '@/components/StagesAtRiskWidget';
+import { useAttention, useStagesAtRisk } from '@/hooks/useHrHomeQueries';
 import { useAuth } from '@/context/AuthContext';
+import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
+import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
+import { isInSetup, nextSetupStage, setupBadge } from '@/lib/hrHome';
 import { LIVE_POLL_MS } from '@/lib/polling';
-import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
-import { GlassCard, StatCard, Pill } from '@/design/components/primitives';
-import { PromoBanner, TrustStrip } from '@/design/components/banners';
-import {
-  Kanban, Users, BarChart3, Plus, Gauge, Target, ClipboardCheck, ShieldCheck,
-} from '@/design/components/icons';
+import { cn } from '@/lib/utils';
+import { EmptyState, Page, PageBody, PageHeader } from '@/design/components/page';
+import { StatusTag, type TagTone } from '@/design/components/primitives';
+import { Card } from '@/design/components/card';
+import { Row, RowList, Section } from '@/design/components/rows';
+import { Stat, StatGroup } from '@/design/components/stat-group';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
+import { Plus } from '@/design/components/icons';
 
-// ── Activity tone colours (design spec) ──────────────────────────────────────
-const ACTIVITY_BG: Record<string, string> = {
-  forest: 'rgba(39,201,63,0.16)',
-  electric: 'rgba(var(--accent-rgb),0.16)',
-  amber: 'rgba(255,183,100,0.16)',
-  lavender: 'rgba(168,135,220,0.16)',
+// Activity tone → tinted square + dot, all on status tokens so both modes hold.
+const ACTIVITY_TONE: Record<string, { bg: string; dot: string }> = {
+  forest: { bg: 'bg-[var(--ui-ok-wash)]', dot: 'text-[var(--ui-ok)]' },
+  electric: { bg: 'bg-[var(--ui-info-wash)]', dot: 'text-[var(--ui-info)]' },
+  amber: { bg: 'bg-[var(--ui-warn-wash)]', dot: 'text-[var(--ui-warn)]' },
+  lavender: { bg: 'bg-[var(--ui-lavender-wash)]', dot: 'text-[var(--ui-lavender)]' },
 };
 
-const ACTIVITY_COLOR: Record<string, string> = {
-  forest: '#27c93f',
-  electric: '#60a5fa',
-  amber: '#ffb764',
-  lavender: '#c89ce8',
+/** How many openings "Openings in setup" lists before pointing at the full list. */
+const SETUP_VISIBLE = 5;
+
+const SETUP_TONE: Record<string, TagTone> = {
+  'Sent back': 'ember',
+  'Awaiting approval': 'amber',
+  'Not submitted': 'neutral',
+  Approved: 'electric',
 };
 
-// Trend helper — green up-arrow when a stage has anything in it, flat otherwise.
-const tr = (n: number | undefined): 'up' | 'flat' => ((n ?? 0) > 0 ? 'up' : 'flat');
-// Render a count, or an em-dash while the funnel is still loading.
-const num = (n: number | undefined): string => (n === undefined ? '—' : String(n));
+/** A small muted count after a heading — only rendered once the count is known. */
+function Count({ n }: { n: number | undefined }): JSX.Element | null {
+  if (n === undefined) return null;
+  return (
+    <span className="ml-2 rounded-full bg-[var(--ui-inset-strong)] px-2 py-0.5 text-[12px] font-semibold tabular-nums text-[var(--ui-soft)]">
+      {n}
+    </span>
+  );
+}
 
 export default function HRConsole() {
   const { user } = useAuth();
@@ -52,7 +71,7 @@ export default function HRConsole() {
     staleTime: 60_000,
   });
 
-  // Live hiring funnel — drives the stat strip. The dashboard is the page a
+  // Live hiring funnel — drives the stat group. The dashboard is the page a
   // manager leaves open, so it polls like the other live views.
   const { data: analytics } = useQuery({
     queryKey: ['hr', 'analytics'],
@@ -75,9 +94,27 @@ export default function HRConsole() {
     retry: false,
   });
 
+  // The two lists under "Needs you today" read the same cached queries as the
+  // panels themselves, so their counts are the lists' own lengths.
+  const attention = useAttention();
+  const atRisk = useStagesAtRisk();
+  const attentionCount = attention.data?.total;
+  const atRiskCount = atRisk.data?.length;
+
+  // Openings that are not yet approved and live. No polling: this changes when
+  // someone acts on an opening, and the opening's own page is where that
+  // happens.
+  const openings = useQuery({
+    queryKey: ['hr', 'requisitions', 'home'],
+    queryFn: () => listRequisitions({ limit: 200 }),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const inSetup = (openings.data ?? []).filter(isInSetup);
+
   const f = analytics?.funnel;
   const a = analytics?.averages;
-  const openings = analytics?.openings;
+  const open = analytics?.openings;
   const velocity = analytics?.velocity;
 
   /**
@@ -87,197 +124,227 @@ export default function HRConsole() {
    * two applications to three is "+50%", which reads as a trend and is not
    * one. "+1 vs last week" cannot be misread that way.
    */
-  const weekDelta = ((): { text: string; trend: 'up' | 'down' | 'flat' } | null => {
+  const weekDelta = ((): string | null => {
     if (!velocity) return null;
     const diff = velocity.applications_last_7d - velocity.applications_prev_7d;
     if (velocity.applications_last_7d === 0 && velocity.applications_prev_7d === 0) {
       return null;
     }
-    return {
-      text: `${diff >= 0 ? '+' : ''}${diff} vs last week`,
-      trend: diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat',
-    };
+    return `${diff >= 0 ? '+' : ''}${diff} vs last week`;
   })();
 
-  const stats = [
+  // One line under a label, only when there is something true to say.
+  const stats: { label: string; value: number | undefined; note?: string; to: string }[] = [
     {
       label: 'Open roles',
-      value: num(openings?.open),
+      value: open?.open,
       // Only mentioned when there is one. "0 paused" is not information.
-      delta: openings?.paused ? `${openings.paused} paused` : undefined,
-      trend: 'flat' as const,
+      note: open?.paused ? `${open.paused} paused` : undefined,
+      to: '/hr/requisitions',
     },
     {
       label: 'Applicants',
-      value: num(f?.total_applicants),
-      delta: weekDelta?.text ?? (a?.avg_ats != null ? `avg ATS ${Math.round(a.avg_ats)}` : undefined),
-      trend: weekDelta?.trend ?? tr(f?.total_applicants),
+      value: f?.total_applicants,
+      note: weekDelta ?? (a?.avg_ats != null ? `avg ATS ${Math.round(a.avg_ats)}` : undefined),
+      to: '/hr/applicants',
     },
-    { label: 'Shortlisted', value: num(f?.shortlisted), trend: tr(f?.shortlisted) },
+    { label: 'Shortlisted', value: f?.shortlisted, to: '/hr/applicants' },
     {
       label: 'Exam passed',
-      value: num(f?.exam_passed),
-      delta: a?.avg_exam_percent != null ? `${Math.round(a.avg_exam_percent)}% avg` : undefined,
-      trend: tr(f?.exam_passed),
+      value: f?.exam_passed,
+      note: a?.avg_exam_percent != null ? `${Math.round(a.avg_exam_percent)}% avg` : undefined,
+      to: '/hr/applicants',
     },
     {
       label: 'Interviewed',
-      value: num(f?.interview_completed),
-      delta:
+      value: f?.interview_completed,
+      note:
         a?.avg_interview_composite != null
           ? `${a.avg_interview_composite.toFixed(1)}/10 avg`
           : undefined,
-      trend: tr(f?.interview_completed),
+      to: '/hr/interviews',
     },
     {
       label: 'Hired',
-      value: num(f?.hired),
+      value: f?.hired,
       // The median, and only once somebody has actually been hired. A
       // time-to-hire with no hires behind it is a number about nothing.
-      delta:
+      note:
         velocity?.median_time_to_hire_days != null
           ? `${Math.round(velocity.median_time_to_hire_days)}d median`
           : undefined,
-      trend: tr(f?.hired),
+      to: '/hr/pipeline',
     },
   ];
 
   const name = me?.full_name ?? user?.full_name ?? null;
+  const activityKey = useScopedPersistKey('hr-home-activity');
 
   return (
-    <div className="mx-auto max-w-[1280px] px-6 py-8 lg:px-8">
-      {/* ── Brand promo banner + trust chips ── */}
-      <Reveal>
-        <PromoBanner
-          tone="electric"
-          badge="Hiring OS"
-          eyebrow="AntHire for Teams"
-          title="Screen smarter. Hire fairer. Move faster."
-          subtitle="AI-ranked applicants, structured exams and avatar interviews — every candidate measured against the same fair rubric, end to end."
-          cta={{ label: 'Review applicants', to: '/hr/applicants' }}
-          icon={Gauge}
-          dismissId="hr-hero-v1"
-        />
-      </Reveal>
-      <TrustStrip
-        className="mb-7 mt-4"
-        items={[
-          { icon: BarChart3, label: 'ATS-powered ranking' },
-          { icon: Target, label: 'One fair rubric' },
-          { icon: ClipboardCheck, label: 'Audit-ready' },
-          { icon: ShieldCheck, label: 'DPDP-safe' },
-        ]}
+    <Page width="default">
+      <PageHeader
+        title={
+          <span data-testid="page-title">
+            {meLoading ? 'HR Console' : name ? `Welcome, ${name}` : 'HR Console'}
+          </span>
+        }
+        description="Start with what needs you today, then check how the pipeline is moving."
+        actions={
+          <>
+            <Button asChild variant="outline">
+              <Link to="/hr/exams">
+                <Plus aria-hidden="true" /> Create exam
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link to="/hr/applicants">Invite applicant</Link>
+            </Button>
+          </>
+        }
       />
 
-      {/* ── Header ── */}
-      <Reveal>
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 data-testid="page-title" className="text-[28px] font-semibold tracking-[-1px]">
-              {meLoading
-                ? 'HR Console'
-                : name
-                  ? `Welcome, ${name}`
-                  : 'HR Console'}
-            </h1>
-            <p className="mt-1 text-[14px] text-muted-foreground">
-              Your hiring at a glance
-            </p>
-          </div>
-          <div className="flex items-center gap-2.5">
-            <Link to="/hr/exams">
-              <Pill variant="ghost" className="px-4 py-2.5">
-                <Plus size={16} aria-hidden="true" /> Create exam
-              </Pill>
-            </Link>
-            <Link to="/hr/applicants">
-              <Pill className="px-5 py-2.5">Invite applicant</Pill>
-            </Link>
-          </div>
-        </div>
-      </Reveal>
+      <PageBody
+        asideLabel="Shortcuts"
+        aside={
+          <>
+            <Card as="section" title="Shortcuts" density="compact">
+              <RowList>
+                <Row title="Open hiring pipeline" to="/hr/pipeline" />
+                <Row title="Review applicants" to="/hr/applicants" />
+                <Row title="View analytics" to="/hr/analytics" />
+                <Row title="All openings" to="/hr/requisitions" />
+                <Row title="Offers" to="/hr/offers" />
+              </RowList>
+            </Card>
 
-      {/* ── Stat strip ── */}
-      <Stagger className="mt-7 grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-        {stats.map((s) => (
-          <StaggerItem key={s.label}>
-            <StatCard {...s} className="h-full" />
-          </StaggerItem>
-        ))}
-      </Stagger>
-
-      {/* ── Attention required ──
-          Above the activity feed on purpose. The feed is a record of what
-          happened; this is the short list of what has not, and burying it
-          under the record would defeat the point of surfacing exceptions. */}
-      <Reveal className="mt-5">
-        <AttentionPanel />
-      </Reveal>
-
-      {/* ── Body ── */}
-      <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
-        {/* Activity feed */}
-        <Reveal dir="left" className="lg:col-span-2">
-          <GlassCard className="p-5">
-            <h3 className="mb-4 text-[16px] font-semibold">Activity feed</h3>
-            <ActivityFeed items={notifs?.items ?? []} />
-          </GlassCard>
-        </Reveal>
-
-        {/* Right panel */}
-        <div className="flex flex-col gap-4">
-          <Reveal dir="right">
-            <GlassCard feature className="p-5">
-              <h3 className="mb-3.5 text-[16px] font-semibold">Quick actions</h3>
-              <div className="flex flex-col gap-2.5">
-                <Link to="/hr/pipeline">
-                  <Pill variant="ghost" className="w-full justify-start py-3">
-                    <Kanban size={16} aria-hidden="true" /> Open hiring pipeline
-                  </Pill>
-                </Link>
-                <Link to="/hr/applicants">
-                  <Pill variant="ghost" className="w-full justify-start py-3">
-                    <Users size={16} aria-hidden="true" /> Review applicants
-                  </Pill>
-                </Link>
-                <Link to="/hr/analytics">
-                  <Pill variant="ghost" className="w-full justify-start py-3">
-                    <BarChart3 size={16} aria-hidden="true" /> View analytics
-                  </Pill>
-                </Link>
-              </div>
-            </GlassCard>
-          </Reveal>
-
-          {/* The public careers board's address, which until now appeared
-              nowhere in this console — see CareersLinkCard's header. Second in
-              the column, under Quick actions: it is a thing you copy, which is
-              what the rest of this column is for. Renders nothing when the
-              account has no company. */}
-          <Reveal dir="right">
+            {/* The public careers board's address, which until now appeared
+                nowhere in this console — see CareersLinkCard's header. Renders
+                nothing when the account has no company. */}
             <CareersLinkCard slug={me?.company_slug} companyName={me?.company_name} />
-          </Reveal>
+          </>
+        }
+      >
+        {/* ── Needs you today ──
+            The one raised region. Above the feed on purpose: the feed further
+            down is a record of what happened; these are the conditions that
+            have not been dealt with, and burying them under the record would
+            defeat the point of surfacing exceptions. Both lists show here —
+            neither is hidden behind a tab. */}
+        <Card
+          emphasis="raised"
+          as="section"
+          title="Needs you today"
+          data-testid="needs-you-today"
+          className="flex flex-col"
+        >
+          <div className="flex flex-col gap-6">
+            <Section
+              title={
+                <>
+                  Attention required
+                  <Count n={attentionCount} />
+                </>
+              }
+            >
+              <AttentionPanel bare />
+            </Section>
+            {/* PH4-O1 — overdue/due-soon stages across every opening, so nobody
+                has to open each one's decision queue to find out. */}
+            <Section
+              title={
+                <>
+                  Stages at risk
+                  <Count n={atRiskCount} />
+                </>
+              }
+            >
+              <StagesAtRiskWidget bare />
+            </Section>
+          </div>
+        </Card>
 
-          {/* PH4-O1 — overdue/due-soon stages across every opening, so nobody
-              has to open each one's decision queue to find out. */}
-          <Reveal dir="right">
-            <StagesAtRiskWidget />
-          </Reveal>
+        {/* ── Openings in setup ── */}
+        <Card
+          as="section"
+          title={
+            <>
+              Openings in setup
+              <Count n={openings.isSuccess ? inSetup.length : undefined} />
+            </>
+          }
+          description="Not yet approved and accepting applications. Each opens its setup."
+          data-testid="openings-in-setup"
+        >
+          {openings.isLoading ? (
+            <Skeleton className="h-14 w-full rounded-card" />
+          ) : openings.isError ? (
+            <p role="alert" className="text-[13px] text-muted-foreground">
+              Could not load your openings just now.
+            </p>
+          ) : inSetup.length === 0 ? (
+            <EmptyState size="row" title="No opening is waiting on setup." />
+          ) : (
+            <>
+              <RowList>
+                {inSetup.slice(0, SETUP_VISIBLE).map((r) => {
+                  const next = nextSetupStage(r);
+                  const badge = setupBadge(r);
+                  return (
+                    <Row
+                      key={r.id}
+                      to={`/hr/requisitions/${r.id}?tab=setup`}
+                      title={r.title}
+                      meta={
+                        <>
+                          <span className="font-medium text-foreground">Next: {next.stage}</span> —{' '}
+                          {next.detail}
+                        </>
+                      }
+                      trailing={
+                        <StatusTag tone={SETUP_TONE[badge] ?? 'neutral'} dot>
+                          {badge}
+                        </StatusTag>
+                      }
+                    />
+                  );
+                })}
+              </RowList>
+              {inSetup.length > SETUP_VISIBLE ? (
+                <Link
+                  to="/hr/requisitions"
+                  className="mt-3 inline-flex min-h-10 items-center text-[13px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                >
+                  View all {inSetup.length} openings in setup
+                </Link>
+              ) : null}
+            </>
+          )}
+        </Card>
 
-          <Reveal dir="right">
-            <GlassCard className="p-5">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                Getting started
-              </p>
-              <p className="mt-2 text-[13px] text-white/80">
-                Upload resumes to begin ATS screening, then author an exam and send
-                interview invites — all from the four stages in the pipeline.
-              </p>
-            </GlassCard>
-          </Reveal>
-        </div>
-      </div>
-    </div>
+        {/* ── Pipeline: the funnel as one stat group, each cell a link. ── */}
+        <section aria-label="Pipeline at a glance">
+          <StatGroup missingLabel="Not loaded yet">
+            {stats.map((s) => (
+              <Stat
+                key={s.label}
+                value={s.value}
+                to={s.to}
+                label={
+                  <>
+                    {s.label}
+                    {s.note ? (
+                      <span className="mt-0.5 block text-[12px] font-normal">{s.note}</span>
+                    ) : null}
+                  </>
+                }
+              />
+            ))}
+          </StatGroup>
+        </section>
+
+        <RecentActivity items={notifs?.items ?? []} persistKey={activityKey} />
+      </PageBody>
+    </Page>
   );
 }
 
@@ -286,7 +353,7 @@ export default function HRConsole() {
 // completed), so we render the same feed here. Empty-state aware.
 
 // Map a notification kind → a tone colour from the design palette.
-const KIND_TONE: Record<string, keyof typeof ACTIVITY_BG> = {
+const KIND_TONE: Record<string, keyof typeof ACTIVITY_TONE> = {
   applicant_scored: 'electric',
   interview_completed: 'forest',
   // Results arriving: something to read.
@@ -329,45 +396,73 @@ function timeAgo(iso: string): string {
  */
 const PANEL_OWNED_KINDS = new Set(['system']);
 
-function ActivityFeed({ items: all }: { items: NotificationItem[] }) {
+/** Recent activity: a record, so it sits closed under its newest line. */
+function RecentActivity({
+  items: all,
+  persistKey,
+}: {
+  items: NotificationItem[];
+  persistKey: string;
+}) {
   const items = all.filter((n) => !PANEL_OWNED_KINDS.has(n.kind));
+  const newest = items[0];
+  return (
+    <Collapsible
+      variant="card"
+      headingLevel="h2"
+      title="Recent activity"
+      count={items.length}
+      noun="event"
+      latest={newest ? `${newest.title}, ${timeAgo(newest.created_at)}` : undefined}
+      persistKey={persistKey}
+      data-testid="recent-activity"
+    >
+      <ActivityFeed items={items} />
+    </Collapsible>
+  );
+}
+
+function ActivityFeed({ items }: { items: NotificationItem[] }) {
   if (items.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 py-10 text-center">
-        <p className="text-[13px] text-muted-foreground">No recent activity yet.</p>
-      </div>
+      <EmptyState
+        size="row"
+        title="No recent activity yet."
+        description="Invites, scores and completed interviews will show up here."
+      />
     );
   }
 
   return (
-    <div className="flex flex-col">
-      {items.map((n) => {
+    <ProgressiveList
+      items={items}
+      initial={5}
+      noun="events"
+      getKey={(n) => n.id}
+      className="flex flex-col"
+      renderItem={(n) => {
         const tone = KIND_TONE[n.kind] ?? 'lavender';
         return (
-          <div
-            key={n.id}
-            className="flex items-center gap-3.5 border-b border-border py-3.5 last:border-0"
-          >
+          <li className="flex items-center gap-3.5 border-b border-border py-3 last:border-0">
             <span
-              className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px]"
-              style={{ background: ACTIVITY_BG[tone] }}
+              className={cn(
+                'flex h-9 w-9 flex-none items-center justify-center rounded-[10px]',
+                ACTIVITY_TONE[tone].bg,
+              )}
               aria-hidden="true"
             >
-              <span
-                className="h-2 w-2 rounded-full bg-current"
-                style={{ color: ACTIVITY_COLOR[tone] }}
-              />
+              <span className={cn('h-2 w-2 rounded-full bg-current', ACTIVITY_TONE[tone].dot)} />
             </span>
-            <div className="flex-1">
+            <div className="min-w-0 flex-1">
               <div className="text-[13.5px]">
                 <span className="font-semibold">{n.title}</span>
-                {n.body ? <span className="text-white/70"> — {n.body}</span> : null}
+                {n.body ? <span className="text-muted-foreground"> — {n.body}</span> : null}
               </div>
-              <div className="text-[11.5px] text-[var(--ui-faint)]">{timeAgo(n.created_at)}</div>
+              <div className="text-[12px] text-muted-foreground">{timeAgo(n.created_at)}</div>
             </div>
-          </div>
+          </li>
         );
-      })}
-    </div>
+      }}
+    />
   );
 }

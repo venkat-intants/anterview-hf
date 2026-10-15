@@ -110,7 +110,8 @@ export async function answerTheExam(
   }
 
   await page.getByRole('button', { name: 'Submit exam' }).click();
-  const verdict = page.getByText(/You passed|Not this time/);
+  // The screen is the same whatever the score: submitted, with the hiring team.
+  const verdict = page.getByTestId('exam-submitted');
   await expect(verdict).toBeVisible();
   return (await verdict.innerText()).trim();
 }

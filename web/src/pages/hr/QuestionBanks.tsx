@@ -1,21 +1,49 @@
-// QuestionBanks (/hr/question-banks) — PH4-D1. The company's reusable
-// question banks: create one, rename it, archive it, and see how many
-// questions it holds at each stage of the review lifecycle and how many
-// exams draw on it.
+// QuestionBanks (/hr/question-banks) - the company's reusable question banks,
+// as a list a person can scan: each bank's name and what it assesses, how many
+// questions sit at each stage of review, and the ONE thing that bank needs next
+// as a link straight to that stage of its flow.
 //
-// English-only by design (CLAUDE.md — staff consoles are not translated).
+// "New bank" is the page's single primary; it opens the creation flow
+// (/hr/question-banks/new), which is the same rail every bank page uses.
+//
+// What the list can and cannot show. The list endpoint returns a bank's name,
+// description, status counts and exam usage - not how many of its questions are
+// MCQ or coding on older backends, so there the list shows status counts only
+// and offers no kind filter; the kind split is on the bank's own page. A newer
+// backend sends an optional `kind_counts` per bank: when present the row shows
+// "n MCQ · n coding" and the toolbar gains a kind filter; when absent nothing is
+// shown for it - never zeros we do not know. Fetching every bank's questions to
+// count kinds here would be one request per bank on every visit.
+//
+// English-only by design (CLAUDE.md - staff consoles are not translated).
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Library, Plus } from '@/design/components/icons';
-import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
-import { Reveal } from '@/design/components/Reveal';
+import { ArrowRight, CheckCircle2, Clock, Library, Pencil, Plus, Search } from '@/design/components/icons';
+import { StatusTag, type TagTone } from '@/design/components/primitives';
+import { Page, PageHeader, EmptyState, Toolbar } from '@/design/components/page';
+import { Card } from '@/design/components/card';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
+import { cn } from '@/lib/utils';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import {
+  BANK_KIND_FILTERS,
+  BANK_LIST_FILTERS,
+  anyKindCounts,
+  bankNextAction,
+  kindSummary,
+  matchesBankFilter,
+  matchesKindFilter,
+  statusCounts,
+  type BankKindFilter,
+  type BankListFilter,
+  type BankNextAction,
+} from '@/lib/bankFlow';
+import {
   archiveQuestionBank,
-  createQuestionBank,
   listQuestionBanks,
   updateQuestionBank,
   type BankOut,
@@ -33,32 +61,52 @@ const STATUS_TONE: Record<BankQuestionStatus, TagTone> = {
   retired: 'ember',
 };
 
-const STATUS_ORDER: BankQuestionStatus[] = ['draft', 'in_review', 'approved', 'retired'];
+const field =
+  'h-10 rounded-[10px] border border-input bg-card px-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+
+// Rename / Archive are occasional actions: ghost, icon plus label, 40px targets,
+// no border or fill until hovered.
+const QUIET =
+  'inline-flex min-h-10 items-center gap-1.5 rounded-[10px] px-3 text-[13px] font-medium text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+
+// Applied to a wrapper: the idle ConfirmDeleteButton is its only <button> child.
+const QUIET_ARCHIVE =
+  'inline-flex [&>button]:rounded-[10px] [&>button]:border-transparent [&>button]:bg-transparent [&>button]:px-3 [&>button]:font-medium [&>button]:text-[var(--ui-soft)] [&>button:hover]:bg-[var(--ui-inset)] [&>button:hover]:text-[var(--ui-danger)]';
+
+function NextActionLink({ bank, action }: { bank: BankOut; action: BankNextAction }): JSX.Element {
+  const to = `/hr/question-banks/${bank.id}?stage=${action.stage}`;
+  const Icon = action.kind === 'wait' ? Clock : action.kind === 'ready' ? CheckCircle2 : ArrowRight;
+  return (
+    <Link
+      to={to}
+      data-testid="bank-next-action"
+      className={cn(
+        'inline-flex min-h-10 items-center gap-1.5 rounded-[10px] px-2 text-[13.5px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+        action.kind === 'act'
+          ? 'text-foreground hover:underline'
+          : 'text-muted-foreground hover:text-foreground hover:underline',
+      )}
+    >
+      {action.kind !== 'act' ? <Icon size={15} aria-hidden="true" /> : null}
+      {action.label}
+      {action.kind === 'act' ? <ArrowRight size={15} aria-hidden="true" /> : null}
+    </Link>
+  );
+}
 
 export default function QuestionBanks(): JSX.Element {
   const qc = useQueryClient();
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<BankListFilter>('all');
+  const [kindFilter, setKindFilter] = useState<BankKindFilter>('all');
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['hr', 'question-banks'],
     queryFn: listQuestionBanks,
   });
 
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ['hr', 'question-banks'] });
-
-  const createMut = useMutation({
-    mutationFn: () =>
-      createQuestionBank({ name: name.trim(), description: description.trim() || null }),
-    onSuccess: () => {
-      toast.success('Bank created');
-      setName('');
-      setDescription('');
-      invalidate();
-    },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not create this bank')),
-  });
+  const invalidate = (): void => void qc.invalidateQueries({ queryKey: ['hr', 'question-banks'] });
 
   const renameMut = useMutation({
     mutationFn: ({ id, name: next }: { id: string; name: string }) =>
@@ -80,182 +128,243 @@ export default function QuestionBanks(): JSX.Element {
     onError: (e: unknown) => toast.error(errText(e, 'Could not archive this bank')),
   });
 
-  const banks: BankOut[] = data ?? [];
+  const allBanks: BankOut[] = data ?? [];
+  const hasKinds = anyKindCounts(allBanks);
+  const needle = search.trim().toLowerCase();
+  const banks = allBanks.filter(
+    (b) =>
+      matchesBankFilter(b, filter) &&
+      (!hasKinds || matchesKindFilter(b, kindFilter)) &&
+      (!needle ||
+        b.name.toLowerCase().includes(needle) ||
+        (b.description ?? '').toLowerCase().includes(needle)),
+  );
 
   return (
-    <div className="mx-auto max-w-[900px] px-0 py-2 space-y-6">
-      <Reveal>
-        <div>
-          <h1 className="text-[28px] font-semibold tracking-[-1px] text-foreground">
-            Question banks
-          </h1>
-          <p className="mt-1 text-[14px] text-muted-foreground">
-            A reusable library of MCQ and coding questions, reviewed once and then copied into
-            any exam. A published round&apos;s copy never changes when the bank question is edited or
-            superseded.
-          </p>
+    <Page width="form">
+      <PageHeader
+        title="Question banks"
+        description="Reusable MCQ and coding questions, reviewed once and then copied into any exam. A published round keeps its own copy."
+        actions={
+          <>
+            <Button asChild variant="outline">
+              <Link to="/hr/question-banks/reviews">Question reviews</Link>
+            </Button>
+            <Button asChild>
+              <Link to="/hr/question-banks/new">
+                <Plus aria-hidden="true" />
+                New bank
+              </Link>
+            </Button>
+          </>
+        }
+      />
+
+      {isLoading ? (
+        <div className="flex flex-col gap-2" role="status" aria-label="Loading question banks">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-[84px] w-full rounded-card" />
+          ))}
         </div>
-      </Reveal>
-
-      <Reveal delay={0.05}>
-        <GlassCard className="p-5 space-y-3">
-          <h3 className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
-            <Plus size={16} aria-hidden="true" />
-            New bank
-          </h3>
-          <form
-            className="grid gap-2.5 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!name.trim()) {
-                toast.error('A name is required.');
-                return;
-              }
-              createMut.mutate();
-            }}
+      ) : isError ? (
+        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
+          Could not load question banks.{' '}
+          <button type="button" className="font-semibold underline" onClick={() => void refetch()}>
+            Try again
+          </button>
+        </p>
+      ) : allBanks.length === 0 ? (
+        <EmptyState
+          icon={Library}
+          size="page"
+          title="No banks yet"
+          description="A bank holds questions you review once and reuse across exams. Start one and fill it by writing, by AI, or from a file."
+          action={
+            <Button asChild variant="outline">
+              <Link to="/hr/question-banks/new">Create your first bank</Link>
+            </Button>
+          }
+        />
+      ) : (
+        <div className="flex flex-col gap-4">
+          <Toolbar
+            className="mb-0"
+            trailing={
+              <span className="text-[13px] tabular-nums text-muted-foreground" role="status">
+                {banks.length} of {allBanks.length} bank{allBanks.length === 1 ? '' : 's'}
+              </span>
+            }
           >
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="bank-name" className="text-[12px] font-medium text-[var(--ui-soft)]">
-                Name
-              </label>
+            <div className="relative min-w-[200px] max-w-[320px] flex-1">
+              <Search
+                size={14}
+                aria-hidden="true"
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
               <input
-                id="bank-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Backend Engineer — Core"
-                className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search banks"
+                aria-label="Search banks"
+                className={cn(field, 'w-full pl-8')}
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="bank-description"
-                className="text-[12px] font-medium text-[var(--ui-soft)]"
-              >
-                Description (optional)
-              </label>
-              <input
-                id="bank-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={createMut.isPending}
-              className="rounded-[10px] bg-primary px-4 py-2 text-[13px] font-semibold text-primary-foreground disabled:opacity-50"
+            <select
+              value={filter}
+              onChange={(e) => setFilter(e.target.value as BankListFilter)}
+              aria-label="Filter banks by status"
+              className={field}
             >
-              {createMut.isPending ? 'Creating…' : 'Create'}
-            </button>
-          </form>
-        </GlassCard>
-      </Reveal>
-
-      <Reveal delay={0.08}>
-        <GlassCard className="p-5">
-          <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-            <Library size={17} aria-hidden="true" />
-            Banks
-          </h3>
-          {isLoading ? (
-            <p className="text-[13px] text-muted-foreground">Loading…</p>
-          ) : isError ? (
-            <p className="text-[13px] text-[var(--ui-danger)]">Could not load question banks.</p>
-          ) : banks.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-muted-foreground">
-              No banks yet — create your first one above.
-            </p>
-          ) : (
-            <div role="list" aria-label="Question banks" className="flex flex-col gap-2">
-              {banks.map((b) => (
-                <div
-                  key={b.id}
-                  role="listitem"
-                  className="rounded-[14px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-3"
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      {renaming?.id === b.id ? (
-                        <form
-                          className="flex items-center gap-2"
-                          onSubmit={(e) => {
-                            e.preventDefault();
-                            const next = renaming.name.trim();
-                            if (next.length < 1) {
-                              toast.error('A name is required.');
-                              return;
-                            }
-                            renameMut.mutate({ id: b.id, name: next });
-                          }}
-                        >
-                          <input
-                            aria-label={`New name for ${b.name}`}
-                            value={renaming.name}
-                            onChange={(e) => setRenaming({ id: b.id, name: e.target.value })}
-                            className="min-w-0 flex-1 rounded-[9px] border border-border bg-secondary px-2.5 py-1.5 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
-                          />
-                          <button
-                            type="submit"
-                            disabled={renameMut.isPending}
-                            className="rounded-[9px] bg-primary px-3 py-1.5 text-[12px] font-medium text-primary-foreground disabled:opacity-50"
-                          >
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setRenaming(null)}
-                            className="rounded-[9px] border border-border px-3 py-1.5 text-[12px] text-muted-foreground hover:text-foreground"
-                          >
-                            Cancel
-                          </button>
-                        </form>
-                      ) : (
-                        <Link
-                          to={`/hr/question-banks/${b.id}`}
-                          className="text-[14.5px] font-medium text-foreground hover:underline"
-                        >
-                          {b.name}
-                        </Link>
-                      )}
-                      {b.description ? (
-                        <p className="mt-0.5 text-[12px] text-muted-foreground">{b.description}</p>
-                      ) : null}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {renaming?.id === b.id ? null : (
-                        <button
-                          type="button"
-                          onClick={() => setRenaming({ id: b.id, name: b.name })}
-                          className="rounded-[9px] border border-border px-3 py-1.5 text-[12px] text-muted-foreground hover:text-foreground"
-                        >
-                          Rename
-                        </button>
-                      )}
-                      <ConfirmDeleteButton
-                        label="Archive"
-                        pending={archiveMut.isPending}
-                        onConfirm={() => archiveMut.mutate(b.id)}
-                      />
-                    </div>
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    {STATUS_ORDER.map((status) =>
-                      b.counts[status] ? (
-                        <StatusTag key={status} tone={STATUS_TONE[status]} className="text-[10.5px]">
-                          {b.counts[status]} {status.replace('_', ' ')}
-                        </StatusTag>
-                      ) : null,
-                    )}
-                    <span className="text-[11.5px] text-[var(--ui-faint)]">
-                      Used in {b.used_in_exams} exam{b.used_in_exams === 1 ? '' : 's'}
-                    </span>
-                  </div>
-                </div>
+              {BANK_LIST_FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>
+                  {f.label}
+                </option>
               ))}
-            </div>
+            </select>
+            {hasKinds ? (
+              <select
+                value={kindFilter}
+                onChange={(e) => setKindFilter(e.target.value as BankKindFilter)}
+                aria-label="Filter banks by question type"
+                data-testid="bank-kind-filter"
+                className={field}
+              >
+                {BANK_KIND_FILTERS.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {f.label}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </Toolbar>
+
+          {banks.length === 0 ? (
+            <EmptyState
+              title="No banks match"
+              description="Clear the search or the filter to see every bank."
+            />
+          ) : (
+            <Card flush>
+              <ul aria-label="Question banks" className="divide-y divide-border">
+                {banks.map((b) => {
+                  const counts = statusCounts(b);
+                  const action = bankNextAction(b);
+                  return (
+                    <li key={b.id} className="px-4 py-3 sm:px-5" data-testid="bank-row">
+                      <div className="grid gap-x-6 gap-y-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                        <div className="min-w-0">
+                          {renaming?.id === b.id ? (
+                            <form
+                              className="flex flex-wrap items-center gap-2"
+                              onSubmit={(e) => {
+                                e.preventDefault();
+                                const next = renaming.name.trim();
+                                if (next.length < 1) {
+                                  toast.error('A name is required.');
+                                  return;
+                                }
+                                renameMut.mutate({ id: b.id, name: next });
+                              }}
+                            >
+                              <input
+                                aria-label={`New name for ${b.name}`}
+                                value={renaming.name}
+                                onChange={(e) => setRenaming({ id: b.id, name: e.target.value })}
+                                className={cn(field, 'min-w-0 flex-1')}
+                              />
+                              <Button type="submit" size="sm" disabled={renameMut.isPending}>
+                                Save
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setRenaming(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </form>
+                          ) : (
+                            <Link
+                              to={`/hr/question-banks/${b.id}`}
+                              className="inline-flex min-h-10 items-center rounded-[6px] text-[15px] font-semibold text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                            >
+                              {b.name}
+                            </Link>
+                          )}
+                          {b.description ? (
+                            <p className="line-clamp-1 text-[13px] text-muted-foreground">
+                              {b.description}
+                            </p>
+                          ) : null}
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                            {counts.length === 0 ? (
+                              <span className="text-[12.5px] text-muted-foreground">
+                                No questions
+                              </span>
+                            ) : (
+                              counts.map((c) => (
+                                <StatusTag
+                                  key={c.status}
+                                  tone={STATUS_TONE[c.status]}
+                                  className="text-[12px]"
+                                >
+                                  {c.label}
+                                </StatusTag>
+                              ))
+                            )}
+                            {kindSummary(b) ? (
+                              <span
+                                data-testid="bank-kind-counts"
+                                className="text-[12.5px] tabular-nums text-muted-foreground"
+                              >
+                                {kindSummary(b)}
+                              </span>
+                            ) : null}
+                            <span className="text-[12.5px] text-[var(--ui-faint)]">
+                              {counts.length > 0 || kindSummary(b) ? (
+                                <span aria-hidden="true">· </span>
+                              ) : null}
+                              Used in {b.used_in_exams} exam{b.used_in_exams === 1 ? '' : 's'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-x-1 gap-y-0 md:flex-nowrap md:justify-end">
+                          <NextActionLink bank={b} action={action} />
+                          {renaming?.id === b.id ? null : (
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => setRenaming({ id: b.id, name: b.name })}
+                                className={QUIET}
+                              >
+                                <Pencil size={14} aria-hidden="true" />
+                                Rename
+                              </button>
+                              {/* ConfirmDeleteButton has no className prop, and its
+                                  armed Sure?/Delete/Cancel state must stay as it is, so
+                                  the idle button is quieted from outside. The pair it
+                                  swaps to when armed is a span and is not touched. */}
+                              <span className={QUIET_ARCHIVE}>
+                                <ConfirmDeleteButton
+                                  label="Archive"
+                                  pending={archiveMut.isPending}
+                                  onConfirm={() => archiveMut.mutate(b.id)}
+                                />
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Card>
           )}
-        </GlassCard>
-      </Reveal>
-    </div>
+        </div>
+      )}
+    </Page>
   );
 }

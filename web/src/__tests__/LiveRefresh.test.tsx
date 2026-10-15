@@ -25,6 +25,21 @@ describe('queriesToRefresh', () => {
     expect(queriesToRefresh(['interview_invite'])).toContainEqual(['my-applications']);
   });
 
+  it("refreshes the candidate's interview loops when one is scheduled, moved or cancelled", () => {
+    // `interview_schedule` is the kind the backend writes to the CANDIDATE for
+    // an interview loop (interview_scheduling.py, reminders.py).
+    const keys = queriesToRefresh(['interview_schedule']);
+    expect(keys).toContainEqual(['me', 'interview-loops']);
+    expect(keys).toContainEqual(['my-applications']);
+  });
+
+  it("refreshes the candidate's offers and applications when an offer changes", () => {
+    const keys = queriesToRefresh(['candidate_offer']);
+    expect(keys).toContainEqual(['me', 'offers']);
+    expect(keys).toContainEqual(['my-applications']);
+    expect(keys).toContainEqual(['my-application']);
+  });
+
   it('asks for each view once however many events touch it', () => {
     const keys = queriesToRefresh(['exam_submitted', 'interview_completed', 'exam_submitted']);
     const ids = keys.map((k) => JSON.stringify(k));

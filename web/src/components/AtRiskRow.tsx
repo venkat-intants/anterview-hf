@@ -34,7 +34,7 @@ export default function AtRiskRow({
       type="button"
       onClick={() => onOpen(row)}
       aria-label={`${row.full_name} — ${row.stage}, ${row.opening_title}: ${STATE_WORD[row.state]}. Open details`}
-      className="flex w-full items-start gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3 text-left transition-colors hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)]"
+      className="flex w-full items-start gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3 text-left transition-colors hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
     >
       <Icon
         className={cn(
@@ -51,7 +51,7 @@ export default function AtRiskRow({
         <span className="block truncate text-[13px] font-medium text-foreground">
           {row.full_name} &mdash; {row.stage}
         </span>
-        <span className="block truncate text-[11.5px] text-muted-foreground">
+        <span className="block truncate text-[12px] text-muted-foreground">
           {row.opening_title} &middot; {STATE_WORD[row.state]}
           {detailed ? ` (${dueWords(row)})` : ''}
           {row.owner_name ? ` · ${row.owner_name}` : ' · no owner'}

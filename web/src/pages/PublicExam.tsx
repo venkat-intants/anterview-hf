@@ -24,9 +24,8 @@ import { useTranslation } from 'react-i18next';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Loader2,
-  AlertCircle,
   CheckCircle2,
-  XCircle,
+  Send,
   Clock,
   ListChecks,
   ShieldCheck,
@@ -44,8 +43,11 @@ import {
 } from '@/api/publicExam';
 import { cn } from '@/lib/utils';
 import { isTransientApiError } from '@/api/client';
-import { AuroraField } from '@/design/components/AuroraField';
-import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
+import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { ProgressMeter } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
+import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
+import { PublicNext } from '@/components/PublicNext';
 import CodingTaking from '@/pages/exam/CodingTaking';
 import { useExamProctor } from '@/pages/exam/useExamProctor';
 import CameraConsentModal from '@/pages/exam/CameraConsentModal';
@@ -58,22 +60,12 @@ function fmt(totalSec: number): string {
 
 type Phase = 'intro' | 'taking' | 'result';
 
-// ── Full-page dark centred layout (shared by loading / error / result states) ──
-function PageWrap({ children }: { children: React.ReactNode }) {
+// ── Shared public frame (loading / error / result states) ──
+function PageWrap({ children, step }: { children: React.ReactNode; step?: React.ReactNode }) {
   return (
-    <div className="relative flex min-h-screen flex-col items-center justify-center bg-midnight px-6 py-12 font-sans text-foreground">
-      <AuroraField />
-      {/* Logo mark */}
-      <div className="absolute left-6 top-6 z-10 flex items-center gap-2.5">
-        <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)]">
-          <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-        </span>
-        <span className="text-[15px] font-semibold text-foreground">AntHire</span>
-      </div>
-      <div className="relative z-10 flex w-full max-w-[520px] flex-col items-center gap-4 text-center">
-        {children}
-      </div>
-    </div>
+    <PublicFrame width="narrow" hideLanguage privateLink step={step}>
+      {children}
+    </PublicFrame>
   );
 }
 
@@ -93,7 +85,7 @@ function FullscreenOverlay({ violationCount, maxViolations, onReturn }: Fullscre
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="fs-overlay-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-midnight/95 px-6 backdrop-blur-xl"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-background/95 px-4"
     >
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
@@ -101,26 +93,26 @@ function FullscreenOverlay({ violationCount, maxViolations, onReturn }: Fullscre
         transition={{ type: 'spring', stiffness: 260, damping: 22 }}
         className="w-full max-w-sm"
       >
-        <GlassCard className="flex flex-col items-center gap-4 p-8 text-center">
-          <span className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-[rgba(230,113,79,0.15)] text-ember">
+        <GlassCard className="flex flex-col items-center gap-4 p-6 text-center shadow-elevated sm:p-8">
+          <span className="inline-flex h-14 w-14 items-center justify-center rounded-full bg-[var(--ui-danger-wash)] text-[var(--ui-danger)]">
             <AlertTriangle className="h-7 w-7" aria-hidden="true" />
           </span>
-          <h2 id="fs-overlay-title" className="text-subheading font-semibold text-foreground">
+          <h2 id="fs-overlay-title" className="text-[20px] font-bold leading-tight text-foreground">
             {t('publicExam.fullscreenExitTitle')}
           </h2>
           <p className="text-body-sm text-muted-foreground">{t('publicExam.fullscreenExitSub')}</p>
           {maxViolations !== null && maxViolations > 0 && (
-            <p className="text-caption text-amber-glow">
+            <p className="text-[13px] font-medium text-[var(--ui-warn)]">
               {t('publicExam.violationsRemaining', {
                 remaining: Math.max(0, maxViolations - violationCount),
                 max: maxViolations,
               })}
             </p>
           )}
-          <Pill onClick={onReturn} className="mt-2 w-full gap-2">
+          <Button onClick={onReturn} className="mt-2 h-12 w-full gap-2">
             <Maximize2 size={16} aria-hidden="true" />
             {t('publicExam.returnFullscreen')}
-          </Pill>
+          </Button>
         </GlassCard>
       </motion.div>
     </div>
@@ -141,12 +133,12 @@ function SectionStepper({ sections, currentIndex }: SectionStepperProps) {
         <div key={s.id} className="flex items-center gap-2">
           <div
             className={cn(
-              'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold',
+              'flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold',
               i < currentIndex
-                ? 'bg-vivid-mint/20 text-vivid-mint'
+                ? 'bg-[var(--ui-ok-wash)] text-[var(--ui-ok)]'
                 : i === currentIndex
-                  ? 'bg-electric text-midnight'
-                  : 'bg-[var(--ui-inset)] text-fog',
+                  ? 'bg-[var(--ui-highlight)] text-[var(--ui-highlight-ink)] ring-2 ring-[var(--accent)]'
+                  : 'bg-[var(--ui-inset)] text-muted-foreground',
             )}
             aria-current={i === currentIndex ? 'step' : undefined}
           >
@@ -154,8 +146,8 @@ function SectionStepper({ sections, currentIndex }: SectionStepperProps) {
           </div>
           <span
             className={cn(
-              'shrink-0 text-caption',
-              i === currentIndex ? 'text-foreground' : 'text-fog',
+              'shrink-0 text-[13.5px]',
+              i === currentIndex ? 'font-semibold text-foreground' : 'font-medium text-muted-foreground',
             )}
           >
             {s.title}
@@ -164,7 +156,7 @@ function SectionStepper({ sections, currentIndex }: SectionStepperProps) {
             <div
               className={cn(
                 'h-px w-6 shrink-0',
-                i < currentIndex ? 'bg-vivid-mint/30' : 'bg-[var(--ui-inset-strong)]',
+                i < currentIndex ? 'bg-[var(--ui-ok)]/40' : 'bg-[var(--ui-inset-strong)]',
               )}
             />
           )}
@@ -442,21 +434,38 @@ export default function PublicExam() {
     [sectionQuestions, answers],
   );
 
+  // ── A link that can no longer be used: drop the token it left behind ─────
+  // The per-tab token is otherwise removed only by a successful submit, so an
+  // expired, revoked or already-used link left a dead credential readable from
+  // sessionStorage for the rest of the tab's life. Only TERMINAL states clear
+  // it: a transient load error (the link may be fine, and Retry needs the
+  // token) and a failed submit (the candidate must be able to try again) do not.
+  const linkUnusable = token.length > 0 && examQ.isError && !isTransientApiError(examQ.error);
+  const alreadyCompleted =
+    phase === 'intro' && Boolean(examQ.data?.already_submitted) && !examQ.data?.allow_retake;
+  useEffect(() => {
+    if (!linkUnusable && !alreadyCompleted) return;
+    try {
+      sessionStorage.removeItem(EXAM_TOKEN_KEY);
+    } catch {
+      // Blocked or unavailable: it was never written either.
+    }
+  }, [linkUnusable, alreadyCompleted]);
+
   // ── Error / loading states ───────────────────────────────────────────────
   // Transient failure (network / server hiccup) — the link may be fine.
   if (token && examQ.isError && isTransientApiError(examQ.error)) {
     return (
       <PageWrap>
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(255,183,100,0.15)] text-amber-glow">
-          <AlertCircle className="h-6 w-6" aria-hidden="true" />
-        </span>
-        <h1 className="text-subheading font-semibold text-foreground">
-          {t('publicExam.networkTitle')}
-        </h1>
-        <p className="max-w-sm text-body-sm text-muted-foreground">{t('publicExam.networkDesc')}</p>
-        <Pill className="mt-2 px-8 py-2.5" onClick={() => void examQ.refetch()}>
-          {t('publicExam.retry')}
-        </Pill>
+        <PublicNotice
+          title={t('publicExam.networkTitle')}
+          description={t('publicExam.networkDesc')}
+          action={
+            <Button className="h-12 px-8" onClick={() => void examQ.refetch()}>
+              {t('publicExam.retry')}
+            </Button>
+          }
+        />
       </PageWrap>
     );
   }
@@ -464,13 +473,11 @@ export default function PublicExam() {
   if (!token || examQ.isError) {
     return (
       <PageWrap>
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(255,183,100,0.15)] text-amber-glow">
-          <AlertCircle className="h-6 w-6" aria-hidden="true" />
-        </span>
-        <h1 className="text-subheading font-semibold text-foreground">
-          {t('publicExam.invalidTitle')}
-        </h1>
-        <p className="max-w-sm text-body-sm text-muted-foreground">{t('publicExam.invalidDesc')}</p>
+        <PublicNotice
+          title={t('publicExam.invalidTitle')}
+          description={t('publicExam.invalidDesc')}
+          hint={t('publicFrame.requestNew')}
+        />
       </PageWrap>
     );
   }
@@ -478,8 +485,10 @@ export default function PublicExam() {
   if (examQ.isLoading || !examQ.data) {
     return (
       <PageWrap>
-        <Loader2 className="h-8 w-8 animate-spin text-electric" aria-hidden="true" />
-        <p className="text-body-sm text-muted-foreground">{t('publicExam.loading')}</p>
+        <div role="status" className="flex flex-col items-center gap-3 py-20">
+          <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" aria-hidden="true" />
+          <p className="text-[14px] text-muted-foreground">{t('publicExam.loading')}</p>
+        </div>
       </PageWrap>
     );
   }
@@ -489,16 +498,13 @@ export default function PublicExam() {
   // ── Already completed ────────────────────────────────────────────────────
   if (phase !== 'result' && exam.already_submitted && !exam.allow_retake) {
     return (
-      <PageWrap>
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(39,201,63,0.15)] text-vivid-mint">
-          <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
-        </span>
-        <h1 className="text-subheading font-semibold text-foreground">
-          {t('publicExam.completedTitle')}
-        </h1>
-        <p className="max-w-sm text-body-sm text-muted-foreground">
-          {t('publicExam.completedDesc')}
-        </p>
+      <PageWrap step={t('public.step.assessment')}>
+        <PublicNotice
+          tone="ok"
+          title={t('publicExam.completedTitle')}
+          description={t('publicExam.completedDesc')}
+        />
+        <PublicNext className="mt-6">{t('public.reviewNext')}</PublicNext>
       </PageWrap>
     );
   }
@@ -511,18 +517,15 @@ export default function PublicExam() {
   if (phase === 'intro' && cameraRequired && cameraConsent === 'declined') {
     return (
       <PageWrap>
-        <span className="inline-flex h-12 w-12 items-center justify-center rounded-[9px] bg-[rgba(255,183,100,0.15)] text-amber-glow">
-          <AlertCircle className="h-6 w-6" aria-hidden="true" />
-        </span>
-        <h1 className="text-subheading font-semibold text-foreground">
-          {t('publicExam.cameraRequiredTitle')}
-        </h1>
-        <p className="max-w-sm text-body-sm text-muted-foreground">
-          {t('publicExam.cameraRequiredDesc')}
-        </p>
-        <Pill className="mt-2 px-8 py-2.5" onClick={() => setCameraConsent('pending')}>
-          {t('publicExam.cameraReconsider')}
-        </Pill>
+        <PublicNotice
+          title={t('publicExam.cameraRequiredTitle')}
+          description={t('publicExam.cameraRequiredDesc')}
+          action={
+            <Button className="h-12 px-8" onClick={() => setCameraConsent('pending')}>
+              {t('publicExam.cameraReconsider')}
+            </Button>
+          }
+        />
       </PageWrap>
     );
   }
@@ -530,43 +533,30 @@ export default function PublicExam() {
   // ── Result ───────────────────────────────────────────────────────────────
   if (phase === 'result' && result) {
     return (
-      <PageWrap>
-        <motion.div
-          initial={{ opacity: 0, scale: 0.92 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ type: 'spring', stiffness: 220, damping: 20 }}
-          className="w-full"
-        >
-          <GlassCard className="flex flex-col items-center gap-4 p-8 text-center">
-            <span
-              className={cn(
-                'inline-flex h-16 w-16 items-center justify-center rounded-3xl',
-                result.passed
-                  ? 'bg-[rgba(39,201,63,0.15)] text-vivid-mint'
-                  : 'bg-[rgba(230,113,79,0.15)] text-ember',
-              )}
-            >
-              {result.passed ? (
-                <CheckCircle2 className="h-8 w-8" aria-hidden="true" />
-              ) : (
-                <XCircle className="h-8 w-8" aria-hidden="true" />
-              )}
-            </span>
-            <h1 className="text-heading font-semibold tracking-heading text-foreground">
-              {result.score_percent}%
-            </h1>
-            <p className="text-body-sm text-muted-foreground">
-              {t('publicExam.points', { raw: result.score_raw, max: result.score_max })}
-              {result.status === 'expired' ? t('publicExam.submittedAtLimit') : ''}
-            </p>
-            <StatusTag tone={result.passed ? 'forest' : 'ember'} dot>
-              {result.passed ? t('publicExam.passed') : t('publicExam.notThisTime')}
-            </StatusTag>
-            <p className="max-w-sm text-body-sm text-muted-foreground">
-              {t('publicExam.resultThanks')}
-            </p>
-          </GlassCard>
-        </motion.div>
+      <PageWrap step={t('public.step.assessment')}>
+        {/* Submitted, and with the hiring team. Deliberately NOT a verdict: no
+            tick or cross, no pass or fail, no tone that varies with the score
+            (a person decides, never the software). The score is shown as a
+            plain number only; `result.passed` is not read here. */}
+        <div data-testid="exam-submitted" className="flex w-full flex-col gap-6">
+          <PublicNotice
+            tone="info"
+            icon={<Send size={22} aria-hidden="true" />}
+            title={t('public.exam.submittedTitle')}
+            description={t('public.exam.submittedDesc')}
+            hint={
+              <>
+                {t('public.exam.score', {
+                  percent: result.score_percent,
+                  raw: result.score_raw,
+                  max: result.score_max,
+                })}
+                {result.status === 'expired' ? t('publicExam.submittedAtLimit') : ''}
+              </>
+            }
+          />
+          <PublicNext>{t('public.reviewNext')}</PublicNext>
+        </div>
       </PageWrap>
     );
   }
@@ -600,18 +590,9 @@ export default function PublicExam() {
       roundTitle.length > 0 && roundTitle !== exam.title && !isDefaultRoundTitle;
 
     return (
-      <div className="relative flex min-h-screen flex-col items-center justify-center bg-midnight px-6 py-12 font-sans text-foreground">
-        <AuroraField />
-        <div className="relative z-10 w-full max-w-[520px]">
-          {/* Logo */}
-          <div className="mb-6 flex items-center gap-2.5">
-            <span className="flex h-8 w-8 items-center justify-center rounded-[9px] bg-[linear-gradient(135deg,#112d72,#a887dc)]">
-              <span className="h-2.5 w-2.5 rounded-full bg-primary" />
-            </span>
-            <span className="text-[15px] font-semibold text-foreground">AntHire</span>
-          </div>
-
-          <GlassCard className="p-8">
+      <PublicFrame width="narrow" hideLanguage privateLink step={t('public.step.assessment')}>
+        <div className="w-full">
+          <GlassCard className="p-5 sm:p-8">
             {/* Header row */}
             <div className="flex items-center justify-between">
               <StatusTag tone="forest" dot>
@@ -622,10 +603,10 @@ export default function PublicExam() {
                   in the DOM, on a screen that gets shared and captured. The
                   remainder is still infeasible to guess, so it was never
                   exploitable on its own; it simply bought nothing. */}
-              <span className="font-mono text-[11px] text-fog">#{exam.exam_id.slice(0, 8)}</span>
+              <span className="font-mono text-[12px] text-[var(--ui-soft)]">#{exam.exam_id.slice(0, 8)}</span>
             </div>
 
-            <h1 className="mt-4 text-[26px] font-semibold tracking-[-0.8px] text-foreground">
+            <h1 className="mt-4 text-[28px] font-bold leading-[1.15] tracking-[-0.6px] text-foreground">
               {exam.title}
             </h1>
             {showRoundLabel && (
@@ -647,13 +628,13 @@ export default function PublicExam() {
                 return (
                   <div
                     key={f.label}
-                    className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4"
+                    className="rounded-[12px] bg-[var(--ui-inset-soft)] p-4"
                   >
-                    <Icon size={16} className="text-electric" aria-hidden="true" />
-                    <div className="mt-2 text-[11px] uppercase tracking-[0.5px] text-fog">
+                    <Icon size={16} className="text-[var(--ui-info)]" aria-hidden="true" />
+                    <div className="mt-2 text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--ui-soft)]">
                       {f.label}
                     </div>
-                    <div className="mt-0.5 text-[13.5px] font-medium text-foreground">
+                    <div className="mt-0.5 text-[15px] font-semibold text-foreground">
                       {f.value}
                     </div>
                   </div>
@@ -667,12 +648,12 @@ export default function PublicExam() {
                 {sections.map((s, i) => (
                   <div
                     key={s.id}
-                    className="flex items-center justify-between rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-caption"
+                    className="flex items-center justify-between rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[13px]"
                   >
                     <span className="text-muted-foreground">
                       {i + 1}. {s.title}
                     </span>
-                    <span className="capitalize text-fog">{s.kind}</span>
+                    <span className="capitalize text-[var(--ui-soft)]">{s.kind}</span>
                   </div>
                 ))}
               </div>
@@ -680,24 +661,24 @@ export default function PublicExam() {
 
             {/* Timer warning */}
             {exam.time_limit_seconds && (
-              <p className="mt-4 text-caption text-amber-glow">{t('publicExam.timerNote')}</p>
+              <p className="mt-4 text-[13.5px] font-medium text-[var(--ui-warn)]">{t('publicExam.timerNote')}</p>
             )}
 
             {/* PH4-D2 — the fact only: never the percentage, never why. The
                 round/section limits below are already the scaled ones. */}
             {exam.adjustments &&
             (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
-              <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
-                <Clock size={14} className="mt-0.5 shrink-0 text-vivid-mint" aria-hidden="true" />
+              <div className="mt-4 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-3 text-[13px] leading-relaxed text-muted-foreground">
+                <Clock size={14} className="mt-0.5 shrink-0 text-[var(--ui-ok)]" aria-hidden="true" />
                 <span>{t('publicExam.adjustmentNotice')}</span>
               </div>
             ) : null}
 
             {/* Proctoring notice */}
-            <div className="mt-4 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
+            <div className="mt-4 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-3 text-[13px] leading-relaxed text-muted-foreground">
               <ShieldCheck
                 size={14}
-                className="mt-0.5 shrink-0 text-vivid-mint"
+                className="mt-0.5 shrink-0 text-[var(--ui-ok)]"
                 aria-hidden="true"
               />
               <span>{t('publicExam.proctoringNotice')}</span>
@@ -707,12 +688,12 @@ export default function PublicExam() {
                 itself (camera-proctoring contract §3: consent is its own
                 separate step, the CameraConsentModal below). */}
             {cameraRequired && (
-              <div className="mt-3 flex items-start gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2.5 text-caption text-muted-foreground">
+              <div className="mt-3 flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-3 text-[13px] leading-relaxed text-muted-foreground">
                 <ShieldCheck
                   size={14}
                   className={cn(
                     'mt-0.5 shrink-0',
-                    cameraConsent === 'granted' ? 'text-vivid-mint' : 'text-amber-glow',
+                    cameraConsent === 'granted' ? 'text-[var(--ui-ok)]' : 'text-[var(--ui-warn)]',
                   )}
                   aria-hidden="true"
                 />
@@ -725,21 +706,21 @@ export default function PublicExam() {
             )}
 
             {/* DPDP consent */}
-            <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4 text-[12.5px] text-mist">
+            <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4 text-[13.5px] leading-relaxed text-foreground focus-within:ring-2 focus-within:ring-[var(--accent)]">
               <input
                 type="checkbox"
                 checked={consent}
                 onChange={(e) => setConsent(e.target.checked)}
-                className="mt-0.5 h-4 w-4 flex-none accent-electric"
+                className="mt-0.5 h-5 w-5 flex-none accent-[var(--accent)]"
               />
-              <span className="flex items-center gap-1.5">
-                <ShieldCheck size={14} className="flex-none text-vivid-mint" aria-hidden="true" />
+              <span className="flex items-start gap-1.5">
+                <ShieldCheck size={16} className="mt-0.5 flex-none text-[var(--ui-ok)]" aria-hidden="true" />
                 {t('publicExam.consentLabel')}
               </span>
             </label>
 
-            <Pill
-              className="mt-6 w-full py-3.5"
+            <Button
+              className="mt-6 h-12 w-full text-[15px]"
               disabled={
                 !consent || startMut.isPending || (cameraRequired && cameraConsent !== 'granted')
               }
@@ -749,10 +730,10 @@ export default function PublicExam() {
                 <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
               ) : null}
               {t('publicExam.startExam')}
-            </Pill>
+            </Button>
 
             {startMut.isError && (
-              <p className="mt-3 text-center text-body-sm text-ember">
+              <p role="alert" className="mt-3 text-center text-[14px] text-[var(--ui-danger)]">
                 {startMut.error instanceof Error
                   ? startMut.error.message
                   : t('publicExam.couldNotStart')}
@@ -770,7 +751,7 @@ export default function PublicExam() {
             onDecline={() => setCameraConsent('declined')}
           />
         )}
-      </div>
+      </PublicFrame>
     );
   }
 
@@ -780,7 +761,7 @@ export default function PublicExam() {
   const showViolationWarning = violationCount > 0 && isFullscreen;
 
   return (
-    <div className="min-h-screen bg-midnight font-sans">
+    <div className="min-h-screen bg-background font-sans text-foreground">
       {/* Fullscreen-exit blocking overlay */}
       <AnimatePresence>
         {fullscreenSupported && !isFullscreen && phase === 'taking' && (
@@ -793,11 +774,11 @@ export default function PublicExam() {
       </AnimatePresence>
 
       {/* Sticky bar */}
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-obsidian/80 px-4 py-3 backdrop-blur-xl">
+      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-border bg-card px-4 py-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-body-sm font-semibold text-foreground">{exam.title}</p>
+          <p className="truncate text-[15px] font-bold text-foreground">{exam.title}</p>
           {sections.length > 0 && currentSection && (
-            <p className="text-caption text-muted-foreground">
+            <p className="text-[13px] text-muted-foreground">
               {t('publicExam.sectionProgress', {
                 current: sectionIndex + 1,
                 total: sections.length,
@@ -807,11 +788,11 @@ export default function PublicExam() {
           )}
           {exam.adjustments &&
           (exam.adjustments.extra_time_percent || exam.adjustments.deadline_extended) ? (
-            <p className="text-caption text-vivid-mint">{t('publicExam.adjustmentNotice')}</p>
+            <p className="text-[13px] text-[var(--ui-ok)]">{t('publicExam.adjustmentNotice')}</p>
           ) : null}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* Camera-proctoring indicator — candidate-visible, never decoration
               (camera-proctoring contract §4). Only rendered once the camera
               is actually the active signal path; a declined/not-required
@@ -830,7 +811,7 @@ export default function PublicExam() {
           {/* Violation badge */}
           {violationCount > 0 && (
             <div
-              className="flex items-center gap-1 rounded-full bg-[rgba(230,113,79,0.15)] px-2.5 py-1 text-caption text-ember"
+              className="flex items-center gap-1 rounded-full bg-[var(--ui-danger-wash)] px-3 py-1.5 text-[13px] font-medium text-[var(--ui-danger)]"
               aria-live="polite"
               aria-label={t('publicExam.violationBadgeLabel', { count: violationCount })}
             >
@@ -843,9 +824,9 @@ export default function PublicExam() {
           {sectionRemaining !== null && (
             <div
               className={cn(
-                'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-caption font-medium tabular-nums',
+                'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-medium tabular-nums',
                 sectionRemaining <= 30
-                  ? 'bg-[rgba(230,113,79,0.15)] text-ember'
+                  ? 'bg-[var(--ui-danger-wash)] text-[var(--ui-danger)]'
                   : 'bg-[var(--ui-inset)] text-muted-foreground',
               )}
               aria-live="polite"
@@ -860,15 +841,17 @@ export default function PublicExam() {
           {remaining !== null && (
             <div
               className={cn(
-                'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-body-sm font-medium tabular-nums',
+                // The clock is the most legible thing in the bar: largest, boldest,
+                // and it gains a border (not only a colour) when time is nearly up.
+                'flex items-center gap-2 rounded-full border px-4 py-2 text-[20px] font-bold leading-none tabular-nums',
                 remaining <= 30
-                  ? 'bg-[rgba(230,113,79,0.15)] text-ember'
-                  : 'bg-[var(--ui-inset)] text-foreground',
+                  ? 'border-[var(--ui-danger)] bg-[var(--ui-danger-wash)] text-[var(--ui-danger)]'
+                  : 'border-[var(--ui-line-strong)] bg-[var(--ui-inset)] text-foreground',
               )}
               aria-live="polite"
               aria-label={t('publicExam.timeRemaining', { time: fmt(remaining) })}
             >
-              <Clock className="h-4 w-4" aria-hidden="true" />
+              <Clock className="h-5 w-5" aria-hidden="true" />
               {fmt(remaining)}
             </div>
           )}
@@ -882,7 +865,7 @@ export default function PublicExam() {
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -8 }}
-            className="flex items-center justify-center gap-2 border-b border-[rgba(230,113,79,0.25)] bg-[rgba(230,113,79,0.08)] px-4 py-2 text-caption text-ember"
+            className="flex items-center justify-center gap-2 border-b border-[var(--ui-danger)]/30 bg-[var(--ui-danger-wash)] px-4 py-2.5 text-[13px] font-medium text-[var(--ui-danger)]"
             role="alert"
           >
             <AlertTriangle size={13} aria-hidden="true" />
@@ -896,7 +879,31 @@ export default function PublicExam() {
         )}
       </AnimatePresence>
 
-      <div className="mx-auto max-w-2xl px-4 py-8">
+      <div className="mx-auto max-w-2xl px-4 py-6 sm:py-8">
+        {/* Progress through the current section — always on screen, so a
+            candidate under the clock never has to scroll to see how far on
+            they are. Reuses the existing answered/total counts. */}
+        {currentSection?.kind === 'mcq' && sectionQuestions.length > 0 && (
+          <div className="mb-5">
+            <div className="mb-1.5 flex items-center justify-between text-[13px] text-muted-foreground">
+              <span className="text-[15px] font-bold tabular-nums text-foreground">
+                {answeredCountForSection}/{sectionQuestions.length}
+              </span>
+              <span>
+                {answeredCountForSection < sectionQuestions.length
+                  ? t('publicExam.unanswered', {
+                      count: sectionQuestions.length - answeredCountForSection,
+                    })
+                  : t('publicExam.allAnswered')}
+              </span>
+            </div>
+            <ProgressMeter
+              value={(answeredCountForSection / sectionQuestions.length) * 100}
+              label={currentSection.title}
+            />
+          </div>
+        )}
+
         {/* Section stepper */}
         {sections.length > 1 && (
           <div className="mb-6">
@@ -923,8 +930,8 @@ export default function PublicExam() {
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: i * 0.04 }}
                     >
-                      <GlassCard className="rounded-[16px] p-6 transition-colors hover:border-electric/30">
-                        <p className="text-body font-medium text-foreground">
+                      <GlassCard className="p-4 sm:p-6">
+                        <p className="text-[16px] font-semibold leading-relaxed text-foreground">
                           {i + 1}. {q.prompt}
                         </p>
                         <div className="mt-4 space-y-2" role="radiogroup" aria-label={q.prompt}>
@@ -934,10 +941,10 @@ export default function PublicExam() {
                               <label
                                 key={oi}
                                 className={cn(
-                                  'flex cursor-pointer items-center gap-3 rounded-[12px] border px-3 py-2.5 text-body-sm transition-colors',
+                                  'flex min-h-12 cursor-pointer items-center gap-3 rounded-[14px] border px-4 py-3 text-[15px] transition-colors focus-within:ring-2 focus-within:ring-[var(--accent)]',
                                   checked
-                                    ? 'border-electric/60 bg-electric/10 text-foreground'
-                                    : 'border-border text-muted-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
+                                    ? 'border-foreground bg-[var(--ui-inset)] font-medium text-foreground'
+                                    : 'border-border text-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
                                 )}
                               >
                                 <input
@@ -945,7 +952,7 @@ export default function PublicExam() {
                                   name={q.id}
                                   checked={checked}
                                   onChange={() => setAnswers((prev) => ({ ...prev, [q.id]: oi }))}
-                                  className="h-4 w-4 accent-electric"
+                                  className="h-5 w-5 flex-none accent-[var(--accent)]"
                                 />
                                 {opt}
                               </label>
@@ -972,8 +979,8 @@ export default function PublicExam() {
         </AnimatePresence>
 
         {/* Navigation + submit footer */}
-        <div className="mt-8 flex items-center justify-between gap-3 border-t border-border pt-6">
-          <div className="text-caption text-muted-foreground">
+        <div className="sticky bottom-0 -mx-4 mt-8 flex items-center justify-between gap-3 border-t border-border bg-card px-4 py-3">
+          <div className="text-[13px] text-muted-foreground">
             {currentSection?.kind === 'mcq' &&
               (answeredCountForSection < sectionQuestions.length
                 ? t('publicExam.unanswered', {
@@ -985,25 +992,25 @@ export default function PublicExam() {
           <div className="flex items-center gap-3">
             {/* Next section button (shown when not on the last section) */}
             {sectionIndex < sections.length - 1 && (
-              <Pill variant="ghost" onClick={() => setSectionIndex((i) => i + 1)}>
+              <Button variant="outline" className="h-11" onClick={() => setSectionIndex((i) => i + 1)}>
                 {t('publicExam.nextSection')}
-              </Pill>
+              </Button>
             )}
 
             {/* Submit (shown on last section or when only one section) */}
             {sectionIndex === sections.length - 1 && (
-              <Pill onClick={doSubmit} disabled={submitMut.isPending}>
+              <Button className="h-11 px-6" onClick={doSubmit} disabled={submitMut.isPending}>
                 {submitMut.isPending ? (
                   <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
                 ) : null}
                 {t('publicExam.submitExam')}
-              </Pill>
+              </Button>
             )}
           </div>
         </div>
 
         {submitMut.isError && (
-          <p className="mt-3 text-right text-body-sm text-ember">
+          <p role="alert" className="mt-3 text-right text-[14px] text-[var(--ui-danger)]">
             {submitMut.error instanceof Error
               ? submitMut.error.message
               : t('publicExam.submitFailed')}
@@ -1022,7 +1029,7 @@ export default function PublicExam() {
         <div
           className={cn(
             'fixed bottom-6 right-4 z-40 h-28 w-20 overflow-hidden rounded-xl',
-            'border border-white/10 bg-obsidian/80 shadow-elevated',
+            'border border-border bg-card shadow-elevated',
             'transition-opacity duration-500',
             cameraAvailable ? 'opacity-100' : 'opacity-0',
           )}

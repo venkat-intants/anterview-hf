@@ -5,6 +5,7 @@
 //   POST /notifications/read-all
 
 import { apiGet, apiPost } from './client';
+import { pathId } from './pathId';
 
 export interface NotificationItem {
   id: string;
@@ -26,7 +27,7 @@ export function listNotifications(limit = 30): Promise<NotificationList> {
 }
 
 export function markNotificationRead(id: string): Promise<{ ok: boolean }> {
-  return apiPost<{ ok: boolean }>(`/notifications/${id}/read`, {});
+  return apiPost<{ ok: boolean }>(`/notifications/${pathId(id)}/read`, {});
 }
 
 export function markAllNotificationsRead(): Promise<{ ok: boolean }> {

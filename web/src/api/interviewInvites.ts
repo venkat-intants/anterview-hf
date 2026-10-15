@@ -3,6 +3,7 @@
 
 import { apiGet, apiPost, apiPatch } from './client';
 import type { InviteStatus } from './publicInterview';
+import { pathId } from './pathId';
 
 export type { InviteStatus };
 
@@ -92,16 +93,16 @@ export function createInvite(input: InviteCreateInput): Promise<InviteResult> {
 }
 
 export function revokeInvite(inviteId: string): Promise<InterviewInvite> {
-  return apiPost<InterviewInvite>(`/hr/interviews/${inviteId}/revoke`, {});
+  return apiPost<InterviewInvite>(`/hr/interviews/${pathId(inviteId)}/revoke`, {});
 }
 
 export function getInviteResult(inviteId: string): Promise<InterviewOutcome> {
-  return apiGet<InterviewOutcome>(`/hr/interviews/${inviteId}/result`);
+  return apiGet<InterviewOutcome>(`/hr/interviews/${pathId(inviteId)}/result`);
 }
 
 export function rescheduleInvite(
   inviteId: string,
   scheduledAt: string,
 ): Promise<InviteResult> {
-  return apiPatch<InviteResult>(`/hr/interviews/${inviteId}`, { scheduled_at: scheduledAt });
+  return apiPatch<InviteResult>(`/hr/interviews/${pathId(inviteId)}`, { scheduled_at: scheduledAt });
 }

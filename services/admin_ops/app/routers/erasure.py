@@ -27,7 +27,9 @@ Two ways in, one pipeline
 
     Error paths:
       401 — no / invalid / revoked JWT
-      403 — valid JWT, non-admin role
+      403 — valid JWT, non-admin role; OR the target holds a staff role and the
+            caller is not a platform_owner; OR the target is the caller (use
+            POST /users/me/dpdp/delete)
       404 — user_id not found in DB
       409 — pending erasure request already exists for this user
       500 — unexpected DB error (generic message; full exc logged, no PII)
@@ -69,7 +71,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.admin_auth import AccountHolderDep, AdminDep
+from app.admin_auth import AccountHolderDep, AdminCtxDep
 from app.database import get_db_session
 from app.models import AuditLog, ErasureRequest, Session, User
 from app.redis_client import get_redis
@@ -162,6 +164,24 @@ class SelfErasureResponse(ErasureResponse):
 # ---------------------------------------------------------------------------
 
 DbSessionDep = Annotated[AsyncSession, Depends(get_db_session)]
+
+# Roles that mean "an ordinary candidate account". A target holding ANYTHING
+# else is staff (hr_manager, super_admin, interviewer, admin, platform_owner...)
+# -- a deny-by-default test, so a role added later is protected without anyone
+# remembering to list it here.
+_CANDIDATE_ROLES: frozenset[str] = frozenset({"candidate", "guest_candidate"})
+
+
+async def _target_staff_roles(db: AsyncSession, user_id: _uuid_mod.UUID) -> set[str]:
+    """Non-candidate roles held by *user_id* (empty for an ordinary candidate)."""
+    rows = await db.execute(
+        text(
+            "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id"
+            " WHERE ur.user_id = :uid"
+        ),
+        {"uid": user_id},
+    )
+    return {str(row[0]) for row in rows} - _CANDIDATE_ROLES
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +515,7 @@ async def request_own_erasure(
 )
 async def request_erasure(
     user_id: _uuid_mod.UUID,
-    admin_sub: AdminDep,
+    admin_ctx: AdminCtxDep,
     db: DbSessionDep,
     body: ErasureRequestBody | None = None,
 ) -> ErasureResponse:
@@ -507,6 +527,19 @@ async def request_erasure(
     PII note: email/name/phone are NOT logged at any point in this function.
     """
     reason: str | None = body.reason if body is not None else None
+    admin_sub, admin_roles = admin_ctx
+
+    # ------------------------------------------------------------------
+    # 0a. Not on yourself through the operator route. The data principal's own
+    #     route (POST /users/me/dpdp/delete) exists for exactly that, and it
+    #     records the right channel ("self", not "admin"); an operator erasing
+    #     their own account here would also log it as an admin action.
+    # ------------------------------------------------------------------
+    if admin_sub == str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Use POST /users/me/dpdp/delete to erase your own account.",
+        )
 
     # ------------------------------------------------------------------
     # 1. Check user exists
@@ -533,6 +566,27 @@ async def request_erasure(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"A pending erasure request already exists for user {user_id}",
+        )
+
+    # ------------------------------------------------------------------
+    # 2b. Staff accounts are not the analytics admin's to erase. `admin` is the
+    #     platform ANALYTICS role; erasing a platform_owner, super_admin or
+    #     hr_manager (soft-delete + token revocation + a 30-day purge of the
+    #     tenant's own staff record) is a platform-owner decision. Same 404 as an
+    #     unknown user would NOT be right here -- the caller is already an admin
+    #     who can see the account exists -- so this is an explicit 403.
+    # ------------------------------------------------------------------
+    staff_roles = await _target_staff_roles(db, user_id)
+    if staff_roles and "platform_owner" not in admin_roles:
+        log.warning(
+            "erasure.staff_target_refused",
+            actor_id=admin_sub,
+            user_id=str(user_id),
+            target_roles=sorted(staff_roles),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only a platform owner may erase a staff account.",
         )
 
     # ------------------------------------------------------------------

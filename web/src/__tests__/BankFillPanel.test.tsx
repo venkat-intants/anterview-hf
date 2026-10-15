@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ApiError } from '../api/client';
 
 const api = {
   generateBankQuestions: vi.fn(),
@@ -138,6 +139,38 @@ describe('BankFillPanel — AI is a preview, not a save', () => {
 
     expect(screen.queryByTestId('bank-ai-preview')).not.toBeInTheDocument();
     expect(api.createBankQuestionsBulk).not.toHaveBeenCalled();
+  });
+
+  it('shows a 503 sentence inline (not a toast) and retries from the same panel', async () => {
+    const user = userEvent.setup();
+    const paused =
+      'Usage limits are temporarily unavailable, so this action is paused. Please try again in a minute.';
+    api.generateBankQuestions.mockRejectedValueOnce(new ApiError(paused, 503));
+    renderPanel();
+    await user.type(screen.getByLabelText('Topic'), 'Electrical safety');
+    await user.click(screen.getByRole('button', { name: /generate a preview/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(paused);
+    expect(toastError).not.toHaveBeenCalled();
+
+    await user.click(within(alert).getByRole('button', { name: 'Try again' }));
+    await screen.findByTestId('bank-ai-preview');
+    expect(api.generateBankQuestions).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the daily-limit sentence with no Try again, since retrying cannot help', async () => {
+    const user = userEvent.setup();
+    const daily =
+      "Your company has reached today's limit for AI question generation. Try again tomorrow.";
+    api.generateBankQuestions.mockRejectedValue(new ApiError(daily, 429));
+    renderPanel();
+    await user.type(screen.getByLabelText('Topic'), 'Electrical safety');
+    await user.click(screen.getByRole('button', { name: /generate a preview/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(daily);
+    expect(within(alert).queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
   });
 
   it('will not generate without a topic', () => {

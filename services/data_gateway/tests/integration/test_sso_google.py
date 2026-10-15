@@ -105,6 +105,9 @@ class _FakeResult:
     def fetchone(self) -> tuple[Any, ...] | None:
         return self._row
 
+    def first(self) -> tuple[Any, ...] | None:
+        return self._row
+
 
 class _FakeDbSession:
     """In-memory fake for AsyncSession — records execute/commit calls."""
@@ -122,6 +125,10 @@ class _FakeDbSession:
         # The only SELECT the SSO callback runs is the candidate-only privileged-role
         # probe. Return a row only when simulating a privileged account; all other
         # statements (upsert RETURNING, role/consent INSERTs) yield the user_id row.
+        # The account-state lookup (_upsert_google_user) reads email_verified_at:
+        # no pre-existing row, so the upsert proceeds as a fresh sign-in.
+        if sql.lstrip().upper().startswith("SELECT") and "email_verified_at" in sql:
+            return _FakeResult(None)
         if sql.lstrip().upper().startswith("SELECT"):
             return _FakeResult((1,) if self._privileged else None)
         return _FakeResult((self._user_id,))

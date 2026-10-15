@@ -56,7 +56,7 @@ const PERFORMANCE_LABEL: Record<CheckinPerformance, string> = {
 };
 
 const FIELD_CLS =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50';
+  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:cursor-not-allowed disabled:opacity-50';
 
 function summaryLine(c: CheckinOut): string {
   if (c.employment === 'left') {
@@ -139,16 +139,24 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
 
   if (checkins.isLoading) {
     return (
-      <div id="checkin-section" tabIndex={-1} className="mt-5 outline-none">
-        <h3 className="text-[13px] font-medium text-foreground">90-day check-in</h3>
+      <div
+        id="checkin-section"
+        tabIndex={-1}
+        className="mt-6 border-t border-border pt-5 outline-none"
+      >
+        <h3 className="text-[15px] font-bold text-foreground">90-day check-in</h3>
         <p className="mt-2 text-[12.5px] text-muted-foreground">Loading…</p>
       </div>
     );
   }
   if (checkins.isError || !checkins.data) {
     return (
-      <div id="checkin-section" tabIndex={-1} className="mt-5 outline-none">
-        <h3 className="text-[13px] font-medium text-foreground">90-day check-in</h3>
+      <div
+        id="checkin-section"
+        tabIndex={-1}
+        className="mt-6 border-t border-border pt-5 outline-none"
+      >
+        <h3 className="text-[15px] font-bold text-foreground">90-day check-in</h3>
         <p className="mt-2 text-[12.5px] text-muted-foreground">
           Could not load the check-in for this hire.
         </p>
@@ -199,8 +207,12 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
   }
 
   return (
-    <div id="checkin-section" tabIndex={-1} className="mt-5 outline-none">
-      <h3 className="text-[13px] font-medium text-foreground">90-day check-in</h3>
+    <div
+      id="checkin-section"
+      tabIndex={-1}
+      className="mt-6 border-t border-border pt-5 outline-none"
+    >
+      <h3 className="text-[15px] font-bold text-foreground">90-day check-in</h3>
       {/* Server copy, shown verbatim — not ours to paraphrase. */}
       <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">{notice}</p>
 
@@ -220,13 +232,13 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
               <button
                 type="button"
                 onClick={() => startCorrection(live)}
-                className="shrink-0 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+                className="shrink-0 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
                 Correct
               </button>
             ) : null}
           </div>
-          <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">{recordedByLine(live)}</p>
+          <p className="mt-1 text-[12px] text-muted-foreground">{recordedByLine(live)}</p>
         </div>
       ) : null}
 
@@ -236,7 +248,7 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
           className="mt-2.5 flex flex-col gap-2.5 rounded-[12px] border border-border p-3"
         >
           {correcting ? (
-            <p className="text-[11.5px] text-[var(--ui-faint)]">
+            <p className="text-[12px] text-muted-foreground">
               The earlier record is kept as a previous version.
             </p>
           ) : null}
@@ -273,7 +285,7 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
               ))}
             </select>
             {!employedAvailable ? (
-              <p className="mt-1 text-[11px] text-[var(--ui-faint)]">
+              <p className="mt-1 text-[12px] text-muted-foreground">
                 Available from {win.employed_from ? formatDate(win.employed_from) : '—'}
               </p>
             ) : null}
@@ -341,7 +353,7 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
             <button
               type="submit"
               disabled={!canSubmit || pending}
-              className="rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+              className="rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
             >
               {pending ? 'Saving…' : correcting ? 'Save correction' : 'Save check-in'}
             </button>
@@ -357,7 +369,7 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
             ) : null}
           </div>
 
-          <p className="text-[11px] text-[var(--ui-faint)]">
+          <p className="text-[12px] text-muted-foreground">
             This never changes the application or any decision.
           </p>
         </form>
@@ -365,12 +377,12 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
 
       {earlier.length > 0 ? (
         <details className="mt-2">
-          <summary className="cursor-pointer text-[11.5px] text-muted-foreground">
+          <summary className="cursor-pointer text-[12px] text-muted-foreground">
             Earlier versions ({earlier.length})
           </summary>
           <ul className="mt-1.5 flex flex-col gap-1.5 pl-2">
             {earlier.map((c) => (
-              <li key={c.checkin_id} className="text-[11.5px] text-[var(--ui-faint)]">
+              <li key={c.checkin_id} className="text-[12px] text-muted-foreground">
                 {summaryLine(c)} · {formatDate(c.recorded_at)}
               </li>
             ))}

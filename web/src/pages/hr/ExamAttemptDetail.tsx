@@ -8,7 +8,7 @@
 // per-MCQ correctness + per-coding-question points, plus the score summary.
 
 import { Suspense, lazy, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   getExam,
@@ -19,8 +19,9 @@ import {
 } from '@/api/exams';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { GlassCard, StatCard, StatusTag, Avatar } from '@/design/components/primitives';
-import { ArrowLeft, CheckCircle2, XCircle, Clock, Code2, Loader2 } from '@/design/components/icons';
+import { CheckCircle2, XCircle, Clock, Code2, Loader2 } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
+import { PageHeader, Breadcrumbs, Page } from '@/design/components/page';
 import AttemptProctoringSummary from '@/components/hr/AttemptProctoringSummary';
 
 // Code-split: the evidence tab pulls in the read-only CodeEditor (Prism +
@@ -28,12 +29,6 @@ import AttemptProctoringSummary from '@/components/hr/AttemptProctoringSummary';
 const CodeEvidencePanel = lazy(() => import('@/components/hr/CodeEvidencePanel'));
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function gradientFor(seed: string): string {
-  const hues = [200, 260, 170, 30, 340, 310, 140];
-  const h = hues[seed.charCodeAt(0) % hues.length];
-  return `linear-gradient(135deg,hsl(${h},80%,55%),hsl(${(h + 60) % 360},70%,45%))`;
-}
 
 function initialsOf(name: string): string {
   return name
@@ -60,7 +55,9 @@ function describeAdjustment(adj: AttemptAdjustment): string {
     parts.push(`Time adjustment applied: +${adj.extra_time_seconds}s`);
   }
   if (adj.auto_submit_relaxed) {
-    parts.push(parts.length > 0 ? 'auto-submit relaxed' : 'Auto-submit was relaxed for this attempt');
+    parts.push(
+      parts.length > 0 ? 'auto-submit relaxed' : 'Auto-submit was relaxed for this attempt',
+    );
   }
   return parts.join(' · ');
 }
@@ -84,7 +81,11 @@ export default function ExamAttemptDetail() {
     queryFn: () => listAttempts(examId),
   });
 
-  const { data: breakdown, isLoading, isError } = useQuery({
+  const {
+    data: breakdown,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ['hr', 'exam', examId, 'attempt', attemptId, 'breakdown'],
     queryFn: () => getAttemptBreakdown(examId, attemptId),
     enabled: Boolean(examId) && Boolean(attemptId),
@@ -108,63 +109,59 @@ export default function ExamAttemptDetail() {
   const inProgress = attempt?.status === 'in_progress' || attempt?.submitted_at === null;
 
   return (
-    <div className="mx-auto max-w-[1080px] px-6 py-8 lg:px-8">
-      {/* ── Back link ── */}
-      <Link
-        to={`/hr/exams/${examId}/results`}
-        className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft size={15} aria-hidden="true" /> Back to results
-      </Link>
-
-      {/* ── Title bar ── */}
-      <Reveal>
-        <div className="mt-4 flex flex-wrap items-end justify-between gap-4">
-          <div className="flex items-center gap-3">
+    <Page width="default">
+      <PageHeader
+        breadcrumbs={
+          <Breadcrumbs
+            items={[
+              { label: 'Exams', to: '/hr/exams' },
+              { label: exam?.title ?? 'Exam', to: `/hr/exams/${examId}` },
+              { label: 'Results', to: `/hr/exams/${examId}/results` },
+              { label: attempt ? `Attempt #${attempt.attempt_no}` : 'Attempt' },
+            ]}
+          />
+        }
+        title={
+          <span className="flex items-center gap-3">
             {attempt && (
-              <Avatar
-                initials={initialsOf(attempt.applicant_name)}
-                gradient={gradientFor(attempt.applicant_id)}
-                size={44}
-              />
+              <span aria-hidden="true" className="flex">
+                <Avatar initials={initialsOf(attempt.applicant_name)} size={44} />
+              </span>
             )}
-            <div>
-              <h1 className="text-[28px] font-semibold tracking-[-1px]">
-                {attempt?.applicant_name ?? 'Attempt'}
-              </h1>
-              <p className="mt-1 font-mono text-[13px] text-muted-foreground">
-                {exam?.title ?? 'Exam'}
-                {attempt ? ` · attempt #${attempt.attempt_no}` : ''}
-                {attempt?.submitted_at ? ` · ${formatDate(attempt.submitted_at)}` : ''}
-              </p>
-            </div>
-          </div>
-
-          {scorePercent !== null && (
-            <div>
-              {inProgress ? (
-                <StatusTag tone="electric">
-                  <Clock size={11} aria-hidden="true" /> In progress
-                </StatusTag>
-              ) : passed ? (
-                <StatusTag tone="forest" dot>
-                  <CheckCircle2 size={11} aria-hidden="true" /> Passed
-                </StatusTag>
-              ) : (
-                <StatusTag tone="ember">
-                  <XCircle size={11} aria-hidden="true" /> Failed
-                </StatusTag>
-              )}
-            </div>
-          )}
-        </div>
-      </Reveal>
+            <span className="min-w-0 break-words">{attempt?.applicant_name ?? 'Attempt'}</span>
+          </span>
+        }
+        description={
+          <span className="font-mono text-[13px]">
+            {exam?.title ?? 'Exam'}
+            {attempt ? ` · attempt #${attempt.attempt_no}` : ''}
+            {attempt?.submitted_at ? ` · ${formatDate(attempt.submitted_at)}` : ''}
+          </span>
+        }
+        actions={
+          scorePercent !== null ? (
+            inProgress ? (
+              <StatusTag tone="electric">
+                <Clock size={11} aria-hidden="true" /> In progress
+              </StatusTag>
+            ) : passed ? (
+              <StatusTag tone="forest" dot>
+                <CheckCircle2 size={11} aria-hidden="true" /> Passed
+              </StatusTag>
+            ) : (
+              <StatusTag tone="ember">
+                <XCircle size={11} aria-hidden="true" /> Failed
+              </StatusTag>
+            )
+          ) : undefined
+        }
+      />
 
       {/* ── PH4-D2 — what this attempt was actually given, read off the
           attempt itself. Facts only: no note, no basis, no recorder. ── */}
       {breakdown?.adjustment ? (
         <Reveal delay={0.04}>
-          <div className="mt-4 inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-info)]/30 bg-[var(--ui-info)]/[0.06] px-3 py-1.5 text-[12.5px] text-[var(--ui-soft)]">
+          <div className="inline-flex items-center gap-1.5 rounded-[10px] border border-[var(--ui-line-strong)] bg-[var(--ui-inset-soft)] px-3 py-1.5 text-[13px] text-[var(--ui-soft)]">
             <Clock size={13} className="text-[var(--ui-info)]" aria-hidden="true" />
             {describeAdjustment(breakdown.adjustment)}
           </div>
@@ -181,9 +178,9 @@ export default function ExamAttemptDetail() {
 
       {/* ── Loading / error ── */}
       {isLoading && (
-        <GlassCard className="mt-6 p-8 text-center">
+        <GlassCard className="p-8 text-center">
           <div
-            className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[#60a5fa]"
+            className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[var(--accent)]"
             role="status"
             aria-label="Loading attempt"
           />
@@ -191,8 +188,10 @@ export default function ExamAttemptDetail() {
       )}
 
       {!isLoading && isError && (
-        <GlassCard className="mt-6 p-8 text-center">
-          <p className="text-[14px] font-medium text-foreground">Could not load this attempt</p>
+        <GlassCard className="p-8 text-center">
+          <p role="alert" className="text-[14px] font-medium text-foreground">
+            Could not load this attempt
+          </p>
           <p className="mt-1 text-[13px] text-muted-foreground">
             It may have been removed, or you don&apos;t have access to it.
           </p>
@@ -205,14 +204,18 @@ export default function ExamAttemptDetail() {
               question to have evidence about. ── */}
           {codingEntries.length > 0 && (
             <Reveal delay={0.05}>
-              <div className="mt-5 flex gap-1 border-b border-border" role="tablist" aria-label="Attempt views">
+              <div
+                className="mt-5 flex gap-1 border-b border-border"
+                role="tablist"
+                aria-label="Attempt views"
+              >
                 <button
                   type="button"
                   role="tab"
                   aria-selected={tab === 'overview'}
                   onClick={() => setTab('overview')}
                   className={cn(
-                    'border-b-2 px-3 py-2 text-[13px] font-medium',
+                    'min-h-[40px] border-b-2 px-3 py-2 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
                     tab === 'overview'
                       ? 'border-[var(--accent)] text-foreground'
                       : 'border-transparent text-muted-foreground hover:text-foreground',
@@ -226,7 +229,7 @@ export default function ExamAttemptDetail() {
                   aria-selected={tab === 'code-evidence'}
                   onClick={() => setTab('code-evidence')}
                   className={cn(
-                    'inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-medium',
+                    'inline-flex min-h-[40px] items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
                     tab === 'code-evidence'
                       ? 'border-[var(--accent)] text-foreground'
                       : 'border-transparent text-muted-foreground hover:text-foreground',
@@ -255,152 +258,153 @@ export default function ExamAttemptDetail() {
               </Suspense>
             </div>
           ) : (
-          <>
-          {/* ── Stat strip ── */}
-          <Reveal delay={0.06}>
-            <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <StatCard
-                label="Score"
-                value={scorePercent !== null ? `${scorePercent}%` : '—'}
-                delta={passed ? 'passed' : 'did not pass'}
-                trend={passed ? 'up' : 'flat'}
-                feature
-              />
-              <StatCard
-                label="Points"
-                value={
-                  attempt && attempt.score_raw !== null && attempt.score_max !== null
-                    ? `${attempt.score_raw}/${attempt.score_max}`
-                    : '—'
-                }
-                delta="raw / max"
-                trend="flat"
-              />
-              <StatCard
-                label="MCQ correct"
-                value={mcqEntries.length > 0 ? `${mcqCorrect}/${mcqEntries.length}` : '—'}
-                delta={`${totalQuestions} question${totalQuestions !== 1 ? 's' : ''}`}
-                trend="flat"
-              />
-              <StatCard
-                label="Pass mark"
-                value={passThreshold !== null ? `${passThreshold}%` : '—'}
-                delta="threshold"
-                trend="flat"
-              />
-            </div>
-          </Reveal>
-
-          {/* ── MCQ breakdown ── */}
-          {mcqEntries.length > 0 && (
-            <Reveal delay={0.1}>
-              <GlassCard className="mt-5 overflow-hidden p-0">
-                <div className="border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                  Multiple choice · {mcqCorrect}/{mcqEntries.length} correct
+            <>
+              {/* ── Stat strip ── */}
+              <Reveal delay={0.06}>
+                <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
+                  <StatCard
+                    label="Score"
+                    value={scorePercent !== null ? `${scorePercent}%` : '—'}
+                    delta={passed ? 'passed' : 'did not pass'}
+                    trend={passed ? 'up' : 'flat'}
+                  />
+                  <StatCard
+                    label="Points"
+                    value={
+                      attempt && attempt.score_raw !== null && attempt.score_max !== null
+                        ? `${attempt.score_raw}/${attempt.score_max}`
+                        : '—'
+                    }
+                    delta="raw / max"
+                    trend="flat"
+                  />
+                  <StatCard
+                    label="MCQ correct"
+                    value={mcqEntries.length > 0 ? `${mcqCorrect}/${mcqEntries.length}` : '—'}
+                    delta={`${totalQuestions} question${totalQuestions !== 1 ? 's' : ''}`}
+                    trend="flat"
+                  />
+                  <StatCard
+                    label="Pass mark"
+                    value={passThreshold !== null ? `${passThreshold}%` : '—'}
+                    delta="threshold"
+                    trend="flat"
+                  />
                 </div>
-                <Stagger className="flex flex-col">
-                  {mcqEntries.map(([qid, correct], i) => {
-                    const q = qMap.get(qid);
-                    return (
-                      <StaggerItem key={qid}>
-                        <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-3.5 last:border-0">
-                          <div className="min-w-0">
-                            <p className="text-[13.5px] text-foreground">
-                              <span className="text-[var(--ui-faint)]">Q{i + 1}.</span>{' '}
-                              {q?.prompt ?? `Question ${i + 1}`}
-                            </p>
-                            {q && !correct && (
-                              <p className="mt-1 text-[12.5px] text-muted-foreground">
-                                Correct answer: {q.options[q.correct_index] ?? '—'}
-                              </p>
-                            )}
-                          </div>
-                          <div className="flex flex-none items-center gap-3">
-                            <span className="font-mono text-[12px] text-[var(--ui-faint)]">
-                              {q ? `${correct ? q.points : 0}/${q.points} pts` : ''}
-                            </span>
-                            {correct ? (
-                              <StatusTag tone="forest" dot>
-                                <CheckCircle2 size={11} aria-hidden="true" /> Correct
-                              </StatusTag>
-                            ) : (
-                              <StatusTag tone="ember">
-                                <XCircle size={11} aria-hidden="true" /> Incorrect
-                              </StatusTag>
-                            )}
-                          </div>
-                        </div>
-                      </StaggerItem>
-                    );
-                  })}
-                </Stagger>
-              </GlassCard>
-            </Reveal>
-          )}
+              </Reveal>
 
-          {/* ── Coding breakdown ── */}
-          {codingEntries.length > 0 && (
-            <Reveal delay={0.14}>
-              <GlassCard className="mt-5 overflow-hidden p-0">
-                <div className="border-b border-border px-6 py-3.5 text-[11.5px] uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-                  Coding · {codingEntries.length} question{codingEntries.length !== 1 ? 's' : ''}
-                </div>
-                <Stagger className="flex flex-col">
-                  {codingEntries.map(([qid, r], i) => {
-                    const earned = r.raw ?? 0;
-                    const full = earned >= r.points && r.points > 0;
-                    const partial = earned > 0 && earned < r.points;
-                    return (
-                      <StaggerItem key={qid}>
-                        <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-3.5 last:border-0">
-                          <div className="min-w-0">
-                            <p className="text-[13.5px] text-foreground">
-                              <span className="text-[var(--ui-faint)]">Q{i + 1}.</span> Coding question
-                            </p>
-                            <p className="mt-1 text-[12.5px] text-muted-foreground">
-                              {r.submitted === false
-                                ? 'Not submitted'
-                                : r.error
-                                  ? r.error
-                                  : `Language: ${r.language ?? 'unknown'}`}
-                            </p>
-                          </div>
-                          <div className="flex flex-none items-center gap-3">
-                            <span className="font-mono text-[12px] text-[var(--ui-faint)]">
-                              {earned}/{r.points} pts
-                            </span>
-                            {full ? (
-                              <StatusTag tone="forest" dot>
-                                <CheckCircle2 size={11} aria-hidden="true" /> Passed
-                              </StatusTag>
-                            ) : partial ? (
-                              <StatusTag tone="amber">Partial</StatusTag>
-                            ) : (
-                              <StatusTag tone="ember">
-                                <XCircle size={11} aria-hidden="true" /> Failed
-                              </StatusTag>
-                            )}
-                          </div>
-                        </div>
-                      </StaggerItem>
-                    );
-                  })}
-                </Stagger>
-              </GlassCard>
-            </Reveal>
-          )}
+              {/* ── MCQ breakdown ── */}
+              {mcqEntries.length > 0 && (
+                <Reveal delay={0.1}>
+                  <GlassCard className="mt-5 overflow-hidden p-0">
+                    <div className="border-b border-border px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-soft)]">
+                      Multiple choice · {mcqCorrect}/{mcqEntries.length} correct
+                    </div>
+                    <Stagger className="flex flex-col">
+                      {mcqEntries.map(([qid, correct], i) => {
+                        const q = qMap.get(qid);
+                        return (
+                          <StaggerItem key={qid}>
+                            <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-3.5 last:border-0">
+                              <div className="min-w-0">
+                                <p className="text-[13.5px] text-foreground">
+                                  <span className="text-[var(--ui-faint)]">Q{i + 1}.</span>{' '}
+                                  {q?.prompt ?? `Question ${i + 1}`}
+                                </p>
+                                {q && !correct && (
+                                  <p className="mt-1 text-[12.5px] text-muted-foreground">
+                                    Correct answer: {q.options[q.correct_index] ?? '—'}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="flex flex-none items-center gap-3">
+                                <span className="font-mono text-[12px] text-[var(--ui-faint)]">
+                                  {q ? `${correct ? q.points : 0}/${q.points} pts` : ''}
+                                </span>
+                                {correct ? (
+                                  <StatusTag tone="forest" dot>
+                                    <CheckCircle2 size={11} aria-hidden="true" /> Correct
+                                  </StatusTag>
+                                ) : (
+                                  <StatusTag tone="ember">
+                                    <XCircle size={11} aria-hidden="true" /> Incorrect
+                                  </StatusTag>
+                                )}
+                              </div>
+                            </div>
+                          </StaggerItem>
+                        );
+                      })}
+                    </Stagger>
+                  </GlassCard>
+                </Reveal>
+              )}
 
-          {totalQuestions === 0 && (
-            <GlassCard className="mt-5 p-8 text-center">
-              <p className="text-[13px] text-muted-foreground">
-                No per-question breakdown is available for this attempt.
-              </p>
-            </GlassCard>
-          )}
-          </>
+              {/* ── Coding breakdown ── */}
+              {codingEntries.length > 0 && (
+                <Reveal delay={0.14}>
+                  <GlassCard className="mt-5 overflow-hidden p-0">
+                    <div className="border-b border-border px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-soft)]">
+                      Coding · {codingEntries.length} question
+                      {codingEntries.length !== 1 ? 's' : ''}
+                    </div>
+                    <Stagger className="flex flex-col">
+                      {codingEntries.map(([qid, r], i) => {
+                        const earned = r.raw ?? 0;
+                        const full = earned >= r.points && r.points > 0;
+                        const partial = earned > 0 && earned < r.points;
+                        return (
+                          <StaggerItem key={qid}>
+                            <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-3.5 last:border-0">
+                              <div className="min-w-0">
+                                <p className="text-[13.5px] text-foreground">
+                                  <span className="text-[var(--ui-faint)]">Q{i + 1}.</span> Coding
+                                  question
+                                </p>
+                                <p className="mt-1 text-[12.5px] text-muted-foreground">
+                                  {r.submitted === false
+                                    ? 'Not submitted'
+                                    : r.error
+                                      ? r.error
+                                      : `Language: ${r.language ?? 'unknown'}`}
+                                </p>
+                              </div>
+                              <div className="flex flex-none items-center gap-3">
+                                <span className="font-mono text-[12px] text-[var(--ui-faint)]">
+                                  {earned}/{r.points} pts
+                                </span>
+                                {full ? (
+                                  <StatusTag tone="forest" dot>
+                                    <CheckCircle2 size={11} aria-hidden="true" /> Passed
+                                  </StatusTag>
+                                ) : partial ? (
+                                  <StatusTag tone="amber">Partial</StatusTag>
+                                ) : (
+                                  <StatusTag tone="ember">
+                                    <XCircle size={11} aria-hidden="true" /> Failed
+                                  </StatusTag>
+                                )}
+                              </div>
+                            </div>
+                          </StaggerItem>
+                        );
+                      })}
+                    </Stagger>
+                  </GlassCard>
+                </Reveal>
+              )}
+
+              {totalQuestions === 0 && (
+                <GlassCard className="mt-5 p-8 text-center">
+                  <p className="text-[13px] text-muted-foreground">
+                    No per-question breakdown is available for this attempt.
+                  </p>
+                </GlassCard>
+              )}
+            </>
           )}
         </>
       )}
-    </div>
+    </Page>
   );
 }

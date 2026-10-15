@@ -45,7 +45,7 @@ test.describe('an opening with candidates in it', () => {
     await signIn(page, tenant.accounts.hr_manager);
     await shortlistFromApplicants(page, candidate, opening.title);
     expect(await sitTheExam(candidatePage, candidate, { answerCorrectly: false }))
-      .toContain('Not this time');
+      .toContain('Assessment submitted');
     await candidateContext.close();
 
     await expect

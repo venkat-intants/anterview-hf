@@ -66,7 +66,7 @@ test.describe('an offer moves from creation to preboarding complete', () => {
     await shortlistFromApplicants(page, candidate, opening.title);
 
     const verdict = await sitTheExam(candidatePage, candidate, { answerCorrectly: true });
-    expect(verdict).toContain('You passed');
+    expect(verdict).toContain('Assessment submitted');
 
     await expect
       .poll(async () => (await decisionQueue(api, opening.id)).map((r) => r.full_name), {
@@ -76,7 +76,10 @@ test.describe('an offer moves from creation to preboarding complete', () => {
 
     // ── 1. HR hires them (D-05: a person, with a reason) ────────────────────
     await page.goto(`/hr/requisitions/${opening.id}/decisions`);
-    await page.getByRole('button', { name: 'Hire', exact: true }).click();
+    // The queue is a master-detail workspace: the first candidate is selected,
+    // and the panel goes Evidence -> Decision -> Reason & confirm.
+    await page.getByTestId('to-decision').click();
+    await page.getByRole('button', { name: /^Hire/ }).click();
     await page
       .getByLabel('Reason', { exact: true })
       .selectOption({ label: 'Skills / competency fit' });
@@ -87,7 +90,10 @@ test.describe('an offer moves from creation to preboarding complete', () => {
       .not.toContain(candidate.name);
 
     // ── HR sets up what preboarding needs, on the opening itself ────────────
-    await page.goto(`/hr/requisitions/${opening.id}`);
+    // Preboarding documents are the last stage of the opening's Setup tab (the
+    // opening has candidates, so the hub would otherwise open on Pipeline).
+    await page.goto(`/hr/requisitions/${opening.id}?tab=setup`);
+    await page.getByRole('button', { name: /Preboarding documents/ }).click();
     await page.getByRole('button', { name: 'Add requirement' }).click();
     await page.getByLabel('Name').fill('PAN card');
     await page.getByLabel('Kind').selectOption('tax');
@@ -157,7 +163,7 @@ test.describe('an offer moves from creation to preboarding complete', () => {
       mimeType: 'application/pdf',
       buffer: makeCvPdf([candidate.name, 'PAN: E2E1234F']),
     });
-    await expect(panRow.getByText(/submitted/i)).toBeVisible();
+    await expect(panRow.getByText(/in review/i)).toBeVisible();
 
     // ── 7. HR rejects it with a reason ───────────────────────────────────────
     await page.goto(offerDetailUrl);
@@ -193,11 +199,13 @@ test.describe('an offer moves from creation to preboarding complete', () => {
       mimeType: 'application/pdf',
       buffer: makeCvPdf([candidate.name, 'PAN: E2E1234F', 'clear scan']),
     });
-    await expect(panRowAgain.getByText(/submitted/i)).toBeVisible();
+    await expect(panRowAgain.getByText(/in review/i)).toBeVisible();
 
     // ── 9. HR verifies it and marks preboarding complete ────────────────────
     await page.goto(offerDetailUrl);
-    await expect(page.getByText(/submitted/i).first()).toBeVisible();
+    // The approval track also says "Submitted", so wait on the document's own
+    // review control rather than on that word.
+    await expect(page.getByRole('button', { name: 'Verify' })).toBeVisible();
     await page.getByRole('button', { name: 'Verify' }).click();
     await page.getByRole('button', { name: /Confirm — Verify/ }).click();
     await expect(page.getByText('Verified', { exact: true }).first()).toBeVisible();

@@ -48,11 +48,18 @@ test.describe('workflow builder', () => {
 
     // Nothing unapproved can be published, so the header does not offer it.
     await expect(page.getByTestId('publish-workflow')).toHaveCount(0);
+    // The server's blockers are listed beside the action, each linking to its
+    // round, before anyone tries to submit.
+    const blockers = page.getByTestId('submit-blockers');
+    await expect(blockers).toContainText(/questions/);
+    await expect(blockers.getByRole('button', { name: /^Go to / }).first()).toBeVisible();
+    // The test rounds have no questions: Run dry run, then the submit step
+    // refuses with why.
+    await page.getByTestId('run-dry-run').click();
+    await page.getByTestId('submit-review').click();
     const review = page.getByTestId('review-panel');
-    await review.getByRole('button', { name: 'Submit for review' }).click();
-    // The test rounds have no questions: the submission is refused, with why.
-    await expect(review.getByRole('alert')).toContainText(/questions/);
-    await expect(review.getByRole('button', { name: 'Submit for review' })).toBeVisible();
+    await expect(review.getByRole('button', { name: 'Submit for review' })).toBeDisabled();
+    await expect(review).toContainText(/Fix \d+ issue/);
   });
 
   test('a second person approves a version before it goes live', async ({
@@ -69,9 +76,15 @@ test.describe('workflow builder', () => {
     await page.getByTestId('template-interview_only').click();
     await expect(page.getByTestId('workflow-meta')).toContainText('v1 · draft');
 
+    // Dry run first, then the submit step (a sheet) with the reviewer note.
+    await page.getByTestId('run-dry-run').click();
+    await page.getByTestId('submit-review').click();
     const review = page.getByTestId('review-panel');
     await review.getByRole('button', { name: 'Submit for review' }).click();
-    await expect(review.getByText('Locked while a company super admin reviews it.')).toBeVisible();
+    // The sheet closes on submit; the track says who it is waiting on.
+    await expect(page.getByTestId('workflow-state')).toContainText(
+      'Waiting on a company super admin',
+    );
     await expect(page.getByTestId('publish-workflow')).toHaveCount(0);
 
     const versions = await api.get<WorkflowSummary[]>(`/hr/requisitions/${opening.id}/workflows`);

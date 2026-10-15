@@ -112,6 +112,7 @@ from shared.redis_factory import build_redis_client
 
 from app.avatars import resolve_avatar
 from app.config import settings
+from app.worker import close_path
 
 # IC-4: four sibling modules carved out of this file (constants, prompt,
 # consent, session_store). Imported back here — rather than left for callers to
@@ -319,8 +320,11 @@ _FALLBACK_SUBSCRIBE_TIMEOUT_SECONDS: float = 15.0
 # drifts silently, and both happened to read 60 so no test could tell them
 # apart. The alias keeps this name for the existing call sites.
 _SERVICE_JWT_TTL_SECONDS: int = SERVICE_TOKEN_TTL_SECONDS
-# Scoring HTTP timeout and max retry count.
-_SCORE_TIMEOUT_SECONDS: float = 15.0
+# Scoring HTTP timeout and max retries. The timeout must exceed the scorer's WORST
+# case, ~247 s (60 s x 4 LLM attempts + 7 s backoff); at the old 15 s a slow call
+# was retried while still running and paid for twice. A timeout is never retried
+# (the reconciler picks up an unscored session); fast failures still get one.
+_SCORE_TIMEOUT_SECONDS: float = 300.0
 _SCORE_MAX_RETRIES: int = 1
 
 # ---------------------------------------------------------------------------
@@ -727,8 +731,9 @@ async def _post_score(
 ) -> None:
     """POST the transcript to feedback_billing /internal/score.
 
-    Best-effort: logs on failure, never raises. One retry on transient errors.
-    Timeout: _SCORE_TIMEOUT_SECONDS. No queue, no Celery.
+    Best-effort: logs on failure, never raises. One retry on a fast transient
+    error (connection failure, 5xx); NEVER on a timeout (see
+    _SCORE_TIMEOUT_SECONDS). No queue, no Celery.
 
     The httpx.AsyncClient is constructed once outside the retry loop and reused
     across the single allowed retry — avoids creating a new connection pool per
@@ -750,22 +755,20 @@ async def _post_score(
     if role_profile is not None:
         payload["role_profile"] = role_profile.model_dump(mode="json")
 
-    # JWT mint is outside the loop — a mint failure aborts immediately without
-    # retry and is logged, so we don't thrash on a bad config.
-    try:
-        token = _mint_service_jwt()
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "interview-worker.score.jwt_mint_failed session_id=%s err=%s",
-            session_id, type(exc).__name__,
-        )
-        return
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
     # Single client reused across all retry attempts.
     async with httpx.AsyncClient(timeout=_SCORE_TIMEOUT_SECONDS) as client:
         for attempt in range(_SCORE_MAX_RETRIES + 1):
+            # Minted per attempt (a failed attempt can take minutes, longer than
+            # the token lives). A mint failure aborts without retry.
+            try:
+                token = _mint_service_jwt()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "interview-worker.score.jwt_mint_failed session_id=%s err=%s",
+                    session_id, type(exc).__name__,
+                )
+                return
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
             try:
                 resp = await client.post(url, json=payload, headers=headers)
                 if resp.status_code == 409:
@@ -779,6 +782,14 @@ async def _post_score(
                 logger.info(
                     "interview-worker.score.ok session_id=%s scorecard_id=%s composite=%.2f",
                     session_id, data.get("scorecard_id"), data.get("composite_score"),
+                )
+                return
+            except httpx.TimeoutException as exc:
+                # Not retried: the scorer may still be working, and a second
+                # request would pay for a second LLM run.
+                logger.error(
+                    "interview-worker.score.timeout session_id=%s err=%s — not retrying",
+                    session_id, type(exc).__name__,
                 )
                 return
             except httpx.HTTPStatusError as exc:
@@ -1131,6 +1142,15 @@ async def claim_close(session_id: str, *, client: Any | None = None) -> bool:
     return bool(claimed)
 
 
+async def release_close_guard(session_id: str, *, client: Any | None = None) -> None:
+    """Re-open the single-fire guard so the reaper can finalise a kept checkpoint."""
+    await close_path.delete_key(
+        lambda: client if client is not None else _get_checkpoint_redis(),
+        _close_guard_key(session_id),
+        timeout=_CHECKPOINT_TIMEOUT_SECONDS, what="close_guard_release",
+    )
+
+
 async def restore_state_from_checkpoint(session_id: str) -> InterviewState:
     """Return the InterviewState for a session, resuming a checkpoint if present.
 
@@ -1287,7 +1307,11 @@ async def _reap_one(
 
     state = InterviewState()
     state.restore_checkpoint(checkpoint)
-    await _persist_turns(session_id, state.transcript)
+    if not await _persist_turns(session_id, state.transcript):
+        # The checkpoint is the only copy: keep it and hand the claim back.
+        logger.warning("interview-worker.reaper_turns_failed room=%s — will retry", session_id)
+        await release_close_guard(session_id, client=client)
+        return
 
     # The session ended when its worker stopped refreshing the checkpoint, NOT
     # when this sweep happened to notice. Recording the sweep time instead would
@@ -1307,12 +1331,12 @@ async def _reap_one(
         "interview-worker.reaper_abandoning room=%s age=%.0fs answers=%d turns=%d",
         session_id, age, state.candidate_answer_count, len(state.transcript),
     )
-    await _update_session_status(
-        session_id,
-        "abandoned",
-        completed_at=last_seen,
-        duration_seconds=duration,
-    )
+    if not await _update_session_status(
+        session_id, "abandoned", completed_at=last_seen, duration_seconds=duration
+    ):
+        logger.warning("interview-worker.reaper_status_failed room=%s — will retry", session_id)
+        await release_close_guard(session_id, client=client)
+        return
     await client.delete(key_str)
     reaped.append(session_id)
 
@@ -1998,15 +2022,11 @@ class InterviewJob:
         # Speak the closing line before shutting the agent down — but NOT on a
         # consent withdrawal, where we stop processing at once.
         if not consent_withdrawn:
-            try:
-                closing_text = _get_closing_msg(self.language, timed_out=timed_out)
-                handle = self.session.say(closing_text, allow_interruptions=False)
-                await handle
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "interview-worker: closing say() failed room=%s err=%s",
-                    session_id, type(exc).__name__,
-                )
+            await close_path.say_closing(
+                self.session,
+                lambda: _get_closing_msg(self.language, timed_out=timed_out),
+                session_id,
+            )
 
         # Shutdown the agent session (clean, drain=True by default).
         try:
@@ -2028,17 +2048,15 @@ class InterviewJob:
             now = datetime.now(tz=UTC)
             elapsed = int((now - self.session_started_at).total_seconds())
             final_status = "abandoned" if consent_withdrawn else state.final_status()
-            await _update_session_status(
-                session_id,
-                final_status,
-                completed_at=now,
-                duration_seconds=elapsed,
-            )
 
             # Persist the transcript to the turns table (audit trail + admin
-            # drill-in view + re-scoring resilience). Done for every close, even
-            # abandoned sessions, so the DB always has whatever was said.
-            await _persist_turns(session_id, state.transcript)
+            # drill-in view + re-scoring resilience) and then the status, for
+            # every close, even abandoned sessions. record_ok decides the
+            # checkpoint's fate below.
+            record_ok = await close_path.write_final_record(
+                session_id, state.transcript, final_status,
+                completed_at=now, duration_seconds=elapsed,
+            )
 
             # Score only if we have enough answers AND consent was not withdrawn.
             # We AWAIT it (not fire-and-forget) so the scorecard row exists BEFORE
@@ -2069,10 +2087,10 @@ class InterviewJob:
                     session_id, state.candidate_answer_count, MIN_ANSWERS_TO_SCORE,
                 )
 
-            # The session is durably finalised — drop the checkpoint so the
-            # startup reaper has nothing left to find. The close-guard key stays
-            # for its full TTL; that is what keeps this single-fire.
-            await clear_checkpoint(session_id)
+            # Written: drop the checkpoint (the guard key stays, keeping close single-fire).
+            await close_path.settle_checkpoint(
+                session_id, record_ok, clear=clear_checkpoint, release_guard=release_close_guard
+            )
 
         # End the call: delete the LiveKit room so the candidate is disconnected
         # and the frontend navigates to the results page. session.shutdown() only
@@ -2119,14 +2137,11 @@ class InterviewJob:
             return
         now = datetime.now(tz=UTC)
         elapsed = int((now - self.session_started_at).total_seconds())
-        await _update_session_status(
-            session_id,
-            state.final_status(),
-            completed_at=now,
-            duration_seconds=elapsed,
+        # Transcript, then status, before scoring.
+        record_ok = await close_path.write_final_record(
+            session_id, state.transcript, state.final_status(),
+            completed_at=now, duration_seconds=elapsed,
         )
-        # Persist the transcript before scoring (audit + admin view + resilience).
-        await _persist_turns(session_id, state.transcript)
         if state.should_score():
             # Await directly: the candidate already disconnected and this job is
             # tearing down — a bare background task would be cancelled before the
@@ -2140,8 +2155,9 @@ class InterviewJob:
                 transcript=state.transcript,
                 role_profile=self.role_profile,
             )
-        # Durably finalised — the reaper has nothing left to recover here.
-        await clear_checkpoint(session_id)
+        await close_path.settle_checkpoint(
+            session_id, record_ok, clear=clear_checkpoint, release_guard=release_close_guard
+        )
 
     # ------------------------------------------------------------------
     # Event handlers and background tasks
@@ -2198,6 +2214,7 @@ class InterviewJob:
             # the room deletion — the candidate left connected to a dead room
             # until the reaper swept it 17 minutes later.
             self.close_task = asyncio.create_task(self._on_close(timed_out=False))
+            self.close_task.add_done_callback(close_path.log_task_failure)
 
     async def _wall_clock_cap(self) -> None:
         """Fire the close path after SESSION_WALL_CLOCK_CAP_SECONDS."""

@@ -195,3 +195,42 @@ describe('OfferApprovals — one offer in full', () => {
     expect(screen.getByText(/nothing for you to decide/)).toBeInTheDocument();
   });
 });
+
+describe('OfferApprovals — where this offer is', () => {
+  beforeEach(() => {
+    paramOfferId = 'offer-1';
+  });
+
+  it('shows who submitted it and how long it has waited, from the offer itself', async () => {
+    getAdminOffer.mockResolvedValue({
+      ...DETAIL,
+      history: [
+        { action: 'submitted', actor_type: 'user', actor_name: 'Asha R', at: '2026-09-10T00:00:00.000Z', details: {} },
+      ],
+    });
+    renderPage();
+    const track = await screen.findByTestId('review-track');
+    expect(track).toHaveTextContent('Submitted by Asha R');
+    expect(track).toHaveTextContent(/Waiting \d+ days?|Submitted today/);
+    // One step is the approver's, and it is marked as theirs.
+    const current = Array.from(track.querySelectorAll('li[aria-current="step"]'));
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent('Your decision');
+  });
+
+  it('states what the decision changes in one line, and pins the decision', async () => {
+    renderPage();
+    await screen.findByText('Kiran Rao · Backend Engineer');
+    expect(screen.getByText(/What your decision changes/)).toBeInTheDocument();
+    expect(screen.getByTestId('decision-panel').className).toMatch(/\bsticky\b/);
+  });
+
+  it('has no decision and no pending step once the offer is decided', async () => {
+    getAdminOffer.mockResolvedValue({ ...DETAIL, status: 'approved' });
+    renderPage();
+    const track = await screen.findByTestId('review-track');
+    expect(track.querySelector('li[aria-current="step"]')).toBeNull();
+    expect(screen.queryByTestId('decision-panel')).not.toBeInTheDocument();
+    expect(screen.queryByText(/What your decision changes/)).not.toBeInTheDocument();
+  });
+});

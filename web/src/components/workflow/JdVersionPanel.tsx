@@ -31,12 +31,15 @@ import {
   type Requisition,
 } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
+import { queryKeys } from '@/lib/queryKeys';
 import { GlassCard, Pill } from '@/design/components/primitives';
 import { AlertCircle } from '@/design/components/icons';
+import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
+import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 
 const INPUT =
-  'w-full rounded-[10px] border border-white/[0.1] bg-[rgba(28,29,31,0.6)] px-3 py-2 text-[13.5px] text-white placeholder:text-[#5a5f66] focus:border-[var(--accent)] focus:outline-none';
-const LABEL = 'mb-1.5 block text-[12.5px] font-medium text-[#b8babf]';
+  'w-full rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+const LABEL = 'mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]';
 
 const STATUS_LABEL: Record<JdVersion['status'], string> = {
   draft: 'Draft',
@@ -46,9 +49,9 @@ const STATUS_LABEL: Record<JdVersion['status'], string> = {
 
 /** Deliberately not colour alone: "published" must be readable without it. */
 const STATUS_TONE: Record<JdVersion['status'], string> = {
-  draft: 'border-[#d6a23d]/40 text-[#d6a23d]',
-  published: 'border-[#4f9e6a]/40 text-[#6fbf8d]',
-  archived: 'border-white/[0.1] text-[#888b91]',
+  draft: 'border-[var(--ui-warn)] text-[var(--ui-warn)]',
+  published: 'border-[var(--ui-ok)] text-[var(--ui-ok)]',
+  archived: 'border-border text-muted-foreground',
 };
 
 function when(iso: string | null): string {
@@ -79,26 +82,30 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
   const [note, setNote] = useState('');
 
   const history = useQuery({
-    queryKey: ['jd-history', requisition.id],
+    queryKey: queryKeys.jdHistory(requisition.id),
     queryFn: () => getJdHistory(requisition.id),
   });
 
   const versions = history.data?.versions ?? [];
   const draft = versions.find((v) => v.status === 'draft') ?? null;
   const published = versions.find((v) => v.status === 'published') ?? null;
+  const newestVersion = versions.reduce<JdVersion | null>(
+    (n, v) => (n === null || v.version > n.version ? v : n),
+    null,
+  );
+  const historyKey = useScopedPersistKey('jd-version-history');
 
   // The textarea starts from the draft if there is one, otherwise from the
   // live advert — editing one field must not silently blank the document.
   const text = draftText ?? draft?.jd_text ?? requisition.jd_text ?? '';
 
   function refresh(): void {
-    void client.invalidateQueries({ queryKey: ['jd-history', requisition.id] });
-    void client.invalidateQueries({ queryKey: ['requisition', requisition.id] });
+    void client.invalidateQueries({ queryKey: queryKeys.jdHistory(requisition.id) });
+    void client.invalidateQueries({ queryKey: queryKeys.requisition(requisition.id) });
   }
 
   const save = useMutation({
-    mutationFn: () =>
-      saveJdDraft(requisition.id, { jd_text: text, change_note: note || null }),
+    mutationFn: () => saveJdDraft(requisition.id, { jd_text: text, change_note: note || null }),
     onSuccess: () => {
       setDraftText(null);
       setNote('');
@@ -132,25 +139,25 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
   });
 
   return (
-    <section aria-labelledby="jd-versions-heading" className="mt-5">
-      <GlassCard className="p-5">
+    <section aria-labelledby="jd-versions-heading">
+      <GlassCard className="p-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="jd-versions-heading" className="text-[15px] font-semibold text-white">
+          <h2 id="jd-versions-heading" className="text-[15px] font-semibold text-foreground">
             Job description
           </h2>
           {published ? (
-            <span className="text-[12px] text-[#888b91]">
+            <span className="text-[12px] text-muted-foreground">
               Published: v{published.version}
               {published.created_by_name ? ` · by ${published.created_by_name}` : ''}
             </span>
           ) : (
-            <span className="text-[12px] text-[#888b91]">No published version yet</span>
+            <span className="text-[12px] text-muted-foreground">No published version yet</span>
           )}
         </div>
 
-        <p className="mt-1 text-[12.5px] text-[#888b91]">
-          Editing here creates a draft. Candidates keep seeing the published version until
-          you publish the draft.
+        <p className="mt-1 text-[12.5px] text-muted-foreground">
+          Editing here creates a draft. Candidates keep seeing the published version until you
+          publish the draft.
         </p>
 
         <div className="mt-4">
@@ -169,7 +176,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
 
         <div className="mt-3">
           <label htmlFor="jd-change-note" className={LABEL}>
-            What changed <span className="text-[#5a5f66]">(optional)</span>
+            What changed <span className="text-[var(--ui-faint)]">(optional)</span>
           </label>
           <input
             id="jd-change-note"
@@ -198,7 +205,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
                 type="button"
                 onClick={() => discard.mutate()}
                 disabled={discard.isPending}
-                className="rounded-[10px] border border-white/[0.1] px-3 py-2 text-[12.5px] text-[#b8babf] hover:text-white disabled:opacity-40"
+                className="rounded-[10px] border border-border px-3 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
               >
                 Discard draft
               </button>
@@ -207,69 +214,80 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
         </div>
 
         {draft ? (
-          <p className="mt-2.5 flex items-start gap-1.5 text-[11.5px] text-[#d6a23d]">
+          <p className="mt-2.5 flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]">
             <AlertCircle size={12} aria-hidden="true" className="mt-0.5 shrink-0" />
-            This draft is not visible to candidates. Publish it to make it the live job
-            description.
+            This draft is not visible to candidates. Publish it to make it the live job description.
           </p>
         ) : null}
 
         {/* ── History ───────────────────────────────────────────────── */}
         <div className="mt-6">
-          <h3 className="text-[13px] font-semibold text-[#d5d7da]">Version history</h3>
-          {history.isLoading ? (
-            <p className="mt-2 text-[12.5px] text-[#888b91]">Loading…</p>
-          ) : versions.length === 0 ? (
-            <p className="mt-2 text-[12.5px] text-[#888b91]">
-              No versions recorded yet. The next edit will create version 1.
-            </p>
-          ) : (
-            <ul className="mt-2 flex flex-col gap-1.5">
-              {versions.map((v) => (
-                <li
-                  key={v.id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-white/[0.07] bg-white/[0.02] px-3 py-2"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[13px] font-medium text-[#d5d7da]">
-                        v{v.version}
-                      </span>
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-[10.5px] ${STATUS_TONE[v.status]}`}
-                      >
-                        {STATUS_LABEL[v.status]}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 text-[11.5px] text-[#888b91]">
-                      {when(v.created_at)}
-                      {v.created_by_name ? ` · ${v.created_by_name}` : ''}
-                      {liveWindow(v) ? ` · ${liveWindow(v)}` : ''}
-                    </p>
-                    {v.change_note ? (
-                      <p className="mt-0.5 truncate text-[11.5px] text-[#6f7379]">
-                        {v.change_note}
+          <Collapsible
+            title="Version history"
+            count={history.isLoading ? undefined : versions.length}
+            noun="version"
+            latest={
+              newestVersion
+                ? `v${newestVersion.version} ${STATUS_LABEL[newestVersion.status].toLowerCase()}, ${when(newestVersion.created_at)}`
+                : undefined
+            }
+            persistKey={historyKey}
+            data-testid="jd-version-history"
+          >
+            {history.isLoading ? (
+              <p className="text-[12.5px] text-muted-foreground">Loading…</p>
+            ) : versions.length === 0 ? (
+              <p className="text-[12.5px] text-muted-foreground">
+                No versions recorded yet. The next edit will create version 1.
+              </p>
+            ) : (
+              <ProgressiveList
+                items={versions}
+                initial={5}
+                noun="versions"
+                getKey={(v) => v.id}
+                className="flex flex-col gap-1.5"
+                renderItem={(v) => (
+                  <li className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[13px] font-medium text-foreground">v{v.version}</span>
+                        <span
+                          className={`rounded-full border px-2 py-0.5 text-[12px] ${STATUS_TONE[v.status]}`}
+                        >
+                          {STATUS_LABEL[v.status]}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[12px] text-muted-foreground">
+                        {when(v.created_at)}
+                        {v.created_by_name ? ` · ${v.created_by_name}` : ''}
+                        {liveWindow(v) ? ` · ${liveWindow(v)}` : ''}
                       </p>
+                      {v.change_note ? (
+                        <p className="mt-0.5 truncate text-[12px] text-[var(--ui-soft)]">
+                          {v.change_note}
+                        </p>
+                      ) : null}
+                    </div>
+                    {v.status === 'archived' ? (
+                      <button
+                        type="button"
+                        onClick={() => publish.mutate(v.id)}
+                        disabled={publish.isPending}
+                        className="inline-flex min-h-10 shrink-0 items-center rounded-[10px] border border-border px-3 text-[12px] text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+                      >
+                        Restore
+                      </button>
                     ) : null}
-                  </div>
-                  {v.status === 'archived' ? (
-                    <button
-                      type="button"
-                      onClick={() => publish.mutate(v.id)}
-                      disabled={publish.isPending}
-                      className="shrink-0 rounded-[10px] border border-white/[0.1] px-3 py-1.5 text-[12px] text-[#b8babf] hover:text-white disabled:opacity-40"
-                    >
-                      Restore
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
-          <p className="mt-2 text-[11.5px] text-[#6f7379]">
-            Restoring publishes that wording again as a new live version. Nothing in the
-            history is overwritten.
-          </p>
+                  </li>
+                )}
+              />
+            )}
+            <p className="mt-2 text-[12px] text-[var(--ui-soft)]">
+              Restoring publishes that wording again as a new live version. Nothing in the history
+              is overwritten.
+            </p>
+          </Collapsible>
         </div>
       </GlassCard>
     </section>

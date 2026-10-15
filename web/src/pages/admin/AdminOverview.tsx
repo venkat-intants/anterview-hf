@@ -1,31 +1,16 @@
-// AdminOverview — admin KPI tile page.
+// AdminOverview — platform KPI page.
 // Route: /admin/overview (inside AdminRoute + AppShell)
 //
-// Layout: reproduced from design screen AdminOverview.tsx.
-// Behavior: all live react-query hooks, charts, system health board preserved.
+// Cross-tenant and aggregate by design: counts, rates, averages and service
+// health only — no per-candidate detail is shown here.
 //
-// Sources merged:
-//   A) Layout — design/screens/admin/AdminOverview.tsx (page header style,
-//      Stagger/Reveal, GlassCard surfaces, stat tile shape, System Status section)
-//   B) Behavior — current live AdminOverview.tsx (getOverview 6 KPI tiles,
-//      getTrends LineChart, getScoreDistribution BarChart + axis averages,
-//      getSystemHealth refetchInterval 60s, data-testid="overview-tiles",
-//      error/skeleton states, sparkline)
+// Layout: PageHeader → six KPI cards → two chart cards → system status cards.
+// Data: all live react-query hooks (getOverview, getTrends, getScoreDistribution,
+// getSystemHealth with a 60 s refetch), data-testid="overview-tiles".
 
-import { useEffect, type ReactNode } from 'react';
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { motion } from 'framer-motion';
-import {
-  Users,
-  ClipboardList,
-  CheckCircle2,
-  TrendingUp,
-  Clock,
-  Calendar,
-  AlertCircle,
-  Activity,
-  Server,
-} from '@/design/components/icons';
+import { CheckCircle2, AlertCircle, AlertTriangle } from '@/design/components/icons';
 import {
   LineChart,
   Line,
@@ -42,9 +27,11 @@ import type { TrendItem, ScoreBucket } from '@/api/admin';
 import { toast } from '@/lib/toast';
 import { formatDuration } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
-import { GlassCard, StatusTag } from '@/design/components/primitives';
-import { Stagger, StaggerItem, Reveal } from '@/design/components/Reveal';
-import { TOOLTIP_STYLE } from '@/lib/chartTheme';
+import { Skeleton } from '@/components/ui/skeleton';
+import { StatCard, StatusTag } from '@/design/components/primitives';
+import { EmptyState, PageHeader, SectionCard, Page } from '@/design/components/page';
+import { useAccentColor } from '@/lib/useAccentColor';
+import { AXIS_STYLE, GRID_STROKE, TOOLTIP_STYLE } from '@/lib/chartTheme';
 
 // ── System-health board labels / dot colors ────────────────────────────────────
 
@@ -69,11 +56,10 @@ const STATUS_TONE: Record<string, 'forest' | 'amber' | 'ember'> = {
   down: 'ember',
 };
 
-// ── Dark chart theme tokens ────────────────────────────────────────────────────
+// ── Chart theme tokens ─────────────────────────────────────────────────────────
 
-const CHART_GRID = 'rgba(255,255,255,0.08)';
-const CHART_TICKS = { fill: '#9a9aa0', fontSize: 11 } as const;
-const SERIES_BLUE = '#0088ff';
+const CHART_GRID = GRID_STROKE;
+const CHART_TICKS = { fill: AXIS_STYLE.stroke, fontSize: 12 } as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -91,114 +77,26 @@ function fmtDurationSecs(seconds: number | null): string {
   return formatDuration(Math.round(seconds));
 }
 
-// ── Inline sparkline (SVG) ─────────────────────────────────────────────────────
-
-function Sparkline({ points, color = SERIES_BLUE }: { points: number[]; color?: string }) {
-  if (points.length < 2) return null;
-  const min = Math.min(...points);
-  const max = Math.max(...points);
-  const span = max - min || 1;
-  const W = 100;
-  const H = 32;
-  const d = points
-    .map((p, i) => `${(i / (points.length - 1)) * W},${H - ((p - min) / span) * H}`)
-    .join(' ');
-  return (
-    <svg
-      viewBox={`0 0 ${W} ${H}`}
-      width="100%"
-      height={H}
-      preserveAspectRatio="none"
-      aria-hidden="true"
-      className="mt-3"
-    >
-      <polyline
-        points={d}
-        fill="none"
-        stroke={color}
-        strokeWidth={2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        opacity={0.7}
-      />
-    </svg>
-  );
-}
-
-// ── KPI stat tile ──────────────────────────────────────────────────────────────
-
-interface StatTileProps {
-  icon: ReactNode;
-  label: string;
-  value: ReactNode;
-  sub?: string;
-  loading?: boolean;
-  spark?: number[];
-  feature?: boolean;
-}
-
-function StatTile({ icon, label, value, sub, loading, spark, feature }: StatTileProps) {
-  return (
-    <GlassCard feature={feature} hover className="p-5 h-full">
-      <div className="flex items-center justify-between">
-        <span className="text-[12.5px] text-muted-foreground">{label}</span>
-        <span className="text-muted-foreground" aria-hidden="true">
-          {icon}
-        </span>
-      </div>
-
-      {loading ? (
-        <div
-          className="mt-3 h-8 w-28 rounded-lg bg-[var(--ui-inset)] animate-pulse"
-          aria-hidden="true"
-        />
-      ) : (
-        <div className="mt-2 text-[28px] font-semibold tracking-[-1px] text-foreground leading-none tabular-nums">
-          {value}
-        </div>
-      )}
-
-      {sub && !loading && (
-        <p className="mt-1.5 text-[12px] text-muted-foreground">{sub}</p>
-      )}
-
-      {spark && !loading && (
-        <Sparkline points={spark} color={feature ? '#60a5fa' : SERIES_BLUE} />
-      )}
-    </GlassCard>
-  );
-}
-
-// ── Skeleton tile for loading state ───────────────────────────────────────────
+// ── Loading / empty placeholders ───────────────────────────────────────────────
 
 function TileSkeleton() {
   return (
-    <GlassCard className="p-5 h-full">
-      <div className="flex items-center gap-2.5">
-        <div className="h-4 w-4 rounded bg-[var(--ui-inset)] animate-pulse" />
-        <div className="h-3 w-28 rounded bg-[var(--ui-inset)] animate-pulse" />
-      </div>
-      <div className="mt-3 h-8 w-24 rounded-lg bg-[var(--ui-inset)] animate-pulse" />
-      <div className="mt-2 h-2.5 w-32 rounded bg-[var(--ui-inset)] animate-pulse" />
-    </GlassCard>
+    <div className="h-[116px] rounded-card border border-border bg-card p-5 shadow-card">
+      <Skeleton className="h-3.5 w-28" />
+      <Skeleton className="mt-4 h-8 w-24 rounded-[10px]" />
+      <Skeleton className="mt-3 h-3 w-32" />
+    </div>
   );
 }
 
-// ── Chart skeleton ─────────────────────────────────────────────────────────────
-
 function ChartSkeleton({ height = 200 }: { height?: number }) {
-  return (
-    <div
-      className="w-full rounded-xl bg-[var(--ui-inset)] animate-pulse"
-      style={{ height }}
-      aria-hidden="true"
-    />
-  );
+  return <Skeleton className="w-full rounded-[14px]" style={{ height }} aria-hidden="true" />;
 }
 
 // ── Trend line chart ───────────────────────────────────────────────────────────
 
 function TrendsChart({ items }: { items: TrendItem[] }) {
+  const accent = useAccentColor();
   const data = items.map((item) => ({
     ...item,
     label: new Date(item.date).toLocaleDateString('en-IN', {
@@ -236,10 +134,10 @@ function TrendsChart({ items }: { items: TrendItem[] }) {
         <Line
           type="monotone"
           dataKey="interview_count"
-          stroke={SERIES_BLUE}
+          stroke={accent}
           strokeWidth={2.5}
           dot={false}
-          activeDot={{ r: 4, fill: SERIES_BLUE, stroke: '#1c1c1e' }}
+          activeDot={{ r: 4, fill: accent, stroke: 'var(--card)' }}
         />
       </LineChart>
     </ResponsiveContainer>
@@ -249,16 +147,12 @@ function TrendsChart({ items }: { items: TrendItem[] }) {
 // ── Score distribution bar chart ───────────────────────────────────────────────
 
 function DistributionChart({ buckets }: { buckets: ScoreBucket[] }) {
+  const accent = useAccentColor();
   return (
     <ResponsiveContainer width="100%" height={180}>
       <BarChart data={buckets} margin={{ top: 4, right: 16, bottom: 0, left: 0 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID} vertical={false} />
-        <XAxis
-          dataKey="label"
-          tick={CHART_TICKS}
-          tickLine={false}
-          axisLine={false}
-        />
+        <XAxis dataKey="label" tick={CHART_TICKS} tickLine={false} axisLine={false} />
         <YAxis
           tick={CHART_TICKS}
           tickLine={false}
@@ -267,16 +161,11 @@ function DistributionChart({ buckets }: { buckets: ScoreBucket[] }) {
           width={28}
         />
         <Tooltip
-          cursor={{ fill: 'rgba(0,136,255,0.06)' }}
+          cursor={{ fill: 'var(--ui-inset)' }}
           contentStyle={TOOLTIP_STYLE}
           formatter={(value) => [value ?? 0, 'Interviews']}
         />
-        <Bar
-          dataKey="count"
-          fill={SERIES_BLUE}
-          fillOpacity={0.85}
-          radius={[4, 4, 0, 0]}
-        />
+        <Bar dataKey="count" fill={accent} fillOpacity={0.85} radius={[4, 4, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -298,7 +187,11 @@ export default function AdminOverview() {
     throwOnError: false,
   });
 
-  const { data: trendsData, isLoading: trendsLoading } = useQuery({
+  const {
+    data: trendsData,
+    isLoading: trendsLoading,
+    isError: trendsError,
+  } = useQuery({
     queryKey: ['admin', 'trends'],
     queryFn: () => getTrends(),
     staleTime: 5 * 60 * 1000,
@@ -306,7 +199,11 @@ export default function AdminOverview() {
     throwOnError: false,
   });
 
-  const { data: distData, isLoading: distLoading } = useQuery({
+  const {
+    data: distData,
+    isLoading: distLoading,
+    isError: distError,
+  } = useQuery({
     queryKey: ['admin', 'score-distribution'],
     queryFn: getScoreDistribution,
     staleTime: 5 * 60 * 1000,
@@ -332,316 +229,249 @@ export default function AdminOverview() {
     }
   }, [overviewError, overviewErr]);
 
+  const header = (
+    <PageHeader
+      eyebrow="Platform"
+      title="Admin Overview"
+      description="Platform health, throughput and performance at a glance."
+    />
+  );
+
   // ── Full-page error state ─────────────────────────────────────────────────────
 
   if (overviewError && !overviewLoading) {
     return (
-      <div
-        role="alert"
-        className="flex flex-col items-center justify-center py-24 gap-4 text-center"
-      >
-        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(230,113,79,0.14)]">
-          <AlertCircle className="h-6 w-6 text-[var(--ui-danger)]" aria-hidden="true" />
+      <Page width="default">
+        {header}
+        <div role="alert">
+          <SectionCard title="Failed to load overview">
+            <EmptyState
+              icon={AlertCircle}
+              title="We could not load the platform numbers"
+              description={`${overviewErr instanceof Error ? overviewErr.message : 'Unknown error'}. Reload the page to try again.`}
+            />
+          </SectionCard>
         </div>
-        <p className="text-[15px] font-semibold text-foreground">Failed to load overview</p>
-        <p className="text-[13px] text-muted-foreground">
-          {overviewErr instanceof Error ? overviewErr.message : 'Unknown error'}
-        </p>
-      </div>
+      </Page>
     );
   }
-
-  // ── Sparkline seeds — derive from trends data when available ──────────────────
-
-  const trendItems = trendsData?.items ?? [];
-  const last7 = trendItems.slice(-7);
-  const interviewSpark = last7.length >= 2 ? last7.map((t) => t.interview_count) : undefined;
 
   // ── Page ──────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="mx-auto max-w-[1280px] px-0 py-0 space-y-8">
+    <Page width="default">
+      {header}
 
-      {/* Page heading — design layout */}
-      <motion.div
-        initial={{ opacity: 0, y: 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-      >
-        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Activity size={15} className="text-[var(--ui-info)]" aria-hidden="true" />
-          Live · AntHire Platform
-        </div>
-        <h1 className="mt-1 text-[28px] font-semibold tracking-[-1px] text-foreground">
-          Admin Overview
-        </h1>
-        <p className="mt-1 text-[14px] text-muted-foreground">
-          Platform health, throughput and performance at a glance.
-        </p>
-      </motion.div>
-
-      {/* KPI tiles — 6 live metrics mapped 1-to-1 from getOverview.
+      {/* KPI cards — 6 live metrics mapped 1-to-1 from getOverview.
           data-testid wraps the outer grid so tests can query the container
           regardless of whether it's in skeleton or data state. */}
       <div data-testid="overview-tiles">
-        {overviewLoading ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <TileSkeleton key={i} />
-            ))}
-          </div>
-        ) : (
-          <Stagger className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 auto-rows-fr">
-            {/* Tile 1 — Total Candidates */}
-            <StaggerItem className="h-full">
-              <StatTile
-                icon={<Users size={16} />}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {overviewLoading ? (
+            Array.from({ length: 6 }).map((_, i) => <TileSkeleton key={i} />)
+          ) : (
+            <>
+              <StatCard
                 label="Total Candidates"
                 value={(overview?.total_candidates ?? 0).toLocaleString('en-IN')}
-                feature
               />
-            </StaggerItem>
-
-            {/* Tile 2 — Total Interviews */}
-            <StaggerItem className="h-full">
-              <StatTile
-                icon={<ClipboardList size={16} />}
+              <StatCard
                 label="Total Interviews"
                 value={(overview?.total_interviews ?? 0).toLocaleString('en-IN')}
-                spark={interviewSpark}
               />
-            </StaggerItem>
-
-            {/* Tile 3 — Completed + completion rate */}
-            <StaggerItem className="h-full">
-              <StatTile
-                icon={<CheckCircle2 size={16} />}
+              <StatCard
                 label="Completed"
                 value={(overview?.completed_interviews ?? 0).toLocaleString('en-IN')}
-                sub={`${fmtPct(overview?.completion_rate ?? 0)} completion rate`}
+                delta={`${fmtPct(overview?.completion_rate ?? 0)} completion rate`}
               />
-            </StaggerItem>
-
-            {/* Tile 4 — Avg Composite Score */}
-            <StaggerItem className="h-full">
-              <StatTile
-                icon={<TrendingUp size={16} />}
+              <StatCard
                 label="Avg Composite Score"
                 value={fmtScore(overview?.avg_composite_score ?? null)}
-                sub="out of 10"
+                delta="out of 10"
               />
-            </StaggerItem>
-
-            {/* Tile 5 — Avg Duration */}
-            <StaggerItem className="h-full">
-              <StatTile
-                icon={<Clock size={16} />}
+              <StatCard
                 label="Avg Duration"
                 value={fmtDurationSecs(overview?.avg_duration_seconds ?? null)}
               />
-            </StaggerItem>
-
-            {/* Tile 6 — Activity (today / 7d / 30d) */}
-            <StaggerItem className="h-full">
-              <StatTile
-                icon={<Calendar size={16} />}
-                label="Activity"
-                value={
-                  <span>
-                    {overview?.interviews_today ?? 0}
-                    <span className="text-[16px] text-muted-foreground font-normal"> today</span>
-                  </span>
-                }
-                sub={`${overview?.interviews_last_7d ?? 0} last 7d · ${overview?.interviews_last_30d ?? 0} last 30d`}
+              <StatCard
+                label="Interviews today"
+                value={String(overview?.interviews_today ?? 0)}
+                delta={`${overview?.interviews_last_7d ?? 0} last 7d · ${overview?.interviews_last_30d ?? 0} last 30d`}
               />
-            </StaggerItem>
-          </Stagger>
-        )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-        {/* Daily interview trends */}
-        <Reveal dir="left" className="h-full">
-          <GlassCard className="p-5 h-full">
-            <h3 className="mb-4 text-[16px] font-semibold text-foreground">
-              Daily Interview Volume (30 days)
-            </h3>
-            {trendsLoading ? (
-              <ChartSkeleton height={200} />
-            ) : trendsData && trendsData.items.length > 0 ? (
-              <TrendsChart items={trendsData.items} />
-            ) : (
-              <div className="flex items-center justify-center h-[200px] text-[13px] text-muted-foreground">
-                No trend data available.
-              </div>
-            )}
-          </GlassCard>
-        </Reveal>
+        <SectionCard
+          title="Daily Interview Volume (30 days)"
+          description="Interviews per day over the last 30 days, across all companies."
+        >
+          {trendsLoading ? (
+            <ChartSkeleton height={200} />
+          ) : trendsError ? (
+            <EmptyState
+              icon={AlertTriangle}
+              title="Could not load the trend."
+              className="h-[200px]"
+            />
+          ) : trendsData && trendsData.items.length > 0 ? (
+            <TrendsChart items={trendsData.items} />
+          ) : (
+            <EmptyState title="No trend data available." className="h-[200px]" />
+          )}
+        </SectionCard>
 
-        {/* Score distribution */}
-        <Reveal dir="right" className="h-full">
-          <GlassCard className="p-5 h-full">
-            <h3 className="mb-4 text-[16px] font-semibold text-foreground">
-              Score Distribution
-            </h3>
-            {distLoading ? (
-              <ChartSkeleton height={180} />
-            ) : distData ? (
-              <>
-                <DistributionChart buckets={distData.buckets} />
+        <SectionCard
+          title="Score Distribution"
+          description="How composite scores spread across score bands, with the average for each axis."
+        >
+          {distLoading ? (
+            <ChartSkeleton height={180} />
+          ) : distError ? (
+            <EmptyState
+              icon={AlertTriangle}
+              title="Could not load the distribution."
+              className="h-[180px]"
+            />
+          ) : distData ? (
+            <>
+              <DistributionChart buckets={distData.buckets} />
 
-                {/* Per-axis averages — real values from getScoreDistribution */}
-                <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-1.5 border-t border-border pt-3 text-[12px] text-muted-foreground">
-                  <span>
-                    Communication:{' '}
-                    <strong className="text-foreground font-semibold">
-                      {fmtScore(distData.avg_communication)}
-                    </strong>
-                  </span>
-                  <span>
-                    Technical:{' '}
-                    <strong className="text-foreground font-semibold">
-                      {fmtScore(distData.avg_technical)}
-                    </strong>
-                  </span>
-                  <span>
-                    Problem Solving:{' '}
-                    <strong className="text-foreground font-semibold">
-                      {fmtScore(distData.avg_problem_solving)}
-                    </strong>
-                  </span>
-                  <span>
-                    Confidence:{' '}
-                    <strong className="text-foreground font-semibold">
-                      {fmtScore(distData.avg_confidence)}
-                    </strong>
-                  </span>
-                </div>
-              </>
-            ) : (
-              <div className="flex items-center justify-center h-[180px] text-[13px] text-muted-foreground">
-                No distribution data available.
+              {/* Per-axis averages — real values from getScoreDistribution */}
+              <div className="mt-4 grid grid-cols-1 gap-x-6 gap-y-1.5 border-t border-border pt-3 text-[13px] text-muted-foreground sm:grid-cols-2">
+                <span>
+                  Communication:{' '}
+                  <strong className="font-semibold text-foreground">
+                    {fmtScore(distData.avg_communication)}
+                  </strong>
+                </span>
+                <span>
+                  Technical:{' '}
+                  <strong className="font-semibold text-foreground">
+                    {fmtScore(distData.avg_technical)}
+                  </strong>
+                </span>
+                <span>
+                  Problem Solving:{' '}
+                  <strong className="font-semibold text-foreground">
+                    {fmtScore(distData.avg_problem_solving)}
+                  </strong>
+                </span>
+                <span>
+                  Confidence:{' '}
+                  <strong className="font-semibold text-foreground">
+                    {fmtScore(distData.avg_confidence)}
+                  </strong>
+                </span>
               </div>
-            )}
-          </GlassCard>
-        </Reveal>
+            </>
+          ) : (
+            <EmptyState title="No distribution data available." className="h-[180px]" />
+          )}
+        </SectionCard>
       </div>
 
-      {/* System Status board — design layout with two-column panels (Microservices + AI Providers).
-          Backed by getSystemHealth (queryKey ['admin','system-health'], refetchInterval 60s). */}
-      <Reveal>
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
-          {/* Microservices panel */}
-          <GlassCard className="p-5 h-full">
-            <h3 className="mb-4 flex items-center gap-2 text-[16px] font-semibold text-foreground">
-              <Server size={17} className="text-[var(--ui-info)]" aria-hidden="true" />
-              Microservices
-            </h3>
+      {/* System status — backed by getSystemHealth (queryKey ['admin','system-health'],
+          refetchInterval 60s). */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        <SectionCard title="Microservices" description="Live health of each backend service.">
+          {healthLoading ? (
+            <ChartSkeleton height={160} />
+          ) : health ? (
+            <ul className="flex flex-col">
+              {health.services
+                .filter((s) => s.kind === 'service')
+                .map((s) => (
+                  <li
+                    key={s.name}
+                    className="flex items-center gap-3 border-b border-border py-3 last:border-0"
+                  >
+                    <span
+                      className={cn('h-2.5 w-2.5 flex-none rounded-full', STATUS_DOT[s.status])}
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-[14px] font-medium text-foreground">
+                      {SERVICE_LABEL[s.name] ?? s.name}
+                    </span>
+                    {s.latency_ms != null && (
+                      <span className="font-mono text-[12px] text-muted-foreground">
+                        {s.latency_ms}ms
+                      </span>
+                    )}
+                    <StatusTag
+                      tone={STATUS_TONE[s.status] ?? 'neutral'}
+                      dot={s.status === 'operational'}
+                    >
+                      {s.status}
+                    </StatusTag>
+                  </li>
+                ))}
+            </ul>
+          ) : (
+            <EmptyState icon={AlertTriangle} title="Status unavailable." />
+          )}
+        </SectionCard>
 
-            {healthLoading ? (
-              <ChartSkeleton height={160} />
-            ) : health ? (
-              <div className="flex flex-col">
+        <SectionCard
+          title="System Status"
+          description="Datastores and the overall platform state. Refreshes every minute."
+          action={
+            health ? (
+              <StatusTag tone={health.overall === 'operational' ? 'forest' : 'amber'}>
+                {health.overall === 'operational' ? 'All systems operational' : 'Degraded'}
+              </StatusTag>
+            ) : undefined
+          }
+        >
+          {healthLoading ? (
+            <ChartSkeleton height={120} />
+          ) : health ? (
+            <>
+              {/* Datastores */}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 {health.services
-                  .filter((s) => s.kind === 'service')
+                  .filter((s) => s.kind === 'datastore')
                   .map((s) => (
                     <div
                       key={s.name}
-                      className="flex items-center gap-3 border-b border-border py-3 last:border-0"
+                      className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4"
                     >
-                      <span
-                        className={cn(
-                          'h-2.5 w-2.5 flex-none rounded-full',
-                          STATUS_DOT[s.status],
-                        )}
-                        aria-hidden="true"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="truncate text-[13.5px] font-medium text-foreground">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[14px] font-semibold text-foreground">
                           {SERVICE_LABEL[s.name] ?? s.name}
-                        </div>
-                      </div>
-                      {s.latency_ms != null && (
-                        <span className="font-mono text-[12px] text-muted-foreground">
-                          {s.latency_ms}ms
                         </span>
-                      )}
-                      <StatusTag tone={STATUS_TONE[s.status] ?? 'neutral'} dot={s.status === 'operational'}>
+                        {s.status === 'operational' ? (
+                          <CheckCircle2
+                            size={16}
+                            className="text-[var(--ui-ok)]"
+                            aria-hidden="true"
+                          />
+                        ) : (
+                          <AlertCircle
+                            size={16}
+                            className="text-[var(--ui-warn)]"
+                            aria-hidden="true"
+                          />
+                        )}
+                      </div>
+                      <StatusTag tone={STATUS_TONE[s.status] ?? 'neutral'} dot className="mt-3">
                         {s.status}
                       </StatusTag>
                     </div>
                   ))}
               </div>
-            ) : (
-              <div className="text-[13px] text-muted-foreground">Status unavailable.</div>
-            )}
-          </GlassCard>
-
-          {/* Datastores + overall status panel */}
-          <GlassCard className="p-5 h-full">
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <h3 className="flex items-center gap-2 text-[16px] font-semibold text-foreground">
-                <Activity size={16} className="text-[var(--ui-info)]" aria-hidden="true" />
-                System Status
-              </h3>
-              {health && (
-                <span
-                  className={cn(
-                    'rounded-full px-2.5 py-1 text-[11.5px] font-semibold',
-                    health.overall === 'operational'
-                      ? 'bg-[rgba(39,201,63,0.16)] text-[var(--ui-ok)]'
-                      : 'bg-[rgba(255,183,100,0.16)] text-[var(--ui-warn)]',
-                  )}
-                >
-                  {health.overall === 'operational' ? 'All systems operational' : 'Degraded'}
-                </span>
-              )}
-            </div>
-
-            {healthLoading ? (
-              <ChartSkeleton height={120} />
-            ) : health ? (
-              <>
-                {/* Datastores */}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  {health.services
-                    .filter((s) => s.kind === 'datastore')
-                    .map((s) => (
-                      <div
-                        key={s.name}
-                        className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-[14px] font-semibold text-foreground">
-                            {SERVICE_LABEL[s.name] ?? s.name}
-                          </span>
-                          {s.status === 'operational' ? (
-                            <CheckCircle2 size={16} className="text-[var(--ui-ok)]" aria-hidden="true" />
-                          ) : (
-                            <AlertCircle size={16} className="text-[var(--ui-warn)]" aria-hidden="true" />
-                          )}
-                        </div>
-                        <StatusTag
-                          tone={STATUS_TONE[s.status] ?? 'neutral'}
-                          dot
-                          className="mt-3"
-                        >
-                          {s.status}
-                        </StatusTag>
-                      </div>
-                    ))}
-                </div>
-                <p className="mt-4 text-[11px] text-[var(--ui-faint)]">
-                  Checked {new Date(health.checked_at).toLocaleTimeString()}
-                </p>
-              </>
-            ) : (
-              <div className="text-[13px] text-muted-foreground">Status unavailable.</div>
-            )}
-          </GlassCard>
-        </div>
-      </Reveal>
-    </div>
+              <p className="mt-4 text-[12.5px] text-muted-foreground">
+                Checked {new Date(health.checked_at).toLocaleTimeString()}
+              </p>
+            </>
+          ) : (
+            <EmptyState icon={AlertTriangle} title="Status unavailable." />
+          )}
+        </SectionCard>
+      </div>
+    </Page>
   );
 }

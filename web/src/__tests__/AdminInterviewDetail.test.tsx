@@ -2,7 +2,8 @@
 // Covers: scored path (renders composite score, axes, strengths, improvements, summary)
 //         and unscored path (scorecard: null — renders "No scorecard yet" without crashing).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AdminInterviewDetail from '../pages/admin/AdminInterviewDetail';
@@ -204,5 +205,54 @@ describe('AdminInterviewDetail page', () => {
       });
       expect(screen.getByText(/interview not found/i)).toBeInTheDocument();
     });
+  });
+});
+
+describe('AdminInterviewDetail — the proctoring event timeline is closed by default', () => {
+  const withEvents = (n: number): InterviewDetailResponse => ({
+    ...SCORED_DETAIL,
+    integrity_score: 82,
+    proctoring_summary: { by_type: { tab_switch: n }, flagged_seconds: {}, total_events: n },
+    // most recent first, as the API sends them
+    integrity_events: Array.from({ length: n }, (_, i) => ({
+      event_type: 'tab_switch',
+      started_at: `2026-06-01T10:${String(30 - i).padStart(2, '0')}:00Z`,
+      duration_seconds: i + 1,
+    })),
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+  });
+
+  it('shows the count and the newest event under the header, and the events once opened', async () => {
+    mockGetInterviewDetail.mockResolvedValue(withEvents(3));
+    renderDetail('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    const timeline = await screen.findByTestId('integrity-timeline');
+    const toggle = within(timeline).getByRole('button', { name: /Event timeline/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(within(timeline).getByTestId('collapsible-summary').textContent).toMatch(/^3 events · latest: /);
+    expect(within(timeline).queryByRole('list')).toBeNull();
+
+    await userEvent.click(toggle);
+    expect(within(timeline).getAllByRole('listitem')).toHaveLength(3);
+  });
+
+  it('shows five events, then "Show all"', async () => {
+    mockGetInterviewDetail.mockResolvedValue(withEvents(8));
+    renderDetail('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    const timeline = await screen.findByTestId('integrity-timeline');
+    await userEvent.click(within(timeline).getByRole('button', { name: /Event timeline/ }));
+    expect(within(timeline).getAllByRole('listitem')).toHaveLength(5);
+    await userEvent.click(within(timeline).getByRole('button', { name: 'Show all 8 events' }));
+    expect(within(timeline).getAllByRole('listitem')).toHaveLength(8);
+  });
+
+  it('has no timeline section when no event was recorded', async () => {
+    mockGetInterviewDetail.mockResolvedValue({ ...SCORED_DETAIL, integrity_score: 100, integrity_events: [] });
+    renderDetail('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+    await screen.findByRole('heading', { name: /priya sharma/i });
+    expect(screen.queryByTestId('integrity-timeline')).toBeNull();
   });
 });

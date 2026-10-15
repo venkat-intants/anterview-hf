@@ -11,7 +11,10 @@ import { Loader2 } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 
 const selectCls =
-  'rounded-[8px] border border-border bg-secondary px-2 py-1 text-[11.5px] text-foreground focus:border-[var(--accent)] focus:outline-none';
+  // Height, radius, border and chevron come from the global select rules
+  // (data-size="sm" gives the 36px compact control); only the width is set here
+  // so the longest bank name is not clipped.
+  'min-w-[8.5rem] max-w-full';
 
 export interface SaveToBankButtonProps {
   onSave: (input: SaveToBankInput) => void;
@@ -40,7 +43,7 @@ export function SaveToBankButton({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={cn('text-[11.5px] text-[var(--ui-info)] hover:underline', className)}
+        className={cn('text-[12px] text-[var(--ui-info)] hover:underline', className)}
       >
         Save to bank
       </button>
@@ -60,11 +63,10 @@ export function SaveToBankButton({
         value={bankId}
         onChange={(e) => setBankId(e.target.value)}
         aria-label="Bank"
+        data-size="sm"
         className={selectCls}
       >
-        <option value="">
-          {banks.isLoading ? 'Loading banks…' : 'Choose a bank'}
-        </option>
+        <option value="">{banks.isLoading ? 'Loading banks…' : 'Choose a bank'}</option>
         {(banks.data ?? []).map((b) => (
           <option key={b.id} value={b.id}>
             {b.name}
@@ -75,6 +77,7 @@ export function SaveToBankButton({
         value={difficulty}
         onChange={(e) => setDifficulty(e.target.value as BankDifficulty)}
         aria-label="Difficulty"
+        data-size="sm"
         className={selectCls}
       >
         <option value="easy">Easy</option>
@@ -85,6 +88,7 @@ export function SaveToBankButton({
         value={language}
         onChange={(e) => setLanguage(e.target.value as ExamLanguage)}
         aria-label="Language"
+        data-size="sm"
         className={selectCls}
       >
         <option value="en">EN</option>
@@ -95,7 +99,7 @@ export function SaveToBankButton({
         type="button"
         disabled={!ready || saving}
         onClick={() => onSave({ bank_id: bankId, difficulty, language })}
-        className="inline-flex items-center gap-1 rounded-[8px] bg-primary px-2.5 py-1 text-[11.5px] font-medium text-primary-foreground disabled:opacity-40"
+        className="inline-flex items-center gap-1 rounded-[8px] bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
       >
         {saving ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : null}
         Save
@@ -103,7 +107,7 @@ export function SaveToBankButton({
       <button
         type="button"
         onClick={() => setOpen(false)}
-        className="text-[11.5px] text-muted-foreground hover:text-foreground"
+        className="text-[12px] text-muted-foreground hover:text-foreground"
       >
         Cancel
       </button>

@@ -1,7 +1,13 @@
 """Deep health checks for interview_core.
 
-Response-body rule (S-6, CWE-209): ``/health/deep`` is UNAUTHENTICATED, so a
-failing check may return only the exception *type*. Driver exceptions embed the
+Access rule: ``/health/deep`` requires the internal service credential (a
+``service``-role JWT, see ``app.dependencies.require_service_jwt``) and its
+result is cached for ``_DEEP_CACHE_SECONDS``. Each run makes a paid TTS call, LLM
+completions and an S3 call, so an open, uncached route was a spend and
+amplification surface. ``/health/live`` stays open and free.
+
+Response-body rule (S-6, CWE-209): a failing check may return only the exception
+*type* (kept even behind auth, since the body is logged by callers and proxies). Driver exceptions embed the
 thing that failed to connect — asyncpg puts the Neon host, port, user and
 database in ``str(exc)``; botocore names the R2 endpoint and bucket; httpx
 echoes the full request URL, which for Gemini carries ``?key=<API key>``. Full
@@ -11,6 +17,7 @@ This mirrors the convention already in services/admin_ops/app/health.py.
 
 import asyncio
 import contextlib
+import time
 from typing import Any
 
 import boto3
@@ -24,12 +31,14 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.sql import text
 
 from app.config import settings
+from app.dependencies import ServiceUserDep
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/health", tags=["health"])
 
 
 async def _check_postgres() -> dict[str, Any]:
+    engine = None
     try:
         engine = create_async_engine(settings.database_url, pool_pre_ping=True)
         async with engine.connect() as conn:
@@ -39,11 +48,16 @@ async def _check_postgres() -> dict[str, Any]:
                 text("SELECT extname FROM pg_extension WHERE extname='vector'")
             )
             has_vector = ext_result.first() is not None
-        await engine.dispose()
         return {"ok": row == 1, "pgvector": has_vector}
     except Exception as exc:
         log.warning("health.postgres.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
         return {"ok": False, "error": type(exc).__name__}
+    finally:
+        # On every path: a failed connect used to leave the engine (and any
+        # half-open connection) undisposed, once per hit.
+        if engine is not None:
+            with contextlib.suppress(Exception):
+                await engine.dispose()
 
 
 async def _check_redis() -> dict[str, Any]:
@@ -292,8 +306,30 @@ async def liveness() -> dict[str, str]:
     return {"status": "alive"}
 
 
+# The deep result is reused for this long. Floor of 60s: the probes make paid
+# calls (Sarvam TTS, Groq/Gemini completions), so even an authorised caller
+# polling in a loop must not be able to turn this into a spend loop.
+_DEEP_CACHE_SECONDS = 60.0
+_deep_cache: tuple[float, dict[str, Any]] | None = None
+_deep_lock = asyncio.Lock()
+
+
 @router.get("/deep")
-async def deep_health() -> dict[str, Any]:
+async def deep_health(_service: ServiceUserDep) -> dict[str, Any]:
+    global _deep_cache  # noqa: PLW0603 — process-wide, intentionally
+    cached = _deep_cache
+    if cached is not None and time.monotonic() - cached[0] < _DEEP_CACHE_SECONDS:
+        return cached[1]
+    async with _deep_lock:  # concurrent callers share one run
+        cached = _deep_cache
+        if cached is not None and time.monotonic() - cached[0] < _DEEP_CACHE_SECONDS:
+            return cached[1]
+        result = await _run_deep_checks()
+        _deep_cache = (time.monotonic(), result)
+        return result
+
+
+async def _run_deep_checks() -> dict[str, Any]:
     postgres, redis_res, s3, llm, sarvam = await asyncio.gather(
         _check_postgres(),
         _check_redis(),

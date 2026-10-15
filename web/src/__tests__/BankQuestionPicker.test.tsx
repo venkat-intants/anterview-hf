@@ -6,12 +6,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { BankQuestionSearchRow } from '../api/questionBanks';
+import { REFERENCE_UNVERIFIED_TAG, type BankQuestionSearchRow } from '../api/questionBanks';
 
 const searchBankQuestions = vi.fn();
 const addBankQuestionsToSection = vi.fn();
 const listBankCompetencies = vi.fn();
-vi.mock('../api/questionBanks', () => ({
+vi.mock('../api/questionBanks', async (importActual) => ({
+  ...(await importActual<typeof import('../api/questionBanks')>()),
   searchBankQuestions: (...a: unknown[]) => searchBankQuestions(...a) as unknown,
   addBankQuestionsToSection: (...a: unknown[]) => addBankQuestionsToSection(...a) as unknown,
   listBankCompetencies: (...a: unknown[]) => listBankCompetencies(...a) as unknown,
@@ -182,5 +183,46 @@ describe('BankQuestionPicker — empty and error states', () => {
     expect(
       await screen.findByText("Could not load the bank's approved questions."),
     ).toBeInTheDocument();
+  });
+});
+
+describe('BankQuestionPicker - what an exam author needs to know before picking', () => {
+  it('shows the kind of each row and flags a coding question whose tests nobody has run', async () => {
+    searchBankQuestions.mockResolvedValue([
+      row({
+        id: 'q-code',
+        kind: 'coding',
+        prompt: 'Reverse a string',
+        origin: 'ai_draft',
+        reference_solution: 'print(1)',
+        tags: [REFERENCE_UNVERIFIED_TAG],
+      }),
+      row({ id: 'q-code-ok', kind: 'coding', prompt: 'Sum two numbers', reference_solution: 'print(2)' }),
+      row({ id: 'q-mcq', prompt: 'A plain MCQ' }),
+    ]);
+    renderPicker();
+    await screen.findByText('Reverse a string');
+
+    const rows = screen.getAllByRole('listitem').filter((el) => el.querySelector('input[type=checkbox]'));
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent('Coding');
+    expect(rows[0]).toHaveTextContent('AI draft');
+    expect(rows[0].querySelector('[data-testid=row-unverified-badge]')).toHaveTextContent(
+      'Unverified',
+    );
+    // A coding question whose solution is not flagged is not called unverified.
+    expect(rows[1].querySelector('[data-testid=row-unverified-badge]')).toBeNull();
+    expect(rows[2]).toHaveTextContent('MCQ');
+    expect(rows[2].querySelector('[data-testid=row-unverified-badge]')).toBeNull();
+  });
+
+  it('still lets the author pick an unverified question - the badge informs, it does not block', async () => {
+    const user = userEvent.setup();
+    searchBankQuestions.mockResolvedValue([
+      row({ id: 'q-code', kind: 'coding', prompt: 'Reverse a string', reference_solution: 'x', tags: [REFERENCE_UNVERIFIED_TAG] }),
+    ]);
+    renderPicker();
+    await user.click(await screen.findByLabelText('Select Reverse a string'));
+    expect(screen.getByRole('button', { name: /Add 1 question/ })).toBeEnabled();
   });
 });

@@ -1,224 +1,63 @@
-/* AntHire landing — fonts + keyframes/animations that are scoped to this
-   design so they never collide with the app-wide keyframes in index.css.
-   Import once in main.tsx AFTER your own index.css.
+/* AntHire landing — the few things Tailwind does not generate, plus the
+   `--lp-*` variables the landing kit reads.
 
-   The `animate-*` class names below match what the copied design components
-   use verbatim (animate-aurora, animate-wave, …). Tailwind does NOT generate
-   these utilities (they're not in tailwind.config animation map), and they are
-   only referenced by files under src/landing/, so defining them here as plain
-   CSS is self-contained. Keyframes use an `at-` prefix to avoid redefining the
-   identically-named `aurora-drift` / `pulse-ring` keyframes in index.css. */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+   Fonts are NOT loaded here: index.html already loads Inter (body) and Plus
+   Jakarta Sans (headings) for the whole app, so the landing page uses the same
+   faces without a second render-blocking request.
 
-/* ── Landing keyframes (mirror tailwind.tokens.ts, prefixed to stay scoped) ── */
-@keyframes at-aurora-drift {
-  0% {
-    transform: translate3d(-6%, -4%, 0) scale(1.05);
-  }
-  50% {
-    transform: translate3d(6%, 5%, 0) scale(1.2);
-  }
-  100% {
-    transform: translate3d(-6%, -4%, 0) scale(1.05);
-  }
-}
-@keyframes at-aurora-drift-2 {
-  0% {
-    transform: translate3d(5%, 3%, 0) scale(1.1);
-  }
-  50% {
-    transform: translate3d(-7%, -6%, 0) scale(1.25);
-  }
-  100% {
-    transform: translate3d(5%, 3%, 0) scale(1.1);
-  }
-}
-@keyframes at-float-chip {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-16px);
-  }
-}
-@keyframes at-pulse-ring {
-  0% {
-    transform: scale(0.82);
-    opacity: 0.7;
-  }
-  70% {
-    opacity: 0;
-  }
-  100% {
-    transform: scale(1.5);
-    opacity: 0;
-  }
-}
+   Import once in main.tsx AFTER index.css. */
+
+/* The one ambient animation left on the page: the waveform in the hero card.
+   Prefixed `at-` so it cannot collide with a keyframe in index.css. */
 @keyframes at-wave {
   0%,
   100% {
-    transform: scaleY(0.28);
+    transform: scaleY(0.3);
   }
   50% {
     transform: scaleY(1);
   }
 }
-@keyframes at-dot-pulse {
-  0%,
-  100% {
-    opacity: 0.3;
-    transform: scale(0.8);
-  }
-  50% {
-    opacity: 1;
-    transform: scale(1.15);
-  }
-}
-@keyframes at-float-up {
-  0% {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-  12%,
-  88% {
-    opacity: 0.8;
-  }
-  100% {
-    transform: translateY(-150px);
-    opacity: 0;
-  }
-}
-@keyframes at-beam-sweep {
-  0% {
-    transform: translateX(-40%) skewX(-12deg);
-    opacity: 0;
-  }
-  50% {
-    opacity: 0.5;
-  }
-  100% {
-    transform: translateX(140%) skewX(-12deg);
-    opacity: 0;
-  }
-}
 
-/* ── Landing animation utilities (consumed verbatim by src/landing/*) ──────── */
-.animate-aurora {
-  animation: at-aurora-drift 22s ease-in-out infinite;
-}
-.animate-aurora-2 {
-  animation: at-aurora-drift-2 28s ease-in-out infinite;
-}
-.animate-float-chip {
-  animation: at-float-chip 6s ease-in-out infinite;
-}
-.animate-pulse-ring {
-  animation: at-pulse-ring 3.4s ease-out infinite;
-}
 .animate-wave {
-  animation: at-wave 1s ease-in-out infinite;
-}
-.animate-dot-pulse {
-  animation: at-dot-pulse 1.8s infinite;
-}
-.animate-float-up {
-  animation: at-float-up 16s linear infinite;
-}
-.animate-beam-sweep {
-  animation: at-beam-sweep 19s ease-in-out infinite;
+  animation: at-wave 1.1s ease-in-out infinite;
+  transform-origin: bottom;
 }
 
-/* respect reduced motion: freeze the ambient/looping landing animations */
+/* Reduced motion: the bars hold a mid-height pose instead of moving. */
 @media (prefers-reduced-motion: reduce) {
-  .at-anim,
-  .at-anim *,
-  .animate-aurora,
-  .animate-aurora-2,
-  .animate-float-chip,
-  .animate-pulse-ring,
-  .animate-wave,
-  .animate-dot-pulse,
-  .animate-float-up,
-  .animate-beam-sweep {
-    animation: none !important;
+  .animate-wave {
+    animation: none;
+    transform: scaleY(0.7);
   }
 }
 
-/* ── Landing theme tokens (light = default, dark = opt-in) ──────────────────
-   The landing page is the one public surface with its own light/dark choice:
-   the app behind the login is a single dark theme, so these tokens are scoped
-   to `[data-landing-theme]` on the landing root and never leak into it.
+/* ── Landing variables ───────────────────────────────────────────────────────
+   Every `--lp-*` value is an alias of an app token (index.css), so the marketing
+   page and the product behind the login cannot drift: change the palette once
+   and both follow. The app tokens are set on <html> (data-mode / .dark), which
+   this element inherits from, so a single block serves both modes — there is no
+   separate light/dark palette here to keep in step.
 
-   Neither theme uses pure black or pure white as the canvas — the page sits on
-   a soft grey and the cards are the white/near-black, which is what gives the
-   aurora gradient something to sit against. */
+   `data-landing-theme` is still stamped on the landing root (it mirrors the
+   shared mode; see landing/lib/useLandingTheme.ts) and is what scopes these. */
 [data-landing-theme] {
-  /* Brand accents are constant across both themes — the gradient is the brand. */
-  --lp-accent: #0088ff;
-  --lp-accent-2: #a887dc;
-}
-
-[data-landing-theme='light'] {
-  --lp-canvas: #f4f5f8; /* grey page ground — never white, never black */
-  --lp-surface: #ffffff; /* cards sit ON the grey */
-  --lp-surface-soft: rgba(255, 255, 255, 0.72);
-  --lp-surface-alt: #eceef3; /* the "old way" / muted panel */
-  --lp-inset: rgba(15, 18, 26, 0.045); /* icon wells, tag pills, track fills */
-  --lp-chip: rgba(15, 18, 26, 0.05);
-  --lp-line: rgba(15, 18, 26, 0.1);
-  --lp-line-strong: rgba(15, 18, 26, 0.16);
-  --lp-text: #16181d;
-  --lp-text-soft: #3b4049;
-  --lp-text-muted: #5b6170;
-  --lp-text-faint: #7b8191;
-  --lp-btn: #16181d; /* primary button inverts per theme … */
-  --lp-btn-text: #ffffff;
-  --lp-shadow-card: 0 18px 46px rgba(15, 18, 26, 0.08);
-  --lp-shadow-nav: 0 8px 32px rgba(15, 18, 26, 0.1);
-  /* The hero/CTA gradient keeps its shape; only the dark terminus lifts, so the
-     panel reads as a coloured card on a grey page rather than a black hole. */
-  --lp-grad-hero: linear-gradient(160deg, #1b2a6b 0.85%, #2f4ea8 33.4%, #5c65c4 49.68%, #a887dc 70.84%, #e6c4e7 95.8%, #fcdbef 107.19%);
-  --lp-grad-cta: linear-gradient(160deg, #1b2a6b, #2f4ea8 45%, #5c65c4 65%, #a887dc 88%, #e6c4e7 110%);
-  --lp-grad-deep: linear-gradient(160deg, #eaf2ff, #f7f9ff);
-  --lp-grad-wash: linear-gradient(90deg, rgba(0, 136, 255, 0.07), rgba(168, 135, 220, 0.07));
-  --lp-on-deep: #16181d; /* text on --lp-grad-deep panels */
-  --lp-on-deep-muted: #5b6170;
-  --lp-aurora-1: radial-gradient(circle at center, rgba(120, 150, 235, 0.32), rgba(150, 175, 240, 0.1) 45%, transparent 70%);
-  --lp-aurora-2: radial-gradient(circle at center, rgba(196, 170, 236, 0.3), rgba(230, 196, 231, 0.1) 45%, transparent 70%);
-  --lp-aurora-top: radial-gradient(120% 80% at 50% -10%, rgba(0, 136, 255, 0.08), transparent 55%);
-  --lp-particle-opacity: 0.45;
-}
-
-[data-landing-theme='dark'] {
-  --lp-canvas: #0e0f13; /* deep grey, deliberately not #000 */
-  --lp-surface: #17181d;
-  --lp-surface-soft: rgba(23, 24, 29, 0.72);
-  --lp-surface-alt: #1b1d22;
-  --lp-inset: rgba(255, 255, 255, 0.05);
-  --lp-chip: rgba(255, 255, 255, 0.06);
-  --lp-line: rgba(255, 255, 255, 0.09);
-  --lp-line-strong: rgba(255, 255, 255, 0.16);
-  --lp-text: #f4f5f7;
-  --lp-text-soft: #d3d6dd;
-  --lp-text-muted: #a6abb6;
-  --lp-text-faint: #7e8493;
-  --lp-btn: #ffffff;
-  --lp-btn-text: #16181d;
-  --lp-shadow-card: 0 30px 80px rgba(0, 0, 0, 0.45);
-  --lp-shadow-nav: 0 8px 32px rgba(0, 0, 0, 0.5);
-  --lp-grad-hero: linear-gradient(160deg, #0e0f13 0.85%, #112d72 33.4%, #4b52aa 49.68%, #a887dc 70.84%, #e6c4e7 95.8%, #fcdbef 107.19%);
-  --lp-grad-cta: linear-gradient(160deg, #0e0f13, #112d72 45%, #4b52aa 65%, #a887dc 88%, #e6c4e7 110%);
-  --lp-grad-deep: linear-gradient(160deg, #001b33, #0a0e1a);
-  --lp-grad-wash: linear-gradient(90deg, rgba(25, 153, 232, 0.08), rgba(164, 91, 242, 0.08));
-  --lp-on-deep: #ffffff;
-  --lp-on-deep-muted: #b8babf;
-  --lp-aurora-1: radial-gradient(circle at center, rgba(75, 82, 170, 0.55), rgba(17, 45, 114, 0.18) 45%, transparent 70%);
-  --lp-aurora-2: radial-gradient(circle at center, rgba(168, 135, 220, 0.42), rgba(221, 85, 231, 0.14) 45%, transparent 70%);
-  --lp-aurora-top: radial-gradient(120% 80% at 50% -10%, rgba(0, 136, 255, 0.1), transparent 55%);
-  --lp-particle-opacity: 1;
-}
-
-.at-particles {
-  opacity: var(--lp-particle-opacity);
+  --lp-canvas: hsl(var(--background));
+  --lp-surface: hsl(var(--card));
+  --lp-surface-alt: hsl(var(--secondary));
+  --lp-inset: var(--ui-inset);
+  --lp-chip: var(--ui-inset);
+  --lp-line: hsl(var(--border));
+  --lp-line-strong: var(--ui-line-strong);
+  --lp-text: hsl(var(--foreground));
+  --lp-text-soft: var(--ui-soft);
+  --lp-text-muted: hsl(var(--muted-foreground));
+  --lp-text-faint: var(--ui-faint);
+  --lp-btn: hsl(var(--primary));
+  --lp-btn-text: hsl(var(--primary-foreground));
+  --lp-accent: var(--accent);
+  --lp-highlight: var(--ui-highlight);
+  --lp-highlight-ink: var(--ui-highlight-ink);
+  --lp-shadow-card: var(--ui-shadow-soft);
+  --lp-shadow-raised: var(--ui-shadow-card);
 }

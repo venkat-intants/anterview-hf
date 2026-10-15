@@ -26,7 +26,7 @@ export default function ModeSwitch({ className }: { className?: string }) {
       role="radiogroup"
       aria-label="Colour mode"
       className={cn(
-        'flex items-center gap-0.5 rounded-[10px] border border-border bg-[var(--ui-inset)] p-[3px]',
+        'flex h-9 items-center gap-0.5 rounded-full border border-border bg-card p-[3px]',
         className,
       )}
     >
@@ -43,7 +43,7 @@ export default function ModeSwitch({ className }: { className?: string }) {
             data-testid={`mode-${id}`}
             onClick={() => setMode(id)}
             className={cn(
-              'inline-flex h-[26px] w-[30px] items-center justify-center rounded-[8px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+              'inline-flex h-7 w-8 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
               active
                 ? 'bg-primary text-primary-foreground'
                 : 'text-muted-foreground hover:text-foreground',

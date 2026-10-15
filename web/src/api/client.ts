@@ -103,7 +103,9 @@ let _refreshPromise: Promise<boolean> | null = null;
 function readCookie(name: string): string | null {
   if (typeof document === 'undefined') return null;
   const match = document.cookie.split('; ').find((row) => row.startsWith(`${name}=`));
-  return match ? (match.split('=')[1] ?? null) : null;
+  // Slice after the FIRST '=' only: a value may itself contain '=' (base64
+  // padding, signed tokens) and split('=')[1] would truncate it there.
+  return match ? match.slice(name.length + 1) : null;
 }
 
 /**
@@ -331,6 +333,16 @@ const FEEDBACK_BASE: string =
 
 function buildUrl(base: string, path: string): string {
   return `${base}${path}`;
+}
+
+/**
+ * The base URL data_gateway requests are built against. '' on the production
+ * Space build (same-origin) — callers that must reason about where a request
+ * will land (proposalGuard) need it, so it is exposed rather than re-read from
+ * import.meta.env in a second place.
+ */
+export function dataGatewayBase(): string {
+  return DATA_GATEWAY_BASE ?? '';
 }
 
 /** GET request against data_gateway (VITE_API_BASE_URL). */

@@ -27,6 +27,14 @@ from app.config import settings
 
 log = structlog.get_logger(__name__)
 
+# The ONLY runner-failure text a candidate ever sees. ExecResult.error is returned
+# verbatim by /exam/run-code and /exam/run-code-custom to anonymous exam takers,
+# and used to carry the runner's host name ("runner unreachable: <httpx error with
+# the URL>"), upstream response bodies and provider/credential state. The detail
+# is logged server-side instead. Grading only tests `error is not None`, so the
+# wording is free to be generic.
+RUNNER_UNAVAILABLE_MESSAGE = "The code runner is temporarily unavailable. Please try again."
+
 # Our language slug -> Piston identifiers (name/aliases as they appear in
 # /runtimes) + the source filename to send (matters for compiled langs, e.g.
 # Java expects a public class `Main` in Main.java).
@@ -117,7 +125,7 @@ async def run_code(
     runtimes = await _load_runtimes()
     rt = runtimes.get(slug)
     if rt is None:
-        return ExecResult("", "", None, False, error="execution runtime unavailable")
+        return ExecResult("", "", None, False, error=RUNNER_UNAVAILABLE_MESSAGE)
 
     run_ms = int(time_limit_ms or settings.code_run_timeout_ms)
     body = {
@@ -151,7 +159,8 @@ async def run_code(
                 break
         if attempt < _MAX_ATTEMPTS - 1:
             await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
-    return ExecResult("", "", None, False, error=last_error)
+    log.warning("piston.run_failed", detail=last_error)
+    return ExecResult("", "", None, False, error=RUNNER_UNAVAILABLE_MESSAGE)
 
 
 def _parse(payload: dict[str, Any]) -> ExecResult:

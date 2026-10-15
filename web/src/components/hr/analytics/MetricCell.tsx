@@ -32,14 +32,14 @@ export default function MetricCell({
       type="button"
       onClick={() => onInfo(name)}
       aria-label={`How is ${metricLabel(name, definition)} calculated?`}
-      className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[var(--ui-faint)] hover:text-[var(--ui-info)] focus:outline-none focus-visible:text-[var(--ui-info)]"
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:text-[var(--ui-info)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
     >
       <Info size={12} aria-hidden="true" />
     </button>
   ) : null;
 
   if (!result) {
-    return <span className="text-[12.5px] text-[var(--ui-faint)]">—</span>;
+    return <span className="text-[13px] text-muted-foreground">—</span>;
   }
 
   if (result.kind === 'count') {
@@ -51,7 +51,7 @@ export default function MetricCell({
           <button
             type="button"
             onClick={() => onDrillDown(name, 'numerator')}
-            className="text-[15px] font-semibold text-foreground underline decoration-dotted underline-offset-2 hover:text-[var(--ui-info)] focus:outline-none focus-visible:text-[var(--ui-info)]"
+            className="text-[15px] font-semibold text-foreground underline decoration-dotted underline-offset-2 hover:text-[var(--ui-info)] focus:outline-none focus-visible:text-[var(--ui-info)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             {value}
           </button>
@@ -82,19 +82,19 @@ export default function MetricCell({
         : undefined;
     return (
       <span
-        className="inline-flex flex-wrap items-center gap-1 text-[12.5px]"
+        className="inline-flex flex-wrap items-center gap-1 text-[13px]"
         title={suppressedTooltip}
       >
         {result.suppressed ? (
-          <span className="text-[var(--ui-faint)]">too few to compare</span>
+          <span className="text-muted-foreground">too few to compare</span>
         ) : (
           <span className="font-semibold text-foreground">
             {result.value === null ? '—' : `${result.value.toFixed(1)}%`}
           </span>
         )}
-        <span className="text-[var(--ui-faint)]">(</span>
+        <span className="text-muted-foreground">(</span>
         {result.numerator === null ? (
-          <span className="text-[var(--ui-faint)]">—</span>
+          <span className="text-muted-foreground">—</span>
         ) : numeratorClickable ? (
           <button
             type="button"
@@ -106,7 +106,7 @@ export default function MetricCell({
         ) : (
           <span className="text-foreground">{result.numerator}</span>
         )}
-        <span className="text-[var(--ui-faint)]">of</span>
+        <span className="text-muted-foreground">of</span>
         {denominatorClickable ? (
           <button
             type="button"
@@ -118,9 +118,9 @@ export default function MetricCell({
         ) : (
           <span className="text-foreground">{result.denominator}</span>
         )}
-        <span className="text-[var(--ui-faint)]">)</span>
+        <span className="text-muted-foreground">)</span>
         {result.suppressed ? (
-          <span className="text-[11px] text-[var(--ui-faint)]" title={`n=${result.denominator}`}>
+          <span className="text-[12px] text-muted-foreground" title={`n=${result.denominator}`}>
             n={result.denominator}
           </span>
         ) : null}
@@ -139,7 +139,7 @@ export default function MetricCell({
   if (result.kind === 'distribution') {
     if (result.suppressed || result.value === null) {
       return (
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-[var(--ui-faint)]">
+        <span className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground">
           too few to compare <span title={`n=${result.n}`}>(n={result.n})</span>
           {infoButton}
         </span>
@@ -150,7 +150,7 @@ export default function MetricCell({
     const total = Object.values(value).reduce((a, b) => a + b, 0) || 1;
     return (
       <span className="inline-flex flex-col gap-1">
-        <span className="flex items-center gap-1.5 text-[11px] text-[var(--ui-faint)]">
+        <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
           <span title={`n=${result.n}`}>n={result.n}</span>
           {infoButton}
         </span>
@@ -159,9 +159,9 @@ export default function MetricCell({
             const v = value[b] ?? 0;
             const pct = Math.round((v / total) * 100);
             return (
-              <span key={b} className="flex items-center gap-2 text-[11px]">
+              <span key={b} className="flex items-center gap-2 text-[12px]">
                 <span className="w-14 shrink-0 capitalize text-[var(--ui-soft)]">{b}</span>
-                <span className="h-2 w-16 shrink-0 overflow-hidden rounded-full bg-[var(--ui-inset)]">
+                <span className="h-2 w-16 shrink-0 overflow-hidden rounded-full bg-[var(--ui-inset-strong)]">
                   <span
                     className="block h-full rounded-full bg-[var(--accent)]"
                     style={{ width: `${pct}%` }}
@@ -186,15 +186,15 @@ export default function MetricCell({
       ? `${result.value.toLocaleString('en-IN')} (n=${result.n}), too few to compare reliably`
       : undefined;
   return (
-    <span className="inline-flex items-center gap-1.5 text-[12.5px]" title={suppressedTooltip}>
+    <span className="inline-flex items-center gap-1.5 text-[13px]" title={suppressedTooltip}>
       {result.suppressed ? (
-        <span className="text-[var(--ui-faint)]">too few to compare</span>
+        <span className="text-muted-foreground">too few to compare</span>
       ) : (
         <span className="font-semibold text-foreground">
           {result.value === null ? '—' : result.value.toLocaleString('en-IN')}
         </span>
       )}
-      <span className="text-[11px] text-[var(--ui-faint)]" title={`n=${result.n}`}>
+      <span className="text-[12px] text-muted-foreground" title={`n=${result.n}`}>
         (n={result.n})
       </span>
       {infoButton}

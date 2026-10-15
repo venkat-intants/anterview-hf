@@ -71,34 +71,88 @@
 
 	# -- admin_ops :8004 (more-specific /admin + /users subpaths) ---------
 	handle /admin/analytics/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8004
 	}
 	handle /admin/interviews* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8004
 	}
 	handle /admin/overview* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8004
 	}
 	handle /admin/status* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8004
 	}
 	handle /admin/system/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8004
 	}
 	handle /users/*/dpdp/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8004
 	}
 
 	# -- feedback_billing :8003 -------------------------------------------
 	handle /api/scorecards* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8003
 	}
 
 	# -- interview_core :8001 ----------------------------------------------
 	handle /api/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 1MB
+		}
 		reverse_proxy 127.0.0.1:8001
 	}
 	handle /ws/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8001
 	}
 
@@ -140,6 +194,12 @@
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /agent/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8002
 	}
 	# /interviewer/* — PH4-A1's interviewer console API. Browser navigation to
@@ -166,6 +226,12 @@
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /consent* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /exam* {
@@ -261,9 +327,21 @@
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /notifications* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /admin/* {
+		# JSON control route, no uploads: cap the body Caddy lets through BEFORE any
+		# auth or rate limit runs (see the /auth/* note: fastapi buffers the whole
+		# body first). Does not touch a websocket upgrade (a GET with no body).
+		request_body {
+			max_size 256KB
+		}
 		reverse_proxy 127.0.0.1:8002
 	}
 	handle /users/* {
@@ -315,10 +393,24 @@
 	# third-party embedder that must work. Everything else is still blocked, so
 	# the clickjacking protection the API origin has is preserved here in the
 	# only form this deployment can actually use.
+	#
+	# Content-Security-Policy-Report-Only is the full resource policy, in
+	# OBSERVE-ONLY mode: nothing it names is blocked, violations appear in the
+	# browser console (no report-uri endpoint exists, so nothing is collected
+	# server-side). It is kept report-only until it has been watched through a
+	# real LiveKit interview, because enforcing a blind policy could break live
+	# WebRTC. It must stay identical in substance to web/vercel.json; the
+	# 'sha256-...' source is the hash of the inline pre-paint theme script in
+	# web/index.html, and web/src/__tests__/cspHash.test.ts fails if either
+	# file drifts from that script. 'wasm-unsafe-eval' is for the self-hosted
+	# MediaPipe wasm (proctoring); style-src keeps 'unsafe-inline' for React
+	# style props and runtime-set styles; https:/wss: in connect-src are
+	# deploy-time hosts (LiveKit, API origins) to be narrowed after review.
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Content-Security-Policy "frame-ancestors 'self' https://huggingface.co"
+		Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self' 'sha256-3SMNxQg2X8DdJquTVuN7jRpIUkZt9Uyd3lirPU0P4ag=' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; media-src 'self' blob: https://cdn.replica.tavus.io; worker-src 'self' blob:; connect-src 'self' https: wss:; base-uri 'self'; object-src 'none'; form-action 'self'"
 		Referrer-Policy "strict-origin-when-cross-origin"
 		-Server
 	}

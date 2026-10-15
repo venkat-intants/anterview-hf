@@ -54,7 +54,7 @@ from pydantic import BaseModel
 from shared.auth.jwt import issue_access_token, resolve_signing_key
 from shared.auth.local import mint_refresh_session
 from sqlalchemy import bindparam as sa_bindparam
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -68,6 +68,7 @@ from app.roles import CANDIDATE_ROLES
 # trusted-proxy gate) so a Google-signin consent row is recorded identically to
 # the POST /consent endpoint — single source of truth for the anti-spoofing logic.
 from app.routers.consent import _hash_value
+from app.session_revocation import SessionRevocationError, revoke_all_sessions_strict
 from app.utils.cookies import delete_cookie_headers
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 
@@ -121,6 +122,95 @@ def _require_google_configured() -> None:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="GOOGLE_OAUTH_NOT_CONFIGURED",
         )
+
+
+# The one refusal for an account Google sign-in may not enter: deleted, suspended
+# or staff. Deliberately the same detail the privileged-account gate returns, so
+# the response does not tell a caller which of those it is (account enumeration).
+_REFUSED = "GOOGLE_SIGNIN_CANDIDATES_ONLY"
+
+
+async def _upsert_google_user(
+    db: AsyncSession, *, email: str, full_name: str | None, now_utc: datetime
+) -> tuple[uuid.UUID, bool]:
+    """Find-or-create the account for a Google-verified address.
+
+    Returns ``(user_id, taken_over)``; ``taken_over`` tells the caller to revoke
+    every pre-existing session on that account after commit.
+
+    Looked up FIRST rather than leaning on ``ON CONFLICT (email)``, because the
+    conflict clause cannot tell the rows apart and used to:
+      * revive a soft-deleted account (``deleted_at`` set, then ``is_active=True``
+        written over it) -- refused now, nothing written;
+      * re-enable an admin-suspended account -- ``is_active`` is no longer touched
+        and a suspended account is refused rather than handed a session;
+      * keep an attacker's password on an account they pre-registered with the
+        victim's address. Registration issues a session without proving the
+        address, so an UNVERIFIED password account is not evidence its holder
+        owns the mailbox. Google just proved the address (email_verified was
+        checked above), so the password is nulled and the address marked
+        verified. A verified account, or one with no password, is left as it was.
+    """
+    existing = (
+        await db.execute(
+            text(
+                "SELECT id, password_hash, email_verified_at, deleted_at, is_active"
+                "  FROM users WHERE email = :email"
+            ),
+            {"email": email},
+        )
+    ).first()
+
+    taken_over = False
+    if existing is not None:
+        if existing.deleted_at is not None or existing.is_active is False:
+            log.warning("google.sso.callback.account_not_usable")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_REFUSED)
+        if existing.password_hash is not None and existing.email_verified_at is None:
+            await db.execute(
+                text(
+                    "UPDATE users SET password_hash = NULL, must_change_password = false,"
+                    " email_verified_at = :now, updated_at = :now WHERE id = :uid"
+                ),
+                {"now": now_utc, "uid": existing.id},
+            )
+            taken_over = True
+            log.warning("google.sso.unverified_account_taken_over")
+
+    stmt = (
+        pg_insert(User)
+        .values(
+            id=uuid.uuid4(),
+            email=email,
+            password_hash=None,
+            full_name=full_name,
+            phone=None,
+            preferred_language="en",
+            naipunyam_id=None,
+            is_active=True,
+            email_verified_at=now_utc,
+            created_at=now_utc,
+            updated_at=now_utc,
+        )
+        .on_conflict_do_update(
+            index_elements=["email"],
+            # No is_active here, on purpose (see docstring).
+            set_={
+                "full_name": full_name,
+                "updated_at": now_utc,
+                "email_verified_at": func.coalesce(User.email_verified_at, now_utc),
+            },
+        )
+        .returning(User.id)
+    )
+    row = (await db.execute(stmt)).fetchone()
+    if row is None:
+        log.error("google.sso.upsert.no_row_returned")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="INTERNAL_ERROR",
+        )
+    return row[0], taken_over
 
 
 # Name of the httpOnly cookie that binds an OAuth state token to the browser
@@ -586,42 +676,9 @@ async def callback(
     #   and store google_sub in the google_id column.
     # ------------------------------------------------------------------
     now_utc = datetime.now(UTC)
-    new_user_id: uuid.UUID = uuid.uuid4()
-
-    stmt = (
-        pg_insert(User)
-        .values(
-            id=new_user_id,
-            email=email,
-            password_hash=None,
-            full_name=full_name,
-            phone=None,
-            preferred_language="en",
-            naipunyam_id=None,
-            is_active=True,
-            created_at=now_utc,
-            updated_at=now_utc,
-        )
-        .on_conflict_do_update(
-            index_elements=["email"],
-            set_={
-                "full_name": full_name,
-                "updated_at": now_utc,
-                "is_active": True,
-            },
-        )
-        .returning(User.id)
+    final_user_id, taken_over = await _upsert_google_user(
+        db, email=email, full_name=full_name, now_utc=now_utc
     )
-
-    result = await db.execute(stmt)
-    row = result.fetchone()
-    if row is None:
-        log.error("google.sso.upsert.no_row_returned")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="INTERNAL_ERROR",
-        )
-    final_user_id: uuid.UUID = row[0]
 
     # Grant the 'candidate' role in the DB. The JWT below hardcodes ['candidate'],
     # but /auth/me and token refresh read roles from user_roles — without this row
@@ -674,6 +731,25 @@ async def callback(
                 "ev": json.dumps(evidence),
             },
         )
+
+    if taken_over:
+        # Every session issued before this moment belonged to whoever pre-registered
+        # the address with a password. Revoked BEFORE the commit and BEFORE the
+        # session below is minted. ``settle`` holds until the epoch's second has
+        # passed, so the new session's iat is strictly later and survives.
+        # FAIL CLOSED: if the old sessions cannot be revoked, roll the takeover
+        # back (the pre-registered password stays) and refuse -- never commit the
+        # identity change beside live sessions of the previous owner.
+        # logout_all swallows its own errors, hence the strict helper.
+        try:
+            await revoke_all_sessions_strict(str(final_user_id), settle=True)
+        except SessionRevocationError as exc:
+            await db.rollback()
+            log.error("google.sso.takeover.revoke_failed", error_type=type(exc).__name__)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="SIGN_IN_TEMPORARILY_UNAVAILABLE",
+            ) from exc
 
     await db.commit()
 

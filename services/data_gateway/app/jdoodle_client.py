@@ -26,7 +26,10 @@ import httpx
 import structlog
 
 from app.config import settings
-from app.piston_client import ExecResult  # reuse the canonical result type
+from app.piston_client import (  # reuse the canonical result type + the safe message
+    RUNNER_UNAVAILABLE_MESSAGE,
+    ExecResult,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -64,7 +67,8 @@ async def run_code(
     if slug not in LANGUAGES:
         return ExecResult("", "", None, False, error=f"unsupported language '{language}'")
     if not settings.jdoodle_client_id or not settings.jdoodle_client_secret:
-        return ExecResult("", "", None, False, error="jdoodle credentials not configured")
+        log.error("jdoodle.credentials_not_configured")
+        return ExecResult("", "", None, False, error=RUNNER_UNAVAILABLE_MESSAGE)
 
     jd_language, version_index = LANGUAGES[slug]
     body = {
@@ -92,16 +96,17 @@ async def run_code(
                 return _parse(resp.json())
             if resp.status_code == 401:
                 log.error("jdoodle.auth_failed")
-                return ExecResult("", "", None, False, error="jdoodle auth failed (check credentials)")
+                return ExecResult("", "", None, False, error=RUNNER_UNAVAILABLE_MESSAGE)
             if resp.status_code == 429:
                 log.warning("jdoodle.daily_limit_reached")
-                return ExecResult("", "", None, False, error="jdoodle daily limit reached")
+                return ExecResult("", "", None, False, error=RUNNER_UNAVAILABLE_MESSAGE)
             last_error = f"runner HTTP {resp.status_code}: {resp.text[:160]}"
             if resp.status_code not in _RETRY_STATUSES:
                 break
         if attempt < _MAX_ATTEMPTS - 1:
             await asyncio.sleep(_BACKOFF_BASE_SECONDS * (2**attempt))
-    return ExecResult("", "", None, False, error=last_error)
+    log.warning("jdoodle.run_failed", detail=last_error)
+    return ExecResult("", "", None, False, error=RUNNER_UNAVAILABLE_MESSAGE)
 
 
 def _parse(payload: dict[str, Any]) -> ExecResult:
@@ -114,7 +119,8 @@ def _parse(payload: dict[str, Any]) -> ExecResult:
     output = str(payload.get("output") or "")
     status = payload.get("statusCode")
     if status not in (200, None) and not output:
-        return ExecResult("", "", None, False, error=f"jdoodle status {status}")
+        log.warning("jdoodle.bad_status", status=status)
+        return ExecResult("", "", None, False, error=RUNNER_UNAVAILABLE_MESSAGE)
     # JDoodle signals its own wall-clock kill inside the output text.
     lowered = output.lower()
     timed_out = "time limit exceeded" in lowered

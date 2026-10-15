@@ -529,3 +529,122 @@ describe('PublicOffer — documents, once accepted', () => {
     expect(screen.queryByRole('button', { name: 'Get a code' })).not.toBeInTheDocument();
   });
 });
+
+// UX round 3 — the offer's three steps, driven by what the server holds.
+describe('PublicOffer — the three steps', () => {
+  const current = () => {
+    const nav = screen.getByRole('navigation', { name: 'Offer progress' });
+    const item = nav.querySelector('li[aria-current="step"]');
+    return item?.textContent ?? '';
+  };
+
+  it('is on Review for a sent offer, and on Accept once the accept panel is open', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    expect(current()).toMatch(/Review/);
+
+    await user.click(screen.getByRole('button', { name: 'Accept offer' }));
+    expect(current()).toMatch(/Accept/);
+  });
+
+  it('is on Joining documents once accepted, with the offer collapsed to one row', async () => {
+    viewOffer.mockResolvedValue(ACCEPTED);
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Offer accepted' })).toBeInTheDocument();
+    expect(current()).toMatch(/Joining documents/);
+    // The offer is still readable, behind "View offer"; documents lead.
+    expect(screen.getByText('View offer')).toBeInTheDocument();
+    expect(screen.getByText('Your documents')).toBeInTheDocument();
+    expect(screen.getByText(/checks each document/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    ['expired', 'This offer has expired'],
+    ['withdrawn', 'This offer has been withdrawn'],
+    ['declined', 'You declined this offer'],
+  ] as const)('draws no steps and offers no Accept for a %s offer', async (status, title) => {
+    viewOffer.mockResolvedValue({ ...SENT, status });
+    renderPage();
+    expect(await screen.findByText(title)).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Offer progress' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /accept/i })).not.toBeInTheDocument();
+  });
+
+  it('explains why a second code is asked for, before asking', async () => {
+    viewOffer.mockResolvedValue(ACCEPTED);
+    renderPage();
+    await screen.findByText('Your documents');
+    expect(screen.getByText(/their own one-time code, separate from the one you used/i)).toBeInTheDocument();
+  });
+});
+
+describe('PublicOffer — joining documents in words', () => {
+  async function openChecklist(checklist: PublicDocumentsChecklist) {
+    viewOffer.mockResolvedValue(ACCEPTED);
+    requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
+    openDocumentsSession.mockResolvedValue({
+      session_token: 'sess_tok',
+      expires_at: '2026-09-18T02:00:00.000Z',
+    });
+    getMyDocuments.mockResolvedValue(checklist);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Your documents');
+    await user.click(screen.getByRole('button', { name: 'Get a code' }));
+    await screen.findByText(/Code sent/);
+    await user.type(screen.getByLabelText(/enter the code/i), '111111');
+    await user.click(screen.getByRole('button', { name: 'Continue' }));
+  }
+
+  it('shows "n of N still needed" from outstanding and items', async () => {
+    await openChecklist({
+      ...CHECKLIST,
+      outstanding: ['PAN card', 'Aadhaar card'],
+    });
+    expect(await screen.findByTestId('docs-remaining')).toHaveTextContent('2 of 2 still needed');
+  });
+
+  it('counts only what is not yet verified, and says which are already with the hiring team', async () => {
+    await openChecklist({
+      ...CHECKLIST,
+      outstanding: ['Aadhaar card'],
+      items: [
+        { ...CHECKLIST.items[0], state: 'verified' },
+        {
+          ...CHECKLIST.items[1],
+          state: 'submitted',
+          document: {
+            id: 'd1', version: 1, file_name: 'a.pdf', content_type: 'application/pdf', size_bytes: 10,
+            expires_on: null, uploaded_at: null, reviewed_at: null, review_note: null,
+          },
+        },
+      ],
+    });
+    expect(await screen.findByTestId('docs-remaining')).toHaveTextContent('1 of 2 still needed');
+    expect(screen.getByText('1 is sent and waiting for review.')).toBeInTheDocument();
+  });
+
+  it('names each document state in words, with the reason for "Send again"', async () => {
+    await openChecklist({
+      ...CHECKLIST,
+      outstanding: ['PAN card', 'Aadhaar card'],
+      items: [
+        { ...CHECKLIST.items[0] },
+        {
+          ...CHECKLIST.items[1],
+          state: 'rejected',
+          document: {
+            id: 'd2', version: 1, file_name: 'a.pdf', content_type: 'application/pdf', size_bytes: 10,
+            expires_on: null, uploaded_at: null, reviewed_at: null, review_note: 'photo is blurred',
+          },
+        },
+      ],
+    });
+    const pan = (await screen.findByText('PAN card')).closest('li') as HTMLElement;
+    const aadhaar = screen.getByText('Aadhaar card').closest('li') as HTMLElement;
+    expect(within(pan).getByText('Needed')).toBeInTheDocument();
+    expect(within(aadhaar).getByText('Send again')).toBeInTheDocument();
+    expect(within(aadhaar).getByText(/photo is blurred/)).toBeInTheDocument();
+  });
+});

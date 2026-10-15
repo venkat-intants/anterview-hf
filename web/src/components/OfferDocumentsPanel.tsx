@@ -18,7 +18,11 @@ import {
 } from '@/api/offers';
 import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
-import { Download, Loader2 } from '@/design/components/icons';
+import { Download, FileText, Loader2 } from '@/design/components/icons';
+import { EmptyState } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const REASON_MIN = 5;
 
@@ -100,20 +104,24 @@ function DocumentRow({ offerId, item }: { offerId: string; item: ChecklistItem }
   const reasonReady = note.trim().length >= REASON_MIN;
 
   return (
-    <li role="group" aria-label={item.name} className="rounded-[10px] border border-border p-3">
+    <li
+      role="group"
+      aria-label={item.name}
+      className="border-b border-border py-4 first:pt-0 last:border-b-0 last:pb-0"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
-          <p className="truncate text-[13px] font-medium text-foreground">
+          <p className="break-words text-[14px] font-semibold text-foreground">
             {item.name}
             {item.mandatory ? '' : ' (optional)'}
           </p>
           {item.document ? (
-            <p className="mt-0.5 text-[11.5px] text-muted-foreground">
+            <p className="mt-0.5 break-all text-[13px] text-muted-foreground">
               v{item.document.version} · {item.document.file_name ?? 'file'}
               {item.document.expires_on ? ` · expires ${item.document.expires_on}` : ''}
             </p>
           ) : (
-            <p className="mt-0.5 text-[11.5px] text-muted-foreground">Not uploaded yet.</p>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">Not uploaded yet.</p>
           )}
         </div>
         <StatusTag tone={STATE_TONE[item.state]} dot>
@@ -122,75 +130,80 @@ function DocumentRow({ offerId, item }: { offerId: string; item: ChecklistItem }
       </div>
 
       {item.document?.review_note ? (
-        <p className="mt-2 rounded-[8px] border border-border bg-[var(--ui-inset-soft)] p-2 text-[12px] text-[var(--ui-soft)]">
+        <p className="mt-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-2.5 text-[13px] text-[var(--ui-soft)]">
           {item.document.review_note}
         </p>
       ) : null}
 
       {item.document ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <button
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
             type="button"
+            variant="outline"
             onClick={() => downloadMut.mutate()}
             disabled={downloadMut.isPending}
-            className="inline-flex items-center gap-1.5 rounded-[8px] border border-border px-2.5 py-1 text-[11.5px] text-foreground disabled:opacity-40"
           >
             {downloadMut.isPending ? (
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+              <Loader2 className="animate-spin" aria-hidden="true" />
             ) : (
-              <Download className="h-3 w-3" aria-hidden="true" />
+              <Download aria-hidden="true" />
             )}
             Download
-          </button>
+          </Button>
           {actions.map((action) => (
-            <button
+            <Button
               key={action}
               type="button"
+              variant="outline"
               onClick={() => setPendingAction((v) => (v === action ? null : action))}
-              className="rounded-[8px] border border-border px-2.5 py-1 text-[11.5px] text-foreground"
+              aria-pressed={pendingAction === action}
+              className={
+                action === 'reject'
+                  ? 'border-[var(--ui-danger)]/40 text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]'
+                  : undefined
+              }
             >
               {ACTION_LABEL[action]}
-            </button>
+            </Button>
           ))}
         </div>
       ) : null}
 
       {pendingAction ? (
-        <div className="mt-2 flex flex-col gap-1.5">
+        <div className="mt-3 flex flex-col gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3">
           <label
             htmlFor={`note-${item.requirement_id}`}
-            className="text-[11.5px] font-medium text-[var(--ui-soft)]"
+            className="text-[13px] font-semibold text-foreground"
           >
             {needsReason ? 'Tell the candidate what is wrong (required)' : 'Note (optional)'}
           </label>
-          <input
+          <Input
             id={`note-${item.requirement_id}`}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            className="rounded-[8px] border border-border bg-secondary px-2.5 py-1.5 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            aria-invalid={needsReason && !reasonReady ? true : undefined}
           />
           {needsReason && !reasonReady ? (
-            <p className="text-[11px] text-[var(--ui-warn)]">At least {REASON_MIN} characters.</p>
+            <p className="text-[12.5px] text-[var(--ui-warn)]">At least {REASON_MIN} characters.</p>
           ) : null}
-          <div className="flex gap-2">
-            <button
+          <div className="flex flex-wrap gap-2">
+            <Button
               type="button"
               disabled={(needsReason && !reasonReady) || reviewMut.isPending}
               onClick={() => reviewMut.mutate(pendingAction)}
-              className="self-start rounded-[8px] bg-primary px-3 py-1.5 text-[11.5px] font-medium text-primary-foreground disabled:opacity-40"
             >
               {reviewMut.isPending ? 'Saving…' : `Confirm — ${ACTION_LABEL[pendingAction]}`}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
               onClick={() => {
                 setPendingAction(null);
                 setNote('');
               }}
-              className="self-start rounded-[8px] px-3 py-1.5 text-[11.5px] text-muted-foreground hover:text-foreground"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       ) : null}
@@ -206,10 +219,23 @@ export default function OfferDocumentsPanel({ offerId }: { offerId: string }) {
   });
 
   if (docs.isLoading) {
-    return <p className="text-[12.5px] text-muted-foreground">Loading…</p>;
+    return (
+      <div className="flex flex-col gap-2" aria-busy="true">
+        <span className="sr-only">Loading…</span>
+        <Skeleton className="h-16 rounded-[16px]" />
+        <Skeleton className="h-16 rounded-[16px]" />
+      </div>
+    );
   }
   if (docs.isError || !docs.data) {
-    return <p className="text-[12.5px] text-muted-foreground">Could not load these documents.</p>;
+    return (
+      <div role="alert" className="flex flex-wrap items-center gap-3">
+        <p className="text-[13.5px] text-muted-foreground">Could not load these documents.</p>
+        <Button type="button" variant="outline" onClick={() => void docs.refetch()}>
+          Try again
+        </Button>
+      </div>
+    );
   }
 
   const data = docs.data;
@@ -217,11 +243,13 @@ export default function OfferDocumentsPanel({ offerId }: { offerId: string }) {
   return (
     <div>
       {data.items.length === 0 ? (
-        <p className="text-[12.5px] text-muted-foreground">
-          This opening asks for no documents — set them up on the opening&apos;s dashboard.
-        </p>
+        <EmptyState
+          icon={FileText}
+          title="This opening asks for no documents"
+          description="Set them up on the opening's dashboard."
+        />
       ) : (
-        <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col">
           {data.items.map((item) => (
             <DocumentRow key={item.requirement_id} offerId={offerId} item={item} />
           ))}
@@ -230,15 +258,15 @@ export default function OfferDocumentsPanel({ offerId }: { offerId: string }) {
 
       {data.history.length > 0 ? (
         <details className="mt-4">
-          <summary className="cursor-pointer text-[12.5px] text-[var(--ui-info)]">
+          <summary className="inline-flex min-h-10 cursor-pointer items-center rounded-full px-1 text-[13.5px] font-semibold text-[var(--ui-info)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
             Document activity ({data.history.length})
           </summary>
-          <ol className="mt-2 flex flex-col gap-1.5 border-l border-border pl-3">
+          <ol className="mt-2 flex flex-col gap-2 border-l border-border pl-3">
             {data.history.map((h, i) => (
-              <li key={i} className="text-[12px] text-[var(--ui-soft)]">
+              <li key={i} className="text-[13px] text-[var(--ui-soft)]">
                 {h.action.replace(/_/g, ' ')}
                 {h.actor_name ? ` — ${h.actor_name}` : ''}
-                <span className="ml-1.5 text-[11px] text-[var(--ui-faint)]">
+                <span className="ml-1.5 text-[12px] text-muted-foreground">
                   {new Date(h.at).toLocaleString()}
                 </span>
               </li>
@@ -247,15 +275,16 @@ export default function OfferDocumentsPanel({ offerId }: { offerId: string }) {
         </details>
       ) : null}
 
-      <button
+      <Button
         type="button"
+        variant="ghost"
         onClick={() =>
           void qc.invalidateQueries({ queryKey: ['hr', 'offer', offerId, 'documents'] })
         }
-        className="mt-3 text-[11.5px] text-muted-foreground hover:text-foreground"
+        className="-ml-5 mt-3 text-muted-foreground"
       >
         Refresh
-      </button>
+      </Button>
     </div>
   );
 }

@@ -11,6 +11,7 @@
 // the console can explain that BEFORE somebody starts typing.
 
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './client';
+import { pathId } from './pathId';
 
 export type QuestionKind =
   | 'short_text'
@@ -58,7 +59,7 @@ export function isFrozen(question: ApplicationQuestion): boolean {
 }
 
 export function listQuestions(requisitionId: string): Promise<ApplicationQuestion[]> {
-  return apiGet<ApplicationQuestion[]>(`/hr/requisitions/${requisitionId}/questions`);
+  return apiGet<ApplicationQuestion[]>(`/hr/requisitions/${pathId(requisitionId)}/questions`);
 }
 
 /**
@@ -71,7 +72,7 @@ export function addQuestion(
   body: QuestionInput,
 ): Promise<ApplicationQuestion[]> {
   return apiPost<ApplicationQuestion[]>(
-    `/hr/requisitions/${requisitionId}/questions`,
+    `/hr/requisitions/${pathId(requisitionId)}/questions`,
     body,
   );
 }
@@ -80,12 +81,12 @@ export function updateQuestion(
   questionId: string,
   body: Partial<Omit<QuestionInput, 'kind'>>,
 ): Promise<ApplicationQuestion[]> {
-  return apiPatch<ApplicationQuestion[]>(`/hr/questions/${questionId}`, body);
+  return apiPatch<ApplicationQuestion[]>(`/hr/questions/${pathId(questionId)}`, body);
 }
 
 /** Stop asking it. The answers already given stay readable on their applications. */
 export function retireQuestion(questionId: string): Promise<void> {
-  return apiDelete<void>(`/hr/questions/${questionId}`);
+  return apiDelete<void>(`/hr/questions/${pathId(questionId)}`);
 }
 
 export function reorderQuestions(
@@ -93,7 +94,7 @@ export function reorderQuestions(
   questionIds: string[],
 ): Promise<ApplicationQuestion[]> {
   return apiPut<ApplicationQuestion[]>(
-    `/hr/requisitions/${requisitionId}/questions/order`,
+    `/hr/requisitions/${pathId(requisitionId)}/questions/order`,
     { question_ids: questionIds },
   );
 }
@@ -109,5 +110,5 @@ export interface ApplicationAnswer {
 }
 
 export function listAnswers(enrolmentId: string): Promise<ApplicationAnswer[]> {
-  return apiGet<ApplicationAnswer[]>(`/hr/enrolments/${enrolmentId}/answers`);
+  return apiGet<ApplicationAnswer[]>(`/hr/enrolments/${pathId(enrolmentId)}/answers`);
 }

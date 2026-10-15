@@ -913,8 +913,10 @@ async def _grade_and_finalize(
     auto-advance to interview when the terminal round is passed.
 
     Idempotency + pool safety:
-    - A Redis SET NX EX claim (keyed by attempt_id) serializes concurrent submits of
-      the SAME attempt so the slow JDoodle/Piston round-trip is never duplicated.
+    - A Redis SET NX EX claim (keyed by attempt_id) is the fast path that keeps
+      concurrent submits of the SAME attempt from duplicating the slow JDoodle/Piston
+      round-trip. It fails open and expires, so it is NOT the guarantee: the persist
+      step locks the attempt row (FOR UPDATE) and the loser returns the stored result.
     - The DB connection is released (via an early commit) BEFORE the outbound grading
       calls, so a 5-30 s JDoodle round-trip no longer exhausts the connection pool.
     - A re-submit of an already-finished attempt returns the stored result instantly
@@ -1078,15 +1080,27 @@ async def _grade_and_finalize(
         # the attempt and assignment by PK so SQLAlchemy tracks them in this new
         # transaction (the old ORM objects were detached when we committed above).
         # ---------------------------------------------------------------------------
+        #
+        # FOR UPDATE: the DATABASE is the arbiter of who persists, not Redis. The
+        # Redis claim is only the fast path — it fails open, and its 180 s TTL can
+        # lapse mid-grade on a slow multi-question coding run, so two submits can
+        # both reach this point. Locking the attempt row serialises them: the
+        # second blocks here until the first commits, then re-reads status
+        # 'submitted' and returns the stored result below instead of persisting,
+        # advancing and notifying a second time. populate_existing so the re-read
+        # sees the committed row, not a stale identity-map copy.
         fresh_attempt = await db.scalar(
-            select(ExamAttempt).where(ExamAttempt.id == attempt.id)
+            select(ExamAttempt)
+            .where(ExamAttempt.id == attempt.id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         fresh_assignment: ExamAssignment | None = await db.scalar(
             select(ExamAssignment).where(ExamAssignment.id == ctx.assignment.id)
         )
         # Guard against a race where a concurrent submit finished first while we were
-        # grading (e.g. Redis failed open for both). Return stored result without
-        # overwriting it.
+        # grading (the claim failed open, or its TTL lapsed). Return the stored
+        # result without overwriting it.
         if fresh_attempt is not None and fresh_attempt.status in ("submitted", "expired"):
             return _stored_result(fresh_attempt)
 
@@ -1170,16 +1184,22 @@ async def _grade_and_finalize(
         # row is only written iff the attempt commit also succeeds — atomic.
         if passed and ctx.exam_round.advances_to_interview and ctx.exam.auto_advance_on_pass:
             try:
-                await advance_applicant_to_interview(
-                    db,
-                    company_id=ctx.company_id,
-                    applicant=ctx.applicant,
-                    created_by_user_id=ctx.exam.created_by_user_id,
-                    notify_user_id=ctx.exam.created_by_user_id,
-                    # The application this exam was assigned for (B5), when
-                    # known — the invite is then for that opening's role.
-                    enrolment_id=ctx.assignment.enrolment_id,
-                )
+                # A savepoint: "best-effort" only holds if a SQL-level failure
+                # inside the advance rolls back to here. Without it the error
+                # leaves the outer transaction aborted, the except below
+                # swallows it, and the final commit then fails — losing the
+                # graded attempt this block promises never to endanger.
+                async with db.begin_nested():
+                    await advance_applicant_to_interview(
+                        db,
+                        company_id=ctx.company_id,
+                        applicant=ctx.applicant,
+                        created_by_user_id=ctx.exam.created_by_user_id,
+                        notify_user_id=ctx.exam.created_by_user_id,
+                        # The application this exam was assigned for (B5), when
+                        # known — the invite is then for that opening's role.
+                        enrolment_id=ctx.assignment.enrolment_id,
+                    )
             except Exception as exc:  # noqa: BLE001 - never fail a submit on advance error
                 log.warning(
                     "exam.auto_advance_failed", exam_id=str(ctx.exam.id), error=str(exc)

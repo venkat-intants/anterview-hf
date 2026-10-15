@@ -1,9 +1,10 @@
 // AdminInterviewDetail — drill-in detail for one interview session.
 // Route: /admin/interviews/:sessionId (inside AdminRoute + AppShell)
 //
-// Layout: reproduced from design screen (AdminInterviewDetail.tsx).
-//   • Back link → candidate header → 3-col grid (score ring + breakdown)
-//   • 2nd 3-col row: transcript (lg:col-span-2) + integrity (right col)
+// Layout: breadcrumbs (Interviews → this interview) + PageHeader (candidate, status) → cards:
+//   • Session details
+//   • 3-col grid: score ring + competency breakdown
+//   • 3-col row: transcript (lg:col-span-2) + proctoring (right col)
 //   • Radar, Strengths, Improvements, Summary cards below
 //
 // Behavior: 100% live — getInterviewDetail + getInterviewTranscript,
@@ -11,19 +12,12 @@
 //   (integrity_score / by_type / flagged_seconds / timeline / "not enabled"),
 //   session metadata grid, back nav, skeleton/error.
 
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { motion, type Variants } from 'framer-motion';
 import { useAccentColor } from '@/lib/useAccentColor';
+import { AXIS_STYLE, GRID_STROKE, TOOLTIP_STYLE } from '@/lib/chartTheme';
 import {
-  ArrowLeft,
-  User,
-  Briefcase,
-  Globe,
-  Clock,
-  CalendarDays,
-  Download,
   CheckCircle2,
   TrendingUp,
   AlertCircle,
@@ -52,13 +46,18 @@ import type {
 import { toast } from '@/lib/toast';
 import { formatDate, formatDuration, statusProps, languageLabel } from '@/lib/formatters';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
+import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
+import { Button } from '@/components/ui/button';
+import { GlassCard, ScoreRing, StatusTag, Avatar } from '@/design/components/primitives';
 import {
-  GlassCard,
-  ScoreRing,
-  StatusTag,
-  Avatar,
-  Pill,
-} from '@/design/components/primitives';
+  Page,
+  Breadcrumbs,
+  DataList,
+  EmptyState,
+  PageHeader,
+  SectionCard,
+} from '@/design/components/page';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -70,16 +69,14 @@ function fmtScore(v: number | null): string {
 // Design scoreColor works on 0–100; live scores are 0–10 → multiply by 10
 function scoreColor(score: number): string {
   const pct = score * 10;
-  if (pct >= 85) return '#27c93f';
-  if (pct >= 70) return 'var(--accent)';
-  if (pct >= 55) return '#ffb764';
-  return '#e6714f';
+  if (pct >= 85) return 'var(--ui-ok)';
+  if (pct >= 70) return 'var(--ui-info)';
+  if (pct >= 55) return 'var(--ui-warn)';
+  return 'var(--ui-danger)';
 }
 
 // Map live status codes → StatusTag tones
-function statusTone(
-  status: string,
-): 'forest' | 'electric' | 'amber' | 'ember' | 'neutral' {
+function statusTone(status: string): 'forest' | 'electric' | 'amber' | 'ember' | 'neutral' {
   switch (status) {
     case 'completed':
       return 'forest';
@@ -108,12 +105,12 @@ function initialsOf(name: string | null, email: string): string {
 }
 
 const GRADIENTS = [
-  'linear-gradient(135deg,var(--accent),#a887dc)',
-  'linear-gradient(135deg,#16c253,var(--accent))',
-  'linear-gradient(135deg,#dd55e7,#a887dc)',
-  'linear-gradient(135deg,#ffb764,#dd55e7)',
-  'linear-gradient(135deg,#0fb7fa,#16c253)',
-  'linear-gradient(135deg,#a887dc,var(--accent))',
+  'linear-gradient(135deg,var(--accent),var(--ui-lavender))',
+  'linear-gradient(135deg,var(--ui-ok),var(--accent))',
+  'linear-gradient(135deg,var(--ui-role-platform),var(--ui-lavender))',
+  'linear-gradient(135deg,var(--ui-warn),var(--ui-role-platform))',
+  'linear-gradient(135deg,var(--ui-info),var(--ui-ok))',
+  'linear-gradient(135deg,var(--ui-lavender),var(--accent))',
 ];
 
 function gradientFor(id: string): string {
@@ -123,9 +120,9 @@ function gradientFor(id: string): string {
 
 // Integrity score colour (0–100 scale)
 function integrityColor(score: number): string {
-  if (score >= 80) return '#27c93f';
-  if (score >= 60) return '#ffb764';
-  return '#e6714f';
+  if (score >= 80) return 'var(--ui-ok)';
+  if (score >= 60) return 'var(--ui-warn)';
+  return 'var(--ui-danger)';
 }
 
 function fmtClock(iso: string): string {
@@ -134,18 +131,6 @@ function fmtClock(iso: string): string {
     ? ''
     : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
-
-// ── Animation ──────────────────────────────────────────────────────────────────
-
-const stagger: Variants = {
-  hidden: {},
-  visible: { transition: { staggerChildren: 0.07 } },
-};
-
-const fadeUp: Variants = {
-  hidden: { opacity: 0, y: 14 },
-  visible: { opacity: 1, y: 0, transition: { duration: 0.35, ease: [0.22, 1, 0.36, 1] } },
-};
 
 // ── Axis definitions ───────────────────────────────────────────────────────────
 
@@ -191,19 +176,10 @@ function ScorecardRadar({ scorecard }: { scorecard: ScorecardDetail }) {
   return (
     <ResponsiveContainer width="100%" height={220}>
       <RadarChart data={data} margin={{ top: 8, right: 24, bottom: 8, left: 24 }}>
-        <PolarGrid stroke="rgba(255,255,255,0.08)" />
-        <PolarAngleAxis
-          dataKey="dimension"
-          tick={{ fill: '#888b91', fontSize: 11 }}
-        />
+        <PolarGrid stroke={GRID_STROKE} />
+        <PolarAngleAxis dataKey="dimension" tick={{ fill: AXIS_STYLE.stroke, fontSize: 12 }} />
         <Tooltip
-          contentStyle={{
-            background: '#0f0f10',
-            border: '1px solid rgba(255,255,255,0.1)',
-            borderRadius: '10px',
-            fontSize: 12,
-            color: '#ffffff',
-          }}
+          contentStyle={TOOLTIP_STYLE}
           formatter={(value) => [`${Number(value ?? 0)} / 10`, 'Score']}
         />
         <Radar
@@ -250,18 +226,18 @@ function ScoreBarRow({
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
         )}
       >
-        <span className="flex items-center gap-1.5 text-[12.5px] text-[var(--ui-soft)]">
+        <span className="flex items-center gap-1.5 text-[13.5px] text-[var(--ui-soft)]">
           {label}
           <ChevronDown
             className={cn(
-              'h-3.5 w-3.5 text-[var(--ui-faint)] transition-transform duration-200',
+              'h-3.5 w-3.5 text-muted-foreground transition-transform duration-200',
               open && 'rotate-180',
             )}
             aria-hidden="true"
           />
         </span>
         <span
-          className="font-mono font-semibold text-[12.5px] tabular-nums"
+          className="font-mono text-[13px] font-semibold tabular-nums"
           style={{ color: scoreColor(score) }}
         >
           {fmtScore(score)}
@@ -274,7 +250,7 @@ function ScoreBarRow({
           className="h-full rounded-full transition-all duration-700"
           style={{
             width: `${pct}%`,
-            background: `linear-gradient(90deg,var(--accent),${scoreColor(score)})`,
+            background: scoreColor(score),
           }}
           role="progressbar"
           aria-valuenow={score}
@@ -289,7 +265,7 @@ function ScoreBarRow({
           id={panelId}
           className="mt-1 rounded-[14px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-3"
         >
-          <p className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--accent)]">
+          <p className="mb-1.5 flex items-center gap-1.5 text-[12px] font-semibold uppercase tracking-wide text-[var(--ui-info)]">
             <Info className="h-3.5 w-3.5" aria-hidden="true" />
             Why this score
           </p>
@@ -308,23 +284,18 @@ function ScoreBarRow({
 
 function TranscriptPanel({ turns, isLoading }: { turns: TranscriptTurn[]; isLoading: boolean }) {
   return (
-    <GlassCard className="p-5">
-      <h3 className="mb-4 text-[15px] font-semibold text-foreground flex items-center gap-2">
-        <MessageSquare size={16} className="text-[var(--ui-lavender)]" aria-hidden="true" />
-        Transcript
-      </h3>
-
+    <SectionCard title="Transcript" icon={MessageSquare} className="h-full">
       {isLoading ? (
         <div className="flex flex-col gap-4" aria-label="Loading transcript" aria-busy="true">
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="flex gap-3">
-              <Skeleton className="h-6 w-12 rounded-pill bg-[var(--ui-inset-strong)]" />
-              <Skeleton className="h-10 flex-1 rounded-[14px] bg-[var(--ui-inset)]" />
+              <Skeleton className="h-6 w-12 rounded-pill" />
+              <Skeleton className="h-10 flex-1 rounded-[14px]" />
             </div>
           ))}
         </div>
       ) : turns.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">No transcript recorded for this session.</p>
+        <EmptyState icon={MessageSquare} title="No transcript recorded for this session." />
       ) : (
         <ol className="flex flex-col gap-4" aria-label="Interview transcript">
           {turns.map((turn) => {
@@ -333,21 +304,21 @@ function TranscriptPanel({ turns, isLoading }: { turns: TranscriptTurn[]; isLoad
               <li key={turn.turn_number} className="flex gap-3">
                 <span
                   className={cn(
-                    'flex-none rounded-pill px-2.5 py-1 text-[11px] font-semibold',
+                    'h-fit flex-none rounded-pill px-2.5 py-1 text-[12px] font-semibold',
                     isInterviewer
                       ? 'bg-[var(--ui-lavender-wash)] text-[var(--ui-lavender)]'
-                      : 'bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]',
+                      : 'bg-[var(--ui-info-wash)] text-[var(--ui-info)]',
                   )}
                 >
                   {isInterviewer ? 'AI' : 'C'}
                 </span>
-                <p className="flex-1 text-[13.5px] leading-[1.55] text-[var(--ui-soft)]">
+                <p className="min-w-0 flex-1 break-words text-[14px] leading-[1.55] text-[var(--ui-soft)]">
                   {turn.text?.trim() || (
-                    <span className="italic text-[var(--ui-faint)]">[no text]</span>
+                    <span className="italic text-muted-foreground">[no text]</span>
                   )}
                 </p>
                 {turn.created_at && (
-                  <span className="flex-none font-mono text-[11px] text-[var(--ui-faint)]">
+                  <span className="flex-none font-mono text-[12px] text-muted-foreground">
                     {fmtClock(turn.created_at)}
                   </span>
                 )}
@@ -356,7 +327,7 @@ function TranscriptPanel({ turns, isLoading }: { turns: TranscriptTurn[]; isLoad
           })}
         </ol>
       )}
-    </GlassCard>
+    </SectionCard>
   );
 }
 
@@ -375,22 +346,22 @@ function IntegrityPanel({
   const flaggedSeconds = summary?.flagged_seconds ?? {};
   const types = Object.keys(byType);
   const timeline = events ?? [];
+  const timelineKey = useScopedPersistKey('interview-integrity-timeline');
+  // The newest event by its own time, whatever order the list arrives in.
+  const newestEvent = timeline.reduce<IntegrityEventItem | null>(
+    (n, ev) => (n === null || ev.started_at > n.started_at ? ev : n),
+    null,
+  );
 
   return (
-    <GlassCard className="p-5">
-      <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-        <ShieldCheck size={16} className="text-[var(--ui-ok)]" aria-hidden="true" />
-        Proctoring
-      </h3>
-
-      <p className="mb-4 text-[12px] text-muted-foreground">
-        AI-assisted flagging for human review — not an automated decision.
-      </p>
-
+    <SectionCard
+      title="Proctoring"
+      icon={ShieldCheck}
+      description="AI-assisted flagging for human review — not an automated decision."
+      className="h-full"
+    >
       {score === null || score === undefined ? (
-        <p className="text-[13px] text-muted-foreground">
-          Proctoring was not enabled for this session.
-        </p>
+        <EmptyState icon={ShieldCheck} title="Proctoring was not enabled for this session." />
       ) : (
         <>
           <div className="mb-4 flex items-baseline gap-2">
@@ -404,7 +375,10 @@ function IntegrityPanel({
           </div>
 
           {types.length === 0 ? (
-            <p className="text-[13px] text-[var(--ui-ok)]">No integrity flags were raised. ✓</p>
+            <p className="flex items-center gap-1.5 text-[13.5px] text-foreground">
+              <CheckCircle2 size={15} className="text-[var(--ui-ok)]" aria-hidden="true" />
+              No integrity flags were raised.
+            </p>
           ) : (
             <div className="flex flex-col gap-2.5" aria-label="Integrity flags">
               {types.map((t) => (
@@ -417,10 +391,10 @@ function IntegrityPanel({
                     className="flex-none text-[var(--ui-warn)]"
                     aria-hidden="true"
                   />
-                  <span className="flex-1 text-[12.5px] text-[var(--ui-soft)]">
+                  <span className="flex-1 text-[13px] text-[var(--ui-soft)]">
                     {INTEGRITY_LABELS[t] ?? t}
                   </span>
-                  <span className="font-mono text-[11px] text-[var(--ui-faint)] tabular-nums">
+                  <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
                     {byType[t]}×{flaggedSeconds[t] ? ` · ${flaggedSeconds[t]}s` : ''}
                   </span>
                 </div>
@@ -429,62 +403,48 @@ function IntegrityPanel({
           )}
 
           {timeline.length > 0 && (
-            <div className="pt-3">
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">
-                Event timeline
-              </p>
-              <ul
-                className="space-y-1 max-h-64 overflow-y-auto"
+            <Collapsible
+              title="Event timeline"
+              headingLevel="h3"
+              count={timeline.length}
+              noun="event"
+              latest={
+                newestEvent
+                  ? `${INTEGRITY_LABELS[newestEvent.event_type] ?? newestEvent.event_type} at ${fmtClock(newestEvent.started_at)}`
+                  : undefined
+              }
+              persistKey={timelineKey}
+              className="mt-3"
+              data-testid="integrity-timeline"
+            >
+              <ProgressiveList
+                items={timeline}
+                initial={5}
+                noun="events"
+                getKey={(ev, idx) => `${ev.started_at}-${idx}`}
+                className="space-y-1"
                 aria-label="Integrity event timeline"
-              >
-                {timeline.map((ev, idx) => (
-                  <li
-                    key={idx}
-                    className="flex items-center justify-between gap-2 rounded-[10px] bg-[var(--ui-inset-soft)] px-2.5 py-1.5 text-[11.5px]"
-                  >
+                renderItem={(ev) => (
+                  <li className="flex items-center justify-between gap-2 rounded-[10px] bg-[var(--ui-inset-soft)] px-2.5 py-1.5 text-[12px]">
                     <span className="flex items-center gap-2 text-[var(--ui-soft)]">
-                      <span className="font-mono text-[var(--ui-faint)] tabular-nums">
+                      <span className="font-mono text-muted-foreground tabular-nums">
                         {fmtClock(ev.started_at)}
                       </span>
                       {INTEGRITY_LABELS[ev.event_type] ?? ev.event_type}
                     </span>
                     {ev.duration_seconds != null && (
-                      <span className="font-mono text-[var(--ui-faint)] tabular-nums">
+                      <span className="font-mono text-muted-foreground tabular-nums">
                         {ev.duration_seconds}s
                       </span>
                     )}
                   </li>
-                ))}
-              </ul>
-            </div>
+                )}
+              />
+            </Collapsible>
           )}
         </>
       )}
-    </GlassCard>
-  );
-}
-
-// ── Meta grid item ─────────────────────────────────────────────────────────────
-
-function MetaItem({
-  icon,
-  label,
-  value,
-}: {
-  icon: ReactNode;
-  label: string;
-  value: ReactNode;
-}) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-[9px] bg-[var(--ui-inset-strong)] text-[var(--ui-faint)] mt-0.5">
-        {icon}
-      </div>
-      <div className="min-w-0">
-        <p className="text-[11px] font-medium uppercase tracking-[0.5px] text-[var(--ui-faint)]">{label}</p>
-        <p className="mt-0.5 text-[13px] text-[var(--ui-soft)]">{value}</p>
-      </div>
-    </div>
+    </SectionCard>
   );
 }
 
@@ -492,11 +452,17 @@ function MetaItem({
 
 function DetailSkeleton() {
   return (
-    <div className="space-y-5">
-      <Skeleton className="h-8 w-48 rounded bg-[var(--ui-inset)]" />
-      <Skeleton className="h-40 w-full rounded-[24px] bg-[var(--ui-inset)]" />
-      <Skeleton className="h-64 w-full rounded-[24px] bg-[var(--ui-inset)]" />
-      <Skeleton className="h-32 w-full rounded-[24px] bg-[var(--ui-inset)]" />
+    <div className="space-y-5" aria-busy="true" aria-label="Loading interview">
+      <div className="flex items-center gap-4">
+        <Skeleton className="h-[52px] w-[52px] rounded-full" />
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-56" />
+          <Skeleton className="h-4 w-72" />
+        </div>
+      </div>
+      <Skeleton className="h-40 w-full rounded-card" />
+      <Skeleton className="h-64 w-full rounded-card" />
+      <Skeleton className="h-32 w-full rounded-card" />
     </div>
   );
 }
@@ -520,10 +486,7 @@ export default function AdminInterviewDetail() {
   });
 
   // Live transcript query (queryKey ['admin','transcript',sessionId])
-  const {
-    data: transcriptData,
-    isLoading: transcriptLoading,
-  } = useQuery({
+  const { data: transcriptData, isLoading: transcriptLoading } = useQuery({
     queryKey: ['admin', 'transcript', sessionId],
     queryFn: () => getInterviewTranscript(sessionId!),
     enabled: Boolean(sessionId),
@@ -534,24 +497,24 @@ export default function AdminInterviewDetail() {
 
   useEffect(() => {
     if (isError) {
-      toast.error(
-        error instanceof Error ? error.message : 'Failed to load interview detail.',
-      );
+      toast.error(error instanceof Error ? error.message : 'Failed to load interview detail.');
     }
   }, [isError, error]);
+
+  const crumbs = (
+    <Breadcrumbs
+      items={[{ label: 'Interviews', to: '/admin/interviews' }, { label: 'Interview' }]}
+    />
+  );
 
   // ── Loading ──
 
   if (isLoading) {
     return (
-      <motion.div initial="hidden" animate="visible" variants={stagger} className="space-y-6">
-        <motion.div variants={fadeUp}>
-          <Skeleton className="h-9 w-48 rounded bg-[var(--ui-inset)]" />
-        </motion.div>
-        <motion.div variants={fadeUp}>
-          <DetailSkeleton />
-        </motion.div>
-      </motion.div>
+      <Page width="default">
+        {crumbs}
+        <DetailSkeleton />
+      </Page>
     );
   }
 
@@ -559,21 +522,30 @@ export default function AdminInterviewDetail() {
 
   if (isError || !data) {
     return (
-      <div
-        role="alert"
-        className="flex flex-col items-center justify-center py-24 gap-4 text-center"
-      >
-        <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[rgba(230,113,79,0.14)]">
-          <AlertCircle className="h-6 w-6 text-[var(--ui-danger)]" aria-hidden="true" />
+      <Page width="default">
+        {crumbs}
+        <div role="alert">
+          <SectionCard title="Interview not found">
+            <EmptyState
+              size="page"
+              icon={AlertCircle}
+              title="This interview could not be loaded"
+              description={
+                error instanceof Error ? error.message : 'The session could not be loaded.'
+              }
+              action={
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => void navigate('/admin/interviews')}
+                >
+                  Back to Interviews
+                </Button>
+              }
+            />
+          </SectionCard>
         </div>
-        <p className="text-[15px] font-semibold text-foreground">Interview not found</p>
-        <p className="text-[13px] text-muted-foreground">
-          {error instanceof Error ? error.message : 'The session could not be loaded.'}
-        </p>
-        <Pill variant="ghost" onClick={() => void navigate('/admin/interviews')}>
-          Back to Interviews
-        </Pill>
-      </div>
+      </Page>
     );
   }
 
@@ -585,136 +557,70 @@ export default function AdminInterviewDetail() {
   const ringScore = sc?.composite_score != null ? Math.round(sc.composite_score * 10) : 0;
 
   return (
-    <motion.div
-      initial="hidden"
-      animate="visible"
-      variants={stagger}
-      className="mx-auto max-w-[1180px] space-y-5"
-    >
-      {/* Back nav */}
-      <motion.div variants={fadeUp}>
-        <button
-          type="button"
-          onClick={() => void navigate('/admin/interviews')}
-          className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
-          aria-label="Back to interview list"
-        >
-          <ArrowLeft size={15} aria-hidden="true" />
-          All interviews
-        </button>
-      </motion.div>
-
+    <Page width="default">
       {/* Candidate header */}
-      <motion.div
-        variants={fadeUp}
-        className="flex flex-wrap items-center justify-between gap-4"
-      >
-        <div className="flex items-center gap-4">
-          <Avatar
-            initials={initialsOf(data.candidate_name, data.candidate_email)}
-            gradient={gradientFor(data.session_id)}
-            size={52}
-          />
-          <div>
-            <h1 className="text-[24px] font-semibold tracking-[-0.8px] text-foreground">
-              {data.candidate_name ?? data.candidate_email}
-            </h1>
-            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[13px] text-muted-foreground">
+      <div className="flex items-start gap-4">
+        <Avatar
+          initials={initialsOf(data.candidate_name, data.candidate_email)}
+          gradient={gradientFor(data.session_id)}
+          size={52}
+          className="mt-1 hidden sm:inline-flex"
+        />
+        <PageHeader
+          className="mb-0 min-w-0 flex-1"
+          breadcrumbs={crumbs}
+          title={data.candidate_name ?? data.candidate_email}
+          description={
+            <span className="flex flex-wrap items-center gap-1.5 text-[14px]">
               {data.job_title && <span>{data.job_title}</span>}
-              {data.job_title && <span>·</span>}
+              {data.job_title && <span aria-hidden="true">·</span>}
               <span>{languageLabel(data.language)}</span>
-              <span>·</span>
-              <span className="font-mono text-[11px]">{data.session_id}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <StatusTag tone={tone}>{statusLabel}</StatusTag>
-          {/* PDF export — disabled; feedback_billing not yet wired to admin_ops */}
-          <Pill
-            variant="ghost"
-            className="px-4 py-2.5 opacity-50 cursor-not-allowed"
-            disabled
-            aria-label="Export PDF — coming soon"
-          >
-            <Download size={15} aria-hidden="true" />
-            Export
-          </Pill>
-        </div>
-      </motion.div>
+              <span aria-hidden="true">·</span>
+              <span className="break-all font-mono text-[12px]">{data.session_id}</span>
+            </span>
+          }
+          actions={<StatusTag tone={tone}>{statusLabel}</StatusTag>}
+        />
+      </div>
 
       {/* Session metadata grid */}
-      <motion.div variants={fadeUp}>
-        <GlassCard className="p-6">
-          <h3 className="mb-4 text-[15px] font-semibold text-foreground">Session Details</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <MetaItem
-              icon={<Briefcase className="h-4 w-4" />}
-              label="Role"
-              value={data.job_title ?? '—'}
-            />
-            <MetaItem
-              icon={<Globe className="h-4 w-4" />}
-              label="Language"
-              value={languageLabel(data.language)}
-            />
-            <MetaItem
-              icon={<Clock className="h-4 w-4" />}
-              label="Duration"
-              value={formatDuration(data.duration_seconds)}
-            />
-            <MetaItem
-              icon={<CalendarDays className="h-4 w-4" />}
-              label="Started"
-              value={data.started_at ? formatDate(data.started_at) : '—'}
-            />
-            <MetaItem
-              icon={<CalendarDays className="h-4 w-4" />}
-              label="Completed"
-              value={data.completed_at ? formatDate(data.completed_at) : '—'}
-            />
-            <MetaItem
-              icon={<User className="h-4 w-4" />}
-              label="Preferred Language"
-              value={
-                data.candidate_preferred_language
-                  ? languageLabel(data.candidate_preferred_language)
-                  : '—'
-              }
-            />
-          </div>
-        </GlassCard>
-      </motion.div>
+      <SectionCard title="Session Details">
+        <DataList
+          columns={3}
+          items={[
+            { label: 'Role', value: data.job_title ?? '—' },
+            { label: 'Language', value: languageLabel(data.language) },
+            { label: 'Duration', value: formatDuration(data.duration_seconds) },
+            { label: 'Started', value: data.started_at ? formatDate(data.started_at) : '—' },
+            { label: 'Completed', value: data.completed_at ? formatDate(data.completed_at) : '—' },
+            {
+              label: 'Preferred Language',
+              value: data.candidate_preferred_language
+                ? languageLabel(data.candidate_preferred_language)
+                : '—',
+            },
+          ]}
+        />
+      </SectionCard>
 
       {/* Scorecard section */}
       {sc ? (
         <>
           {/* Score ring + competency breakdown — 3-col grid */}
-          <motion.div
-            variants={fadeUp}
-            className="grid grid-cols-1 gap-5 lg:grid-cols-3"
-          >
-            {/* ScoreRing: design is 0–100; we pass score*10 */}
-            <GlassCard
-              feature
-              className="flex flex-col items-center justify-center gap-3 py-7 text-center"
-            >
-              <ScoreRing
-                score={ringScore}
-                size={140}
-                label="overall"
-              />
-              <p className="text-[12px] text-muted-foreground">
-                {sc.composite_score != null
-                  ? `${fmtScore(sc.composite_score)} / 10`
-                  : 'Not scored'}
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+            {/* ScoreRing takes 0–100; live scores are 0–10, so pass score*10 */}
+            <GlassCard className="flex flex-col items-center justify-center gap-3 py-7 text-center">
+              <ScoreRing score={ringScore} size={140} label="overall" />
+              <p className="text-[13px] text-muted-foreground">
+                {sc.composite_score != null ? `${fmtScore(sc.composite_score)} / 10` : 'Not scored'}
               </p>
-              <StatusTag tone={tone}>{statusLabel}</StatusTag>
             </GlassCard>
 
-            {/* Competency breakdown bars — lg:col-span-2 */}
-            <GlassCard className="p-5 lg:col-span-2">
-              <h3 className="mb-4 text-[15px] font-semibold text-foreground">Competency breakdown</h3>
+            <SectionCard
+              title="Competency breakdown"
+              description="Select any aspect to see why it received this score."
+              className="lg:col-span-2"
+            >
               <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                 {AXIS_ORDER.map((key) => (
                   <ScoreBarRow
@@ -725,137 +631,98 @@ export default function AdminInterviewDetail() {
                   />
                 ))}
               </div>
-              <p className="mt-3 text-[12px] text-muted-foreground">
-                Click any aspect to see why it received this score.
-              </p>
-            </GlassCard>
-          </motion.div>
+            </SectionCard>
+          </div>
 
-          {/* Transcript (left, lg:col-span-2) + Proctoring (right) — design layout */}
-          <motion.div
-            variants={fadeUp}
-            className="grid grid-cols-1 gap-5 lg:grid-cols-3"
-          >
+          {/* Transcript (left, lg:col-span-2) + Proctoring (right) */}
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
             {/* Transcript — live, backed by getInterviewTranscript */}
             <div className="lg:col-span-2">
-              <TranscriptPanel
-                turns={transcriptData?.turns ?? []}
-                isLoading={transcriptLoading}
-              />
+              <TranscriptPanel turns={transcriptData?.turns ?? []} isLoading={transcriptLoading} />
             </div>
 
-            {/* Integrity / proctoring */}
             <IntegrityPanel
               score={data.integrity_score}
               summary={data.proctoring_summary}
               events={data.integrity_events}
             />
-          </motion.div>
+          </div>
 
           {/* Radar chart */}
-          <motion.div variants={fadeUp}>
-            <GlassCard className="p-5">
-              <h3 className="mb-1 text-[15px] font-semibold text-foreground">Score Radar</h3>
-              <p className="mb-3 text-[12px] text-muted-foreground">
-                Performance across all four competency axes (0–10).
-              </p>
-              <ScorecardRadar scorecard={sc} />
-            </GlassCard>
-          </motion.div>
+          <SectionCard
+            title="Score Radar"
+            description="Performance across all four competency axes (0–10)."
+          >
+            <ScorecardRadar scorecard={sc} />
+          </SectionCard>
 
           {/* Strengths */}
           {sc.strengths && sc.strengths.length > 0 && (
-            <motion.div variants={fadeUp}>
-              <GlassCard className="p-5">
-                <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-                  <CheckCircle2 size={16} className="text-[var(--ui-ok)]" aria-hidden="true" />
-                  Key Strengths
-                </h3>
-                <ul className="space-y-2.5" aria-label="Key strengths">
-                  {sc.strengths.map((s, idx) => (
-                    <li key={idx} className="flex gap-2.5">
-                      <CheckCircle2
-                        className="h-4 w-4 text-[var(--ui-ok)] shrink-0 mt-0.5"
-                        aria-hidden="true"
-                      />
-                      <p className="text-[13.5px] leading-[1.55] text-[var(--ui-soft)]">{s}</p>
-                    </li>
-                  ))}
-                </ul>
-              </GlassCard>
-            </motion.div>
+            <SectionCard title="Key Strengths">
+              <ul className="space-y-2.5" aria-label="Key strengths">
+                {sc.strengths.map((s, idx) => (
+                  <li key={idx} className="flex gap-2.5">
+                    <CheckCircle2
+                      className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-ok)]"
+                      aria-hidden="true"
+                    />
+                    <p className="text-[14px] leading-[1.55] text-[var(--ui-soft)]">{s}</p>
+                  </li>
+                ))}
+              </ul>
+            </SectionCard>
           )}
 
           {/* Improvements */}
           {sc.improvements && sc.improvements.length > 0 && (
-            <motion.div variants={fadeUp}>
-              <GlassCard className="p-5">
-                <h3 className="mb-4 flex items-center gap-2 text-[15px] font-semibold text-foreground">
-                  <TrendingUp size={16} className="text-[var(--ui-warn)]" aria-hidden="true" />
-                  Areas for Improvement
-                </h3>
-                <ul className="space-y-2.5" aria-label="Areas for improvement">
-                  {sc.improvements.map((item, idx) => (
-                    <li key={idx} className="flex gap-2.5">
-                      <TrendingUp
-                        className="h-4 w-4 text-[var(--ui-warn)] shrink-0 mt-0.5"
-                        aria-hidden="true"
-                      />
-                      <p className="text-[13.5px] leading-[1.55] text-[var(--ui-soft)]">
-                        <span className="font-semibold text-foreground">{item.area}:</span>{' '}
-                        {item.suggestion}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              </GlassCard>
-            </motion.div>
+            <SectionCard title="Areas for Improvement">
+              <ul className="space-y-2.5" aria-label="Areas for improvement">
+                {sc.improvements.map((item, idx) => (
+                  <li key={idx} className="flex gap-2.5">
+                    <TrendingUp
+                      className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]"
+                      aria-hidden="true"
+                    />
+                    <p className="text-[14px] leading-[1.55] text-[var(--ui-soft)]">
+                      <span className="font-semibold text-foreground">{item.area}:</span>{' '}
+                      {item.suggestion}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </SectionCard>
           )}
 
           {/* Summary */}
           {sc.summary && (
-            <motion.div variants={fadeUp}>
-              <GlassCard className="p-5">
-                <h3 className="mb-3 text-[15px] font-semibold text-foreground">Summary</h3>
-                <p className="text-[13.5px] leading-[1.6] text-[var(--ui-soft)]">{sc.summary}</p>
-              </GlassCard>
-            </motion.div>
+            <SectionCard title="Summary">
+              <p className="text-[14px] leading-[1.6] text-[var(--ui-soft)]">{sc.summary}</p>
+            </SectionCard>
           )}
         </>
       ) : (
         /* No scorecard yet — transcript + proctoring still shown */
         <>
-          <motion.div variants={fadeUp}>
-            <GlassCard className="flex flex-col items-center justify-center py-14 text-center gap-3">
-              <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-[var(--ui-inset)]">
-                <TrendingUp className="h-6 w-6 text-[var(--ui-faint)]" aria-hidden="true" />
-              </div>
-              <p className="text-[15px] font-semibold text-foreground">No scorecard yet</p>
-              <p className="text-[13px] text-muted-foreground">
-                This session has not been scored. Scoring happens when the session completes.
-              </p>
-            </GlassCard>
-          </motion.div>
+          <SectionCard title="Scorecard">
+            <EmptyState
+              icon={TrendingUp}
+              title="No scorecard yet"
+              description="This session has not been scored. Scoring happens when the session completes."
+            />
+          </SectionCard>
 
-          {/* Transcript + proctoring in design 3-col layout even without scorecard */}
-          <motion.div
-            variants={fadeUp}
-            className="grid grid-cols-1 gap-5 lg:grid-cols-3"
-          >
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <TranscriptPanel
-                turns={transcriptData?.turns ?? []}
-                isLoading={transcriptLoading}
-              />
+              <TranscriptPanel turns={transcriptData?.turns ?? []} isLoading={transcriptLoading} />
             </div>
             <IntegrityPanel
               score={data.integrity_score}
               summary={data.proctoring_summary}
               events={data.integrity_events}
             />
-          </motion.div>
+          </div>
         </>
       )}
-    </motion.div>
+    </Page>
   );
 }

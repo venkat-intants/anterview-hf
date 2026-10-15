@@ -104,6 +104,31 @@ describe('Login page', () => {
     expect(screen.getByRole('link', { name: /create one/i })).toHaveAttribute('href', '/register');
   });
 
+  it('toggles password visibility without submitting the form', async () => {
+    const user = userEvent.setup();
+    renderLogin();
+    const input = screen.getByLabelText(/password/i);
+    expect(input).toHaveAttribute('type', 'password');
+    const toggle = screen.getByRole('button', { name: /^show$/i });
+    expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await user.click(toggle);
+    expect(input).toHaveAttribute('type', 'text');
+    expect(screen.getByRole('button', { name: /^hide$/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByText(/enter a valid email address/i)).not.toBeInTheDocument();
+  });
+
+  it('explains why Google sign-in is disabled until consent is given', async () => {
+    const user = userEvent.setup();
+    renderLogin();
+    const google = screen.getByRole('button', { name: /sign in with google/i });
+    const consent = screen.getByRole('checkbox', { name: /i agree to the terms and dpdp/i });
+    expect(google).toBeDisabled();
+    expect(consent).toHaveAccessibleDescription(/tick the box above/i);
+    await user.click(consent);
+    expect(google).toBeEnabled();
+    expect(screen.queryByText(/tick the box above/i)).not.toBeInTheDocument();
+  });
+
   it('renders a "Sign in with Google" button (B-035)', () => {
     renderLogin();
     expect(screen.getByRole('button', { name: /sign in with google/i })).toBeInTheDocument();

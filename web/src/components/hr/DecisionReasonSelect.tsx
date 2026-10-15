@@ -22,14 +22,14 @@ export function DecisionReasonSelect({
 }) {
   return (
     <div>
-      <label htmlFor={id} className="block text-[12px] text-[var(--ui-soft)]">
+      <label htmlFor={id} className="block text-[13px] font-semibold text-foreground">
         {label}
       </label>
       <select
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+        className="mt-1 h-10 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
       >
         <option value="">Choose a reason…</option>
         {reasons.map((r) => (

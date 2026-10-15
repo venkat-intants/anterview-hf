@@ -3,6 +3,7 @@
 // server-side by the HR's company — the frontend just consumes its own list.
 
 import { apiGet, apiPost, clientFetch, uploadWithProgress } from './client';
+import { pathId } from './pathId';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -75,7 +76,7 @@ export function listApplicants(params: ListApplicantsParams = {}): Promise<Appli
 
 /** Lazy one-sentence explanation of why a candidate matches the search phrase. */
 export function whyMatch(id: string, q: string): Promise<{ reason: string }> {
-  return apiGet<{ reason: string }>(`/hr/applicants/${id}/why-match?q=${encodeURIComponent(q)}`);
+  return apiGet<{ reason: string }>(`/hr/applicants/${pathId(id)}/why-match?q=${encodeURIComponent(q)}`);
 }
 
 export interface ReindexResult {
@@ -95,7 +96,7 @@ export function reindexApplicants(): Promise<ReindexResult> {
 }
 
 export function getApplicant(id: string): Promise<Applicant> {
-  return apiGet<Applicant>(`/hr/applicants/${id}`);
+  return apiGet<Applicant>(`/hr/applicants/${pathId(id)}`);
 }
 
 /**
@@ -164,7 +165,7 @@ export function bulkUploadApplicants(
 }
 
 export function getUploadProgress(batchId: string): Promise<UploadProgress> {
-  return apiGet<UploadProgress>(`/hr/uploads/${batchId}`);
+  return apiGet<UploadProgress>(`/hr/uploads/${pathId(batchId)}`);
 }
 
 /** Recent bulk uploads, newest first — for one opening when given. */
@@ -192,7 +193,7 @@ export function updateApplicantStatus(
   reason?: string,
   reasonCode?: string,
 ): Promise<Applicant> {
-  return clientFetch<Applicant>(`${API_BASE}/hr/applicants/${id}`, {
+  return clientFetch<Applicant>(`${API_BASE}/hr/applicants/${pathId(id)}`, {
     method: 'PATCH',
     body: JSON.stringify({
       status,
@@ -233,11 +234,11 @@ export interface Application {
 
 /** Every live application this person holds, oldest first. */
 export function listApplications(applicantId: string): Promise<Application[]> {
-  return apiGet<Application[]>(`/hr/applicants/${applicantId}/applications`);
+  return apiGet<Application[]>(`/hr/applicants/${pathId(applicantId)}/applications`);
 }
 
 export function rescoreApplicant(id: string): Promise<Applicant> {
-  return apiPost<Applicant>(`/hr/applicants/${id}/rescore`, {});
+  return apiPost<Applicant>(`/hr/applicants/${pathId(id)}/rescore`, {});
 }
 
 /* ── Per-round scores (C8 two-layer scoring) ────────────────────────────── */
@@ -284,5 +285,5 @@ export function listRoundResults(
   enrolmentId?: string | null,
 ): Promise<RoundResult[]> {
   const q = enrolmentId ? `?enrolment_id=${encodeURIComponent(enrolmentId)}` : '';
-  return apiGet<RoundResult[]>(`/hr/applicants/${applicantId}/round-results${q}`);
+  return apiGet<RoundResult[]>(`/hr/applicants/${pathId(applicantId)}/round-results${q}`);
 }

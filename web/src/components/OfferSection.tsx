@@ -21,11 +21,17 @@ import {
 import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { FileText } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 
-const inputCls =
-  'mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
-const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
+// Same hairline-divided, 15px-titled block the candidate drawer uses for every
+// section, so the offer reads as one more of them.
+const SECTION = 'mt-6 border-t border-border pt-5';
+const SECTION_TITLE = 'text-[15px] font-bold text-foreground';
+const labelCls = 'text-[13px] font-semibold text-foreground';
+const selectCls =
+  'mt-1.5 h-11 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 const OFFER_TONE: Record<OfferStatus, TagTone> = {
   draft: 'neutral',
@@ -77,7 +83,7 @@ function CreateOfferForm({
   const ready = Number(baseSalary) > 0 && currency.trim().length === 3;
 
   return (
-    <div className="mt-3 flex flex-col gap-2.5 rounded-[10px] border border-border p-3">
+    <div className="mt-3 flex flex-col gap-4 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
       <div>
         <label htmlFor={`${uid}-template`} className={labelCls}>
           Template (optional)
@@ -94,7 +100,7 @@ function CreateOfferForm({
             const tpl = (templates.data ?? []).find((x) => x.id === id);
             if (tpl?.currency) setCurrency(tpl.currency);
           }}
-          className={inputCls}
+          className={selectCls}
         >
           <option value="">No template — start from scratch</option>
           {(templates.data ?? []).map((tpl) => (
@@ -104,46 +110,46 @@ function CreateOfferForm({
           ))}
         </select>
       </div>
-      <div className="grid grid-cols-2 gap-2.5">
+      <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
         <div>
           <label htmlFor={`${uid}-salary`} className={labelCls}>
             Base salary
           </label>
-          <input
+          <Input
             id={`${uid}-salary`}
             type="number"
             min={1}
             value={baseSalary}
             onChange={(e) => setBaseSalary(e.target.value)}
             placeholder="e.g. 1200000"
-            className={inputCls}
+            className="mt-1.5"
           />
         </div>
         <div>
           <label htmlFor={`${uid}-currency`} className={labelCls}>
             Currency
           </label>
-          <input
+          <Input
             id={`${uid}-currency`}
             value={currency}
             onChange={(e) => setCurrency(e.target.value.toUpperCase())}
             maxLength={3}
-            className={inputCls}
+            className="mt-1.5"
           />
         </div>
       </div>
-      <p className="text-[11.5px] text-[var(--ui-faint)]">
+      <p className="text-[12.5px] text-muted-foreground">
         Job title defaults to {jobTitle ?? 'this opening'}. Everything else — dates, benefits, terms
         — is filled in on the offer itself.
       </p>
-      <button
+      <Button
         type="button"
         disabled={!ready || createMut.isPending}
         onClick={() => createMut.mutate()}
-        className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+        className="self-start"
       >
         {createMut.isPending ? 'Creating…' : 'Create offer'}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -171,25 +177,23 @@ export default function OfferSection({
   const canCreate = applicationStatus === 'hired';
 
   return (
-    <div className="mt-5">
+    <div className={SECTION}>
       <div className="flex items-center justify-between gap-2">
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          className="flex items-center gap-1.5 text-[13px] font-medium text-foreground"
-        >
-          <FileText size={13} aria-hidden="true" />
-          Offer{rows.length > 0 ? ` (${rows.length})` : ''}
-        </button>
-        {canCreate ? (
+        <h3 className={SECTION_TITLE}>
           <button
             type="button"
-            onClick={() => setCreating((v) => !v)}
-            className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="-ml-2 flex min-h-10 items-center gap-1.5 rounded-full px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
-            {creating ? 'Close' : 'Create offer'}
+            <FileText size={14} aria-hidden="true" />
+            Offer{rows.length > 0 ? ` (${rows.length})` : ''}
           </button>
+        </h3>
+        {canCreate ? (
+          <Button type="button" variant="outline" onClick={() => setCreating((v) => !v)}>
+            {creating ? 'Close' : 'Create offer'}
+          </Button>
         ) : null}
       </div>
 
@@ -204,13 +208,21 @@ export default function OfferSection({
           ) : null}
 
           {offers.isLoading ? (
-            <p className="mt-2 text-[12.5px] text-muted-foreground">Loading…</p>
+            <div className="mt-2 flex flex-col gap-2" aria-busy="true">
+              <Skeleton className="h-12 rounded-[12px]" />
+              <Skeleton className="h-12 rounded-[12px]" />
+            </div>
           ) : offers.isError ? (
-            <p className="mt-2 text-[12.5px] text-muted-foreground">
-              Could not load this application&apos;s offer.
-            </p>
+            <div role="alert" className="mt-2 flex flex-wrap items-center gap-3">
+              <p className="text-[13px] text-muted-foreground">
+                Could not load this application&apos;s offer.
+              </p>
+              <Button type="button" variant="outline" onClick={() => void offers.refetch()}>
+                Try again
+              </Button>
+            </div>
           ) : rows.length === 0 ? (
-            <p className="mt-2 text-[12.5px] text-muted-foreground">
+            <p className="mt-2 text-[13px] text-muted-foreground">
               {canCreate
                 ? 'No offer yet for this application.'
                 : 'An offer can be created once this application is recorded as a hire.'}
@@ -221,9 +233,9 @@ export default function OfferSection({
                 <li key={o.id}>
                   <Link
                     to={`/hr/offers/${o.id}`}
-                    className="flex items-center justify-between gap-2 rounded-[10px] border border-border p-3 hover:border-[var(--ui-line-strong)]"
+                    className="flex min-h-12 items-center justify-between gap-3 rounded-[16px] border border-border p-3.5 hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                   >
-                    <span className="min-w-0 truncate text-[12.5px] text-foreground">
+                    <span className="min-w-0 truncate text-[13px] text-foreground">
                       {o.job_title}
                       {o.currency && o.base_salary
                         ? ` · ${o.currency} ${Number(o.base_salary).toLocaleString()}`

@@ -27,13 +27,20 @@ import {
   type Requisition,
 } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
+import { queryKeys } from '@/lib/queryKeys';
 import { cn } from '@/lib/utils';
-import { GlassCard, Pill } from '@/design/components/primitives';
+import { SectionCard } from '@/design/components/page';
 import { AlertCircle, Plus, X } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
-const INPUT =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none';
-const LABEL = 'mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]';
+// Native <select> in the same look as the shared Input.
+const SELECT =
+  'h-10 w-full rounded-[10px] border border-input bg-card px-3.5 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
+const LABEL = 'mb-1.5 block text-[13px] font-semibold text-foreground';
+// A hairline-divided group inside the card, titled like the drawer's sections.
+const GROUP = 'mt-6 border-t border-border pt-5';
+const GROUP_TITLE = 'mb-3 text-[15px] font-bold text-foreground';
 
 /** A repeatable list of short strings — responsibilities, skills. */
 function ListField({
@@ -76,23 +83,23 @@ function ListField({
           {list.map((item, i) => (
             <li
               key={`${item}-${i}`}
-              className="flex items-start justify-between gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-1.5"
+              className="flex items-center justify-between gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] py-0.5 pl-3.5 pr-1"
             >
-              <span className="text-[13px] text-foreground">{item}</span>
+              <span className="min-w-0 break-words py-1.5 text-[14px] text-foreground">{item}</span>
               <button
                 type="button"
                 aria-label={`Remove ${item}`}
                 onClick={() => onChange(list.filter((_, j) => j !== i))}
-                className="shrink-0 text-muted-foreground hover:text-[var(--ui-danger)]"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
-                <X size={13} aria-hidden="true" />
+                <X size={16} aria-hidden="true" />
               </button>
             </li>
           ))}
         </ul>
       ) : null}
       <div className="flex gap-2">
-        <input
+        <Input
           id={id}
           value={draft}
           disabled={full}
@@ -104,17 +111,18 @@ function ListField({
             }
           }}
           placeholder={full ? 'Twenty is the limit' : hint}
-          className={INPUT}
+          className="min-w-0 flex-1"
         />
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="icon"
           onClick={add}
           disabled={full || !draft.trim()}
-          className="shrink-0 rounded-[10px] border border-border px-3 text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
           aria-label={`Add to ${label}`}
         >
-          <Plus size={14} aria-hidden="true" />
-        </button>
+          <Plus aria-hidden="true" />
+        </Button>
       </div>
     </div>
   );
@@ -155,7 +163,10 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
         nice_to_have_skills: form.nice_to_have_skills ?? [],
       }),
     onSuccess: (updated) => {
-      client.setQueryData(['requisition', requisition.id], updated);
+      client.setQueryData(queryKeys.requisition(requisition.id), updated);
+      // Saving the posting publishes a JD version, so the setup rail's JD tick
+      // has to be re-read.
+      void client.invalidateQueries({ queryKey: queryKeys.jdHistory(requisition.id) });
       toast.success('Posting updated.');
     },
     onError: (err: unknown) =>
@@ -165,156 +176,164 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
   const num = (v: string): number | null => (v === '' ? null : Number(v));
 
   return (
-    <section aria-labelledby="posting-heading" className="flex flex-col gap-4">
-      <div>
-        <h2 id="posting-heading" className="text-[16px] font-semibold text-foreground">
-          The posting
-        </h2>
-        <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-muted-foreground">
-          What a candidate sees on the job board and before applying. Everything here
-          is optional — leave a field blank and it simply is not shown.
-        </p>
+    <SectionCard
+      title="The posting"
+      description="What a candidate sees on the job board and before applying. Everything here is optional — leave a field blank and it simply is not shown."
+    >
+      <h3 className={GROUP_TITLE}>Basics</h3>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label htmlFor="p-department" className={LABEL}>
+            Department
+          </label>
+          <Input
+            id="p-department"
+            value={form.department ?? ''}
+            onChange={(e) => set('department', e.target.value || null)}
+            placeholder="Engineering"
+            className="h-10 rounded-[10px]"
+          />
+        </div>
+        <div>
+          <label htmlFor="p-location" className={LABEL}>
+            Location
+          </label>
+          <Input
+            id="p-location"
+            value={form.location ?? ''}
+            onChange={(e) => set('location', e.target.value || null)}
+            placeholder="Bengaluru"
+            className="h-10 rounded-[10px]"
+          />
+        </div>
+        <div>
+          <label htmlFor="p-type" className={LABEL}>
+            Employment type
+          </label>
+          <select
+            id="p-type"
+            value={form.employment_type ?? ''}
+            onChange={(e) =>
+              set('employment_type', (e.target.value || null) as EmploymentType | null)
+            }
+            className={SELECT}
+          >
+            <option value="">Not specified</option>
+            {(Object.keys(EMPLOYMENT_TYPE_LABELS) as EmploymentType[]).map((t) => (
+              <option key={t} value={t}>
+                {EMPLOYMENT_TYPE_LABELS[t]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <span className={LABEL}>Experience (years)</span>
+          <div className="flex items-center gap-2">
+            <Input
+              aria-label="Minimum experience in years"
+              type="number"
+              min={0}
+              max={60}
+              value={form.experience_min_years ?? ''}
+              onChange={(e) => set('experience_min_years', num(e.target.value))}
+              className="h-10 min-w-0 flex-1 rounded-[10px]"
+            />
+            <span className="text-muted-foreground">to</span>
+            <Input
+              aria-label="Maximum experience in years"
+              type="number"
+              min={0}
+              max={60}
+              value={form.experience_max_years ?? ''}
+              onChange={(e) => set('experience_max_years', num(e.target.value))}
+              className="h-10 min-w-0 flex-1 rounded-[10px]"
+            />
+          </div>
+          {experienceError ? (
+            <p
+              role="alert"
+              className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-[var(--ui-danger)]"
+            >
+              <AlertCircle size={13} aria-hidden="true" />
+              {experienceError}
+            </p>
+          ) : null}
+        </div>
       </div>
 
-      <GlassCard className="p-5">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label htmlFor="p-department" className={LABEL}>
-              Department
-            </label>
-            <input
-              id="p-department"
-              value={form.department ?? ''}
-              onChange={(e) => set('department', e.target.value || null)}
-              placeholder="Engineering"
-              className={INPUT}
-            />
-          </div>
-          <div>
-            <label htmlFor="p-location" className={LABEL}>
-              Location
-            </label>
-            <input
-              id="p-location"
-              value={form.location ?? ''}
-              onChange={(e) => set('location', e.target.value || null)}
-              placeholder="Bengaluru"
-              className={INPUT}
-            />
-          </div>
-          <div>
-            <label htmlFor="p-type" className={LABEL}>
-              Employment type
-            </label>
-            <select
-              id="p-type"
-              value={form.employment_type ?? ''}
-              onChange={(e) =>
-                set('employment_type', (e.target.value || null) as EmploymentType | null)
-              }
-              className={INPUT}
-            >
-              <option value="">Not specified</option>
-              {(Object.keys(EMPLOYMENT_TYPE_LABELS) as EmploymentType[]).map((t) => (
-                <option key={t} value={t}>
-                  {EMPLOYMENT_TYPE_LABELS[t]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <span className={LABEL}>Experience (years)</span>
-            <div className="flex items-center gap-2">
-              <input
-                aria-label="Minimum experience in years"
-                type="number"
-                min={0}
-                max={60}
-                value={form.experience_min_years ?? ''}
-                onChange={(e) => set('experience_min_years', num(e.target.value))}
-                className={INPUT}
-              />
-              <span className="text-[var(--ui-faint)]">to</span>
-              <input
-                aria-label="Maximum experience in years"
-                type="number"
-                min={0}
-                max={60}
-                value={form.experience_max_years ?? ''}
-                onChange={(e) => set('experience_max_years', num(e.target.value))}
-                className={INPUT}
-              />
-            </div>
-            {experienceError ? (
-              <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-danger)]">
-                <AlertCircle size={12} aria-hidden="true" />
-                {experienceError}
-              </p>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="mt-4 rounded-[12px] border border-border p-3">
-          <span className={LABEL}>Salary range</span>
-          {/* One row like the experience row above. INPUT carries w-full, so
-              the widths go through cn (tailwind-merge) — concatenated, w-full
-              won and every field took its own line. */}
-          <div className="flex flex-wrap items-center gap-2" data-testid="salary-row">
-            <input
-              aria-label="Salary currency"
-              value={form.salary_currency ?? ''}
-              onChange={(e) => set('salary_currency', e.target.value || null)}
-              placeholder="INR"
-              className={cn(INPUT, 'w-20 shrink-0')}
-            />
-            <input
+      <div className={GROUP}>
+        <h3 className={GROUP_TITLE}>Salary range</h3>
+        {/* One row like the experience row above. The widths go through cn
+            (tailwind-merge) — the shared Input carries w-full, and a plain
+            concatenation let w-full win so every field took its own line. */}
+        {/* Below sm the currency sits above the range (two lines that always
+            fit); from sm up it is one row. The min / to / max trio is its own
+            flex row so it never needs the phone's full width twice. */}
+        <div
+          className="flex flex-col gap-2 sm:flex-row sm:items-center"
+          data-testid="salary-row"
+        >
+          <Input
+            aria-label="Salary currency"
+            value={form.salary_currency ?? ''}
+            onChange={(e) => set('salary_currency', e.target.value || null)}
+            placeholder="INR"
+            className={cn('h-10 w-20 shrink-0 rounded-[10px]')}
+          />
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <Input
               aria-label="Minimum salary"
               type="number"
               min={0}
               value={form.salary_min ?? ''}
               onChange={(e) => set('salary_min', num(e.target.value))}
-              className={cn(INPUT, 'w-auto min-w-[6rem] flex-1')}
+              className={cn('w-auto min-w-0 flex-1')}
             />
-            <span className="shrink-0 text-[var(--ui-faint)]">to</span>
-            <input
+            <span className="shrink-0 text-muted-foreground">to</span>
+            <Input
               aria-label="Maximum salary"
               type="number"
               min={0}
               value={form.salary_max ?? ''}
               onChange={(e) => set('salary_max', num(e.target.value))}
-              className={cn(INPUT, 'w-auto min-w-[6rem] flex-1')}
+              className={cn('w-auto min-w-0 flex-1')}
             />
           </div>
-          {salaryError ? (
-            <p className="mt-1 flex items-center gap-1.5 text-[11.5px] text-[var(--ui-danger)]">
-              <AlertCircle size={12} aria-hidden="true" />
-              {salaryError}
-            </p>
-          ) : null}
-          {/* Recording a band and advertising it are different decisions, and
-              the switch sits beside the fields so that is obvious here rather
-              than discovered on the job board. */}
-          <label className="mt-3 flex cursor-pointer items-start gap-2 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
-            <input
-              type="checkbox"
-              checked={form.salary_visible}
-              onChange={(e) => set('salary_visible', e.target.checked)}
-              className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-[var(--accent)]"
-            />
-            <span>
-              Show this range to candidates.
-              {form.salary_visible ? null : (
-                <span className="text-[var(--ui-faint)]">
-                  {' '}
-                  Off — the range is kept for your planning and never sent to the job
-                  board.
-                </span>
-              )}
-            </span>
-          </label>
         </div>
+        {salaryError ? (
+          <p
+            role="alert"
+            className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-[var(--ui-danger)]"
+          >
+            <AlertCircle size={13} aria-hidden="true" />
+            {salaryError}
+          </p>
+        ) : null}
+        {/* Recording a band and advertising it are different decisions, and
+            the switch sits beside the fields so that is obvious here rather
+            than discovered on the job board. */}
+        <label className="mt-3 flex min-h-10 cursor-pointer items-start gap-2.5 text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
+          <input
+            type="checkbox"
+            checked={form.salary_visible}
+            onChange={(e) => set('salary_visible', e.target.checked)}
+            className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent)]"
+          />
+          <span>
+            Show this range to candidates.
+            {form.salary_visible ? null : (
+              <span className="text-muted-foreground">
+                {' '}
+                Off — the range is kept for your planning and never sent to the job board.
+              </span>
+            )}
+          </span>
+        </label>
+      </div>
 
-        <div className="mt-4 flex flex-col gap-4">
+      <div className={GROUP}>
+        <h3 className={GROUP_TITLE}>The role</h3>
+        <div className="flex flex-col gap-4">
           <ListField
             id="p-responsibilities"
             label="What they will do"
@@ -339,22 +358,21 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
             />
           </div>
         </div>
+      </div>
 
-        <div className="mt-5 flex items-center gap-3">
-          <Pill
-            onClick={() => save.mutate()}
-            disabled={save.isPending || Boolean(experienceError || salaryError)}
-            className="px-5 py-2.5"
-          >
-            {save.isPending ? 'Saving…' : 'Save posting'}
-          </Pill>
-          {experienceError || salaryError ? (
-            <span className="text-[12px] text-muted-foreground">
-              Fix the range above to save.
-            </span>
-          ) : null}
-        </div>
-      </GlassCard>
-    </section>
+      <div className="mt-6 flex flex-wrap items-center gap-3 border-t border-border pt-5">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => save.mutate()}
+          disabled={save.isPending || Boolean(experienceError || salaryError)}
+        >
+          {save.isPending ? 'Saving…' : 'Save posting'}
+        </Button>
+        {experienceError || salaryError ? (
+          <span className="text-[13px] text-muted-foreground">Fix the range above to save.</span>
+        ) : null}
+      </div>
+    </SectionCard>
   );
 }

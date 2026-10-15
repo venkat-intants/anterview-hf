@@ -30,10 +30,17 @@ route accepts 250 MB. A cap BELOW the handler's limit 413s a legitimate upload a
 the edge, so the service logs nothing and the only evidence is the 413 the user
 sees — the same shape of silent failure as the two above.
 
+A fourth: a proxied block with NO cap at all. fastapi buffers the whole request
+body before it solves a route's dependencies, so for ``/consent*``, ``/agent/*``,
+``/notifications*``, ``/admin/*``, ``/users/*/dpdp/*``, ``/api/*`` and ``/ws/*`` the
+only thing bounding what an unauthenticated caller makes the service buffer was the
+absence of a limit (security audit, M2). Every ``reverse_proxy`` block now declares
+a ``request_body { max_size }`` or is named in ``NO_BODY_CAP_EXEMPT`` with a reason.
+
 Scope, stated honestly: this checks that each prefix is matched by SOME
 ``handle`` block, not that it is matched by the RIGHT one. For the body caps it
-checks only that a cap is not too SMALL: a cap that is too large, or missing
-entirely, is a judgement call this cannot make. Upstream correctness
+checks that a cap is not too SMALL and that one EXISTS; how large a cap should be
+is a judgement call this cannot make. Upstream correctness
 for the deliberately-shared prefixes (``/admin``, ``/api``, ``/users``) is
 Caddy's longest-path-wins and is not modelled here. The failure this exists to
 catch is "reaches no backend at all", which is the one that has actually
@@ -78,6 +85,14 @@ LOG_REDACTION_EXEMPT = {
     # useless without the httpOnly refresh cookie it is compared against, which
     # Caddy redacts as `Cookie`. Logging it grants nobody anything.
     "X-CSRF-Token": "double-submit half; worthless without the httpOnly cookie",
+}
+
+
+# Proxied blocks that deliberately carry no ``request_body`` cap. A new proxied
+# route is capped or it is listed here with the reason - never silently neither.
+NO_BODY_CAP_EXEMPT = {
+    # GET-only liveness probe, rewritten to /health/live; it takes no body.
+    "/health": "GET-only liveness probe; no request body",
 }
 
 
@@ -356,6 +371,21 @@ def main() -> int:
                     f"accepts, at the edge, with nothing in the service log"
                 )
 
+    # 5. Every proxied block caps the request body.
+    for path, text in configs.items():
+        rel = path.relative_to(ROOT).as_posix()
+        for pat, block in handle_blocks(text):
+            if "reverse_proxy" not in block or pat in NO_BODY_CAP_EXEMPT:
+                continue
+            if body_cap(block) is None:
+                problems.append(
+                    f"{rel}: `handle {pat}` proxies to a service but has no "
+                    f"`request_body {{ max_size ... }}` - an unauthenticated caller can "
+                    f"make the service buffer an unbounded body before auth or the rate "
+                    f"limit runs. Add a cap (256KB for JSON control routes), or exempt "
+                    f"the route in NO_BODY_CAP_EXEMPT with a reason"
+                )
+
     if problems:
         return _fail(problems)
 
@@ -363,7 +393,8 @@ def main() -> int:
         f"OK - {sum(len(v) for v in router_prefixes().values())} router prefixes "
         f"routed in both Caddyfiles; {len(headers)} custom headers "
         f"({len(LOG_REDACTION_EXEMPT)} exempt) redacted and CORS-allowed; "
-        f"{len(UPLOAD_LIMITS)} upload caps at or above the handler's own limit."
+        f"{len(UPLOAD_LIMITS)} upload caps at or above the handler's own limit; "
+        f"every proxied block caps its request body."
     )
     return 0
 

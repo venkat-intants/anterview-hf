@@ -82,6 +82,7 @@ from app.reapplication import check as cooldown_check
 from app.resume_details import extract_contact_details
 from app.routers.consent import _hash_value
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
+from app.session_revocation import revoke_all_sessions_strict
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 from app.workflow_runner import enrol_applicant
 
@@ -357,6 +358,18 @@ async def activate_account(body: ActivateIn, db: DbSessionDep) -> ActivateOut:
     """
     try:
         result = await activate(db, raw_token=body.token, new_password=body.new_password)
+        revoke_for = result.get("revoke_sessions_for", "")
+        if revoke_for:
+            # An unverified password account is being taken over by the person
+            # who proved control of the address. FAIL CLOSED: every session the
+            # previous owner (possibly a pre-registering attacker) holds must be
+            # revoked BEFORE the password change is committed. If that cannot be
+            # done, the exception below rolls the takeover back and the caller
+            # gets a 503 -- the old sessions are never left alive beside a
+            # password they no longer match. (logout_all swallows its own
+            # errors, so it cannot be used to detect failure -- see
+            # app/session_revocation.py.) Non-takeover activations skip this.
+            await revoke_all_sessions_strict(revoke_for)
         await db.commit()
     except ActivationError as exc:
         await db.rollback()
@@ -371,7 +384,13 @@ async def activate_account(body: ActivateIn, db: DbSessionDep) -> ActivateOut:
             detail="We could not set up your account. Please try again.",
         ) from exc
 
-    if result["linked"] == "existing":
+    if result.get("password_replaced"):
+        message = (
+            "This email already had an account that was never verified, so we have "
+            "added the application to it and set it to the password you just chose. "
+            "Sign in with that password."
+        )
+    elif result["linked"] == "existing":
         message = (
             "This email already had an account, so we have added the application "
             "to it. Sign in with your existing password."

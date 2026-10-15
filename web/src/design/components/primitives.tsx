@@ -1,10 +1,11 @@
 import {
   forwardRef, memo, useEffect, useId, useRef, useState,
-  type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode,
+  type AriaRole, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes,
 } from 'react';
 import { animate, motion, useInView, useMotionValue } from 'framer-motion';
 import { cn } from '../lib/cn';
 import { useAccentColor } from '@/lib/useAccentColor';
+import { SelectControl } from '@/components/ui/select-control';
 
 /* ─────────────────────────  AnimatedNumber  ───────────────────────── */
 
@@ -52,20 +53,34 @@ interface GlassCardProps {
   hover?: boolean;
   /** electric-tinted “featured” surface */
   feature?: boolean;
+  /** Landmark/grouping semantics, so a card can BE the region or group rather
+   *  than needing a wrapper element to carry the role. */
+  role?: AriaRole;
+  'aria-label'?: string;
+  'aria-labelledby'?: string;
 }
 
 export const GlassCard = forwardRef<HTMLDivElement, GlassCardProps>(
-  ({ children, className, hover = false, feature = false, 'data-testid': testId }, ref) => (
+  (
+    {
+      children, className, hover = false, feature = false, 'data-testid': testId,
+      role, 'aria-label': ariaLabel, 'aria-labelledby': ariaLabelledBy,
+    },
+    ref,
+  ) => (
     <div
       ref={ref}
       data-testid={testId}
+      role={role}
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledBy}
       className={cn(
-        'rounded-[24px] border p-6',
+        'rounded-card border p-6 shadow-card',
         feature
-          ? 'border-[rgba(var(--accent-rgb),0.22)] bg-[image:var(--ui-grad-feature)]'
+          ? 'border-[rgba(var(--accent-rgb),0.2)] bg-[image:var(--ui-grad-feature)]'
           : 'border-border bg-card',
         hover &&
-          'transition-[transform,box-shadow,border-color] duration-300 will-change-transform hover:-translate-y-1 hover:border-[rgba(var(--accent-rgb),0.45)] hover:shadow-[0_16px_48px_-18px_rgba(var(--accent-rgb),0.45)]',
+          'transition-[transform,box-shadow,border-color] duration-300 will-change-transform hover:-translate-y-0.5 hover:border-[var(--ui-line-strong)] hover:shadow-card-hover',
         className,
       )}
     >
@@ -91,8 +106,8 @@ export function StatCard({ label, value, delta, trend = 'flat', feature, classNa
     trend === 'up' ? 'text-[var(--ui-ok)]' : trend === 'down' ? 'text-[var(--ui-danger)]' : 'text-muted-foreground';
   return (
     <GlassCard feature={feature} className={cn('p-5', className)}>
-      <div className="mb-3 text-[12.5px] text-muted-foreground">{label}</div>
-      <div className="text-[30px] font-semibold tracking-[-1.2px] text-foreground tabular-nums">
+      <div className="mb-2 text-[13px] font-medium text-muted-foreground">{label}</div>
+      <div className="font-display text-[30px] font-bold tracking-[-1px] text-foreground tabular-nums">
         <AnimatedNumber value={value} />
       </div>
       {delta ? <div className={cn('mt-1.5 text-[12px]', deltaColor)}>{delta}</div> : null}
@@ -119,17 +134,19 @@ export const ScoreRing = memo(function ScoreRing({
   const c = 2 * Math.PI * r;
   const gradId = useId();
   const accent = useAccentColor();
-  const color = clamped >= 85 ? '#27c93f' : clamped >= 70 ? accent : clamped >= 55 ? '#ffb764' : '#e6714f';
+  // `stopColor=` is a presentation attribute and cannot resolve a CSS var;
+  // `style` can, which is what lets the band colour follow the mode.
+  const color = clamped >= 85 ? 'var(--ui-ok)' : clamped >= 70 ? accent : clamped >= 55 ? 'var(--ui-warn)' : 'var(--ui-danger)';
   return (
     <div className={cn('relative inline-flex items-center justify-center', className)} style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor={accent} />
-            <stop offset="100%" stopColor={color} />
+            <stop offset="100%" style={{ stopColor: color }} />
           </linearGradient>
         </defs>
-        <circle cx={size / 2} cy={size / 2} r={r} stroke="rgba(255,255,255,0.08)" strokeWidth={stroke} fill="none" />
+        <circle cx={size / 2} cy={size / 2} r={r} style={{ stroke: 'var(--ui-inset-strong)' }} strokeWidth={stroke} fill="none" />
         <motion.circle
           cx={size / 2} cy={size / 2} r={r} stroke={`url(#${gradId})`} strokeWidth={stroke}
           fill="none" strokeLinecap="round" strokeDasharray={c}
@@ -140,8 +157,8 @@ export const ScoreRing = memo(function ScoreRing({
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-[28px] font-semibold tracking-[-1px] text-foreground">{clamped}</span>
-        <span className="text-[10px] uppercase tracking-[1px] text-[var(--ui-faint)]">{label}</span>
+        <span className="font-display text-[28px] font-bold tracking-[-1px] text-foreground">{clamped}</span>
+        <span className="text-[12px] font-medium text-muted-foreground">{label}</span>
       </div>
     </div>
   );
@@ -189,9 +206,9 @@ interface PillProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const PILL_STYLES: Record<PillVariant, string> = {
   primary: 'bg-primary text-primary-foreground hover:bg-primary/90',
-  ghost: 'bg-[var(--ui-inset)] text-foreground border border-border hover:bg-[var(--ui-inset-strong)]',
-  outline: 'bg-transparent text-foreground border border-border hover:border-[var(--ui-line-strong)]',
-  accent: 'bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)] border border-[rgba(var(--accent-rgb),0.35)] hover:bg-[rgba(var(--accent-rgb),0.2)]',
+  ghost: 'bg-[var(--ui-inset)] text-foreground border border-transparent hover:bg-[var(--ui-inset-strong)]',
+  outline: 'bg-card text-foreground border border-input hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
+  accent: 'bg-[var(--ui-info-wash)] text-[var(--ui-info)] border border-transparent hover:bg-[rgba(var(--accent-rgb),0.16)]',
   danger: 'bg-[var(--ui-danger-wash)] text-[var(--ui-danger)] border border-[var(--ui-danger)]/35 hover:brightness-95',
 };
 
@@ -201,7 +218,7 @@ export const Pill = forwardRef<HTMLButtonElement, PillProps>(
       ref={ref}
       className={cn(
         'inline-flex items-center justify-center gap-2 rounded-[9999px] px-5 py-2.5 text-[14px] font-semibold',
-        'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+        'transition-[background-color,border-color,transform] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         'disabled:cursor-not-allowed disabled:opacity-50',
         PILL_STYLES[variant],
         className,
@@ -244,10 +261,12 @@ interface AvatarProps {
   className?: string;
 }
 
-export function Avatar({ initials, gradient = 'linear-gradient(135deg,var(--accent),#a887dc)', size = 36, className }: AvatarProps): JSX.Element {
+export function Avatar({ initials, gradient = 'var(--ui-grad-avatar)', size = 36, className }: AvatarProps): JSX.Element {
   return (
     <span
-      className={cn('inline-flex flex-none items-center justify-center rounded-full font-semibold text-foreground', className)}
+      // White initials, so every gradient passed in must be dark enough to
+      // carry them (4.5:1). The default and design/data/shared.ts GRADIENTS are.
+      className={cn('inline-flex flex-none items-center justify-center rounded-full font-semibold text-white', className)}
       style={{ width: size, height: size, background: gradient, fontSize: size * 0.36 }}
     >
       {initials}
@@ -261,11 +280,11 @@ export type TagTone = 'neutral' | 'electric' | 'lavender' | 'amber' | 'forest' |
 
 const TAG_TONES: Record<TagTone, string> = {
   neutral: 'bg-[var(--ui-inset-strong)] text-[var(--ui-soft)]',
-  electric: 'bg-[rgba(var(--accent-rgb),0.16)] text-[var(--ui-info)]',
+  electric: 'bg-[var(--ui-info-wash)] text-[var(--ui-info)]',
   lavender: 'bg-[var(--ui-lavender-wash)] text-[var(--ui-lavender)]',
-  amber: 'bg-[rgba(255,183,100,0.16)] text-[var(--ui-warn)]',
-  forest: 'bg-[rgba(39,201,63,0.16)] text-[var(--ui-ok)]',
-  ember: 'bg-[rgba(230,113,79,0.16)] text-[var(--ui-danger)]',
+  amber: 'bg-[var(--ui-warn-wash)] text-[var(--ui-warn)]',
+  forest: 'bg-[var(--ui-ok-wash)] text-[var(--ui-ok)]',
+  ember: 'bg-[var(--ui-danger-wash)] text-[var(--ui-danger)]',
   // Pink has no dedicated status token; the platform-role pink is the
   // theme-aware pink (darkened in light mode so the chip text holds contrast).
   pink: 'bg-[rgba(221,85,231,0.16)] text-[var(--ui-role-platform)]',
@@ -280,7 +299,7 @@ interface StatusTagProps {
 
 export function StatusTag({ children, tone = 'neutral', dot = false, className }: StatusTagProps): JSX.Element {
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 text-[11.5px] font-semibold', TAG_TONES[tone], className)}>
+    <span className={cn('inline-flex items-center gap-1.5 rounded-pill px-2.5 py-1 text-[12px] font-semibold', TAG_TONES[tone], className)}>
       {dot ? <span className="h-1.5 w-1.5 rounded-full bg-current" /> : null}
       {children}
     </span>
@@ -293,30 +312,96 @@ interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
   label: string;
   icon?: ReactNode;
   hint?: string;
+  /** Validation message. Sets aria-invalid, links the message to the input and
+   *  announces it, so a page does not wire that up by hand. */
+  error?: string;
 }
 
 export const Field = forwardRef<HTMLInputElement, FieldProps>(
-  ({ label, icon, hint, id, className, ...rest }, ref) => {
+  ({ label, icon, hint, error, id, className, 'aria-describedby': describedBy, ...rest }, ref) => {
     const autoId = useId();
     const fieldId = id ?? autoId;
+    const hintId = `${fieldId}-hint`;
+    const errorId = `${fieldId}-error`;
+    // A caller's own aria-describedby is kept and ours appended to it.
+    const describedIds =
+      [describedBy, error ? errorId : null, hint ? hintId : null].filter(Boolean).join(' ') || undefined;
     return (
       <div className="flex flex-col gap-1.5">
-        <label htmlFor={fieldId} className="text-[12.5px] font-medium text-[var(--ui-soft)]">{label}</label>
-        <div className="flex items-center gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset)] px-3.5 py-3 focus-within:border-[var(--accent)]">
+        <label htmlFor={fieldId} className="text-[13px] font-semibold text-foreground">{label}</label>
+        <div
+          className={cn(
+            'flex items-center gap-2.5 rounded-[12px] border bg-card px-3.5 py-3 transition-[border-color,box-shadow] focus-within:shadow-[0_0_0_3px_rgba(var(--accent-rgb),0.16)]',
+            error
+              ? 'border-[var(--ui-danger)]'
+              : 'border-input hover:border-[var(--ui-line-strong)] focus-within:border-[var(--accent)]',
+          )}
+        >
           {icon ? <span className="text-[var(--ui-faint)]">{icon}</span> : null}
           <input
             ref={ref}
             id={fieldId}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={describedIds}
             className={cn('w-full min-w-0 bg-transparent text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none', className)}
             {...rest}
           />
         </div>
-        {hint ? <span className="text-[11.5px] text-[var(--ui-faint)]">{hint}</span> : null}
+        {error ? (
+          <span id={errorId} role="alert" className="text-[12.5px] font-medium text-[var(--ui-danger)]">{error}</span>
+        ) : null}
+        {hint ? <span id={hintId} className="text-[12.5px] text-muted-foreground">{hint}</span> : null}
       </div>
     );
   },
 );
 Field.displayName = 'Field';
+
+/* ─────────────────────────  SelectField (labeled dropdown)  ───────────────────────── */
+
+interface SelectFieldProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>, 'size'> {
+  label: string;
+  hint?: string;
+  /** Validation message — same wiring as <Field error>. */
+  error?: string;
+  size?: 'md' | 'sm';
+  leadingIcon?: ReactNode;
+}
+
+/** The select counterpart of <Field>: a label, the native dropdown (styled by the
+ *  base layer in index.css, so it matches Field's height and focus ring), and the
+ *  hint/error wiring. Children are the <option>s. */
+export const SelectField = forwardRef<HTMLSelectElement, SelectFieldProps>(
+  ({ label, hint, error, id, size, leadingIcon, children, 'aria-describedby': describedBy, ...rest }, ref) => {
+    const autoId = useId();
+    const fieldId = id ?? autoId;
+    const hintId = `${fieldId}-hint`;
+    const errorId = `${fieldId}-error`;
+    const describedIds =
+      [describedBy, error ? errorId : null, hint ? hintId : null].filter(Boolean).join(' ') || undefined;
+    return (
+      <div className="flex flex-col gap-1.5">
+        <label htmlFor={fieldId} className="text-[13px] font-semibold text-foreground">{label}</label>
+        <SelectControl
+          ref={ref}
+          id={fieldId}
+          size={size}
+          invalid={Boolean(error)}
+          leadingIcon={leadingIcon}
+          aria-describedby={describedIds}
+          {...rest}
+        >
+          {children}
+        </SelectControl>
+        {error ? (
+          <span id={errorId} role="alert" className="text-[12.5px] font-medium text-[var(--ui-danger)]">{error}</span>
+        ) : null}
+        {hint ? <span id={hintId} className="text-[12.5px] text-muted-foreground">{hint}</span> : null}
+      </div>
+    );
+  },
+);
+SelectField.displayName = 'SelectField';
 
 /* ─────────────────────────  ToggleSwitch  ───────────────────────── */
 
@@ -349,7 +434,9 @@ export function ToggleSwitch({ checked, onChange, label }: ToggleSwitchProps): J
         data-testid="toggle-thumb"
         className={cn(
           'absolute top-px h-5 w-5 rounded-full transition-all',
-          checked ? 'left-[21px] bg-primary' : 'left-px bg-muted-foreground',
+          // On: the thumb takes the primary's own foreground, because the
+          // track is the accent and the primary is that same blue.
+          checked ? 'left-[21px] bg-primary-foreground' : 'left-px bg-muted-foreground',
         )}
       />
     </button>
@@ -372,7 +459,7 @@ interface SegTabsProps {
 
 export function SegTabs({ tabs, active, onChange, className }: SegTabsProps): JSX.Element {
   return (
-    <div className={cn('inline-flex items-center gap-1 rounded-pill border border-border bg-[var(--ui-inset)] p-1', className)} role="tablist">
+    <div className={cn('inline-flex items-center gap-1 rounded-pill bg-[var(--ui-inset-strong)] p-1', className)} role="tablist">
       {tabs.map((t) => {
         const on = t.key === active;
         return (
@@ -382,8 +469,8 @@ export function SegTabs({ tabs, active, onChange, className }: SegTabsProps): JS
             aria-selected={on}
             onClick={() => onChange(t.key)}
             className={cn(
-              'rounded-pill px-3.5 py-1.5 text-[12.5px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-              on ? 'bg-primary text-primary-foreground' : 'text-[var(--ui-soft)] hover:text-foreground',
+              'rounded-pill px-3.5 py-1.5 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
+              on ? 'bg-card text-foreground shadow-card' : 'text-muted-foreground hover:text-foreground',
             )}
           >
             {t.label}

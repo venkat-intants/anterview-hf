@@ -82,7 +82,7 @@ export default function ConsentModal({
   return (
     /* Backdrop */
     <div
-      className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
       aria-hidden="false"
     >
       {/* Dialog card */}
@@ -92,14 +92,14 @@ export default function ConsentModal({
         aria-modal="true"
         aria-labelledby={HEADING_ID}
         onKeyDown={handleKeyDown}
-        className="relative w-full max-w-lg rounded-2xl shadow-elevated overflow-y-auto max-h-[90vh] focus:outline-none"
+        className="relative w-full max-w-lg rounded-card shadow-elevated overflow-y-auto max-h-[90vh] focus:outline-none"
         tabIndex={-1}
       >
         {/* Header */}
         <div className="px-6 pt-6 pb-4 border-b border-border">
           <h2
             id={HEADING_ID}
-            className="text-subheading font-semibold text-foreground"
+            className="font-display text-[22px] font-bold leading-tight tracking-[-0.4px] text-foreground"
           >
             {t('consent.title')}
           </h2>
@@ -118,25 +118,27 @@ export default function ConsentModal({
 
           <dl className="space-y-2">
             <div>
-              <dt className="font-semibold text-foreground inline">{t('consent.languagesLabel')} </dt>
+              <dt className="font-semibold text-foreground inline">
+                {t('consent.languagesLabel')}{' '}
+              </dt>
               <dd className="inline">{t('consent.languagesValue')}</dd>
             </div>
             <div>
-              <dt className="font-semibold text-foreground inline">{t('consent.retentionLabel')} </dt>
+              <dt className="font-semibold text-foreground inline">
+                {t('consent.retentionLabel')}{' '}
+              </dt>
               <dd className="inline">
                 {t('consent.retentionValue')}{' '}
                 <strong className="text-foreground">{t('consent.retentionDays')}</strong>
               </dd>
             </div>
             <div>
-              <dt className="font-semibold text-foreground inline">
-                {t('consent.rightsLabel')}{' '}
-              </dt>
+              <dt className="font-semibold text-foreground inline">{t('consent.rightsLabel')} </dt>
               <dd className="inline">
                 {t('consent.rightsValue')}{' '}
                 <a
                   href="mailto:support@intants.com"
-                  className="text-primary underline underline-offset-2 hover:text-primary/80 focus:outline-none focus:ring-2 focus:ring-ring rounded"
+                  className="font-semibold text-foreground underline underline-offset-2 hover:text-foreground/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] rounded"
                 >
                   support@intants.com
                 </a>
@@ -145,19 +147,15 @@ export default function ConsentModal({
           </dl>
 
           {/* DPDP cross-border transparency — data currently processed outside India */}
-          <p className="text-body-sm text-foreground">
-            {t('consent.dataFlowNote')}
-          </p>
+          <p className="text-body-sm text-foreground">{t('consent.dataFlowNote')}</p>
 
-          <p className="text-muted-foreground text-caption">
-            {t('consent.footerNote')}
-          </p>
+          <p className="text-muted-foreground text-caption">{t('consent.footerNote')}</p>
 
           {/* API error */}
           {error && (
             <div
               role="alert"
-              className="rounded-xl bg-destructive/10 border border-destructive/30 px-4 py-3 text-caption text-destructive"
+              className="rounded-[12px] border border-[var(--ui-danger)]/35 bg-[var(--ui-danger-wash)] px-4 py-3 text-[13px] font-medium text-[var(--ui-danger)]"
             >
               {error}
             </div>

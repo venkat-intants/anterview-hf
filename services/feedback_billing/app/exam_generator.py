@@ -12,6 +12,7 @@ Gemini to write the prompt + options in that language.
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import structlog
@@ -27,6 +28,19 @@ from app.config import Settings
 from app.untrusted_input import frame_untrusted, frame_untrusted_inline, scan_untrusted
 
 log = structlog.get_logger(__name__)
+
+
+def log_ref(name: str, text: str) -> dict[str, Any]:
+    """Log fields describing HR-typed free text WITHOUT containing it:
+    ``<name>_len`` and a short, non-reversible ``<name>_ref`` (first 8 hex of
+    a SHA-256) so two log lines about the same input can still be correlated.
+    Empty text has no ref."""
+    clean = (text or "").strip()
+    out: dict[str, Any] = {f"{name}_len": len(clean)}
+    if clean:
+        out[f"{name}_ref"] = hashlib.sha256(clean.encode("utf-8")).hexdigest()[:8]
+    return out
+
 
 EXAM_GENERATOR_VERSION: str = "1.0"
 
@@ -235,10 +249,11 @@ async def generate_exam_questions(
         # job_title is not merely metadata here: it reaches the prompt through
         # the role blueprint (see _role_blueprint), so it is scanned like every
         # other string that gets there. It stays a log field as well, so the
-        # warning names the posting and not just the offending field.
+        # warning can be correlated with a request (length + short hash, never
+        # the text: HR-typed free text can carry names or a pasted JD).
         {"topic": topic_excerpt, "job_title": job_title},
         event="exam_generator.injection_markers_detected",
-        job_title=job_title,
+        **log_ref("job_title", job_title),
         kind="mcq",
     )
     prompt = (
@@ -271,7 +286,7 @@ async def generate_exam_questions(
 
     log.info(
         "exam_generator.complete",
-        topic=topic[:80],
+        **log_ref("topic", topic),
         requested=count,
         produced=len(questions),
         difficulty=difficulty,
@@ -463,7 +478,7 @@ async def generate_coding_questions(
         # log context.
         {"topic": topic_excerpt, "job_title": job_title},
         event="exam_generator.injection_markers_detected",
-        job_title=job_title,
+        **log_ref("job_title", job_title),
         kind="coding",
     )
     prompt = (
@@ -508,7 +523,7 @@ async def generate_coding_questions(
 
     log.info(
         "exam_generator.coding_complete",
-        topic=topic[:80],
+        **log_ref("topic", topic),
         requested=count,
         produced=len(questions),
         difficulty=difficulty,

@@ -25,12 +25,12 @@ from __future__ import annotations
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import UNAUTHORIZED, require_jwt
+from app.auth import UNAUTHORIZED, is_guest_token, require_jwt
 from app.database import get_db_session
 
 log = structlog.get_logger(__name__)
@@ -119,6 +119,17 @@ async def list_scorecards(
     user_id: str = str(jwt_payload.get("sub", ""))
     if not user_id:
         raise _UNAUTHORIZED
+
+    # An interview magic-link token's `sub` is the applicant's REAL account id, so
+    # without this a forwarded interview link lists that account's whole scorecard
+    # history. The guest reads their one scorecard through GET /scorecards/{id}
+    # (bound to their session); they have no use for the list.
+    if is_guest_token(jwt_payload):
+        log.warning("scorecards.list.guest_token_refused", user_id=user_id)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions for this action.",
+        )
 
     offset = (page - 1) * per_page
 

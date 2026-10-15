@@ -1,8 +1,13 @@
 // OfferDetail — PH4-A3/A4. One offer, in full: every field (editable only in
-// draft or after it was sent back), the actions the offer's own state makes
-// legal, the approval note or decline reason, the history timeline, its
-// documents, marking preboarding complete, and preparing the signed HRMS
-// handoff.
+// draft or after it was sent back), the one next action the offer's own state
+// makes legal, the approval note or decline reason, the history, and — once the
+// offer is accepted — its documents, marking preboarding complete, and the
+// signed HRMS handoff.
+//
+// Layout: header, ONE approval track (Draft → Submitted → Approved → Sent →
+// Answered) that carries the single primary action and the quieter ones, then
+// the terms in one raised card with a "glance" rail beside it. Documents and
+// preboarding are a second tab that exists only for an accepted offer.
 //
 // Field names and the state machine match services/data_gateway/app/offers.py
 // EXACTLY — EDITABLE = draft/rejected, BEFORE_ANSWER = the states withdraw
@@ -10,7 +15,10 @@
 
 import { offerStatusWord } from '@/lib/offerStatus';
 import { offerActionWord } from '@/lib/offerHistory';
-import { useEffect, useState } from 'react';
+import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
+import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
+import { offerPrimary, offerSecondary, offerTrack } from '@/lib/offerTrack';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -32,26 +40,44 @@ import {
   type PayPeriod,
 } from '@/api/offers';
 import { toast } from '@/lib/toast';
-import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
+import { cn } from '@/lib/utils';
+import { DataList, Page, PageBody } from '@/design/components/page';
+import { ApprovalTrack } from '@/design/components/approval-track';
+import { Card } from '@/design/components/card';
+import { Section, Well } from '@/design/components/rows';
+import {
+  EditorHeader,
+  DocStatusPill,
+  type DocStatus,
+  type SaveState,
+} from '@/components/hr/EditorHeader';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import OfferDocumentsPanel from '@/components/OfferDocumentsPanel';
-import { ArrowLeft, Download, Loader2 } from '@/design/components/icons';
+import { Download, Loader2 } from '@/design/components/icons';
 
 const inputCls =
-  'mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-60';
-const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
+  'mt-1 min-h-[40px] w-full rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
+  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60';
+const PRIMARY_BTN =
+  'inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-40';
+const SECONDARY_BTN =
+  'inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-full border border-[var(--ui-line-strong)] px-5 py-2 text-[13px] font-medium text-foreground transition-colors hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40';
+const labelCls = 'text-[13px] font-medium text-[var(--ui-soft)]';
 
-const OFFER_TONE: Record<OfferStatus, TagTone> = {
-  draft: 'neutral',
-  pending_approval: 'amber',
-  approved: 'electric',
-  rejected: 'ember',
-  sent: 'electric',
-  accepted: 'forest',
-  declined: 'ember',
-  expired: 'neutral',
-  withdrawn: 'neutral',
+/** Which of the shared lifecycle pills an offer's state reads as. The word
+ *  shown is always `offerStatusWord`, so nothing here changes the wording. */
+const OFFER_DOC_STATUS: Record<OfferStatus, DocStatus> = {
+  draft: 'draft',
+  pending_approval: 'draft',
+  approved: 'approved',
+  rejected: 'draft',
+  sent: 'live',
+  accepted: 'live',
+  declined: 'locked',
+  expired: 'locked',
+  withdrawn: 'locked',
 };
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ['full_time', 'part_time', 'contract', 'internship'];
@@ -144,7 +170,13 @@ function diff(current: FieldsState, saved: FieldsState): OfferFieldsInput {
   return out;
 }
 
-function OfferFields({ offer }: { offer: OfferDetailShape }) {
+function OfferFields({
+  offer,
+  onSaveState,
+}: {
+  offer: OfferDetailShape;
+  onSaveState: (state: SaveState | undefined) => void;
+}) {
   const qc = useQueryClient();
   const editable = offer.status === 'draft' || offer.status === 'rejected';
   const saved = fieldsFrom(offer);
@@ -171,195 +203,231 @@ function OfferFields({ offer }: { offer: OfferDetailShape }) {
     onError: (e: unknown) => toast.error(errText(e, 'Could not update this offer')),
   });
 
+  // The header owns the save-state wording; this only reports it.
+  const reportRef = useRef(onSaveState);
+  reportRef.current = onSaveState;
+  const reported: SaveState | undefined = !editable
+    ? undefined
+    : saveMut.isPending
+      ? 'saving'
+      : saveMut.isError && dirty
+        ? 'error'
+        : dirty
+          ? 'unsaved'
+          : 'saved';
+  useEffect(() => {
+    reportRef.current(reported);
+  }, [reported]);
+
   return (
-    <GlassCard className="p-5">
-      <h2 className="text-[15px] font-semibold text-foreground">Offer details</h2>
+    <Card
+      emphasis="raised"
+      as="section"
+      title="Offer terms"
+      data-testid="offer-terms"
+      className="flex flex-col"
+    >
       {!editable ? (
-        <p className="mt-1 text-[12px] text-muted-foreground">
+        <Well className="mb-5 text-[13px] text-muted-foreground">
           This offer is {offerStatusWord(offer.status)} — it can be changed only as a draft or once
           it has been sent back.
-        </p>
+        </Well>
       ) : null}
 
-      <div className="mt-3 grid gap-3 sm:grid-cols-2">
-        <label className="block">
-          <span className={labelCls}>Job title</span>
-          <input
-            disabled={!editable}
-            value={fields.job_title}
-            onChange={(e) => set('job_title', e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Employment type</span>
-          <select
-            disabled={!editable}
-            value={fields.employment_type}
-            onChange={(e) => set('employment_type', e.target.value)}
-            className={inputCls}
-          >
-            <option value="">—</option>
-            {EMPLOYMENT_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t.replace('_', ' ')}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className={labelCls}>Start date</span>
-          <input
-            type="date"
-            disabled={!editable}
-            value={fields.start_date}
-            onChange={(e) => set('start_date', e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Location</span>
-          <input
-            disabled={!editable}
-            value={fields.location}
-            onChange={(e) => set('location', e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Base salary</span>
-          <input
-            type="number"
-            min={0}
-            disabled={!editable}
-            value={fields.base_salary}
-            onChange={(e) => set('base_salary', e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Currency</span>
-          <input
-            disabled={!editable}
-            maxLength={3}
-            value={fields.currency}
-            onChange={(e) => set('currency', e.target.value.toUpperCase())}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Pay period</span>
-          <select
-            disabled={!editable}
-            value={fields.pay_period}
-            onChange={(e) => set('pay_period', e.target.value)}
-            className={inputCls}
-          >
-            <option value="">—</option>
-            {PAY_PERIODS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <span className={labelCls}>Offer valid for (days)</span>
-          <input
-            type="number"
-            min={1}
-            max={60}
-            disabled={!editable}
-            value={fields.valid_days}
-            onChange={(e) => set('valid_days', e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Probation (months)</span>
-          <input
-            type="number"
-            min={0}
-            max={24}
-            disabled={!editable}
-            value={fields.probation_months}
-            onChange={(e) => set('probation_months', e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Notice period (days)</span>
-          <input
-            type="number"
-            min={0}
-            max={365}
-            disabled={!editable}
-            value={fields.notice_period_days}
-            onChange={(e) => set('notice_period_days', e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Bonus</span>
-          <input
-            disabled={!editable}
-            value={fields.bonus}
-            onChange={(e) => set('bonus', e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Equity</span>
-          <input
-            disabled={!editable}
-            value={fields.equity}
-            onChange={(e) => set('equity', e.target.value)}
-            className={inputCls}
-          />
-        </label>
+      <div className="flex flex-col gap-6">
+        <Section title="Role & start">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className={labelCls}>Job title</span>
+              <input
+                disabled={!editable}
+                value={fields.job_title}
+                onChange={(e) => set('job_title', e.target.value)}
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Employment type</span>
+              <select
+                disabled={!editable}
+                value={fields.employment_type}
+                onChange={(e) => set('employment_type', e.target.value)}
+                className={inputCls}
+              >
+                <option value="">—</option>
+                {EMPLOYMENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t.replace('_', ' ')}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className={labelCls}>Start date</span>
+              <input
+                type="date"
+                disabled={!editable}
+                value={fields.start_date}
+                onChange={(e) => set('start_date', e.target.value)}
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Location</span>
+              <input
+                disabled={!editable}
+                value={fields.location}
+                onChange={(e) => set('location', e.target.value)}
+                className={inputCls}
+              />
+            </label>
+          </div>
+        </Section>
+
+        <Section title="Pay">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className={labelCls}>Base salary</span>
+              <input
+                type="number"
+                min={0}
+                disabled={!editable}
+                value={fields.base_salary}
+                onChange={(e) => set('base_salary', e.target.value)}
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Currency</span>
+              <input
+                disabled={!editable}
+                maxLength={3}
+                value={fields.currency}
+                onChange={(e) => set('currency', e.target.value.toUpperCase())}
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Pay period</span>
+              <select
+                disabled={!editable}
+                value={fields.pay_period}
+                onChange={(e) => set('pay_period', e.target.value)}
+                className={inputCls}
+              >
+                <option value="">—</option>
+                {PAY_PERIODS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block">
+              <span className={labelCls}>Bonus</span>
+              <input
+                disabled={!editable}
+                value={fields.bonus}
+                onChange={(e) => set('bonus', e.target.value)}
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Equity</span>
+              <input
+                disabled={!editable}
+                value={fields.equity}
+                onChange={(e) => set('equity', e.target.value)}
+                className={inputCls}
+              />
+            </label>
+          </div>
+        </Section>
+
+        <Section title="Conditions">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className={labelCls}>Offer valid for (days)</span>
+              <input
+                type="number"
+                min={1}
+                max={60}
+                disabled={!editable}
+                value={fields.valid_days}
+                onChange={(e) => set('valid_days', e.target.value)}
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Probation (months)</span>
+              <input
+                type="number"
+                min={0}
+                max={24}
+                disabled={!editable}
+                value={fields.probation_months}
+                onChange={(e) => set('probation_months', e.target.value)}
+                className={inputCls}
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Notice period (days)</span>
+              <input
+                type="number"
+                min={0}
+                max={365}
+                disabled={!editable}
+                value={fields.notice_period_days}
+                onChange={(e) => set('notice_period_days', e.target.value)}
+                className={inputCls}
+              />
+            </label>
+          </div>
+          <label className="mt-3 block">
+            <span className={labelCls}>Benefits</span>
+            <textarea
+              disabled={!editable}
+              value={fields.benefits}
+              onChange={(e) => set('benefits', e.target.value)}
+              rows={2}
+              className={inputCls}
+            />
+          </label>
+          <label className="mt-3 block">
+            <span className={labelCls}>Terms</span>
+            <textarea
+              disabled={!editable}
+              value={fields.terms}
+              onChange={(e) => set('terms', e.target.value)}
+              rows={4}
+              className={inputCls}
+            />
+          </label>
+        </Section>
       </div>
-      <label className="mt-3 block">
-        <span className={labelCls}>Benefits</span>
-        <textarea
-          disabled={!editable}
-          value={fields.benefits}
-          onChange={(e) => set('benefits', e.target.value)}
-          rows={2}
-          className={inputCls}
-        />
-      </label>
-      <label className="mt-3 block">
-        <span className={labelCls}>Terms</span>
-        <textarea
-          disabled={!editable}
-          value={fields.terms}
-          onChange={(e) => set('terms', e.target.value)}
-          rows={4}
-          className={inputCls}
-        />
-      </label>
 
       {editable ? (
-        <div className="mt-3 flex justify-end">
+        <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-border pt-4">
           <button
             type="button"
             disabled={!dirty || saveMut.isPending}
             onClick={() => saveMut.mutate()}
-            className="rounded-[10px] bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground disabled:opacity-40"
+            className={SECONDARY_BTN}
           >
             {saveMut.isPending ? 'Saving…' : 'Save changes'}
           </button>
         </div>
       ) : null}
-    </GlassCard>
+    </Card>
   );
 }
 
 /* ── Actions, legal only where the state machine allows them ─────────────── */
 
-function ActionsPanel({ offer }: { offer: OfferDetailShape }) {
+function useOfferLifecycle(offer: OfferDetailShape) {
   const qc = useQueryClient();
   const [withdrawReason, setWithdrawReason] = useState('');
+  const [exportResult, setExportResult] = useState<HrmsExportResult | null>(null);
   const invalidate = () => qc.invalidateQueries({ queryKey: ['hr', 'offer', offer.id] });
 
   const submitMut = useMutation({
@@ -411,114 +479,6 @@ function ActionsPanel({ offer }: { offer: OfferDetailShape }) {
     },
     onError: (e: unknown) => toast.error(errText(e, 'Could not withdraw this offer')),
   });
-
-  const canSubmit = offer.status === 'draft' || offer.status === 'rejected';
-  const canRecall = offer.status === 'pending_approval';
-  const canReopen = offer.status === 'approved';
-  const canSend = offer.status === 'approved';
-  const canResend =
-    (offer.status === 'sent' || offer.status === 'accepted') && !offer.preboarding_completed_at;
-  const canWithdraw = ['draft', 'pending_approval', 'approved', 'rejected', 'sent'].includes(
-    offer.status,
-  );
-
-  if (!canSubmit && !canRecall && !canReopen && !canSend && !canResend && !canWithdraw) {
-    return (
-      <p className="text-[12.5px] text-muted-foreground">
-        This offer is {offerStatusWord(offer.status)} — there is nothing left to do here.
-      </p>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap gap-2">
-        {canSubmit ? (
-          <button
-            type="button"
-            disabled={submitMut.isPending}
-            onClick={() => submitMut.mutate()}
-            className="rounded-[10px] bg-primary px-3.5 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
-          >
-            Submit for approval
-          </button>
-        ) : null}
-        {canRecall ? (
-          <button
-            type="button"
-            disabled={recallMut.isPending}
-            onClick={() => recallMut.mutate()}
-            className="rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground disabled:opacity-40"
-          >
-            Recall
-          </button>
-        ) : null}
-        {canReopen ? (
-          <button
-            type="button"
-            disabled={reopenMut.isPending}
-            onClick={() => reopenMut.mutate()}
-            className="rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground disabled:opacity-40"
-          >
-            Reopen for editing
-          </button>
-        ) : null}
-        {canSend ? (
-          <button
-            type="button"
-            disabled={sendMut.isPending}
-            onClick={() => sendMut.mutate()}
-            className="rounded-[10px] bg-[var(--ui-ok)] px-3.5 py-2 text-[12.5px] font-medium text-white disabled:opacity-40"
-          >
-            Send to candidate
-          </button>
-        ) : null}
-        {canResend ? (
-          <button
-            type="button"
-            disabled={resendMut.isPending}
-            onClick={() => resendMut.mutate()}
-            className="rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground disabled:opacity-40"
-          >
-            Re-send
-          </button>
-        ) : null}
-      </div>
-      {canResend ? (
-        <p className="text-[11.5px] text-[var(--ui-faint)]">
-          Re-sending retires the old link and lifts a lock from too many wrong codes.
-        </p>
-      ) : null}
-
-      {canWithdraw ? (
-        <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-          <input
-            type="text"
-            value={withdrawReason}
-            onChange={(e) => setWithdrawReason(e.target.value)}
-            placeholder="Withdraw reason (optional)"
-            aria-label="Withdraw reason"
-            className="w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1.5 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none"
-          />
-          <ConfirmDeleteButton
-            label="Withdraw offer"
-            confirmText="Withdraw"
-            confirmGroupLabel="Confirm withdrawal"
-            pending={withdrawMut.isPending}
-            onConfirm={() => withdrawMut.mutate()}
-          />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/* ── Preboarding + HRMS export ─────────────────────────────────────────────── */
-
-function PreboardingPanel({ offer }: { offer: OfferDetailShape }) {
-  const qc = useQueryClient();
-  const [exportResult, setExportResult] = useState<HrmsExportResult | null>(null);
-
   const completeMut = useMutation({
     mutationFn: () => completePreboarding(offer.id),
     onSuccess: () => {
@@ -529,7 +489,6 @@ function PreboardingPanel({ offer }: { offer: OfferDetailShape }) {
     // The server names exactly which mandatory documents are not verified yet.
     onError: (e: unknown) => toast.error(errText(e, 'Could not complete preboarding')),
   });
-
   const exportMut = useMutation({
     mutationFn: () => hrmsExport(offer.id),
     onSuccess: (res) => {
@@ -540,72 +499,380 @@ function PreboardingPanel({ offer }: { offer: OfferDetailShape }) {
     onError: (e: unknown) => toast.error(errText(e, 'Could not prepare the export')),
   });
 
-  if (offer.status !== 'accepted') {
-    return (
-      <p className="text-[12.5px] text-muted-foreground">Preboarding follows an accepted offer.</p>
-    );
-  }
+  return {
+    submitMut,
+    recallMut,
+    reopenMut,
+    sendMut,
+    resendMut,
+    withdrawMut,
+    completeMut,
+    exportMut,
+    exportResult,
+    withdrawReason,
+    setWithdrawReason,
+  };
+}
+
+type OfferLifecycle = ReturnType<typeof useOfferLifecycle>;
+
+/** Why "Submit for approval" is unavailable while the form holds unsaved work. */
+const SUBMIT_BLOCK_REASON: Partial<Record<SaveState, string>> = {
+  unsaved: 'Save your changes first — approval is requested for the saved offer.',
+  saving: 'Saving your changes…',
+  error: 'The last save failed. Fix it or save again before submitting.',
+};
+
+/**
+ * The track plus its actions: the ONE primary the state allows, and the quiet
+ * ones (recall, reopen, re-send, withdraw) beside it. Replaces the banners, the
+ * Approval card and the Actions card.
+ */
+function OfferApprovalTrack({
+  offer,
+  life,
+  saveState,
+}: {
+  offer: OfferDetailShape;
+  life: OfferLifecycle;
+  saveState: SaveState | undefined;
+}) {
+  const { steps, stateLabels } = offerTrack(offer);
+  const primaryKind = offerPrimary(offer);
+  const sec = offerSecondary(offer);
+  const { recallMut, reopenMut, resendMut, withdrawMut, withdrawReason, setWithdrawReason } = life;
+
+  const blockReason = primaryKind === 'submit' && saveState ? SUBMIT_BLOCK_REASON[saveState] : undefined;
+  const reasonId = `offer-submit-reason-${offer.id}`;
+
+  const primary = ((): JSX.Element | undefined => {
+    switch (primaryKind) {
+      case 'submit':
+        return (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <button
+              type="button"
+              data-testid="offer-primary"
+              disabled={life.submitMut.isPending || Boolean(blockReason)}
+              aria-describedby={blockReason ? reasonId : undefined}
+              onClick={() => life.submitMut.mutate()}
+              className={`${PRIMARY_BTN} w-full sm:w-auto`}
+            >
+              Submit for approval
+            </button>
+            {blockReason ? (
+              <span id={reasonId} className="text-[12.5px] text-muted-foreground">
+                {blockReason}
+              </span>
+            ) : null}
+          </div>
+        );
+      case 'send':
+        return (
+          <button
+            type="button"
+            data-testid="offer-primary"
+            disabled={life.sendMut.isPending}
+            onClick={() => life.sendMut.mutate()}
+            className={PRIMARY_BTN}
+          >
+            Send to candidate
+          </button>
+        );
+      case 'complete_preboarding':
+        return (
+          <button
+            type="button"
+            data-testid="offer-primary"
+            disabled={life.completeMut.isPending}
+            onClick={() => life.completeMut.mutate()}
+            className={PRIMARY_BTN}
+          >
+            {life.completeMut.isPending ? 'Checking…' : 'Mark preboarding complete'}
+          </button>
+        );
+      default:
+        return undefined;
+    }
+  })();
+
+  const anything = primary || sec.recall || sec.reopen || sec.resend || sec.withdraw;
+
+  const secondary = anything ? (
+    <>
+      {sec.recall ? (
+        <button
+          type="button"
+          disabled={recallMut.isPending}
+          onClick={() => recallMut.mutate()}
+          className={SECONDARY_BTN}
+        >
+          Recall
+        </button>
+      ) : null}
+      {sec.reopen ? (
+        <button
+          type="button"
+          disabled={reopenMut.isPending}
+          onClick={() => reopenMut.mutate()}
+          className={SECONDARY_BTN}
+        >
+          Reopen for editing
+        </button>
+      ) : null}
+      {sec.resend ? (
+        <button
+          type="button"
+          disabled={resendMut.isPending}
+          onClick={() => resendMut.mutate()}
+          className={SECONDARY_BTN}
+        >
+          Re-send
+        </button>
+      ) : null}
+      {sec.withdraw ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <input
+            type="text"
+            value={withdrawReason}
+            onChange={(e) => setWithdrawReason(e.target.value)}
+            placeholder="Withdraw reason (optional)"
+            aria-label="Withdraw reason"
+            className="min-h-[40px] w-full rounded-[12px] sm:w-[260px] border border-border bg-secondary px-3 py-1.5 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          />
+          <ConfirmDeleteButton
+            label="Withdraw offer"
+            confirmText="Withdraw"
+            confirmGroupLabel="Confirm withdrawal"
+            pending={withdrawMut.isPending}
+            onConfirm={() => withdrawMut.mutate()}
+          />
+        </div>
+      ) : null}
+    </>
+  ) : undefined;
 
   return (
     <div className="flex flex-col gap-3">
-      {offer.preboarding_completed_at ? (
-        <p className="text-[12.5px] text-[var(--ui-ok)]">
-          Preboarding completed on {fmt(offer.preboarding_completed_at)}.
+      <ApprovalTrack
+        data-testid="offer-track"
+        label="Offer progress"
+        steps={steps}
+        stateLabels={stateLabels}
+        primary={primary}
+        secondary={secondary}
+      />
+      {sec.resend ? (
+        <p className="text-[12px] text-[var(--ui-faint)]">
+          Re-sending retires the old link and lifts a lock from too many wrong codes.
         </p>
-      ) : (
-        <button
-          type="button"
-          disabled={completeMut.isPending}
-          onClick={() => completeMut.mutate()}
-          className="self-start rounded-[10px] bg-primary px-3.5 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
-        >
-          {completeMut.isPending ? 'Checking…' : 'Mark preboarding complete'}
-        </button>
-      )}
+      ) : null}
+      {!anything ? (
+        <p className="text-[12.5px] text-muted-foreground">
+          {offer.status === 'accepted' && offer.preboarding_completed_at
+            ? // The HRMS export is still on the Documents tab, so this is not "nothing".
+              'Preboarding is complete. The HRMS export is on the Documents tab.'
+            : `This offer is ${offerStatusWord(offer.status)} — there is nothing left to do here.`}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
-      {offer.preboarding_completed_at ? (
-        <div className="border-t border-border pt-3">
+/* ── Documents + preboarding: only for an accepted offer ──────────────────── */
+
+function DocumentsTab({ offer, life }: { offer: OfferDetailShape; life: OfferLifecycle }) {
+  const { exportResult, exportMut } = life;
+  return (
+    <Card emphasis="raised" as="section" aria-label="Documents and preboarding" className="flex flex-col gap-6">
+      <Section title="Documents">
+        <OfferDocumentsPanel offerId={offer.id} />
+      </Section>
+
+      <Section title="Preboarding">
+        {offer.preboarding_completed_at ? (
+          <p className="text-[12.5px] text-[var(--ui-ok)]">
+            Preboarding completed on {fmt(offer.preboarding_completed_at)}.
+          </p>
+        ) : (
+          <p className="text-[12.5px] text-muted-foreground">
+            Verify every mandatory document, then mark preboarding complete above.
+          </p>
+        )}
+
+        {offer.preboarding_completed_at ? (
           <button
             type="button"
             disabled={exportMut.isPending}
             onClick={() => exportMut.mutate()}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground disabled:opacity-40"
+            className={cn(SECONDARY_BTN, 'mt-3')}
           >
             {exportMut.isPending ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
             ) : null}
             Prepare HRMS export
           </button>
+        ) : null}
 
-          {exportResult ? (
-            <div className="mt-3 rounded-[10px] border border-border p-3">
-              <p className="text-[12px] text-[var(--ui-soft)]">
-                key_id <span className="text-foreground">{exportResult.key_id}</span> · algorithm{' '}
-                <span className="text-foreground">{exportResult.algorithm}</span>
-              </p>
-              <p className="mt-1 break-all text-[11px] text-[var(--ui-faint)]">
-                signature {exportResult.signature}
-              </p>
-              <pre className="mt-2 max-h-[240px] overflow-auto rounded-[8px] bg-[var(--ui-inset)] p-2.5 text-[11px] text-[var(--ui-soft)]">
-                {JSON.stringify(exportResult.payload, null, 2)}
-              </pre>
-              <button
-                type="button"
-                onClick={() => downloadJson(`offer-${offer.id}-hrms-export.json`, exportResult)}
-                className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-[var(--ui-info)] hover:underline"
-              >
-                <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                Download JSON
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
+        {exportResult ? (
+          <Well className="mt-3">
+            <p className="text-[12px] text-[var(--ui-soft)]">
+              key_id <span className="text-foreground">{exportResult.key_id}</span> · algorithm{' '}
+              <span className="text-foreground">{exportResult.algorithm}</span>
+            </p>
+            <p className="mt-1 break-all text-[12px] text-[var(--ui-faint)]">
+              signature {exportResult.signature}
+            </p>
+            <pre className="mt-2 max-h-[240px] overflow-auto rounded-[8px] bg-[var(--ui-inset)] p-2.5 text-[12px] text-[var(--ui-soft)]">
+              {JSON.stringify(exportResult.payload, null, 2)}
+            </pre>
+            <button
+              type="button"
+              onClick={() => downloadJson(`offer-${offer.id}-hrms-export.json`, exportResult)}
+              className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-[var(--ui-info)] hover:underline"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              Download JSON
+            </button>
+          </Well>
+        ) : null}
+      </Section>
+    </Card>
   );
 }
 
 /* ── Page ───────────────────────────────────────────────────────────────── */
+
+function money(o: OfferDetailShape): string {
+  if (!o.base_salary) return '';
+  return [o.currency, o.base_salary, o.pay_period ? `/ ${o.pay_period}` : '']
+    .filter(Boolean)
+    .join(' ');
+}
+
+type OfferTab = 'terms' | 'documents';
+
+function OfferLoaded({ offer }: { offer: OfferDetailShape }) {
+  const accepted = offer.status === 'accepted';
+  // Documents are the work on an accepted offer, so they open first.
+  const [tab, setTab] = useState<OfferTab>(accepted ? 'documents' : 'terms');
+  const life = useOfferLifecycle(offer);
+  const [saveState, setSaveState] = useState<SaveState | undefined>(undefined);
+  const historyKey = useScopedPersistKey('offer-history');
+
+  // If the offer stops being accepted (it cannot, but the cache can change under
+  // us), never leave the page on a tab that no longer exists.
+  const activeTab: OfferTab = accepted ? tab : 'terms';
+
+  // Newest entry, by time, for the one-line summary under the closed header.
+  const newestEntry = offer.history.reduce<(typeof offer.history)[number] | null>(
+    (n, h) => (n === null || h.at > n.at ? h : n),
+    null,
+  );
+  const history = (
+    <Collapsible
+      variant="card"
+      title="History"
+      count={offer.history.length}
+      noun="entry"
+      nounPlural="entries"
+      latest={
+        newestEntry
+          ? `${offerActionWord(newestEntry.action)}${newestEntry.actor_name ? ` by ${newestEntry.actor_name}` : ''}, ${new Date(newestEntry.at).toLocaleDateString()}`
+          : undefined
+      }
+      persistKey={historyKey}
+      data-testid="offer-history"
+    >
+      {offer.history.length === 0 ? (
+        <p className="text-[12.5px] text-muted-foreground">No activity recorded yet.</p>
+      ) : (
+        <ProgressiveList
+          as="ol"
+          items={offer.history}
+          initial={5}
+          noun="entries"
+          getKey={(h, i) => `${h.at}-${i}`}
+          className="flex flex-col gap-4 border-l border-border pl-5"
+          renderItem={(h) => (
+            <li className="relative text-[13px] text-foreground">
+              <span
+                aria-hidden="true"
+                className="absolute -left-[25px] top-1.5 h-2 w-2 rounded-full border border-border bg-primary"
+              />
+              {offerActionWord(h.action)}
+              {h.actor_name ? ` — ${h.actor_name}` : ''}
+              <span className="mt-0.5 block text-[12px] tabular-nums text-muted-foreground">
+                {new Date(h.at).toLocaleString()}
+              </span>
+            </li>
+          )}
+        />
+      )}
+    </Collapsible>
+  );
+
+  const terms = <OfferFields offer={offer} onSaveState={setSaveState} />;
+
+  return (
+    <Page width="default">
+      <EditorHeader
+        breadcrumbs={[{ label: 'Offers', to: '/hr/offers' }, { label: 'Offer' }]}
+        title={`${offer.candidate_name} · ${offer.job_title}`}
+        status={
+          <DocStatusPill status={OFFER_DOC_STATUS[offer.status]}>
+            {offerStatusWord(offer.status)}
+          </DocStatusPill>
+        }
+        meta={offer.expires_at ? <span>Expires {fmt(offer.expires_at)}</span> : undefined}
+        saveState={saveState}
+      />
+
+      <OfferApprovalTrack offer={offer} life={life} saveState={saveState} />
+
+      <PageBody
+        asideLabel="Offer inspector"
+        aside={
+          <Card as="section" title="At a glance" density="compact" data-testid="offer-glance">
+            <DataList
+              columns={1}
+              items={[
+                { label: 'Base pay', value: <span className="tabular-nums">{money(offer)}</span> },
+                { label: 'Start date', value: offer.start_date ?? '' },
+                { label: 'Location', value: offer.location ?? '' },
+                {
+                  label: 'Employment type',
+                  value: offer.employment_type ? offer.employment_type.replace('_', ' ') : '',
+                },
+                ...(offer.approval_note && offer.status !== 'rejected'
+                  ? [{ label: 'Approver’s note', value: offer.approval_note }]
+                  : []),
+              ]}
+            />
+          </Card>
+        }
+      >
+        {accepted ? (
+          <Tabs value={activeTab} onValueChange={(v) => setTab(v as OfferTab)}>
+            <TabsList aria-label="Offer sections">
+              <TabsTrigger value="terms">Terms</TabsTrigger>
+              <TabsTrigger value="documents">Documents &amp; preboarding</TabsTrigger>
+            </TabsList>
+            <TabsContent value="documents" className="mt-4">
+              <DocumentsTab offer={offer} life={life} />
+            </TabsContent>
+            <TabsContent value="terms" className="mt-4">
+              {terms}
+            </TabsContent>
+          </Tabs>
+        ) : (
+          terms
+        )}
+        {history}
+      </PageBody>
+    </Page>
+  );
+}
 
 export default function OfferDetail() {
   const { offerId = '' } = useParams();
@@ -618,100 +885,33 @@ export default function OfferDetail() {
 
   if (query.isLoading) {
     return (
-      <div className="mx-auto w-full max-w-[860px] px-4 py-16">
-        <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading…
-        </p>
-      </div>
+      <Page width="default">
+        <div className="flex flex-col gap-4" role="status" aria-label="Loading offer">
+          <Skeleton className="h-9 w-2/3" />
+          <Skeleton className="h-64 w-full rounded-card" />
+          <Skeleton className="h-32 w-full rounded-card" />
+        </div>
+      </Page>
     );
   }
   if (query.isError || !query.data) {
     return (
-      <div className="mx-auto w-full max-w-[860px] px-4 py-16">
-        <p className="text-[13px] text-[var(--ui-danger)]">
+      <Page width="form">
+        <p
+          role="alert"
+          className={cn(
+            'rounded-[12px] border border-[var(--ui-danger)] bg-[var(--ui-danger-wash)] p-4',
+            'text-[13.5px] text-[var(--ui-danger)]',
+          )}
+        >
           {errText(query.error, 'Could not load this offer.')}
         </p>
-      </div>
+        <Link to="/hr/offers" className="text-[13px] text-[var(--ui-info)] underline">
+          Back to offers
+        </Link>
+      </Page>
     );
   }
 
-  const offer = query.data;
-
-  return (
-    <div className="mx-auto w-full max-w-[860px] px-4 py-8">
-      <Link
-        to="/hr/offers"
-        className="mb-2 inline-flex items-center gap-1.5 text-[12.5px] text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-        Offers
-      </Link>
-      <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-[22px] font-semibold tracking-[-0.6px] text-foreground">
-          {offer.candidate_name} · {offer.job_title}
-        </h1>
-        <StatusTag tone={OFFER_TONE[offer.status]} dot>
-          {offerStatusWord(offer.status)}
-        </StatusTag>
-      </div>
-      {offer.expires_at ? (
-        <p className="mt-1 text-[12.5px] text-muted-foreground">Expires {fmt(offer.expires_at)}</p>
-      ) : null}
-
-      {offer.status === 'rejected' && offer.approval_note ? (
-        <p className="mt-3 rounded-[10px] border border-[var(--ui-warn)]/35 bg-[rgba(255,183,100,0.08)] p-3 text-[12.5px] text-[var(--ui-soft)]">
-          Sent back: {offer.approval_note}
-        </p>
-      ) : null}
-      {offer.status === 'declined' && offer.decline_reason ? (
-        <p className="mt-3 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3 text-[12.5px] text-[var(--ui-soft)]">
-          Decline reason: {offer.decline_reason}
-        </p>
-      ) : null}
-      {offer.status === 'withdrawn' && offer.withdraw_reason ? (
-        <p className="mt-3 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3 text-[12.5px] text-[var(--ui-soft)]">
-          Withdraw reason: {offer.withdraw_reason}
-        </p>
-      ) : null}
-
-      <div className="mt-5 flex flex-col gap-5">
-        <OfferFields offer={offer} />
-
-        <GlassCard className="p-5">
-          <h2 className="mb-3 text-[15px] font-semibold text-foreground">Actions</h2>
-          <ActionsPanel offer={offer} />
-        </GlassCard>
-
-        <GlassCard className="p-5">
-          <h2 className="mb-3 text-[15px] font-semibold text-foreground">Documents</h2>
-          <OfferDocumentsPanel offerId={offer.id} />
-        </GlassCard>
-
-        <GlassCard className="p-5">
-          <h2 className="mb-3 text-[15px] font-semibold text-foreground">Preboarding</h2>
-          <PreboardingPanel offer={offer} />
-        </GlassCard>
-
-        <GlassCard className="p-5">
-          <h2 className="mb-3 text-[15px] font-semibold text-foreground">History</h2>
-          {offer.history.length === 0 ? (
-            <p className="text-[12.5px] text-muted-foreground">No activity recorded yet.</p>
-          ) : (
-            <ol className="flex flex-col gap-1.5 border-l border-border pl-3">
-              {offer.history.map((h, i) => (
-                <li key={i} className="text-[12.5px] text-[var(--ui-soft)]">
-                  {offerActionWord(h.action)}
-                  {h.actor_name ? ` — ${h.actor_name}` : ''}
-                  <span className="ml-1.5 text-[11px] text-[var(--ui-faint)]">
-                    {new Date(h.at).toLocaleString()}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
-        </GlassCard>
-      </div>
-    </div>
-  );
+  return <OfferLoaded offer={query.data} />;
 }

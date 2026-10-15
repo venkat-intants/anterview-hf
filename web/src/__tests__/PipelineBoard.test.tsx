@@ -71,7 +71,7 @@ describe('PipelineBoard — nothing here moves anybody', () => {
     const { onOpen } = renderBoard([
       row({ applicant_id: 'ap-1', enrolment_id: 'en-1', full_name: 'Asha Rao' }),
     ]);
-    await user.click(screen.getByRole('button', { name: /Open details for Asha Rao/ }));
+    await user.click(screen.getByRole('button', { name: 'Asha Rao' }));
     // The whole row: the drawer needs the application as well as the person.
     expect(onOpen).toHaveBeenCalledWith(
       expect.objectContaining({ applicant_id: 'ap-1', enrolment_id: 'en-1' }),

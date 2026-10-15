@@ -399,14 +399,14 @@ describe('resume — URL and method via fetch stub', () => {
   it('setCurrentResume calls POST /users/me/resumes/{id}/set-current', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(makeFetchResponse(200, { message: 'ok', resume_id: 'r2' }));
+      .mockResolvedValue(makeFetchResponse(200, { message: 'ok', resume_id: '00000000-0000-4000-8000-0000000000a2' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const { setCurrentResume } = await import('../api/resume');
-    await setCurrentResume('r2');
+    await setCurrentResume('00000000-0000-4000-8000-0000000000a2');
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/users/me/resumes/r2/set-current');
+    expect(url).toContain('/users/me/resumes/00000000-0000-4000-8000-0000000000a2/set-current');
     expect(init.method).toBe('POST');
   });
 
@@ -414,41 +414,41 @@ describe('resume — URL and method via fetch stub', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValue(
-        makeFetchResponse(200, { message: 'Resume set as current.', resume_id: 'r3' }),
+        makeFetchResponse(200, { message: 'Resume set as current.', resume_id: '00000000-0000-4000-8000-0000000000a3' }),
       );
     vi.stubGlobal('fetch', fetchMock);
 
     const { setCurrentResume } = await import('../api/resume');
-    const result = await setCurrentResume('r3');
+    const result = await setCurrentResume('00000000-0000-4000-8000-0000000000a3');
 
     expect(result.message).toBe('Resume set as current.');
-    expect(result.resume_id).toBe('r3');
+    expect(result.resume_id).toBe('00000000-0000-4000-8000-0000000000a3');
   });
 
   it('deleteResume calls DELETE /users/me/resumes/{id}', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(makeFetchResponse(200, { message: 'Resume r4 deleted.' }));
+      .mockResolvedValue(makeFetchResponse(200, { message: 'Resume 00000000-0000-4000-8000-0000000000a4 deleted.' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const { deleteResume } = await import('../api/resume');
-    await deleteResume('r4');
+    await deleteResume('00000000-0000-4000-8000-0000000000a4');
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain('/users/me/resumes/r4');
+    expect(url).toContain('/users/me/resumes/00000000-0000-4000-8000-0000000000a4');
     expect(init.method).toBe('DELETE');
   });
 
   it('deleteResume returns message from response', async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(makeFetchResponse(200, { message: 'Resume r5 deleted.' }));
+      .mockResolvedValue(makeFetchResponse(200, { message: 'Resume 00000000-0000-4000-8000-0000000000a5 deleted.' }));
     vi.stubGlobal('fetch', fetchMock);
 
     const { deleteResume } = await import('../api/resume');
-    const result = await deleteResume('r5');
+    const result = await deleteResume('00000000-0000-4000-8000-0000000000a5');
 
     expect(typeof result.message).toBe('string');
-    expect(result.message).toContain('r5');
+    expect(result.message).toContain('00000000-0000-4000-8000-0000000000a5');
   });
 });

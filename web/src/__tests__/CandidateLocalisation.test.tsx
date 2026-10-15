@@ -26,7 +26,20 @@ import i18n from '../lib/i18n';
 const LANGS = ['en', 'hi', 'te'] as const;
 
 /** The namespaces a candidate can see without logging in. */
-const CANDIDATE_NAMESPACES = ['resumeApply', 'careers', 'apply'] as const;
+const CANDIDATE_NAMESPACES = [
+  'resumeApply',
+  'careers',
+  'apply',
+  // UX round 3 — the signed-in candidate app: the next step, whose move it is,
+  // the application track, translated stage text, and the practice / "not a
+  // hiring decision" line. Held to the same four properties as the public
+  // surfaces above (present, same keys, really translated, placeholders kept).
+  'nextStep',
+  'turn',
+  'track',
+  'stage',
+  'practice',
+] as const;
 
 /**
  * Keys whose value is deliberately identical across locales: proper nouns and

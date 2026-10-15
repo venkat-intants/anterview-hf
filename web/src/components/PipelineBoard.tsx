@@ -25,7 +25,6 @@ import type { PipelineRow, PipelineStatus } from '@/api/pipeline';
 import { applicationKey } from '@/lib/applicationKey';
 import { offerOutcomeTag } from '@/lib/offerOutcome';
 import { Avatar, StatusTag, type TagTone } from '@/design/components/primitives';
-import { cn } from '@/lib/utils';
 
 /**
  * The columns, in the order a candidate passes through them.
@@ -86,6 +85,15 @@ function headlineScore(row: PipelineRow): { label: string; value: string } | nul
   return null;
 }
 
+/** "Updated 3d ago" — how long since anything on this application changed. */
+function updatedAgo(iso: string): string | null {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  const days = Math.floor((Date.now() - t) / 86_400_000);
+  if (days <= 0) return 'Updated today';
+  return `Updated ${days}d ago`;
+}
+
 function Card({
   row,
   showOutcome,
@@ -98,18 +106,33 @@ function Card({
 }) {
   const score = headlineScore(row);
   const offerTag = offerOutcomeTag(row.offer_outcome);
+  const nameId = `card-${applicationKey(row)}`;
+  const age = row.updated_at ? updatedAgo(row.updated_at) : null;
   return (
-    <button
-      type="button"
+    // The name is the one real button; the card as a whole is clickable for a
+    // mouse, and its status, score and age stay ordinary text a screen reader
+    // reads in place of being swallowed by a button label.
+    <article
+      aria-labelledby={nameId}
       onClick={onOpen}
-      aria-label={`Open details for ${row.full_name}`}
-      className="w-full rounded-[14px] border border-border bg-card p-3 text-left transition-colors hover:border-[rgba(var(--accent-rgb),0.3)] focus:outline-none focus-visible:border-[var(--accent)]"
+      className="w-full cursor-pointer rounded-[12px] border border-border bg-card p-3 text-left shadow-card transition-[border-color,box-shadow] focus-within:ring-2 focus-within:ring-[var(--accent)] hover:border-[var(--ui-line-strong)] hover:shadow-elevated"
     >
       <div className="flex items-center gap-2.5">
         <Avatar initials={initialsOf(row.full_name)} size={28} />
         <div className="min-w-0 flex-1">
-          <p className="truncate text-[13.5px] font-medium text-foreground">{row.full_name}</p>
-          <p className="truncate text-[11.5px] text-[var(--ui-faint)]">
+          <button
+            type="button"
+            id={nameId}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpen();
+            }}
+            aria-haspopup="dialog"
+            className="block max-w-full truncate rounded-[6px] text-left text-[14px] font-semibold text-foreground hover:underline focus-visible:outline-none"
+          >
+            {row.full_name}
+          </button>
+          <p className="truncate text-[12px] text-muted-foreground">
             {row.opening_title ?? row.target_job_title}
           </p>
         </div>
@@ -120,12 +143,13 @@ function Card({
         ) : null}
         {offerTag ? <StatusTag tone={offerTag.tone}>{offerTag.label}</StatusTag> : null}
         {score ? (
-          <span className="text-[11.5px] text-muted-foreground">
+          <span className="text-[12px] tabular-nums text-muted-foreground">
             {score.label} <span className="text-[var(--ui-soft)]">{score.value}</span>
           </span>
         ) : null}
+        {age ? <span className="ml-auto text-[12px] text-muted-foreground">{age}</span> : null}
       </div>
-    </button>
+    </article>
   );
 }
 
@@ -158,20 +182,22 @@ export default function PipelineBoard({
           <section
             key={col.key}
             aria-labelledby={`col-${col.key}`}
-            className="flex w-full min-w-0 flex-col gap-2 rounded-[16px] border border-border bg-white/[0.015] p-2.5"
+            className="flex w-full min-w-0 flex-col gap-2 rounded-card border border-border bg-[var(--ui-inset-soft)] p-2.5"
           >
             <h3
               id={`col-${col.key}`}
-              className="flex items-baseline justify-between px-1 text-[12px] font-medium text-[var(--ui-soft)]"
+              className="flex items-baseline justify-between px-1 text-[13px] font-bold text-foreground"
             >
               {col.label}
-              <span className="text-[11.5px] text-[var(--ui-faint)]">{col.rows.length}</span>
+              <span className="text-[12px] font-semibold text-muted-foreground">
+                {col.rows.length}
+              </span>
             </h3>
 
             {col.rows.length === 0 ? (
               // Named rather than blank: an empty column that says nothing
               // looks like a loading failure.
-              <p className="px-1 py-3 text-[11.5px] text-[var(--ui-faint)]">Nobody here.</p>
+              <p className="px-1 py-3 text-[12px] text-muted-foreground">Nobody here.</p>
             ) : (
               col.rows.map((row) => (
                 <Card
@@ -186,9 +212,9 @@ export default function PipelineBoard({
         ))}
       </div>
 
-      <p className={cn('mt-3 px-1 text-[11.5px] text-[var(--ui-faint)]')}>
-        Cards open a candidate. Moving somebody happens through their own record, so
-        every move is recorded with who made it.
+      <p className="mt-3 px-1 text-[12px] text-muted-foreground">
+        Cards open a candidate. Moving somebody happens through their own record, so every move is
+        recorded with who made it.
       </p>
     </div>
   );

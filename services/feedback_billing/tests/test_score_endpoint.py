@@ -206,7 +206,8 @@ def test_internal_score_passes_candidate_name_for_pdf(client: TestClient) -> Non
     assert kwargs["candidate_name"] == "Ravi Kumar"
     # The name must not be accepted from the wire — it is looked up in the DB.
     assert "candidate_name" not in _VALID_BODY
-    mock_db.scalar.assert_awaited_once()
+    # Two reads: the already-scored pre-check, then the name lookup.
+    assert mock_db.scalar.await_count == 2
     assert "db_session_factory" in kwargs
 
 
@@ -254,7 +255,9 @@ def test_candidate_name_lookup_releases_the_transaction_before_scoring(
         app.dependency_overrides.pop(get_db_session, None)
 
     assert resp.status_code == 201, resp.text
-    assert events == ["rollback", "score_session"], (
+    # One rollback per read (already-scored pre-check, then the name lookup),
+    # both before the LLM call.
+    assert events == ["rollback", "rollback", "score_session"], (
         f"expected the read transaction to be released BEFORE scoring, got {events}"
     )
 
@@ -292,8 +295,9 @@ def test_internal_score_survives_candidate_name_lookup_failure(
     assert resp.status_code == 201, resp.text
     assert mock_score.await_args.kwargs["candidate_name"] == ""
     # The aborted statement must be rolled back or the INSERT that follows
-    # would fail on the poisoned transaction.
-    mock_db.rollback.assert_awaited_once()
+    # would fail on the poisoned transaction. (Two rollbacks: the pre-check's
+    # read, whose scalar here also raises, and the name lookup's.)
+    assert mock_db.rollback.await_count == 2
 
 
 def test_internal_score_rejects_unsupported_language(client: TestClient) -> None:
@@ -604,3 +608,66 @@ def test_internal_routes_reject_a_non_service_role(
     token = _make_jwt(sub="data_gateway", roles=["candidate"])
     resp = client.post(path, json=body, headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 403, f"{path} accepted a candidate token: {resp.status_code}"
+
+
+# ---------------------------------------------------------------------------
+# An already-scored session is answered BEFORE the LLM call
+# ---------------------------------------------------------------------------
+
+
+def test_already_scored_session_is_409_without_calling_the_scorer(client: TestClient) -> None:
+    """The repeat used to run the whole LLM call and only then lose the INSERT race."""
+    token = _make_jwt()
+    mock_db = _mock_db_session()
+    existing = str(uuid.uuid4())
+    mock_db.scalar = AsyncMock(return_value=existing)  # the scorecards lookup finds a row
+
+    async def _override_db() -> AsyncSession:  # type: ignore[misc]
+        yield mock_db  # type: ignore[misc]
+
+    from app.database import get_db_session  # noqa: PLC0415
+
+    app.dependency_overrides[get_db_session] = _override_db
+    try:
+        with patch("app.routers.score.score_session", new_callable=AsyncMock) as scorer:
+            resp = client.post(
+                "/internal/score",
+                json=_VALID_BODY,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 409
+    scorer.assert_not_awaited()
+    mock_db.rollback.assert_awaited()  # read transaction ended, as before the LLM call
+
+
+def test_existing_lookup_failure_falls_through_to_scoring(client: TestClient) -> None:
+    """The pre-check is an optimisation; the UNIQUE constraint stays the arbiter."""
+    token = _make_jwt()
+    mock_db = _mock_db_session()
+    mock_db.scalar = AsyncMock(side_effect=RuntimeError("db hiccup"))
+
+    async def _override_db() -> AsyncSession:  # type: ignore[misc]
+        yield mock_db  # type: ignore[misc]
+
+    from app.database import get_db_session  # noqa: PLC0415
+
+    app.dependency_overrides[get_db_session] = _override_db
+    try:
+        with patch(
+            "app.routers.score.score_session",
+            new_callable=AsyncMock,
+            return_value=_GOOD_SCORE_SESSION_RETURN,
+        ) as scorer:
+            resp = client.post(
+                "/internal/score",
+                json=_VALID_BODY,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+    assert resp.status_code == 201, resp.text
+    scorer.assert_awaited_once()

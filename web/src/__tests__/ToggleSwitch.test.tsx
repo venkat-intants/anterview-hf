@@ -30,7 +30,9 @@ describe('ToggleSwitch', () => {
     expect(track.getAttribute('aria-checked')).toBe('true');
     expect(track.className).toContain('bg-[var(--accent)]');
     const thumb = screen.getByTestId('toggle-thumb');
-    expect(thumb.className).toContain('bg-primary');
+    // The foreground of the primary, not the primary: the track is the accent
+    // and the primary is that same blue, so a primary thumb would vanish on it.
+    expect(thumb.className).toContain('bg-primary-foreground');
     expect(thumb.className).not.toContain('bg-muted-foreground');
   });
 

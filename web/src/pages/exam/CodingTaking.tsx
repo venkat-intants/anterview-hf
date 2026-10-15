@@ -34,7 +34,8 @@ import {
   type TakeExam,
 } from '@/api/publicExam';
 import { cn } from '@/lib/utils';
-import { GlassCard, Pill } from '@/design/components/primitives';
+import { GlassCard } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
 
 const CodeEditor = lazy(() => import('@/components/CodeEditor'));
 
@@ -227,13 +228,13 @@ export default function CodingTaking(props: Props) {
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: i * 0.04 }}
       >
-        <GlassCard className="space-y-4 rounded-[16px] p-6">
+        <GlassCard className="space-y-4 p-4 sm:p-6">
           {/* Prompt + points */}
           <div className="flex items-start justify-between gap-3">
-            <p className="whitespace-pre-wrap text-body font-medium text-foreground">
+            <p className="whitespace-pre-wrap text-[16px] font-semibold leading-relaxed text-foreground">
               {i + 1}. {q.prompt}
             </p>
-            <span className="shrink-0 rounded-full bg-[var(--ui-inset)] px-2.5 py-1 text-caption text-muted-foreground">
+            <span className="shrink-0 rounded-full bg-[var(--ui-inset)] px-3 py-1 text-[13px] font-medium text-muted-foreground">
               {q.points} pts
             </span>
           </div>
@@ -246,12 +247,12 @@ export default function CodingTaking(props: Props) {
                   key={si}
                   className="rounded-[10px] border border-border bg-[var(--ui-inset-soft)] p-3 text-caption"
                 >
-                  <div className="text-fog">{t('publicExam.codingInputLabel')}</div>
-                  <pre className="mt-0.5 whitespace-pre-wrap font-mono text-[12px] text-mist">
+                  <div className="text-[var(--ui-soft)]">{t('publicExam.codingInputLabel')}</div>
+                  <pre className="mt-0.5 whitespace-pre-wrap font-mono text-[13px] text-foreground">
                     {s.stdin || '(none)'}
                   </pre>
-                  <div className="mt-2 text-fog">{t('publicExam.codingExpectedLabel')}</div>
-                  <pre className="mt-0.5 whitespace-pre-wrap font-mono text-[12px] text-mist">
+                  <div className="mt-2 text-[var(--ui-soft)]">{t('publicExam.codingExpectedLabel')}</div>
+                  <pre className="mt-0.5 whitespace-pre-wrap font-mono text-[13px] text-foreground">
                     {s.expected_output}
                   </pre>
                 </div>
@@ -261,13 +262,14 @@ export default function CodingTaking(props: Props) {
 
           {/* Language picker */}
           <div className="flex items-center gap-2">
-            <label className="text-caption text-muted-foreground">
+            <label htmlFor={`lang-${q.id}`} className="text-[13px] font-medium text-foreground">
               {t('publicExam.codingLanguageLabel')}
             </label>
             <select
+              id={`lang-${q.id}`}
               value={lang[q.id]}
               onChange={(e) => setLang((p) => ({ ...p, [q.id]: e.target.value }))}
-              className="rounded-[8px] border border-border bg-secondary px-2.5 py-1.5 text-body-sm text-foreground focus:border-electric focus:outline-none"
+              className="h-11 rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20"
             >
               {q.allowed_languages.map((l) => (
                 <option key={l} value={l}>
@@ -280,8 +282,8 @@ export default function CodingTaking(props: Props) {
           {/* Editor */}
           <Suspense
             fallback={
-              <div className="flex h-40 items-center justify-center rounded-[12px] border border-border bg-card">
-                <Loader2 className="h-5 w-5 animate-spin text-electric" aria-hidden="true" />
+              <div className="flex h-40 items-center justify-center rounded-[16px] border border-border bg-card">
+                <Loader2 className="h-5 w-5 animate-spin text-[var(--accent)]" aria-hidden="true" />
               </div>
             }
           >
@@ -296,11 +298,11 @@ export default function CodingTaking(props: Props) {
 
           {/* Run samples + sample results */}
           <div className="flex flex-wrap items-center gap-3">
-            <Pill
-              variant="ghost"
+            <Button
+              variant="outline"
               onClick={() => runSamples(q.id)}
               disabled={isRunning}
-              className="gap-1.5"
+              className="h-11 gap-1.5"
             >
               {isRunning ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -308,9 +310,9 @@ export default function CodingTaking(props: Props) {
                 <Play size={14} aria-hidden="true" />
               )}
               {t('publicExam.runSamples')}
-            </Pill>
+            </Button>
             {results && (
-              <span className="text-caption text-muted-foreground">
+              <span className="text-[13px] text-muted-foreground" role="status">
                 {results.filter((r) => r.passed).length}/{results.length}{' '}
                 {t('publicExam.samplesPassing', { count: results.length })}
               </span>
@@ -319,7 +321,7 @@ export default function CodingTaking(props: Props) {
             <button
               type="button"
               onClick={() => setShowCustom((p) => ({ ...p, [q.id]: !isCustomOpen }))}
-              className="ml-auto flex items-center gap-1.5 rounded-full border border-border px-3 py-1.5 text-caption text-muted-foreground transition-colors hover:border-[var(--ui-line-strong)] hover:text-foreground"
+              className="ml-auto flex min-h-11 items-center gap-1.5 rounded-full border border-border px-4 text-[13px] font-medium text-muted-foreground transition-colors hover:border-[var(--ui-line-strong)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               aria-expanded={isCustomOpen}
             >
               <Terminal size={12} aria-hidden="true" />
@@ -333,36 +335,36 @@ export default function CodingTaking(props: Props) {
                 <div
                   key={r.index}
                   className={cn(
-                    'rounded-[10px] border p-3 text-caption',
+                    'rounded-[12px] border p-3 text-[13px]',
                     r.passed
-                      ? 'border-[rgba(39,201,63,0.25)] bg-[rgba(39,201,63,0.05)]'
-                      : 'border-[rgba(230,113,79,0.25)] bg-[rgba(230,113,79,0.05)]',
+                      ? 'border-[var(--ui-ok)]/40 bg-[var(--ui-ok-wash)]'
+                      : 'border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)]',
                   )}
                 >
                   <div className="flex items-center gap-1.5 font-medium">
                     {r.passed ? (
-                      <CheckCircle2 size={13} className="text-vivid-mint" aria-hidden="true" />
+                      <CheckCircle2 size={13} className="text-[var(--ui-ok)]" aria-hidden="true" />
                     ) : (
-                      <XCircle size={13} className="text-ember" aria-hidden="true" />
+                      <XCircle size={13} className="text-[var(--ui-danger)]" aria-hidden="true" />
                     )}
                     {t('publicExam.sampleN', { n: r.index + 1 })}
                     {r.timed_out ? ` · ${t('publicExam.timedOut')}` : ''}
                     {r.error ? ` · ${r.error}` : ''}
                   </div>
                   {!r.passed && (
-                    <div className="mt-1.5 grid gap-1 font-mono text-[12px] text-mist sm:grid-cols-2">
+                    <div className="mt-1.5 grid gap-1 font-mono text-[13px] text-foreground sm:grid-cols-2">
                       <div>
-                        <span className="text-fog">{t('publicExam.codingExpected')}</span>
+                        <span className="text-[var(--ui-soft)]">{t('publicExam.codingExpected')}</span>
                         <pre className="whitespace-pre-wrap">{r.expected_output}</pre>
                       </div>
                       <div>
-                        <span className="text-fog">{t('publicExam.codingGot')}</span>
+                        <span className="text-[var(--ui-soft)]">{t('publicExam.codingGot')}</span>
                         <pre className="whitespace-pre-wrap">{r.actual_output || '(empty)'}</pre>
                       </div>
                       {r.stderr && (
                         <div className="sm:col-span-2">
-                          <span className="text-fog">stderr</span>
-                          <pre className="whitespace-pre-wrap text-ember">{r.stderr}</pre>
+                          <span className="text-[var(--ui-soft)]">stderr</span>
+                          <pre className="whitespace-pre-wrap text-[var(--ui-danger)]">{r.stderr}</pre>
                         </div>
                       )}
                     </div>
@@ -374,8 +376,8 @@ export default function CodingTaking(props: Props) {
 
           {/* Custom input panel */}
           {isCustomOpen && (
-            <div className="space-y-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-4">
-              <label className="text-caption text-muted-foreground">
+            <div className="space-y-2 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
+              <label className="text-[13px] font-medium text-foreground">
                 {t('publicExam.customInputLabel')}
               </label>
               <textarea
@@ -383,15 +385,15 @@ export default function CodingTaking(props: Props) {
                 onChange={(e) => setCustomInput((p) => ({ ...p, [q.id]: e.target.value }))}
                 rows={4}
                 placeholder={t('publicExam.customInputPlaceholder')}
-                className="w-full resize-y rounded-[8px] border border-border bg-card px-3 py-2.5 font-mono text-[12px] text-foreground placeholder:text-fog focus:border-electric focus:outline-none"
+                className="w-full resize-y rounded-[12px] border border-input bg-card px-3 py-2.5 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20"
                 aria-label={t('publicExam.customInputLabel')}
               />
               <div className="flex items-center gap-3">
-                <Pill
-                  variant="ghost"
+                <Button
+                  variant="outline"
                   onClick={() => runCustom(q.id)}
                   disabled={isCustomRunning}
-                  className="gap-1.5"
+                  className="h-11 gap-1.5"
                 >
                   {isCustomRunning ? (
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -399,48 +401,48 @@ export default function CodingTaking(props: Props) {
                     <Play size={14} aria-hidden="true" />
                   )}
                   {t('publicExam.runCustomInput')}
-                </Pill>
+                </Button>
               </div>
 
               {/* Custom run output */}
               {cr && (
                 <div
                   className={cn(
-                    'rounded-[10px] border p-3 text-caption',
+                    'rounded-[12px] border p-3 text-[13px]',
                     cr.timed_out || cr.exit_code !== 0
-                      ? 'border-[rgba(230,113,79,0.25)] bg-[rgba(230,113,79,0.05)]'
-                      : 'border-[rgba(39,201,63,0.25)] bg-[rgba(39,201,63,0.05)]',
+                      ? 'border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)]'
+                      : 'border-[var(--ui-ok)]/40 bg-[var(--ui-ok-wash)]',
                   )}
                 >
                   <div className="flex items-center gap-1.5 font-medium text-foreground">
                     <Terminal size={12} aria-hidden="true" />
                     {t('publicExam.customRunOutput')}
                     {cr.timed_out && (
-                      <span className="ml-1 text-ember">· {t('publicExam.timedOut')}</span>
+                      <span className="ml-1 text-[var(--ui-danger)]">· {t('publicExam.timedOut')}</span>
                     )}
                     {!cr.timed_out && cr.exit_code !== null && cr.exit_code !== 0 && (
-                      <span className="ml-1 text-ember">
+                      <span className="ml-1 text-[var(--ui-danger)]">
                         · {t('publicExam.exitCode', { code: cr.exit_code })}
                       </span>
                     )}
                   </div>
                   {cr.error && (
-                    <pre className="mt-1 whitespace-pre-wrap font-mono text-[12px] text-ember">
+                    <pre className="mt-1 whitespace-pre-wrap font-mono text-[13px] text-[var(--ui-danger)]">
                       {cr.error}
                     </pre>
                   )}
                   {cr.stdout && (
                     <div className="mt-1.5">
-                      <span className="text-fog">stdout</span>
-                      <pre className="whitespace-pre-wrap font-mono text-[12px] text-mist">
+                      <span className="text-[var(--ui-soft)]">stdout</span>
+                      <pre className="whitespace-pre-wrap font-mono text-[13px] text-foreground">
                         {cr.stdout}
                       </pre>
                     </div>
                   )}
                   {cr.stderr && (
                     <div className="mt-1.5">
-                      <span className="text-fog">stderr</span>
-                      <pre className="whitespace-pre-wrap font-mono text-[12px] text-ember">
+                      <span className="text-[var(--ui-soft)]">stderr</span>
+                      <pre className="whitespace-pre-wrap font-mono text-[13px] text-[var(--ui-danger)]">
                         {cr.stderr}
                       </pre>
                     </div>
@@ -462,9 +464,9 @@ export default function CodingTaking(props: Props) {
   // ── Standalone mode: full page shell with sticky bar + submit ─────────────
   const exam = props.exam;
   return (
-    <div className="min-h-screen bg-midnight font-sans">
+    <div className="min-h-screen bg-background font-sans">
       {/* Sticky bar */}
-      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-obsidian/80 px-4 py-3 backdrop-blur-xl">
+      <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-card px-4 py-3">
         <div className="min-w-0">
           <p className="truncate text-body-sm font-semibold text-foreground">{exam.title}</p>
           <p className="text-caption text-muted-foreground">
@@ -474,9 +476,9 @@ export default function CodingTaking(props: Props) {
         {remaining !== null && (
           <div
             className={cn(
-              'flex items-center gap-1.5 rounded-full px-3 py-1.5 text-body-sm font-medium tabular-nums',
+              'flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[16px] font-semibold tabular-nums',
               remaining <= 30
-                ? 'bg-[rgba(230,113,79,0.15)] text-ember'
+                ? 'bg-[var(--ui-danger-wash)] text-[var(--ui-danger)]'
                 : 'bg-[var(--ui-inset)] text-foreground',
             )}
             aria-live="polite"
@@ -492,17 +494,17 @@ export default function CodingTaking(props: Props) {
         {questionCards}
 
         {/* Submit */}
-        <div className="flex items-center justify-between gap-3 pt-2">
-          <p className="text-caption text-muted-foreground">{t('publicExam.hiddenTestsNote')}</p>
-          <Pill onClick={doSubmit} disabled={submitMut.isPending}>
+        <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[13px] text-muted-foreground">{t('publicExam.hiddenTestsNote')}</p>
+          <Button onClick={doSubmit} disabled={submitMut.isPending} className="h-12 sm:px-8">
             {submitMut.isPending ? (
               <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
             ) : null}
             {t('publicExam.submitSolution')}
-          </Pill>
+          </Button>
         </div>
         {submitMut.isError && (
-          <p className="text-right text-body-sm text-ember">
+          <p role="alert" className="text-right text-[14px] text-[var(--ui-danger)]">
             {submitMut.error instanceof Error
               ? submitMut.error.message
               : t('publicExam.submitFailed')}

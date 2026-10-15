@@ -32,7 +32,10 @@ import {
 } from '@/api/jobTasks';
 import { downloadUrl } from '@/lib/safeUrl';
 import { toast } from '@/lib/toast';
-import { Loader2, Plus, Trash2, Upload } from '@/design/components/icons';
+import { Plus, Trash2, Upload } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const MAX_ITEMS = 20;
 const ITEM_KEY_RE = /^[a-z0-9_]{1,80}$/;
@@ -46,10 +49,19 @@ function blankItem(n: number): TaskItem {
   return { key: `item_${n}`, prompt: '', response_type: 'text', required: true, max_chars: null };
 }
 
+// Native <select>/<textarea> in the same look as the shared Input.
 const inputCls =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground ' +
-  'placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none disabled:opacity-60';
-const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
+  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground ' +
+  'placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] ' +
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
+const selectCls = `${inputCls} h-11 py-0`;
+const labelCls = 'mb-1.5 block text-[13px] font-semibold text-foreground';
+const helpCls = 'mt-1.5 text-[12.5px] text-muted-foreground';
+// Hairline-divided group with a 15px bold title — the same rhythm as the
+// candidate drawer's sections, since this renders in the round's side panel.
+const GROUP = 'border-t border-border pt-5';
+const GROUP_TITLE = 'text-[15px] font-bold text-foreground';
+const checkCls = 'flex min-h-10 items-center gap-2.5 text-[14px] text-foreground';
 
 /* ── Items builder ─────────────────────────────────────────────────────── */
 
@@ -67,23 +79,22 @@ function ItemRow({
   onRemove: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-2 rounded-[10px] border border-border p-3">
-      <div className="grid grid-cols-2 gap-2">
+    <div className="flex flex-col gap-3 rounded-[16px] border border-border p-3.5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="block">
           <span className={labelCls}>Key</span>
-          <input
+          <Input
             value={item.key}
             disabled={!editable}
             onChange={(e) => onChange({ ...item, key: e.target.value })}
             placeholder="lowercase_with_underscores"
-            className={inputCls}
           />
           {!ITEM_KEY_RE.test(item.key) ? (
-            <p className="mt-1 text-[11px] text-[var(--ui-warn)]">
+            <p className="mt-1.5 text-[12.5px] text-[var(--ui-warn)]">
               Lowercase letters, digits and underscores only.
             </p>
           ) : duplicateKey ? (
-            <p className="mt-1 text-[11px] text-[var(--ui-warn)]">This key is used twice.</p>
+            <p className="mt-1.5 text-[12.5px] text-[var(--ui-warn)]">This key is used twice.</p>
           ) : null}
         </label>
         <label className="block">
@@ -94,7 +105,7 @@ function ItemRow({
             onChange={(e) =>
               onChange({ ...item, response_type: e.target.value as TaskResponseType })
             }
-            className={inputCls}
+            className={selectCls}
           >
             <option value="text">Written answer</option>
             <option value="link">Link</option>
@@ -113,21 +124,21 @@ function ItemRow({
           className={`${inputCls} resize-y`}
         />
       </label>
-      <div className="flex flex-wrap items-center gap-3">
-        <label className="flex items-center gap-2 text-[12.5px] text-foreground">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+        <label className={checkCls}>
           <input
             type="checkbox"
             checked={item.required}
             disabled={!editable}
             onChange={(e) => onChange({ ...item, required: e.target.checked })}
-            className="h-3.5 w-3.5 accent-[var(--accent)]"
+            className="h-4 w-4 accent-[var(--accent)]"
           />
           Required
         </label>
         {item.response_type === 'text' ? (
-          <label className="flex items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
+          <label className="flex items-center gap-2 text-[14px] text-[var(--ui-soft)]">
             Max characters
-            <input
+            <Input
               type="number"
               min={1}
               max={20000}
@@ -137,19 +148,21 @@ function ItemRow({
               onChange={(e) =>
                 onChange({ ...item, max_chars: e.target.value ? Number(e.target.value) : null })
               }
-              className="w-24 rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12.5px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+              className="w-28"
             />
           </label>
         ) : null}
+        {/* Kept apart, on the far edge, from the fields it would discard. */}
         {editable ? (
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={onRemove}
-            className="ml-auto inline-flex items-center gap-1 text-[12px] text-[var(--ui-danger)] hover:underline"
+            className="ml-auto border-[var(--ui-danger)]/40 text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]"
           >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+            <Trash2 aria-hidden="true" />
             Remove
-          </button>
+          </Button>
         ) : null}
       </div>
     </div>
@@ -213,39 +226,51 @@ function MaterialsEditor({ roundId, editable }: { roundId: string; editable: boo
   return (
     <div className="flex flex-col gap-2">
       {materials.isLoading ? (
-        <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          Loading materials…
-        </span>
+        <div aria-busy="true">
+          <span className="sr-only">Loading materials…</span>
+          <Skeleton className="h-11 rounded-[12px]" />
+        </div>
       ) : materials.isError ? (
-        <p className="text-[12px] text-[var(--ui-danger)]">Could not load reference materials.</p>
+        <div role="alert" className="flex flex-wrap items-center gap-3">
+          <p className="text-[13px] text-[var(--ui-danger)]">Could not load reference materials.</p>
+          <Button type="button" variant="outline" onClick={() => void materials.refetch()}>
+            Try again
+          </Button>
+        </div>
       ) : (materials.data ?? []).length === 0 ? (
-        <p className="text-[12px] text-muted-foreground">No reference materials attached.</p>
+        <p className="text-[13px] text-muted-foreground">
+          No reference materials attached.
+          {editable ? ' Add a PDF or image below if candidates need one.' : ''}
+        </p>
       ) : (
-        <ul className="flex flex-col gap-1.5">
+        <ul className="flex flex-col gap-2">
           {(materials.data ?? []).map((m) => (
             <li
               key={m.id}
-              className="flex items-center justify-between gap-2 rounded-[8px] border border-border px-2.5 py-1.5 text-[12.5px]"
+              className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-[12px] border border-border py-1 pl-3.5 pr-1.5 text-[14px]"
             >
-              <span className="min-w-0 truncate text-foreground">{m.title}</span>
-              <div className="flex shrink-0 items-center gap-2">
-                <button
+              <span className="min-w-0 flex-1 break-words text-foreground">{m.title}</span>
+              <div className="flex shrink-0 items-center gap-1">
+                <Button
                   type="button"
+                  variant="ghost"
                   onClick={() => downloadMut.mutate(m.id)}
-                  className="text-[11.5px] text-[var(--ui-info)] hover:underline"
+                  aria-label={`Download ${m.title}`}
+                  className="text-[var(--ui-info)]"
                 >
                   Download
-                </button>
+                </Button>
                 {editable ? (
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
                     onClick={() => removeMut.mutate(m.id)}
                     disabled={removeMut.isPending}
-                    className="text-[11.5px] text-[var(--ui-danger)] hover:underline"
+                    aria-label={`Remove ${m.title}`}
+                    className="text-[var(--ui-danger)] hover:text-[var(--ui-danger)]"
                   >
                     Remove
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </li>
@@ -255,14 +280,15 @@ function MaterialsEditor({ roundId, editable }: { roundId: string; editable: boo
 
       {editable ? (
         <div className="mt-1 flex flex-wrap items-center gap-2">
-          <input
+          <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title"
-            className="w-40 rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none"
+            aria-label="Material title"
+            className="w-full sm:w-48"
           />
-          <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-[8px] border border-[var(--ui-line-strong)] px-2.5 py-1 text-[11.5px] text-foreground hover:border-[var(--accent)]/60">
-            <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+          <label className="inline-flex min-h-10 cursor-pointer items-center gap-2 rounded-full border border-input bg-card px-5 text-[14px] font-semibold text-foreground transition-colors hover:border-[var(--ui-line-strong)] focus-within:ring-2 focus-within:ring-[var(--accent)]">
+            <Upload className="h-4 w-4" aria-hidden="true" />
             {addMut.isPending ? 'Uploading…' : 'Add a file (PDF/JPEG/PNG)'}
             <input
               type="file"
@@ -274,7 +300,11 @@ function MaterialsEditor({ roundId, editable }: { roundId: string; editable: boo
           </label>
         </div>
       ) : null}
-      {error ? <p className="text-[11.5px] text-[var(--ui-danger)]">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -373,9 +403,7 @@ export default function TaskEditor({
   // empty prompt, a duplicate key, a job simulation with no items, a
   // portfolio's minimum outrunning its maximum, or a file item on a portfolio
   // that does not accept files.
-  const hasInvalidItem = form.items.some(
-    (it) => !ITEM_KEY_RE.test(it.key) || !it.prompt.trim(),
-  );
+  const hasInvalidItem = form.items.some((it) => !ITEM_KEY_RE.test(it.key) || !it.prompt.trim());
   const hasDuplicateKey = new Set(keys).size !== keys.length;
   const needsAtLeastOneItem = kind === 'job_simulation' && form.items.length === 0;
   const minMaxInvalid =
@@ -392,84 +420,106 @@ export default function TaskEditor({
     !minMaxInvalid &&
     !fileItemWithoutFiles;
 
+  // The saved task could not be read. Showing the empty form instead would let
+  // a Save overwrite a configuration that exists, so say so and offer a retry.
+  if (config.isLoading) {
+    return (
+      <div className="flex flex-col gap-3" aria-busy="true">
+        <span className="sr-only">Loading…</span>
+        <Skeleton className="h-6 w-24" />
+        <Skeleton className="h-32 rounded-[12px]" />
+        <Skeleton className="h-20 rounded-[12px]" />
+      </div>
+    );
+  }
+  if (config.isError) {
+    return (
+      <div role="alert" className="flex flex-wrap items-center gap-3">
+        <p className="text-[13.5px] text-[var(--ui-danger)]">
+          {errText(config.error, 'Could not load this task.')}
+        </p>
+        <Button type="button" variant="outline" onClick={() => void config.refetch()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <label className={labelCls} htmlFor="task-brief">
-          Brief
-        </label>
-        <textarea
-          id="task-brief"
-          value={form.brief}
-          disabled={!editable}
-          onChange={(e) => setForm({ ...form, brief: e.target.value })}
-          maxLength={20000}
-          rows={5}
-          placeholder="What the candidate is asked to do, and why."
-          className={`${inputCls} mt-1 resize-y`}
-        />
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3">
+        <h3 className={GROUP_TITLE}>Candidate brief</h3>
+        <div>
+          <label className={labelCls} htmlFor="task-brief">
+            Brief
+          </label>
+          <textarea
+            id="task-brief"
+            value={form.brief}
+            disabled={!editable}
+            onChange={(e) => setForm({ ...form, brief: e.target.value })}
+            maxLength={20000}
+            rows={5}
+            placeholder="What the candidate is asked to do, and why."
+            className={`${inputCls} resize-y`}
+          />
+        </div>
+
+        <details className="rounded-[12px] border border-border px-3.5">
+          <summary className="flex min-h-10 cursor-pointer items-center text-[13.5px] text-[var(--ui-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]">
+            Add a Hindi or Telugu translation of the brief (optional)
+          </summary>
+          <div className="flex flex-col gap-3 pb-3.5 pt-2">
+            <label className="block">
+              <span className={labelCls}>Hindi</span>
+              <textarea
+                value={form.briefHi}
+                disabled={!editable}
+                onChange={(e) => setForm({ ...form, briefHi: e.target.value })}
+                maxLength={20000}
+                rows={3}
+                className={`${inputCls} resize-y`}
+              />
+            </label>
+            <label className="block">
+              <span className={labelCls}>Telugu</span>
+              <textarea
+                value={form.briefTe}
+                disabled={!editable}
+                onChange={(e) => setForm({ ...form, briefTe: e.target.value })}
+                maxLength={20000}
+                rows={3}
+                className={`${inputCls} resize-y`}
+              />
+            </label>
+          </div>
+        </details>
       </div>
 
-      <details className="rounded-[10px] border border-border p-3">
-        <summary className="cursor-pointer text-[12.5px] text-[var(--ui-soft)]">
-          Add a Hindi or Telugu translation of the brief (optional)
-        </summary>
-        <div className="mt-3 flex flex-col gap-3">
-          <label className="block">
-            <span className={labelCls}>Hindi</span>
-            <textarea
-              value={form.briefHi}
-              disabled={!editable}
-              onChange={(e) => setForm({ ...form, briefHi: e.target.value })}
-              maxLength={20000}
-              rows={3}
-              className={`${inputCls} resize-y`}
-            />
-          </label>
-          <label className="block">
-            <span className={labelCls}>Telugu</span>
-            <textarea
-              value={form.briefTe}
-              disabled={!editable}
-              onChange={(e) => setForm({ ...form, briefTe: e.target.value })}
-              maxLength={20000}
-              rows={3}
-              className={`${inputCls} resize-y`}
-            />
-          </label>
-        </div>
-      </details>
-
-      <div>
-        <div className="flex items-center justify-between">
-          <h4 className="text-[12px] font-medium text-[var(--ui-soft)]">
-            Items ({form.items.length})
-          </h4>
+      <div className={GROUP}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h4 className={GROUP_TITLE}>Items ({form.items.length})</h4>
           {editable ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={atCap}
               onClick={() =>
                 setForm({ ...form, items: [...form.items, blankItem(form.items.length + 1)] })
               }
-              className="inline-flex items-center gap-1 text-[12px] text-[var(--accent)] hover:underline disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              <Plus aria-hidden="true" />
               Add item
-            </button>
+            </Button>
           ) : null}
         </div>
         {kind === 'job_simulation' && form.items.length === 0 ? (
-          <p className="mt-1 text-[11.5px] text-[var(--ui-warn)]">
+          <p className="mt-2 text-[13px] text-[var(--ui-warn)]">
             A job simulation needs at least one item before it can be published.
           </p>
         ) : null}
-        {atCap ? (
-          <p className="mt-1 text-[11.5px] text-[var(--ui-faint)]">
-            A task has at most {MAX_ITEMS} items.
-          </p>
-        ) : null}
-        <div className="mt-2 flex flex-col gap-2">
+        {atCap ? <p className={helpCls}>A task has at most {MAX_ITEMS} items.</p> : null}
+        <div className="mt-3 flex flex-col gap-3">
           {form.items.map((item, idx) => (
             <ItemRow
               key={idx}
@@ -486,100 +536,96 @@ export default function TaskEditor({
       </div>
 
       {kind === 'portfolio' ? (
-        <div className="flex flex-col gap-3 rounded-[10px] border border-border p-3">
-          <h4 className="text-[12px] font-medium text-[var(--ui-soft)]">Portfolio settings</h4>
-          <div className="grid grid-cols-2 gap-2.5">
+        <div className={`${GROUP} flex flex-col gap-4`}>
+          <h4 className={GROUP_TITLE}>Portfolio settings</h4>
+          <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
             <label className="block">
               <span className={labelCls}>Minimum artifacts</span>
-              <input
+              <Input
                 type="number"
                 min={0}
                 max={20}
                 disabled={!editable}
                 value={form.minArtifacts}
                 onChange={(e) => setForm({ ...form, minArtifacts: e.target.value })}
-                className={inputCls}
               />
             </label>
             <label className="block">
               <span className={labelCls}>Maximum artifacts</span>
-              <input
+              <Input
                 type="number"
                 min={0}
                 max={20}
                 disabled={!editable}
                 value={form.maxArtifacts}
                 onChange={(e) => setForm({ ...form, maxArtifacts: e.target.value })}
-                className={inputCls}
               />
             </label>
           </div>
           {minMaxInvalid ? (
-            <p className="text-[11.5px] text-[var(--ui-warn)]">
+            <p role="alert" className="text-[13px] text-[var(--ui-warn)]">
               The minimum cannot be more than the maximum.
             </p>
           ) : null}
-          <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-[12.5px] text-foreground">
+          <div className="flex flex-wrap gap-x-6">
+            <label className={checkCls}>
               <input
                 type="checkbox"
                 checked={form.allowFiles}
                 disabled={!editable}
                 onChange={(e) => setForm({ ...form, allowFiles: e.target.checked })}
-                className="h-3.5 w-3.5 accent-[var(--accent)]"
+                className="h-4 w-4 accent-[var(--accent)]"
               />
               Accept files
             </label>
-            <label className="flex items-center gap-2 text-[12.5px] text-foreground">
+            <label className={checkCls}>
               <input
                 type="checkbox"
                 checked={form.allowLinks}
                 disabled={!editable}
                 onChange={(e) => setForm({ ...form, allowLinks: e.target.checked })}
-                className="h-3.5 w-3.5 accent-[var(--accent)]"
+                className="h-4 w-4 accent-[var(--accent)]"
               />
               Accept links
             </label>
           </div>
           {fileItemWithoutFiles ? (
-            <p className="text-[11.5px] text-[var(--ui-warn)]">
+            <p role="alert" className="text-[13px] text-[var(--ui-warn)]">
               An item asks for a file, so this portfolio must accept files.
             </p>
           ) : null}
           <label className="block">
             <span className={labelCls}>Approved link domains (comma-separated)</span>
-            <input
+            <Input
               value={form.allowedDomains}
               disabled={!editable}
               onChange={(e) => setForm({ ...form, allowedDomains: e.target.value })}
               placeholder={DEFAULT_LINK_DOMAINS.join(', ')}
-              className={inputCls}
             />
-            <p className="mt-1 text-[11px] text-[var(--ui-faint)]">
+            <p className={helpCls}>
               Leave blank for the default list: {DEFAULT_LINK_DOMAINS.join(', ')}.
             </p>
           </label>
         </div>
       ) : null}
 
-      <div>
-        <h4 className="mb-1.5 text-[12px] font-medium text-[var(--ui-soft)]">
-          Reference materials
-        </h4>
+      <div className={GROUP}>
+        <h4 className={`${GROUP_TITLE} mb-3`}>Reference materials</h4>
         <MaterialsEditor roundId={roundId} editable={editable} />
       </div>
 
       {editable ? (
-        <button
-          type="button"
-          onClick={() => saveMut.mutate()}
-          disabled={saveMut.isPending || !canSave}
-          className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
-        >
-          {saveMut.isPending ? 'Saving…' : 'Save task'}
-        </button>
+        <div className={GROUP}>
+          <Button
+            type="button"
+            onClick={() => saveMut.mutate()}
+            disabled={saveMut.isPending || !canSave}
+          >
+            {saveMut.isPending ? 'Saving…' : 'Save task'}
+          </Button>
+        </div>
       ) : (
-        <p className="text-[11.5px] text-[var(--ui-faint)]">
+        <p className="text-[13px] text-muted-foreground">
           This workflow version is fixed — its task configuration cannot change here.
         </p>
       )}

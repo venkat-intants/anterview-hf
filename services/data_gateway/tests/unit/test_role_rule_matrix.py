@@ -130,6 +130,13 @@ RULES: list[Rule] = [
         "POST /hr/interviews",
         "PATCH /hr/interviews/{invite_id}",
         "POST /hr/interviews/{invite_id}/revoke",
+        # Avatar vs audio-only for one candidate's pending interview. Not a
+        # hiring decision — but neither is a reschedule, and it sits in this
+        # block for the same reason: it changes what a NAMED candidate's
+        # interview will be, so it belongs to whoever owns their hiring and
+        # nobody else. A company super_admin runs hiring operations and is
+        # deliberately not a superset of HR (CLAUDE.md).
+        "PATCH /hr/interviews/{invite_id}/avatar-mode",
         "POST /hr/exams/{exam_id}/assignments",
         "POST /hr/exams/{exam_id}/assignments/{aid}/revoke",
         "POST /hr/enrolments/{enrolment_id}/loops",

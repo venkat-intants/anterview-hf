@@ -13,6 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { CheckCircle2 } from '@/design/components/icons';
 import { getSlaBoard, type SlaBoardRow, type SlaState } from '@/api/stageSla';
 import AtRiskRow from '@/components/AtRiskRow';
+import { SLA_SCOPE_NOTE } from '@/components/stageSlaCopy';
 import CandidateDrawer from '@/components/CandidateDrawer';
 
 const FILTERS = [
@@ -49,7 +50,7 @@ export default function StagesAtRisk(): JSX.Element {
     <Page width="default">
       <PageHeader
         title="Stages at risk"
-        description="Applications against the SLA their stage owner answers for, worst first. Open one to act on it — nothing on this page moves a candidate."
+        description="Applications against the SLA their stage owner answers for, worst first. Only stages with an SLA timer appear here — applicants waiting before round one are flagged under Attention required on the HR home. Open one to act on it — nothing on this page moves a candidate."
       />
 
       <Toolbar
@@ -78,10 +79,13 @@ export default function StagesAtRisk(): JSX.Element {
             Could not check stage SLAs just now.
           </p>
         ) : rows.length === 0 ? (
-          <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-            <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
-            {EMPTY[filter]}
-          </p>
+          <>
+            <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
+              <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
+              {EMPTY[filter]}
+            </p>
+            <p className="mt-1 text-[12px] leading-snug text-muted-foreground">{SLA_SCOPE_NOTE}</p>
+          </>
         ) : (
           <>
             <ul className="flex flex-col gap-2">

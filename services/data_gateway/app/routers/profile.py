@@ -1,7 +1,8 @@
 """Read-only profile viewing for privileged roles.
 
   GET /users/{user_id}/profile  — HR managers and company super-admins can view
-                                  any user in THEIR OWN company; platform admins
+                                  any user in THEIR OWN company, or who has
+                                  applied to it; platform admins
                                   and the platform owner can view any user.
 
 This is the "click a candidate to see their details" surface. Editing one's own
@@ -106,6 +107,10 @@ async def get_user_profile(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
 
+    # Why this viewer may see this profile: "global" (platform roles), "self",
+    # "member" (same company) or "applicant" (QA ANTHIRE-005, below). Logged,
+    # and it decides how much of the profile is returned.
+    basis = "global"
     # Tenant scoping for company-bound viewers.
     if not (_GLOBAL_VIEW_ROLES & set(_viewer.roles)):
         target_company_id = row[15]
@@ -115,18 +120,70 @@ async def get_user_profile(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
             ) from exc
+        basis = "self"
         if caller_uid != user_id:
             caller_company_id = await db.scalar(
                 text("SELECT company_id FROM users WHERE id = :uid AND deleted_at IS NULL"),
                 {"uid": caller_uid},
             )
-            if caller_company_id is None or caller_company_id != target_company_id:
+            # Own company means a member of it, OR someone who applied to it.
+            # A candidate's account carries no company_id once they claim it
+            # (apply_activation._promote_guest clears it — a candidate is not
+            # staff), so the member test alone turned "View full profile" on
+            # every activated applicant into "Profile not found" (QA
+            # ANTHIRE-005). HR already holds this person's name, email and CV
+            # in its ATS; a live applicant row in the caller's company is the
+            # tie, under three limits from the security review:
+            #   * HR managers only. A company super_admin runs hiring
+            #     operations and has no route to a named candidate (CLAUDE.md,
+            #     shared/agents/schema.py DATA_CLASS_ROLES); this must not be one.
+            #   * a candidate account only (no company of its own): STAFF at
+            #     another company stay out of reach even if they applied here.
+            #   * a LIVE application: an applicant row with an enrolment in this
+            #     company that is neither deleted nor rejected, on an opening
+            #     that is still open or paused (or a hire). A rejected
+            #     candidate's account profile — which they keep editing for
+            #     their next job search — is not HR's to keep watching.
+            # Anyone else stays a 404.
+            applied_here = (
+                caller_company_id is not None
+                and target_company_id is None
+                and "hr_manager" in _viewer.roles
+                and bool(
+                    await db.scalar(
+                        text(
+                            "SELECT 1 FROM applicants a"
+                            "  JOIN enrolments e ON e.applicant_id = a.id"
+                            "   AND e.company_id = a.company_id AND e.deleted_at IS NULL"
+                            "   AND e.status <> 'rejected'"
+                            "  JOIN job_requisitions r ON r.id = e.requisition_id"
+                            "   AND r.company_id = e.company_id AND r.deleted_at IS NULL"
+                            # A closed opening's untouched applicants are no
+                            # longer live; a hire stays viewable.
+                            "   AND (e.status = 'hired' OR r.status IN ('open', 'paused'))"
+                            " WHERE a.user_id = :t AND a.company_id = :c"
+                            "   AND a.deleted_at IS NULL LIMIT 1"
+                        ),
+                        {"t": user_id, "c": caller_company_id},
+                    )
+                )
+            )
+            if caller_company_id is None or (
+                caller_company_id != target_company_id and not applied_here
+            ):
                 # Out-of-tenant (or caller unassigned): behave as "not found".
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND, detail="User not found."
                 )
+            basis = "member" if caller_company_id == target_company_id else "applicant"
 
-    log.info("profile.view", target=str(user_id))
+    # Ids only — never the profile's contents.
+    log.info("profile.view", target=str(user_id), viewer=_viewer.user_id, basis=basis)
+    # On the applicant basis, leave out what HR does not need to consider an
+    # application and that says too much about the person's current job: the
+    # work address they typed in, their employment status, and any company or
+    # roles their account holds. HR already has the email and CV they applied with.
+    minimised = basis == "applicant"
     return PublicProfile(
         user_id=str(user_id),
         full_name=row[0],
@@ -134,15 +191,15 @@ async def get_user_profile(
         avatar_url=row[2],
         headline=row[3],
         bio=row[4],
-        employment_status=row[5],
+        employment_status=None if minimised else row[5],
         desired_roles=row[6],
         linkedin_url=row[7],
         github_url=row[8],
         location=row[9],
         phone=row[10],
-        official_email=row[11],
+        official_email=None if minimised else row[11],
         has_resume=bool(row[12]),
         created_at=row[13],
-        company_name=row[14],
-        roles=list(row[16] or []),
+        company_name=None if minimised else row[14],
+        roles=[] if minimised else list(row[16] or []),
     )

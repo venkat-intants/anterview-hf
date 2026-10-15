@@ -22,7 +22,7 @@ const LANGUAGES = [
 
 type LangCode = (typeof LANGUAGES)[number]['code'];
 
-export default function LanguageSwitcher() {
+export default function LanguageSwitcher({ staff = false }: { staff?: boolean } = {}) {
   const { i18n, t } = useTranslation();
   const current = i18n.language as LangCode;
 
@@ -52,7 +52,7 @@ export default function LanguageSwitcher() {
             />
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" sideOffset={8} className="w-40 min-w-0">
+        <DropdownMenuContent align="end" sideOffset={8} className={staff ? 'w-64 min-w-0' : 'w-40 min-w-0'}>
           <DropdownMenuRadioGroup
             value={activeCode}
             onValueChange={(code) => {
@@ -65,6 +65,14 @@ export default function LanguageSwitcher() {
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
+          {staff ? (
+            // QA ANTHIRE-012. Staff consoles are English-only by design
+            // (CLAUDE.md); without saying so, picking Hindi and seeing only
+            // "Logout" change reads as a broken translation.
+            <p className="border-t border-border px-2 pb-1 pt-2 text-[12px] leading-snug text-muted-foreground">
+              {t('lang.staffNote')}
+            </p>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>

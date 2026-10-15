@@ -80,7 +80,7 @@ describe('the openings list shows real setup state', () => {
     expect(within(live).queryByText('not live')).toBeNull();
 
     expect(within(row('Waiting Role')).getByTestId('opening-approval').textContent).toBe('Awaiting approval');
-    expect(within(row('Waiting Role')).getByText('not live')).toBeTruthy();
+    expect(within(row('Waiting Role')).getByText('not live · not approved yet')).toBeTruthy();
     expect(within(row('Sent Back Role')).getByTestId('opening-approval').textContent).toBe('Changes requested');
     expect(within(row('Fresh Role')).getByTestId('opening-approval').textContent).toBe('Not submitted');
 
@@ -89,6 +89,30 @@ describe('the openings list shows real setup state', () => {
     const paused = row('Paused Role');
     expect(within(paused).queryByText('accepting applications')).toBeNull();
     expect(within(paused).queryByText('not live')).toBeNull();
+  });
+
+  it('does not call an opening live once its closing date has passed, or with no live workflow', async () => {
+    // QA ANTHIRE-002/003: the server's public gate refuses both; the list
+    // used to say "accepting applications" for them.
+    m.listRequisitions.mockResolvedValue([
+      opening({
+        id: 'x', title: 'Expired Role', approval_status: 'approved', public_apply_enabled: true,
+        closes_at: '2020-01-01T00:00:00Z',
+      }),
+      opening({
+        id: 'y', title: 'Draft Flow Role', approval_status: 'approved', public_apply_enabled: true,
+        has_published_workflow: false,
+      }),
+    ]);
+    wrap(<Requisitions />);
+    const rows = await screen.findAllByTestId('opening-row');
+    const row = (title: string) => rows.find((r) => r.textContent?.includes(title)) as HTMLElement;
+
+    expect(within(row('Expired Role')).queryByText('accepting applications')).toBeNull();
+    expect(within(row('Expired Role')).getByText('not live · closing date passed')).toBeTruthy();
+    expect(within(row('Expired Role')).getByText(/closing date passed: extend it or close/i)).toBeTruthy();
+    expect(within(row('Draft Flow Role')).queryByText('accepting applications')).toBeNull();
+    expect(within(row('Draft Flow Role')).getByText('not live · no live workflow')).toBeTruthy();
   });
 
   it('has exactly one primary: New opening', async () => {

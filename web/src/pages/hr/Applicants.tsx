@@ -5,7 +5,7 @@
 //           that lists every failed file), shortlist/reject/rescore mutations,
 //           real ats_breakdown/strengths/concerns in the detail drawer.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import CandidatePanel from '@/components/agent/CandidatePanel';
@@ -998,7 +998,7 @@ export default function Applicants() {
   // the person's latest. Same component, same props, as the four other surfaces
   // that open it from state.
   const { applicantId: citedApplicantId } = useParams<{ applicantId?: string }>();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
 
   // Upload form state
@@ -1027,8 +1027,31 @@ export default function Applicants() {
   const statusParam: ApplicantStatus | undefined =
     filter === 'all' ? undefined : (filter as ApplicantStatus);
 
-  // Drawer state
+  // Drawer state. The open applicant is ALSO kept in the URL (?view=<id>), so
+  // leaving the modal for "View full profile" and pressing Back reopens it
+  // instead of dropping HR on the bare list (QA ANTHIRE-004). Written with
+  // replace, so opening and closing the modal adds no history entries of its own.
   const [selected, setSelected] = useState<Applicant | null>(null);
+  const viewId = searchParams.get('view');
+  const setView = (id: string | null): void => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (id) next.set('view', id);
+        else next.delete('view');
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  const openApplicant = (a: Applicant): void => {
+    setSelected(a);
+    setView(a.id);
+  };
+  const closeApplicant = (): void => {
+    setSelected(null);
+    setView(null);
+  };
 
   // ── Queries ──────────────────────────────────────────────────────────────
   // Server-side hybrid search: q + status go to data_gateway, which runs the
@@ -1172,6 +1195,22 @@ export default function Applicants() {
   // The server already applied the status filter + hybrid search ranking — use
   // the list exactly as returned (relevance order when searching, ATS order otherwise).
   const list = applicants ?? [];
+
+  // Back from the full profile: the page remounts with ?view=<id> and no
+  // selection — restore it ONCE, when the list first arrives. One-shot on
+  // purpose: react-router v7 applies setSearchParams inside a transition, so
+  // on close `selected` clears a render before `?view` does, and an effect
+  // that re-synced whenever the two disagreed re-opened the drawer the person
+  // had just closed. An id not in the loaded list (another filter, beyond the
+  // first 200) is not restored.
+  const restoredView = useRef(false);
+  useEffect(() => {
+    if (restoredView.current || !applicants) return;
+    restoredView.current = true;
+    if (!viewId) return;
+    const hit = applicants.find((x) => x.id === viewId);
+    if (hit) setSelected(hit);
+  }, [viewId, applicants]);
 
   /** Server-side page ceiling for GET /hr/applicants (_SEARCH_LIMIT / _LIST_PAGE_SIZE). */
   const APPLICANTS_PAGE_SIZE = 200;
@@ -1335,7 +1374,7 @@ export default function Applicants() {
                     <ApplicantRow
                       key={a.id}
                       a={a}
-                      onSelect={setSelected}
+                      onSelect={openApplicant}
                       isSelected={selected?.id === a.id}
                     />
                   ))}
@@ -1361,7 +1400,7 @@ export default function Applicants() {
         <ApplicantDrawer
           key={selected.id}
           applicant={selected}
-          onClose={() => setSelected(null)}
+          onClose={closeApplicant}
           onShortlist={(id, enrolmentId) =>
             statusMut.mutate({ id, status: 'shortlisted', enrolmentId })
           }

@@ -49,6 +49,9 @@ describe('StagesAtRiskWidget', () => {
     getSlaBoard.mockResolvedValue([]);
     renderWidget();
     await screen.findByText('Nothing overdue or due soon.');
+    // ANTHIRE-001/008: says what it does NOT cover, so it cannot read as
+    // contradicting a stalled alert on Attention required.
+    expect(screen.getByText(/applicants waiting before round one are flagged under attention required/i)).toBeInTheDocument();
     expect(getSlaBoard).toHaveBeenCalledWith({ state: ['overdue', 'due_soon'] });
   });
 

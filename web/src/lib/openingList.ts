@@ -41,10 +41,37 @@ type ListFields = Pick<
   | 'total_enrolments'
   | 'has_published_jd'
   | 'has_published_workflow'
+  | 'closes_at'
 >;
 
-export function isAcceptingApplications(r: Pick<Requisition, 'status' | 'public_apply_enabled'>): boolean {
-  return r.public_apply_enabled && r.status === 'open';
+type LiveFields = Pick<
+  Requisition,
+  'status' | 'public_apply_enabled' | 'approval_status' | 'closes_at' | 'has_published_workflow'
+>;
+
+/** The closing date has passed: the public gate refuses applications from then on. */
+export function closingDatePassed(r: Pick<Requisition, 'closes_at'>, now: Date = new Date()): boolean {
+  return !!r.closes_at && new Date(r.closes_at).getTime() <= now.getTime();
+}
+
+/**
+ * Why an opening whose status is 'open' is NOT actually taking applications,
+ * or null when it is. Mirrors the server's public gate (publishing.py), so the
+ * list can no longer say "accepting applications" for an opening the careers
+ * page refuses (QA ANTHIRE-002/003). `has_published_workflow` absent (older
+ * backend) is not read as missing.
+ */
+export function notLiveReason(r: LiveFields, now: Date = new Date()): string | null {
+  if (r.status !== 'open') return null;
+  if (closingDatePassed(r, now)) return 'closing date passed';
+  if (r.approval_status !== 'approved') return 'not approved yet';
+  if (r.has_published_workflow === false) return 'no live workflow';
+  if (!r.public_apply_enabled) return 'applications switched off';
+  return null;
+}
+
+export function isAcceptingApplications(r: LiveFields, now: Date = new Date()): boolean {
+  return r.status === 'open' && notLiveReason(r, now) === null;
 }
 
 /** A stage the server may or may not have told us about. Absent -> unknown. */
@@ -156,6 +183,11 @@ export function nextAction(r: Requisition): NextAction | null {
       return { text: 'Waiting for approval', to: `${base}?tab=setup`, passive: true };
     default:
       break;
+  }
+  if (closingDatePassed(r)) {
+    // Applications stopped on their own; the opening stays open so the
+    // pipeline can finish. HR decides whether to extend the date or close it.
+    return { text: 'Closing date passed: extend it or close the opening', to: base };
   }
   if (!isAcceptingApplications(r)) {
     const allProven = r.has_published_jd === true && r.has_published_workflow === true;

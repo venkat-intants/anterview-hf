@@ -1,10 +1,11 @@
-// AdminJobJd — admin page: JD PDF upload (functional) + JD library (presentation only).
+// AdminJobJd — admin page: JD PDF upload for the platform-wide PRACTICE job catalogue.
 // Route: /admin/jd (gated by AdminRoute).
 //
 // Layout: reproduced from design screen (AdminJobJd.tsx).
 //   • Page header (title + New role Pill)
 //   • Functional upload card (live: getJobs + uploadJd + FileUploadZone)
-//   • JD library card grid (design layout: zoom reveal, 2-col grid)
+//   (The static design-mock "JD library" grid was removed — QA ANTHIRE-011: it showed
+//   made-up roles as Published on a live admin page.)
 //
 // Behavior: 100% live — getJobs (data_gateway) + accessToken gating;
 //   job picker Select; FileUploadZone + uploadJd (PDF/10MB/progress/char-count toast);
@@ -12,7 +13,7 @@
 
 import { useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, Briefcase, Pencil } from '@/design/components/icons';
+import { AlertCircle, Briefcase } from '@/design/components/icons';
 import { useAuth } from '@/context/AuthContext';
 import { getJobs } from '@/api/jobs';
 import { uploadJd } from '@/api/jd';
@@ -28,11 +29,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
-import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
-import { Plus } from '@/design/components/icons';
+import { GlassCard } from '@/design/components/primitives';
+import { Reveal } from '@/design/components/Reveal';
 import { PageHeader } from '@/design/components/page';
-import { JOB_JDS } from '@/design/data/admin';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -96,20 +95,8 @@ export default function AdminJobJd() {
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <PageHeader
         className="mb-0"
-        title="Jobs & JD library"
-        description="Define roles and the competencies each interview scores."
-        actions={
-          /* New role — presentation only (no backend endpoint) */
-          <Pill
-            className="cursor-not-allowed px-5 py-2.5 opacity-50"
-            disabled
-            aria-label="New role — coming soon"
-            title="Coming soon"
-          >
-            <Plus size={16} aria-hidden="true" />
-            New role
-          </Pill>
-        }
+        title="Practice-interview job descriptions"
+        description="Attach a job description to a role in the platform-wide practice catalogue that candidates use for practice interviews. A company's own openings are not managed here — each company's HR adds the job description on the opening itself (Openings → the opening → Role and posting)."
       />
 
       {/* ══════════════════════════════════════════════════════════════════════
@@ -245,81 +232,6 @@ export default function AdminJobJd() {
         </GlassCard>
       </Reveal>
 
-      {/* ══════════════════════════════════════════════════════════════════════
-          SECTION 2 — PRESENTATION ONLY: JD library card grid
-          Design layout: zoom reveal, 2-col grid.
-          No backend endpoints — rendered as static chrome only.
-      ══════════════════════════════════════════════════════════════════════ */}
-      <Stagger className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-        {JOB_JDS.map((j) => (
-          <StaggerItem key={j.id}>
-            <Reveal dir="zoom">
-              <GlassCard hover className="p-5">
-                <div className="flex items-start gap-3">
-                  <span
-                    className="flex h-11 w-11 flex-none items-center justify-center rounded-[12px] bg-[var(--ui-info-wash)] text-[var(--ui-info)]"
-                    aria-hidden="true"
-                  >
-                    <Briefcase size={20} aria-hidden="true" />
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-[16px] font-semibold text-foreground">
-                        {j.title} · {j.level}
-                      </h3>
-                      <StatusTag
-                        tone={j.status === 'Published' ? 'forest' : 'neutral'}
-                        dot={j.status === 'Published'}
-                        className="shrink-0"
-                      >
-                        {j.status}
-                      </StatusTag>
-                    </div>
-                    <div className="mt-1 text-[12px] text-[var(--ui-faint)]">
-                      Updated {j.updated}
-                    </div>
-                  </div>
-                </div>
-
-                {/* Competency chips */}
-                <div className="mt-4 flex flex-wrap gap-1.5">
-                  {j.competencies.map((c) => (
-                    <span
-                      key={c}
-                      className="rounded-pill border border-border bg-[var(--ui-inset-soft)] px-2.5 py-1 text-[12px] text-[var(--ui-soft)]"
-                    >
-                      {c}
-                    </span>
-                  ))}
-                </div>
-
-                {/* Actions — presentation only, no handlers */}
-                <div className="mt-5 flex gap-2 border-t border-border pt-4">
-                  <Pill
-                    variant="ghost"
-                    className="flex-1 py-2 text-[12.5px] opacity-50 cursor-not-allowed"
-                    disabled
-                    aria-label={`Edit JD for ${j.title} — coming soon`}
-                    title="Coming soon"
-                  >
-                    <Pencil size={14} aria-hidden="true" />
-                    Edit JD
-                  </Pill>
-                  <Pill
-                    variant="accent"
-                    className="flex-1 py-2 text-[12.5px] opacity-50 cursor-not-allowed"
-                    disabled
-                    aria-label={`Map exam for ${j.title} — coming soon`}
-                    title="Coming soon"
-                  >
-                    Map exam
-                  </Pill>
-                </div>
-              </GlassCard>
-            </Reveal>
-          </StaggerItem>
-        ))}
-      </Stagger>
     </div>
   );
 }

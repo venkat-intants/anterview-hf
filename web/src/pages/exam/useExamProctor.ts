@@ -56,6 +56,7 @@ import { sendIntegrityEvent, type ExamIntegrityResult } from '@/api/publicExam';
 import { useProctoring } from '@/features/proctoring/useProctoring';
 import type { ProctorEventSubmitter } from '@/features/proctoring/types';
 import { useExamCamera } from './useExamCamera';
+import { useArmed, GATED_UNTIL_ARMED } from '@/features/proctoring/useArmed';
 
 /** Event types that count toward the violation threshold. Deliberately NOT
  *  copy/paste, mirroring app/exam_camera.py::VIOLATION_EVENT_TYPES — they are
@@ -175,6 +176,16 @@ export function useExamProctor({
   // Per-event-type debounce timestamps.
   const lastEmitRef = useRef<Record<string, number>>({});
 
+  // Camera state has to be read by `postEvent`, which is declared above the
+  // camera hook — so the hook writes into these refs and the gate below reads
+  // them. Mirrors how violationRef decouples the listeners from render order.
+  const cameraSettledRef = useRef(false);
+  const armedRef = useArmed({
+    enabled,
+    cameraEnabled,
+    cameraSettled: cameraSettledRef.current,
+  });
+
   const postEvent = useCallback(
     (eventType: string) => {
       if (!enabled || !attemptId) return;
@@ -186,6 +197,12 @@ export function useExamProctor({
         warnUnsupportedEventType(eventType);
         return;
       }
+
+      // NOT YET STARTED: a violation cannot predate the candidate being
+      // allowed to begin. See features/proctoring/useArmed.ts — the camera
+      // permission prompt and the gap before fullscreen both used to land
+      // here as tab_blur / fullscreen_exit, against auto-submit.
+      if (GATED_UNTIL_ARMED.has(eventType) && !armedRef.current) return;
 
       // Debounce: skip if the same event type fired within DEBOUNCE_MS.
       const now = Date.now();
@@ -241,7 +258,7 @@ export function useExamProctor({
         }
       }
     },
-    [enabled, attemptId, token, maxViolations, onAutoSubmit],
+    [enabled, attemptId, token, maxViolations, onAutoSubmit, armedRef],
   );
 
   // ── Browser event listeners ──────────────────────────────────────────────
@@ -346,6 +363,8 @@ export function useExamProctor({
   // getUserMedia — local-only self-view, never published anywhere (see
   // useExamCamera). Degrades to `available: false` on ANY failure.
   const camera = useExamCamera({ enabled: cameraEnabled });
+  // Keep the gate's view of the permission prompt current (see the refs above).
+  cameraSettledRef.current = camera.settled;
 
   // The shared, transport-agnostic camera module (features/proctoring) — the
   // SAME module the interview uses. `browserEvents: false`: this hook's own

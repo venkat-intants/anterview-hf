@@ -352,6 +352,15 @@ export default function PublicExam() {
   // Request fullscreen as soon as the round starts (triggered from the "Start
   // exam" button click, which is the required user gesture).
   const handleStart = useCallback(async () => {
+    // FULLSCREEN FIRST, BEFORE THE NETWORK CALL. requestFullscreen() is only
+    // honoured while the browser still considers the click "transient user
+    // activation", and awaiting the start request spends it — on a slow
+    // connection the request that used to run here was simply refused, and
+    // the candidate landed on question one outside fullscreen with the
+    // proctor already watching. The old comment claimed this was "still
+    // within the gesture stack"; after an awaited round trip it is not.
+    await enterFullscreen();
+
     const s = await new Promise<{
       attempt_id: string;
       started_at: string;
@@ -360,12 +369,14 @@ export default function PublicExam() {
     }>((resolve, reject) => {
       startMut.mutate(undefined, { onSuccess: resolve, onError: reject });
     });
-    // Enter fullscreen after the phase changes (still within the gesture stack).
     setAttemptId(s.attempt_id);
     setDeadline(s.deadline);
     setAttemptMaxViolations(s.max_violations);
+    // Last: flipping to 'taking' is what arms the proctor, so nothing it could
+    // record happens before the candidate is actually set up. The remaining
+    // start-up signal it waits on — the camera permission prompt — is handled
+    // by features/proctoring/useArmed.
     setPhase('taking');
-    await enterFullscreen();
   }, [startMut, enterFullscreen]);
 
   // ── Global countdown ─────────────────────────────────────────────────────

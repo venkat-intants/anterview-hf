@@ -36,6 +36,7 @@ are not:
     app/worker/prompt.py         the interviewer system instructions
     app/worker/consent.py        DPDP §11 resolver + mid-session watchdog
     app/worker/session_store.py  sessions/turns writes from the worker process
+    app/worker/avatar_mode.py    per-interview avatar vs audio-only choice
 
 All four are imported back into this namespace, so nothing that referred to
 ``app.worker.interview_worker.<name>`` — including every ``mock.patch`` target
@@ -140,6 +141,7 @@ from app.worker.consent import (
     _run_consent_watchdog,
     resolve_consent_user_id,
 )
+from app.worker.avatar_mode import effective_avatar_provider, normalise_avatar_mode
 from app.worker.constants import (
     MAX_CANDIDATE_ANSWERS,
     MIN_ANSWERS_TO_SCORE,
@@ -289,6 +291,8 @@ async def _publish_capacity() -> None:
 
 # Sarvam <lang>-IN codes for the STT/TTS plugins.
 _LANG_VENDOR: dict[str, str] = {"en": "en-IN", "hi": "hi-IN", "te": "te-IN"}
+
+
 _GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 
 # NOTE: the turn-loop model comes from settings.groq_model, NOT a constant here.
@@ -381,6 +385,10 @@ class SessionContext:
     # Catalog avatar id chosen at session-create time (e.g. "anna"). None means
     # unset/legacy row — resolve_avatar(None) returns the default.
     presenter_id: str | None = None
+    # HR's per-interview choice, copied invite -> session at first redeem.
+    # Defaults to "avatar" so a missing row or a failed lookup behaves exactly
+    # as it did before the column existed (app/worker/avatar_mode.py).
+    avatar_mode: str = "avatar"
     # Candidate's extracted resume text ("" if none on file) — grounds the
     # interview in their real experience.
     resume_text: str = ""
@@ -505,6 +513,7 @@ async def _lookup_session(room_name: str) -> SessionContext:
             lang = (sess.language or "en").lower()
             language = lang if lang in _LANG_VENDOR else "en"
             presenter_id: str | None = sess.presenter_id  # catalog avatar id or None
+            avatar_mode = normalise_avatar_mode(sess.avatar_mode)
             # Candidate's current resume text (best-effort — empty if none on file).
             resume_text = ""
             if sess.user_id is not None:
@@ -527,6 +536,7 @@ async def _lookup_session(room_name: str) -> SessionContext:
                 return SessionContext(
                     language=language,
                     presenter_id=presenter_id,
+                    avatar_mode=avatar_mode,
                     resume_text=resume_text,
                     injection_markers=markers,
                     session_id=session_id,
@@ -539,6 +549,7 @@ async def _lookup_session(room_name: str) -> SessionContext:
                 experience_level=level,
                 jd_text=(job.description or ""),
                 presenter_id=presenter_id,
+                avatar_mode=avatar_mode,
                 resume_text=resume_text,
                 company_name=(job.company_name or ""),
                 required_skills=_extract_required_skills(job.competencies),
@@ -1874,30 +1885,34 @@ class InterviewJob:
         CRITICAL: this must happen before session.start(). Reversing it = the
         avatar never publishes video. Enforced for every provider.
         """
+        # Outside the try, and used by EVERY line below that names a provider:
+        # logging settings.avatar_provider instead would report "tavus" for a
+        # session deliberately running without one (see app/worker/avatar_mode.py).
+        provider = effective_avatar_provider(
+            self.session_ctx.avatar_mode, settings.avatar_provider
+        )
         try:
             # Pass the per-session replica_id so the tavus branch uses the chosen
             # face. Simli and "none" providers ignore replica_id entirely.
-            avatar = _build_avatar(
-                settings.avatar_provider, replica_id=self.avatar_replica_id
-            )
+            avatar = _build_avatar(provider, replica_id=self.avatar_replica_id)
         except RuntimeError as exc:
             # Misconfiguration (missing plugin / persona / replica). Loud, but the
             # interview must still happen — degrade to voice-only.
             logger.error(
                 "interview-worker: avatar setup failed provider=%r err=%s — "
                 "falling back to voice-only",
-                settings.avatar_provider, exc,
+                provider, exc,
             )
             avatar = None
 
         avatar = await _start_avatar_or_fallback(
             avatar, self.session, self.ctx.room,
-            provider=settings.avatar_provider, session_id=self.session_id,
+            provider=provider, session_id=self.session_id,
         )
         if avatar is None:
             logger.info(
-                "interview-worker: running voice-only room=%s provider=%r",
-                self.session_id, settings.avatar_provider,
+                "interview-worker: running voice-only room=%s provider=%r mode=%r",
+                self.session_id, provider, self.session_ctx.avatar_mode,
             )
         else:
             # The provider can also kill the avatar MID-interview (e.g. Tavus ends

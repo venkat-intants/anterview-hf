@@ -798,6 +798,11 @@ class InterviewInvite(Base):
     token_hash: Mapped[str] = mapped_column(Text, nullable=False)
     language: Mapped[str] = mapped_column(Text, default="en", nullable=False)
     avatar_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 'avatar' (use the configured AVATAR_PROVIDER) or 'audio' (voice only,
+    # whatever the environment says). HR's per-interview choice; copied onto
+    # sessions.avatar_mode at first redeem, which is what the worker reads.
+    # Migration f3a5c7e9b1d4 — see it for why the toggle cannot pick a vendor.
+    avatar_mode: Mapped[str] = mapped_column(Text, default="avatar", nullable=False)
     expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
     scheduled_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     # The application this is for (B5). In the table since Group B (FK to
@@ -957,6 +962,10 @@ class Session(Base):
     # NULL / default means the baseline presenter ("presenter_alice").
     # Added by migration 20260530_0003.
     presenter_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Copied from interview_invites.avatar_mode at first redeem, so a session
+    # keeps the mode it STARTED under even if HR changes the invite later.
+    # 'avatar' | 'audio'. Migration f3a5c7e9b1d4.
+    avatar_mode: Mapped[str] = mapped_column(Text, default="avatar", nullable=False)
 
     user: Mapped[User] = relationship("User", back_populates="sessions")
     job: Mapped[Job] = relationship("Job", back_populates="sessions")

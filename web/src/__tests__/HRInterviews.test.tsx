@@ -50,6 +50,7 @@ const INVITED: InterviewInvite = {
   applicant_name: 'Bhavya Nair',
   job_title: 'Backend Engineer',
   language: 'hi',
+  avatar_mode: 'avatar',
   status: 'invited',
   scheduled_at: null,
   expires_at: '2026-08-20T10:00:00.000Z',
@@ -64,6 +65,7 @@ const COMPLETED: InterviewInvite = {
   applicant_name: 'Deepa Menon',
   job_title: 'Backend Engineer',
   language: 'en',
+  avatar_mode: 'avatar',
   status: 'completed',
   scheduled_at: '2026-08-04T09:30:00.000Z',
   expires_at: '2026-08-20T10:00:00.000Z',
@@ -79,6 +81,7 @@ const SCHEDULED: InterviewInvite = {
   applicant_name: 'Esha Kapoor',
   job_title: 'Backend Engineer',
   language: 'en',
+  avatar_mode: 'avatar',
   status: 'invited',
   scheduled_at: '2026-09-20T04:15:00.000Z',
   expires_at: '2026-10-20T10:00:00.000Z',
@@ -103,12 +106,14 @@ const listInvites = vi.fn();
 const createInvite = vi.fn();
 const revokeInvite = vi.fn();
 const rescheduleInvite = vi.fn();
+const setInviteAvatarMode = vi.fn();
 vi.mock('../api/interviewInvites', () => ({
   listEligibleApplicants: (...a: unknown[]) => listEligibleApplicants(...a) as unknown,
   listInvites: (...a: unknown[]) => listInvites(...a) as unknown,
   createInvite: (...a: unknown[]) => createInvite(...a) as unknown,
   revokeInvite: (...a: unknown[]) => revokeInvite(...a) as unknown,
   rescheduleInvite: (...a: unknown[]) => rescheduleInvite(...a) as unknown,
+  setInviteAvatarMode: (...a: unknown[]) => setInviteAvatarMode(...a) as unknown,
 }));
 
 const toastError = vi.fn();
@@ -204,6 +209,9 @@ describe('HRInterviews — invite form', () => {
         // B5: the interview is for one application, and says which.
         enrolment_id: 'en-1',
         language: 'te',
+        // Defaults to the avatar, so nothing about an existing invite changes
+        // unless someone deliberately switches it.
+        avatar_mode: 'avatar',
         scheduled_at: null,
       }),
     );
@@ -416,5 +424,81 @@ describe('HRInterviews — interview citation deep link', () => {
 
     expect(await screen.findByText(/not in this list/i)).toBeInTheDocument();
     expect(screen.getByText(/human interview/i)).toBeInTheDocument();
+  });
+
+  // ── Avatar vs audio ────────────────────────────────────────────────────
+  //
+  // The avatar is the only per-minute cost in a session, so whether a
+  // candidate meets a face or a voice is a budget call — and on a weak
+  // connection an accessibility one. It used to be a deployment-wide env var,
+  // which put it with whoever holds the deploy key rather than whoever is
+  // running the hiring.
+
+  it('sends the chosen mode when minting a link', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectApplicant(user, 'en-1');
+    await user.selectOptions(screen.getByLabelText('Interview mode'), 'audio');
+    await user.click(screen.getByRole('button', { name: /generate interview link/i }));
+
+    await waitFor(() =>
+      expect(createInvite).toHaveBeenCalledWith(
+        expect.objectContaining({ avatar_mode: 'audio' }),
+      ),
+    );
+  });
+
+  it('lets the mode be changed on an invite nobody chose one for', async () => {
+    // THE CASE THAT MATTERS. Most invites are minted by the workflow with no
+    // human in the loop, so a create-only control would be unreachable for the
+    // majority of interviews.
+    setInviteAvatarMode.mockResolvedValue({ ...INVITED, avatar_mode: 'audio' });
+    const user = userEvent.setup();
+    renderPage();
+
+    const row = await screen.findByText('Bhavya Nair');
+    const control = within(row.closest('div[id^="interview-"]') as HTMLElement).getByLabelText(
+      'Interview mode for Bhavya Nair',
+    );
+    await user.selectOptions(control, 'audio');
+
+    await waitFor(() => expect(setInviteAvatarMode).toHaveBeenCalledWith('inv-1', 'audio'));
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringMatching(/audio-only/i)),
+    );
+  });
+
+  it('shows the mode as read-only once the interview has started', async () => {
+    // The server 409s after the candidate starts, because the mode is copied
+    // onto the session at that point. Offering a live control that cannot work
+    // is worse than offering none.
+    const user = userEvent.setup();
+    renderPage();
+
+    const row = await screen.findByText('Deepa Menon');
+    const scope = within(row.closest('div[id^="interview-"]') as HTMLElement);
+    expect(scope.queryByLabelText('Interview mode for Deepa Menon')).not.toBeInTheDocument();
+    expect(scope.getByText('Video avatar')).toBeInTheDocument();
+    expect(setInviteAvatarMode).not.toHaveBeenCalled();
+    void user;
+  });
+
+  it("surfaces the server's refusal rather than a generic failure", async () => {
+    setInviteAvatarMode.mockRejectedValue(
+      new Error('This interview is already consumed — the mode is fixed once the candidate starts.'),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    const row = await screen.findByText('Bhavya Nair');
+    const control = within(row.closest('div[id^="interview-"]') as HTMLElement).getByLabelText(
+      'Interview mode for Bhavya Nair',
+    );
+    await user.selectOptions(control, 'audio');
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(expect.stringMatching(/already consumed/i)),
+    );
   });
 });

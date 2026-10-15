@@ -23,9 +23,11 @@ import {
   listEligibleApplicants,
   listInvites,
   createInvite,
+  setInviteAvatarMode,
   revokeInvite,
   rescheduleInvite,
   type InterviewInvite,
+  type AvatarMode,
 } from '@/api/interviewInvites';
 import { applicationKey } from '@/lib/applicationKey';
 import { useDeepLinkedRow } from '@/hooks/useDeepLinkedRow';
@@ -112,6 +114,8 @@ function InviteRow({
   revoking,
   onReschedule,
   rescheduling,
+  onSetMode,
+  settingMode,
   cited,
 }: {
   inv: InterviewInvite;
@@ -119,6 +123,8 @@ function InviteRow({
   revoking: boolean;
   onReschedule: (id: string, iso: string) => void;
   rescheduling: boolean;
+  onSetMode: (id: string, mode: AvatarMode) => void;
+  settingMode: boolean;
   /** True for the row a `/hr/interviews/{id}` citation names. */
   cited: boolean;
 }) {
@@ -206,6 +212,31 @@ function InviteRow({
               {LANG_LABEL[inv.language] ?? inv.language}
             </span>
           )}
+          {/* THE TOGGLE HAS TO LIVE HERE, not only on the create form. Most
+              invites are minted by the workflow with nobody choosing a mode, so
+              a create-only control would be unreachable for the majority of
+              interviews. Editable only while 'invited': after the candidate
+              starts, the session already carries the mode and the server 409s,
+              so showing a live control would be a lie. */}
+          {inv.status === 'invited' ? (
+            <select
+              className="h-9 shrink-0 rounded-[10px] border border-border bg-secondary px-2 text-[12.5px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-40"
+              value={inv.avatar_mode}
+              disabled={settingMode}
+              onChange={(e) => onSetMode(inv.invite_id, e.target.value as AvatarMode)}
+              aria-label={`Interview mode for ${inv.applicant_name}`}
+            >
+              <option value="avatar">Video avatar</option>
+              <option value="audio">Audio only</option>
+            </select>
+          ) : (
+            <span
+              className="shrink-0 text-[12.5px] text-muted-foreground"
+              title="Fixed once the candidate starts"
+            >
+              {inv.avatar_mode === 'audio' ? 'Audio only' : 'Video avatar'}
+            </span>
+          )}
           {canReschedule && (
             <button
               type="button"
@@ -285,6 +316,7 @@ export default function HRInterviews() {
   // under no opening) — a person can be eligible in two openings (B5).
   const [choice, setChoice] = useState('');
   const [language, setLanguage] = useState<'en' | 'hi' | 'te'>('en');
+  const [avatarMode, setAvatarMode] = useState<AvatarMode>('avatar');
   const [scheduledAt, setScheduledAt] = useState('');
   const [mintedLink, setMintedLink] = useState<string | null>(null);
 
@@ -317,6 +349,7 @@ export default function HRInterviews() {
         applicant_id: chosen?.id ?? '',
         enrolment_id: chosen?.enrolment_id ?? null,
         language,
+        avatar_mode: avatarMode,
         scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : null,
       }),
     onSuccess: (res) => {
@@ -336,6 +369,23 @@ export default function HRInterviews() {
       void qc.invalidateQueries({ queryKey: ['hr', 'interviews'] });
     },
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Revoke failed'),
+  });
+
+  const modeMut = useMutation({
+    mutationFn: ({ id, mode }: { id: string; mode: AvatarMode }) =>
+      setInviteAvatarMode(id, mode),
+    onSuccess: (inv) => {
+      toast.success(
+        inv.avatar_mode === 'audio'
+          ? `${inv.applicant_name} will have an audio-only interview`
+          : `${inv.applicant_name} will meet the video avatar`,
+      );
+      void qc.invalidateQueries({ queryKey: ['hr', 'interviews'] });
+    },
+    // The server's 409 names the status and says what to do instead, so it is
+    // shown verbatim rather than replaced by a generic failure.
+    onError: (e: unknown) =>
+      toast.error(e instanceof Error ? e.message : 'Could not change the interview mode'),
   });
 
   const rescheduleMut = useMutation({
@@ -428,7 +478,24 @@ export default function HRInterviews() {
               <option value="hi">हिंदी</option>
               <option value="te">తెలుగు</option>
             </select>
+
+            <select
+              className={inputCls}
+              value={avatarMode}
+              onChange={(e) => setAvatarMode(e.target.value as AvatarMode)}
+              aria-label="Interview mode"
+            >
+              <option value="avatar">Video avatar</option>
+              <option value="audio">Audio only</option>
+            </select>
           </div>
+
+          <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+            <strong className="font-semibold text-foreground">Audio only</strong> drops the
+            video avatar and runs the interview as voice. It costs less per minute and holds
+            up better on a weak connection — the questions, scoring and scorecard are
+            identical either way.
+          </p>
 
           <label className="block text-sm">
             <span className="mb-1 block text-[13px] font-semibold text-foreground">
@@ -554,6 +621,8 @@ export default function HRInterviews() {
                     revoking={revokeMut.isPending}
                     onReschedule={(id, scheduledAt) => rescheduleMut.mutate({ id, scheduledAt })}
                     rescheduling={rescheduleMut.isPending}
+                    onSetMode={(id, mode) => modeMut.mutate({ id, mode })}
+                    settingMode={modeMut.isPending}
                     cited={citedInvite?.invite_id === inv.invite_id}
                   />
                 ))}

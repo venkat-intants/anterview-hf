@@ -147,6 +147,10 @@ class Session(Base):
     # NULL means the baseline presenter ("presenter_alice").
     # Added by data_gateway migration 20260530_0003.
     presenter_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Copied from interview_invites.avatar_mode at first redeem, so a session
+    # keeps the mode it STARTED under even if HR changes the invite later.
+    # 'avatar' | 'audio'. Migration f3a5c7e9b1d4.
+    avatar_mode: Mapped[str] = mapped_column(Text, default="avatar", nullable=False)
     # Phase B proctoring (data_gateway migration 20260618_0002). NULL = no
     # proctoring data (proctoring off / legacy session).
     integrity_score: Mapped[int | None] = mapped_column(Integer, nullable=True)

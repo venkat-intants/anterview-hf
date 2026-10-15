@@ -42,6 +42,18 @@ router = APIRouter(prefix="/hr", tags=["hr-interviews"])
 
 _LANGS = {"en", "hi", "te"}
 
+#: How the candidate meets the interviewer. ``avatar`` uses whatever
+#: ``AVATAR_PROVIDER`` is configured on the instance; ``audio`` is voice only
+#: regardless of it. The toggle deliberately cannot pick a VENDOR — see
+#: migration f3a5c7e9b1d4.
+#:
+#: The DB CHECK (``ck_interview_invites_avatar_mode``) is the arbiter, not this
+#: set: interview_core reads the same column and has its own copy of these two
+#: values, so a third mode means the migration, this set and the worker's, and
+#: the constraint is what makes forgetting one of them fail loudly instead of
+#: writing a mode no worker can interpret.
+AVATAR_MODES = {"avatar", "audio"}
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -55,6 +67,9 @@ class InviteCreateIn(BaseModel):
     job_title: str | None = Field(default=None, max_length=300)
     level: str | None = None
     language: str = "en"
+    # 'avatar' (use the configured provider) or 'audio' (voice only). Defaults
+    # to 'avatar' so an existing caller that omits it is unchanged.
+    avatar_mode: str = "avatar"
     scheduled_at: datetime | None = None
     ttl_hours: int | None = Field(default=None, ge=1, le=8760)
 
@@ -63,6 +78,13 @@ class InviteCreateIn(BaseModel):
     def _lang(cls, v: str) -> str:
         if v not in _LANGS:
             raise ValueError(f"language must be one of {sorted(_LANGS)}")
+        return v
+
+    @field_validator("avatar_mode")
+    @classmethod
+    def _avatar_mode(cls, v: str) -> str:
+        if v not in AVATAR_MODES:
+            raise ValueError(f"avatar_mode must be one of {sorted(AVATAR_MODES)}")
         return v
 
 
@@ -83,6 +105,7 @@ class InviteOut(BaseModel):
     applicant_name: str
     job_title: str
     language: str
+    avatar_mode: str
     status: str
     scheduled_at: str | None
     expires_at: str
@@ -274,6 +297,10 @@ async def advance_applicant_to_interview(
     applicant: Applicant,
     created_by_user_id: uuid.UUID | None,
     language: str = "en",
+    # Defaults to 'avatar' so every existing caller keeps today's behaviour.
+    # The workflow runner passes the round's choice; a bare call gets the
+    # instance default, which is what AVATAR_PROVIDER already gave it.
+    avatar_mode: str = "avatar",
     scheduled_at: datetime | None = None,
     notify_user_id: uuid.UUID | None = None,
     enrolment_id: uuid.UUID | None = None,
@@ -347,6 +374,7 @@ async def advance_applicant_to_interview(
         created_by_user_id=created_by_user_id,
         token_hash=hash_interview_token(raw_token, settings.interview_link_secret),
         language=language,
+        avatar_mode=avatar_mode,
         expires_at=now + timedelta(
             hours=settings.interview_link_ttl_hours, days=extra_days or 0
         ),
@@ -528,6 +556,7 @@ async def create_invite(
         created_by_user_id=hr_uid,
         token_hash=hash_interview_token(raw_token, settings.interview_link_secret),
         language=body.language,
+        avatar_mode=body.avatar_mode,
         expires_at=now + timedelta(hours=ttl_hours, days=extra_days or 0),
         scheduled_at=body.scheduled_at,
         accommodation_id=adj_row.id if adj_row else None,
@@ -714,7 +743,7 @@ async def list_invites(
         out.append(
             InviteOut(
                 invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name,
-                job_title=title, language=inv.language, status=eff_status,
+                job_title=title, language=inv.language, avatar_mode=inv.avatar_mode, status=eff_status,
                 scheduled_at=inv.scheduled_at.isoformat() if inv.scheduled_at else None,
                 expires_at=inv.expires_at.isoformat(), created_at=inv.created_at.isoformat(),
                 composite_score=float(composite) if composite is not None else None,
@@ -744,7 +773,7 @@ async def get_invite(invite_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep) -> I
             sc, composite = row
     return InviteOut(
         invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name or "",
-        job_title=title or "", language=inv.language, status=inv.status,
+        job_title=title or "", language=inv.language, avatar_mode=inv.avatar_mode, status=inv.status,
         scheduled_at=inv.scheduled_at.isoformat() if inv.scheduled_at else None,
         expires_at=inv.expires_at.isoformat(), created_at=inv.created_at.isoformat(),
         composite_score=float(composite) if composite is not None else None,
@@ -770,7 +799,78 @@ async def revoke_invite(
     title = await db.scalar(select(Job.title).where(Job.id == inv.job_id))
     return InviteOut(
         invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name or "",
-        job_title=title or "", language=inv.language, status=inv.status,
+        job_title=title or "", language=inv.language, avatar_mode=inv.avatar_mode, status=inv.status,
+        scheduled_at=inv.scheduled_at.isoformat() if inv.scheduled_at else None,
+        expires_at=inv.expires_at.isoformat(), created_at=inv.created_at.isoformat(),
+        composite_score=None, scorecard_id=None,
+    )
+
+
+class AvatarModeIn(BaseModel):
+    avatar_mode: str
+
+    @field_validator("avatar_mode")
+    @classmethod
+    def _mode(cls, v: str) -> str:
+        if v not in AVATAR_MODES:
+            raise ValueError(f"avatar_mode must be one of {sorted(AVATAR_MODES)}")
+        return v
+
+
+@router.patch("/interviews/{invite_id}/avatar-mode", response_model=InviteOut)
+async def set_invite_avatar_mode(
+    invite_id: uuid.UUID,
+    body: AvatarModeIn,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+) -> InviteOut:
+    """Switch one interview between the avatar and audio-only, before it starts.
+
+    WHY THIS EXISTS AND IS NOT JUST A FIELD ON CREATE. Most invites are not
+    hand-made: the workflow runner mints them when a candidate clears the round
+    before the AI interview, with no human in the loop. A mode that could only
+    be chosen at mint time would therefore be unreachable for the majority of
+    interviews — HR would own the setting on paper and not in practice.
+
+    ONLY WHILE 'invited', and the reason is the copy. The mode is copied onto
+    the ``sessions`` row at first redeem; after that the worker has read it, or
+    is about to. Allowing a change later would present HR a control that
+    silently does nothing for the interview in front of them — worse than no
+    control. A started interview is therefore refused with the status, not
+    quietly ignored.
+    """
+    hr_uid, company_id = ctx
+    inv = await _get_owned_invite(db, company_id, invite_id)
+    if inv.status != "invited":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This interview is already {inv.status} — the mode is fixed once "
+                "the candidate starts. Revoke it and send a new invite to change it."
+            ),
+        )
+    previous = inv.avatar_mode
+    if previous != body.avatar_mode:
+        inv.avatar_mode = body.avatar_mode
+        inv.updated_at = datetime.now(tz=UTC)
+        _audit_invite(
+            db, request, actor=hr_uid, action="interview_invite.avatar_mode_changed",
+            invite_id=inv.id,
+            details={"company_id": str(company_id), "from": previous, "to": body.avatar_mode},
+        )
+        await db.commit()
+        log.info(
+            "hr.interview.avatar_mode_changed",
+            invite_id=str(inv.id), company_id=str(company_id),
+            previous=previous, avatar_mode=body.avatar_mode,
+        )
+    name = await db.scalar(select(Applicant.full_name).where(Applicant.id == inv.applicant_id))
+    title = await db.scalar(select(Job.title).where(Job.id == inv.job_id))
+    return InviteOut(
+        invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name or "",
+        job_title=title or "", language=inv.language, avatar_mode=inv.avatar_mode,
+        status=inv.status,
         scheduled_at=inv.scheduled_at.isoformat() if inv.scheduled_at else None,
         expires_at=inv.expires_at.isoformat(), created_at=inv.created_at.isoformat(),
         composite_score=None, scorecard_id=None,

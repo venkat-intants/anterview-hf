@@ -66,9 +66,14 @@ function whatHappens(round: Round): { receive: string; asked: string } {
 export default function CandidatePreview({
   title,
   rounds,
+  autoShortlistBar = null,
 }: {
   title: string;
   rounds: Round[];
+  /** Set when this version shortlists automatically above a 0–10 bar. Absent
+   *  means a person shortlists — the safe reading for a caller that does not
+   *  know, and the default for every workflow. */
+  autoShortlistBar?: number | null;
 }): JSX.Element {
   const ordered = [...rounds].sort((a, b) => a.position - b.position);
   return (
@@ -81,8 +86,10 @@ export default function CandidatePreview({
         <li className="rounded-[12px] border border-border p-3">
           <p className="text-[13px] font-medium text-foreground">They apply</p>
           <p className="mt-1 text-[12px] text-muted-foreground">
-            A confirmation email. Their application page reads “Application received”, and nothing
-            more happens until you shortlist them.
+            A confirmation email. Their application page reads “Application received”.{' '}
+            {autoShortlistBar !== null
+              ? `If their ATS score is ${autoShortlistBar * 10}/100 or higher they start round one on their own; below that, nothing happens until you shortlist them.`
+              : 'Nothing more happens until you shortlist them.'}
           </p>
         </li>
 

@@ -1787,10 +1787,17 @@ async def rescore_applicant(
         )
         # A rescore can lift an applicant over the bar. Guarded to status 'new',
         # so rescoring someone already shortlisted, held or decided moves nobody.
-        await maybe_auto_shortlist(db, enrolment_id=enr["id"])
+        auto = await maybe_auto_shortlist(db, enrolment_id=enr["id"])
+    else:
+        auto = None
     if latest:
         _apply_score(a, score)
     await db.commit()
+    if auto is not None and auto.action == "advanced":
+        # record_transition moved applicants.status with raw SQL, and this
+        # session does not expire on commit (shared/db/engine.py), so the ORM
+        # object would still say 'new' and _to_out below would report it.
+        await db.refresh(a, ["status"])
     # Refresh the search embedding too (also backfills it if it was missing).
     await _embed_applicant(db, a, hr_uid)
     return _to_out(a)

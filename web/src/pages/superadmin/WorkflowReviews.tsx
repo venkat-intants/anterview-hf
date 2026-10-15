@@ -237,7 +237,10 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
   };
 
   const approveMut = useMutation({
-    mutationFn: () => approveWorkflowReview(workflowId, note),
+    // The fingerprint of the version on screen, so the server can refuse an
+    // approval of something that changed after this page loaded.
+    mutationFn: () =>
+      approveWorkflowReview(workflowId, note, detail.data?.review_fingerprint ?? null),
     onSuccess: () => {
       setMode(null);
       setNote('');

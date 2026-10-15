@@ -373,10 +373,14 @@ def attention_items(f: DashboardFacts) -> list[dict[str, Any]]:
 
 
 def manual_steps(p: dict[str, Any], requisition_id: str) -> list[dict[str, Any]]:
-    """What waits for HR on purpose — the human gates, with counts. Pure.
+    """What waits for a person on purpose, with counts. Pure.
 
-    Not problems: these are the steps D-05 keeps for a person. Listed so it is
-    obvious nothing is stuck for want of automation.
+    Not problems: these are the steps kept for a person. Listed so it is
+    obvious nothing is stuck for want of automation. ``ready_to_shortlist`` is
+    still correct with ``auto_shortlist`` on: an applicant above the bar who is
+    still 'new' is one the automation declined to move (a CV flagged for prompt
+    injection, or an HR-uploaded applicant) — exactly someone a person should
+    confirm by hand.
     """
     decisions = f"/hr/requisitions/{requisition_id}/decisions"
     ready = int(p.get("ready_to_shortlist") or 0)

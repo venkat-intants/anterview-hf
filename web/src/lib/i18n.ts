@@ -742,9 +742,9 @@ const en = {
         invite: 'Interview invitation',
       },
       reviewNext:
-        'The hiring team reviews what you sent. If they want to take you forward, they will email you the next step. A person makes that decision, not the software.',
+        'The hiring team reviews what you sent. Depending on the role, moving to the next stage may happen automatically when you meet its standard. Every hire or reject decision is made by a person, not the software.',
       resumeNext:
-        'The hiring team at {{company}} will read your application. If they want to take you forward, they will email {{email}} with the next step. Nothing is decided automatically.',
+        'The hiring team at {{company}} will read your application. Depending on the role, some steps — such as scoring your CV, or moving you on when you meet its standard — may be automatic. We will email {{email}} with the next step. Every hire or reject decision is made by a person.',
       exam: {
         submittedTitle: 'Assessment submitted',
         submittedDesc: 'Your answers are with the hiring team.',
@@ -1212,7 +1212,7 @@ const en = {
       alreadyApplied: 'You have already applied',
       received: 'Application received',
       reviewNote:
-        'Your CV is with the hiring team for {{title}}. If they move you forward you will get an email with the next step; nothing is decided automatically.',
+        'Your CV is with the hiring team for {{title}}. Depending on the role, some steps — such as scoring your CV, or moving you on when you meet its standard — may be automatic. You will get an email with the next step. Every hire or reject decision is made by a person.',
       loading: 'Loading…',
       aboutRole: 'About the role',
       whatYouWillDo: 'What you will do',
@@ -2422,9 +2422,9 @@ const hi = {
         invite: 'इंटरव्यू आमंत्रण',
       },
       reviewNext:
-        'नियुक्ति टीम आपके भेजे हुए को देखती है। यदि वे आपको आगे बढ़ाना चाहते हैं, तो आपको अगले चरण की जानकारी ईमेल से मिलेगी। यह निर्णय कोई व्यक्ति लेता है, सॉफ़्टवेयर नहीं।',
+        'नियुक्ति टीम आपके भेजे हुए को देखती है। भूमिका के अनुसार, मानक पूरा करने पर अगले चरण में जाना स्वतः हो सकता है। नियुक्ति या अस्वीकृति का हर निर्णय कोई व्यक्ति लेता है, सॉफ़्टवेयर नहीं।',
       resumeNext:
-        '{{company}} की नियुक्ति टीम आपका आवेदन पढ़ेगी। यदि वे आपको आगे बढ़ाना चाहते हैं, तो वे अगले चरण के साथ {{email}} पर ईमेल करेंगे। कोई भी निर्णय स्वतः नहीं लिया जाता।',
+        '{{company}} की नियुक्ति टीम आपका आवेदन पढ़ेगी। भूमिका के अनुसार, कुछ चरण — जैसे आपके CV का मूल्यांकन, या मानक पूरा करने पर आपको आगे बढ़ाना — स्वतः हो सकते हैं। हम अगले चरण के साथ {{email}} पर ईमेल करेंगे। नियुक्ति या अस्वीकृति का हर निर्णय कोई व्यक्ति लेता है।',
       exam: {
         submittedTitle: 'मूल्यांकन जमा हो गया',
         submittedDesc: 'आपके उत्तर नियुक्ति टीम के पास हैं।',
@@ -2862,7 +2862,7 @@ const hi = {
       alreadyApplied: 'आप पहले ही आवेदन कर चुके हैं',
       received: 'आवेदन मिल गया',
       reviewNote:
-        'आपका CV {{title}} की नियुक्ति टीम के पास है। यदि वे आपको आगे बढ़ाते हैं तो आपको अगले चरण की जानकारी ईमेल से मिलेगी; कोई भी निर्णय स्वतः नहीं लिया जाता।',
+        'आपका CV {{title}} की नियुक्ति टीम के पास है। भूमिका के अनुसार, कुछ चरण — जैसे आपके CV का मूल्यांकन, या मानक पूरा करने पर आपको आगे बढ़ाना — स्वतः हो सकते हैं। आपको अगले चरण की जानकारी ईमेल से मिलेगी। नियुक्ति या अस्वीकृति का हर निर्णय कोई व्यक्ति लेता है।',
       loading: 'लोड हो रहा है…',
       aboutRole: 'भूमिका के बारे में',
       whatYouWillDo: 'आप क्या करेंगे',
@@ -4027,9 +4027,9 @@ const te = {
         invite: 'ఇంటర్వ్యూ ఆహ్వానం',
       },
       reviewNext:
-        'నియామక బృందం మీరు పంపినదాన్ని సమీక్షిస్తుంది. వారు మిమ్మల్ని ముందుకు తీసుకెళ్లాలనుకుంటే, తదుపరి దశను మీకు ఇమెయిల్ చేస్తారు. ఆ నిర్ణయం ఒక వ్యక్తి తీసుకుంటారు, సాఫ్ట్‌వేర్ కాదు.',
+        'నియామక బృందం మీరు పంపినదాన్ని సమీక్షిస్తుంది. పాత్రను బట్టి, ప్రమాణాన్ని అందుకుంటే తదుపరి దశకు వెళ్లడం ఆటోమేటిక్‌గా జరగవచ్చు. నియామకం లేదా తిరస్కరణ ప్రతి నిర్ణయం ఒక వ్యక్తి తీసుకుంటారు, సాఫ్ట్‌వేర్ కాదు.',
       resumeNext:
-        '{{company}} నియామక బృందం మీ దరఖాస్తును చదువుతుంది. వారు మిమ్మల్ని ముందుకు తీసుకెళ్లాలనుకుంటే, తదుపరి దశతో {{email}}కు ఇమెయిల్ చేస్తారు. ఏ నిర్ణయమూ ఆటోమేటిక్‌గా తీసుకోబడదు.',
+        '{{company}} నియామక బృందం మీ దరఖాస్తును చదువుతుంది. పాత్రను బట్టి, కొన్ని దశలు — మీ CV మూల్యాంకనం, లేదా ప్రమాణాన్ని అందుకుంటే మిమ్మల్ని ముందుకు తీసుకెళ్లడం వంటివి — ఆటోమేటిక్‌గా జరగవచ్చు. తదుపరి దశతో {{email}}కు ఇమెయిల్ చేస్తాము. నియామకం లేదా తిరస్కరణ ప్రతి నిర్ణయం ఒక వ్యక్తి తీసుకుంటారు.',
       exam: {
         submittedTitle: 'అసెస్‌మెంట్ సమర్పించబడింది',
         submittedDesc: 'మీ సమాధానాలు నియామక బృందం వద్ద ఉన్నాయి.',
@@ -4471,7 +4471,7 @@ const te = {
       alreadyApplied: 'మీరు ఇప్పటికే దరఖాస్తు చేశారు',
       received: 'దరఖాస్తు అందింది',
       reviewNote:
-        'మీ CV {{title}} నియామక బృందం వద్ద ఉంది. వారు మిమ్మల్ని ముందుకు తీసుకెళ్తే తదుపరి దశ గురించి ఈమెయిల్ వస్తుంది; ఏ నిర్ణయమూ స్వయంచాలకంగా తీసుకోబడదు.',
+        'మీ CV {{title}} నియామక బృందం వద్ద ఉంది. పాత్రను బట్టి, కొన్ని దశలు — మీ CV మూల్యాంకనం, లేదా ప్రమాణాన్ని అందుకుంటే మిమ్మల్ని ముందుకు తీసుకెళ్లడం వంటివి — ఆటోమేటిక్‌గా జరగవచ్చు. తదుపరి దశ గురించి ఈమెయిల్ వస్తుంది. నియామకం లేదా తిరస్కరణ ప్రతి నిర్ణయం ఒక వ్యక్తి తీసుకుంటారు.',
       loading: 'లోడ్ అవుతోంది…',
       aboutRole: 'ఉద్యోగం గురించి',
       whatYouWillDo: 'మీరు ఏమి చేస్తారు',

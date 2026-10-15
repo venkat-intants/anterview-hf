@@ -23,7 +23,7 @@ queue for someone to press a button they would press anyway.
 WHAT STILL HOLDS, which is what keeps this inside D-05 rather than around it:
 
   * Auto-shortlist only ever ADVANCES. An applicant below the bar is left
-    exactly where they were — still 'applied', still in HR's queue, still
+    exactly where they were — still 'new', still in HR's queue, still
     shortlistable by hand. Nobody is held, rejected or hidden by this switch.
     D-05's actual promise is that nothing automated ends a candidacy, and that
     is untouched.
@@ -38,11 +38,23 @@ WHAT STILL HOLDS, which is what keeps this inside D-05 rather than around it:
     approval before it is published. Removing a human gate is itself reviewed
     by a human.
 
-THE CHECK IS THE IMPORTANT PART. ``auto_shortlist`` without a threshold would
-mean "advance every applicant", which is not a shortlist at all. The constraint
-makes that combination unrepresentable rather than merely discouraged:
+THE CHECK IS THE IMPORTANT PART. Three combinations are made unrepresentable
+rather than merely discouraged:
 
-    NOT auto_shortlist OR shortlist_ats_threshold IS NOT NULL
+  * no bar, or a bar of 0 — ``score >= 0`` admits every scored applicant,
+    including one recorded as 0 because the scorer's reply had no "overall";
+  * ``auto_assign_first_round`` off — applicants would be marked shortlisted
+    and then have nothing started, stranded with no person watching, because
+    the shortlist was the step a person used to see.
+
+    NOT auto_shortlist OR (shortlist_ats_threshold IS NOT NULL
+                           AND shortlist_ats_threshold >= 1
+                           AND auto_assign_first_round)
+
+THE ``IS NOT NULL`` IS NOT REDUNDANT. A CHECK passes when its expression is
+TRUE *or NULL*, and ``NULL >= 1`` is NULL — so without it, auto-shortlist with
+a NULL threshold would satisfy the constraint, which is the case it most needs
+to refuse. (A first draft of this constraint made exactly that mistake.)
 
 It is added plain, not NOT VALID: the column is new and defaults to false, so
 every existing row satisfies it trivially. See docs/ACCEPTED-RISKS.md and the
@@ -81,7 +93,7 @@ def upgrade() -> None:
     op.create_check_constraint(
         "ck_workflows_auto_shortlist_needs_threshold",
         "workflows",
-        "NOT auto_shortlist OR shortlist_ats_threshold IS NOT NULL",
+        "NOT auto_shortlist OR (shortlist_ats_threshold IS NOT NULL AND shortlist_ats_threshold >= 1 AND auto_assign_first_round)",
     )
 
 

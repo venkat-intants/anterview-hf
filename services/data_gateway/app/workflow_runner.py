@@ -4,7 +4,8 @@ One component advances every enrolled candidate. It is **event-driven, not
 polled**: it reacts to three things happening and consults the enrolment's own
 workflow version to decide what comes next.
 
-    application received  ->  enrol, score, wait for the human shortlist gate
+    application received  ->  enrol, score, wait for the shortlist (a person, or
+                             auto_shortlist above the bar — maybe_auto_shortlist)
     round submitted       ->  record the result, then advance or hold
     interview scored      ->  the same, via the same path
 
@@ -45,6 +46,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
+from shared.agents.guardrails import detect_injection
 from shared.intelligence import (
     FrozenRubricError,
     composite_from_criteria,
@@ -135,7 +137,8 @@ async def enrol_applicant(
     rather than creating a duplicate.
 
     The candidate does NOT get a round here. The first round is assigned after
-    the human shortlist gate, which is the whole point of the gate.
+    the shortlist — ordinarily a person's, or on an opted-in workflow the
+    automatic one in :func:`maybe_auto_shortlist`. Either way, not at enrolment.
 
     ``actor_user_id`` is the person who filed the applicant (HR's upload); the
     ledger entry is then marked manual. None — a candidate applying — is the
@@ -690,6 +693,15 @@ def clears_shortlist_bar(ats_overall: int | None, threshold: int | None) -> bool
     return ats_overall >= threshold * 10
 
 
+class _RoundOneNotStartedError(Exception):
+    """Raised inside the savepoint to UNDO a shortlist whose round one did not
+    start. Private: it never leaves maybe_auto_shortlist."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 async def maybe_auto_shortlist(db: AsyncSession, *, enrolment_id: uuid.UUID) -> RunnerOutcome:
     """Shortlist an applicant the runner's own way, when — and only when — the
     workflow says so and their ATS clears the bar. Caller commits. NEVER RAISES.
@@ -715,12 +727,25 @@ async def maybe_auto_shortlist(db: AsyncSession, *, enrolment_id: uuid.UUID) -> 
     try:
         async with db.begin_nested():
             return await _auto_shortlist(db, enrolment_id)
+    except _RoundOneNotStartedError as stop:
+        # Not a failure — a deliberate undo. The savepoint has rolled the
+        # shortlist back, so the applicant is still 'new' and still in HR's
+        # queue rather than stranded as shortlisted-with-no-round.
+        log.info("runner.auto_shortlist_undone", enrolment_id=str(enrolment_id),
+                 reason=stop.reason)
+        return RunnerOutcome(action="noop", enrolment_id=str(enrolment_id),
+                             reason=f"undone: {stop.reason}")
     except Exception as exc:  # noqa: BLE001 — see "NEVER RAISES" above
+        # exc_type ONLY. str() of a SQLAlchemy/asyncpg error carries the SQL and
+        # its bound parameters, and this savepoint wraps round assignment, whose
+        # parameters include the candidate's name and email. The structlog PII
+        # processor matches key NAMES, never values, so it would not catch them —
+        # and because this swallows the exception, it never reaches the scrubbed
+        # 500 handler either (shared/http_observability.py explains the trap).
         log.error(
             "runner.auto_shortlist_failed",
             enrolment_id=str(enrolment_id),
             exc_type=type(exc).__name__,
-            exc_msg=str(exc),
         )
         return RunnerOutcome(action="noop", enrolment_id=str(enrolment_id),
                              reason=f"auto-shortlist failed: {type(exc).__name__}")
@@ -735,9 +760,12 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
         await db.execute(
             text(
                 "SELECT e.status, e.workflow_id, e.current_round_id, e.company_id,"
-                "       e.ats_overall"
+                "       e.ats_overall, e.source, a.resume_text"
                 "  FROM enrolments e"
+                "  JOIN applicants a ON a.id = e.applicant_id"
                 " WHERE e.id = :i AND e.deleted_at IS NULL"
+                # OF e: the enrolment row only. The applicant row is read, not
+                # locked — it is the CV text, which nothing here writes.
                 " FOR UPDATE OF e"
             ),
             {"i": enrolment_id},
@@ -753,6 +781,16 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
         return RunnerOutcome(action="noop", enrolment_id=eid, reason="already in a round")
     if not row["workflow_id"]:
         return RunnerOutcome(action="noop", enrolment_id=eid, reason="no workflow attached")
+    # HR-CREATED APPLICANTS ARE NEVER AUTO-SHORTLISTED. 'internal' is a CV HR
+    # uploaded (bulk or single) — a person who did not apply through the
+    # product and whose processing rests on the hr_collected_application basis
+    # (bulk_ingest.py). Sending them an exam link or an AI-interview invite
+    # because a model scored their CV, with no human choosing to contact them,
+    # is a different act from advancing someone who applied. HR can still
+    # shortlist them by hand; that is a person deciding to reach out.
+    if row["source"] == "internal":
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason="HR-created applicant — a person decides to contact them")
 
     workflow = await _load_workflow(db, row["workflow_id"])
     if workflow is None:
@@ -768,11 +806,35 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
 
     threshold = workflow.get("shortlist_ats_threshold")
     score = row["ats_overall"]
+    # A bar of 0 admits every scored applicant — including one scored 0
+    # because the scorer's response had no "overall" (apply_ats_to_enrolment
+    # defaults it to 0). As a SUGGESTION that is harmless; as an automatic
+    # shortlist it is "everyone", which the settings layer and
+    # ck_workflows_auto_shortlist_needs_threshold refuse. Refused here too, so
+    # a row that predates or bypasses those still advances no one.
+    if threshold is None or threshold < 1:
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason=f"bar {threshold} is not a usable automatic bar")
     if not clears_shortlist_bar(score, threshold):
         # The ONLY outcome below the bar is nothing. Not held, not rejected:
         # still 'new', still in HR's queue, still shortlistable by hand.
         return RunnerOutcome(action="noop", enrolment_id=eid,
                              reason=f"ATS {score} below the bar of {threshold}/10")
+    # A CV CARRYING INSTRUCTIONS AIMED AT THE SCORER IS NOT ADVANCED ON ITS SCORE.
+    # The injection defence was built on a person looking before anything
+    # happens: detection warns, it never rejects (shared/agents/guardrails.py).
+    # Auto-shortlist removes that person, so a CV that may have talked its own
+    # score up would go straight to an assessment. Checked AFTER the bar so the
+    # scan runs only for applicants who would otherwise advance. The outcome is
+    # still nothing — left 'new', in HR's queue — which keeps it inside D-05; and
+    # the markers are recomputed from the CV wherever HR looks at the applicant
+    # (agents/tools.py), so a person sees the warning rather than losing it.
+    markers = detect_injection(row["resume_text"] or "")
+    if markers:
+        log.warning("runner.auto_shortlist_declined_injection",
+                    enrolment_id=eid, marker_count=len(markers))
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason="CV flagged for prompt injection — left for a person")
 
     previous = await record_transition(
         db,
@@ -790,6 +852,16 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
         return RunnerOutcome(action="noop", enrolment_id=eid, reason="already shortlisted")
 
     outcome = await on_shortlisted(db, enrolment_id=enrolment_id, actor_user_id=None)
+    if outcome.action != "advanced":
+        # SHORTLISTED BUT NOT STARTED IS THE WORST OF BOTH. The manual path has a
+        # person looking at the result; this one does not. Left committed, the
+        # applicant would sit as 'shortlisted' with no round, drop out of HR's
+        # "ready to shortlist" count, and never be retried — a later rescore is
+        # a no-op because they are no longer 'new'. So roll the shortlist back
+        # and leave them where a human will see them. (update_settings refuses
+        # auto_shortlist without auto_assign_first_round, so the usual cause is
+        # a workflow with no rounds — but this catches every cause.)
+        raise _RoundOneNotStartedError(outcome.reason or outcome.action)
     log.info(
         "runner.auto_shortlisted",
         enrolment_id=eid,

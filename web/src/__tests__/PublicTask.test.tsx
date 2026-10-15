@@ -490,7 +490,10 @@ describe('PublicTask — after submitting', () => {
     expect(screen.queryByText(/reviewer/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Describe your approach.')).not.toBeInTheDocument();
     const next = screen.getByRole('heading', { name: 'What happens next' }).closest('section') as HTMLElement;
-    expect(within(next).getByText(/A person makes that decision/)).toBeInTheDocument();
+    // See PublicExamResult.test.tsx: the old "A person makes that decision"
+    // was false wherever a round auto-advances. The hire/reject guarantee holds.
+    expect(within(next).getByText(/every hire or reject decision is made by a person/i)).toBeInTheDocument();
+    expect(within(next).queryByText(/A person makes that decision/)).toBeNull();
     expect(within(next).getByRole('link', { name: 'Track this in My applications' })).toHaveAttribute('href', '/login');
   });
 

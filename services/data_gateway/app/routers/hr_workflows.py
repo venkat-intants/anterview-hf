@@ -46,7 +46,13 @@ from app.interviewer_scorecards import summary_for_enrolments
 from app.models import AuditLog
 from app.stage_sla import sla_for_enrolments
 from app.utils.request_ip import extract_client_ip, extract_user_agent
-from app.workflow_runner import decision_queue, on_shortlisted, record_result, release_hold
+from app.workflow_runner import (
+    decision_queue,
+    maybe_auto_shortlist,
+    on_shortlisted,
+    record_result,
+    release_hold,
+)
 from app.workflow_templates import TEMPLATES, build_template, template_summaries
 from app.workflows import (
     EXAM_BACKED_KINDS,
@@ -569,14 +575,34 @@ async def get_workflow(
 
 @router.patch("/workflows/{workflow_id}")
 async def patch_settings(
-    workflow_id: uuid.UUID, body: SettingsPatch, ctx: HrCtxDep, db: DbSessionDep
+    workflow_id: uuid.UUID, body: SettingsPatch, request: Request, ctx: HrCtxDep,
+    db: DbSessionDep,
 ) -> dict[str, Any]:
-    _hr_uid, company_id = ctx
-    await _owned_workflow(db, company_id, workflow_id)
+    hr_uid, company_id = ctx
+    wf = await _owned_workflow(db, company_id, workflow_id)
+    fields = body.model_dump(exclude_unset=True)
     try:
-        await update_settings(
-            db, workflow_id=workflow_id, fields=body.model_dump(exclude_unset=True)
-        )
+        await update_settings(db, workflow_id=workflow_id, fields=fields)
+        # WHO SWITCHED A HUMAN GATE OFF, AND WHEN. Every other setting is a
+        # mechanical preference; this one removes a person from a step that
+        # affects candidates, so it gets its own audit row rather than having
+        # to be reconstructed from the workflow row and review events. Written
+        # only on an actual change, in the same transaction as the change.
+        if "auto_shortlist" in fields and bool(fields["auto_shortlist"]) != bool(
+            wf.get("auto_shortlist")
+        ):
+            db.add(AuditLog(
+                actor_id=hr_uid, actor_type="user",
+                action=(
+                    "workflow.auto_shortlist.enabled" if fields["auto_shortlist"]
+                    else "workflow.auto_shortlist.disabled"
+                ),
+                resource_type="workflow", resource_id=workflow_id,
+                details={"company_id": str(company_id), "version": wf.get("version"),
+                         "from": bool(wf.get("auto_shortlist")),
+                         "to": bool(fields["auto_shortlist"])},
+                ip_address=extract_client_ip(request), user_agent=extract_user_agent(request),
+            ))
         await db.commit()
     except WorkflowError as exc:
         await db.rollback()
@@ -809,26 +835,38 @@ async def publish_workflow(
     # Candidates who applied while nothing was live join this version, in the
     # same transaction as the publish. Those a person had already shortlisted
     # start their first round now — their human gate already happened, and
-    # leaving them would strand them: re-saving "shortlisted" is a no-op. The
-    # rest wait for the shortlist as normal. on_shortlisted still honours
-    # auto_assign_first_round, and it never decides anything (D-05).
+    # leaving them would strand them: re-saving "shortlisted" is a no-op.
+    #
+    # The rest ('new') are offered to auto-shortlist. Without this they were
+    # attached and then simply waited: auto-shortlist fires when a score is
+    # WRITTEN, and theirs were written before this version existed, so nothing
+    # would ever have re-evaluated them. On a version without auto-shortlist
+    # this is a no-op and they wait for a person, as before. It applies only
+    # what the approver just approved, and every guard in maybe_auto_shortlist
+    # still holds (published, switch on, bar >= 1, status new, clears the bar);
+    # it never raises, so one bad row cannot fail the publish. D-05 unchanged.
     attached = await attach_waiting_candidates(
         db, requisition_id=wf["requisition_id"], workflow_id=workflow_id
     )
     started = 0
+    auto_started = 0
     for enrolment_id, st in attached:
         if st == "shortlisted":
             outcome = await on_shortlisted(db, enrolment_id=enrolment_id, actor_user_id=_hr_uid)
             started += outcome.action == "advanced"
+        elif st == "new":
+            outcome = await maybe_auto_shortlist(db, enrolment_id=enrolment_id)
+            auto_started += outcome.action == "advanced"
     await db.commit()
     log.info("hr.workflow.published", workflow_id=str(workflow_id),
              company_id=str(company_id), warnings=len(report.warnings),
-             attached=len(attached), started=started)
+             attached=len(attached), started=started, auto_started=auto_started)
     return {
         **await get_workflow(workflow_id, ctx, db),
         "validation": report.as_dict(),
         "attached_candidates": len(attached),
-        "started_candidates": started,
+        "started_candidates": started + auto_started,
+        "auto_shortlisted_candidates": auto_started,
     }
 
 

@@ -492,9 +492,12 @@ def watch_ready_to_shortlist(data: WatcherInput) -> list[WatcherFinding]:
 
     The setting that drives this (``shortlist_ats_threshold``) was stored and
     editable for a whole release without anything reading it — HR could set a
-    bar and nothing would ever mention it again. It is a pre-selection aid: a
-    score can say who is worth a look, and only a person starts an assessment
-    that costs money and a candidate's evening.
+    bar and nothing would ever mention it again. Ordinarily it is a
+    pre-selection aid: a score says who is worth a look, and a person starts an
+    assessment that costs money and a candidate's evening. On a workflow with
+    ``auto_shortlist`` on, the runner starts it instead — so the applicants
+    this watcher still counts are the ones it DECLINED (a flagged CV, an
+    HR-uploaded applicant), which is exactly who a person should look at.
 
     Informational on purpose. Nobody is stuck — these candidates are simply
     waiting for a decision that has not been asked for yet.

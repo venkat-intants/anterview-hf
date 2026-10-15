@@ -1627,8 +1627,10 @@ class Workflow(Base):
     The automation settings live here rather than globally, which is what fixes
     the present arrangement where the one existing auto-advance hides behind two
     flags on two screens and ships disabled. Note what is *absent*: there is no
-    setting that ends a candidacy. The two human gates are not configurable
-    because they are not features (D-05).
+    setting that ends a candidacy (D-05). The FINAL decision gate is not
+    configurable. The shortlist gate is, since migration a2c4e6f8b0d3 —
+    ``auto_shortlist`` — and it only ever advances; this docstring used to say
+    both gates were unconfigurable, which stopped being true.
     """
 
     __tablename__ = "workflows"
@@ -1651,7 +1653,7 @@ class Workflow(Base):
         # Auto-shortlist with no bar would advance everyone, which is not a
         # shortlist. Unrepresentable rather than discouraged. Migration a2c4e6f8b0d3.
         CheckConstraint(
-            "NOT auto_shortlist OR shortlist_ats_threshold IS NOT NULL",
+            "NOT auto_shortlist OR (shortlist_ats_threshold IS NOT NULL AND shortlist_ats_threshold >= 1 AND auto_assign_first_round)",
             name="ck_workflows_auto_shortlist_needs_threshold",
         ),
     )

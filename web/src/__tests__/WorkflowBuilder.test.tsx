@@ -1036,3 +1036,54 @@ describe('WorkflowBuilder — auto-shortlist', () => {
   });
 });
 
+// ── Review fixes: the toggle mirrors every rule the server enforces ─────────
+//
+// The server refuses auto-shortlist without a bar of at least 1, and without
+// "Send the first round automatically" on. A switch that let HR try either
+// would just produce a failed save — so the UI states the rule and disables
+// the switch instead.
+
+describe('WorkflowBuilder — auto-shortlist follows the server rules', () => {
+  it('is disabled while first-round auto-assign is off, and says why', async () => {
+    // Shortlisting automatically and then starting nothing would strand the
+    // applicant: the shortlist was the step a person used to see.
+    getWorkflow.mockResolvedValue({
+      ...DRAFT,
+      settings: { ...SETTINGS, auto_assign_first_round: false },
+    });
+    const user = userEvent.setup();
+    await openAutomation(user);
+
+    expect(
+      screen.getByRole('switch', { name: 'Shortlist without my confirmation' }),
+    ).toBeDisabled();
+    expect(screen.getByText(/left with nothing started/i)).toBeInTheDocument();
+  });
+
+  it('treats a bar of 0 as no bar', async () => {
+    // `score >= 0` admits everyone — including an applicant the scorer failed
+    // on and recorded as 0.
+    getWorkflow.mockResolvedValue({
+      ...DRAFT,
+      settings: { ...SETTINGS, shortlist_ats_threshold: 0 },
+    });
+    const user = userEvent.setup();
+    await openAutomation(user);
+
+    expect(
+      screen.getByRole('switch', { name: 'Shortlist without my confirmation' }),
+    ).toBeDisabled();
+    expect(screen.getByText(/at least 1/i)).toBeInTheDocument();
+  });
+
+  it('the candidate preview tells HR what an applicant above the bar will see', async () => {
+    getWorkflow.mockResolvedValue({ ...DRAFT, settings: { ...SETTINGS, auto_shortlist: true } });
+    const user = userEvent.setup();
+    renderBuilder();
+    await user.click(await screen.findByRole('button', { name: 'Preview as a candidate' }));
+
+    // The preview used to promise "nothing more happens until you shortlist
+    // them" whatever the setting — false on an auto-shortlisting version.
+    expect(await screen.findByText(/start round one on their own/i)).toBeInTheDocument();
+  });
+});

@@ -166,26 +166,35 @@ const AUTOMATIONS: {
 function AutoShortlistToggle({
   on,
   bar,
+  autoAssign,
   editable,
   onChange,
 }: {
   on: boolean;
   bar: number | null;
+  /** "Send the first round automatically". Required on: shortlisting someone
+   *  automatically and then starting nothing would strand them. */
+  autoAssign: boolean;
   editable: boolean;
   onChange: (next: boolean) => void;
 }) {
-  const hasBar = bar !== null;
-  // Turning it OFF is always allowed, even with no bar — never trap a setting
-  // in the state the server would refuse.
-  const canToggle = editable && (hasBar || on);
+  // A bar of 0 is no bar: `score >= 0` admits everyone, including an applicant
+  // whose CV the scorer failed on and recorded as 0. Mirrors update_settings.
+  const hasBar = bar !== null && bar >= 1;
+  const ready = hasBar && autoAssign;
+  // Turning it OFF is always allowed, whatever else is true — never trap a
+  // setting in a state the server would refuse.
+  const canToggle = editable && (ready || on);
   return (
     <div className="mt-4 flex items-start gap-3" data-testid="auto-shortlist-setting">
       <div className="min-w-0 flex-1">
         <div className="text-[13px] text-foreground">Shortlist without my confirmation</div>
         <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
           {!hasBar
-            ? 'Set an ATS score above first — without one, every applicant would be shortlisted.'
-            : on
+            ? 'Set an ATS score of at least 1 above first — without one, every applicant would be shortlisted.'
+            : !autoAssign
+              ? 'Turn on “Send the first round automatically” first — otherwise applicants would be shortlisted and then left with nothing started.'
+              : on
               ? `Applicants scoring ${bar * 10}/100 or higher start round one with no one confirming them. Everyone below stays in your queue. The final decision is still yours.`
               : 'Off: you confirm every shortlist. Turn on to let applicants above the bar start on their own.'}
         </div>
@@ -293,6 +302,7 @@ function SettingsPanel({
         <AutoShortlistToggle
           on={Boolean(s.auto_shortlist)}
           bar={s.shortlist_ats_threshold}
+          autoAssign={Boolean(s.auto_assign_first_round)}
           editable={editable}
           onChange={(next) => onPatch({ auto_shortlist: next })}
         />
@@ -1009,6 +1019,9 @@ export default function WorkflowBuilder(): JSX.Element {
             {previewOpen ? (
               <Well className="mb-5">
                 <CandidatePreview
+                  autoShortlistBar={
+                    workflow.settings.auto_shortlist ? workflow.settings.shortlist_ats_threshold : null
+                  }
                   title={req.data?.title ?? 'this opening'}
                   rounds={workflow.rounds}
                 />

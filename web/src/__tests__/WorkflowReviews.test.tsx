@@ -67,6 +67,7 @@ const QUEUE_ROW: PendingWorkflowReview = {
 };
 
 const DETAIL: WorkflowReviewDetail = {
+  review_fingerprint: 'fp-seen',
   workflow_id: 'wf-1',
   requisition_id: 'req-1',
   opening_title: 'Backend Engineer',
@@ -211,7 +212,10 @@ describe('WorkflowReviews — one version in full', () => {
     await user.type(screen.getByLabelText(/note \(optional\)/i), 'Looks solid');
     await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
 
-    await waitFor(() => expect(approveWorkflowReview).toHaveBeenCalledWith('wf-1', 'Looks solid'));
+    // The third argument binds the approval to the version on screen.
+    await waitFor(() =>
+      expect(approveWorkflowReview).toHaveBeenCalledWith('wf-1', 'Looks solid', 'fp-seen'),
+    );
     expect(toastSuccess).toHaveBeenCalled();
   });
 

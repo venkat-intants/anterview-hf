@@ -1082,22 +1082,38 @@ async def update_settings(
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
-    if "auto_shortlist" in updates or "shortlist_ats_threshold" in updates:
-        # Merge with what is already stored: the bad state is reachable from
-        # EITHER side — turning auto-shortlist on with no bar, or clearing the
-        # bar while auto-shortlist is on.
+    if {"auto_shortlist", "shortlist_ats_threshold", "auto_assign_first_round"} & updates.keys():
+        # Merge with what is already stored: each bad state is reachable from
+        # EITHER side — turning auto-shortlist on, or changing the setting it
+        # depends on while it is already on.
         current = (
             await db.execute(
-                text("SELECT auto_shortlist, shortlist_ats_threshold FROM workflows WHERE id = :i"),
+                text(
+                    "SELECT auto_shortlist, shortlist_ats_threshold, auto_assign_first_round"
+                    "  FROM workflows WHERE id = :i"
+                ),
                 {"i": workflow_id},
             )
         ).first()
         on = updates.get("auto_shortlist", current[0] if current else False)
         bar = updates.get("shortlist_ats_threshold", current[1] if current else None)
-        if on and bar is None:
+        assign = updates.get("auto_assign_first_round", current[2] if current else True)
+        if on and (bar is None or bar < 1):
+            # 0 counts as no bar: `score >= 0` admits every scored applicant,
+            # including one the scorer failed on and recorded as 0.
             raise WorkflowError(
-                "Set an ATS shortlist threshold before turning on automatic "
-                "shortlisting — without one, every applicant would be shortlisted."
+                "Set an ATS shortlist threshold of at least 1 before turning on "
+                "automatic shortlisting — without one, every applicant would be "
+                "shortlisted."
+            )
+        if on and not assign:
+            # Automatic shortlisting with a manual first round would mark people
+            # shortlisted and then start nothing — stranded, with no person
+            # watching, because the shortlist was the step a person used to see.
+            raise WorkflowError(
+                "Automatic shortlisting needs \"Send the first round automatically\" "
+                "on — otherwise applicants would be shortlisted and then left "
+                "waiting with nothing started."
             )
     sets = ", ".join(f"{k} = :{k}" for k in updates)
     await db.execute(

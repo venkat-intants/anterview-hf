@@ -270,12 +270,34 @@ async def approve(
     profile_competencies: list[dict[str, Any]] | None,
     ip_address: str | None = None,
     user_agent: str | None = None,
+    seen_fingerprint: str | None = None,
 ) -> dict[str, Any]:
-    """Approve the version that was submitted — and only that. Caller commits."""
+    """Approve the version that was submitted — and only that. Caller commits.
+
+    ``seen_fingerprint`` binds the approval to the version the approver was
+    actually LOOKING AT. Without it, approval checks the current content against
+    whatever was most recently submitted — so an approver with the page open
+    could approve a version that was withdrawn, changed (say, automatic
+    shortlisting switched on) and resubmitted underneath them, never having
+    seen the change. That race existed for every setting; it matters more now
+    that the approval is the safeguard on removing a human gate.
+
+    Optional rather than required, deliberately. The threat is an honest
+    approver on a stale page, not a malicious one — a super admin can approve
+    whatever they like. The review page always sends it, which closes the race
+    for everyone using the product, without breaking API callers that predate
+    it. When it is sent it must match, or the approval is refused.
+    """
     note = _clean(note)
     wf = await _load(db, company_id=company_id, workflow_id=workflow_id)
     if wf["review_status"] != IN_REVIEW:
         raise ReviewError(409, "Only a version waiting for review can be approved.")
+    if seen_fingerprint is not None and seen_fingerprint != wf["review_fingerprint"]:
+        raise ReviewError(
+            409,
+            "This version was changed and resubmitted after you opened it. Reload the "
+            "page to see what you would be approving.",
+        )
     if wf["submitted_by_user_id"] == reviewer or wf["created_by_user_id"] == reviewer:
         raise ReviewError(403, "A workflow cannot be approved by the person who wrote it.")
     current = await workflow_fingerprint(db, workflow_id)

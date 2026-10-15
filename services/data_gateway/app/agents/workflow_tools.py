@@ -159,7 +159,7 @@ async def _current_workflow(ctx: ToolContext) -> dict[str, Any] | None:
     row = (
         await _db(ctx).execute(
             text(
-                "SELECT id, version, status, name FROM workflows"
+                "SELECT id, version, status, name, auto_shortlist FROM workflows"
                 " WHERE requisition_id = CAST(:r AS uuid)"
                 "   AND company_id = CAST(:c AS uuid) AND deleted_at IS NULL"
                 "   AND status IN ('draft','published')"
@@ -884,12 +884,21 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
     if not fields:
         return ToolOutput(data={"error": "no recognised settings were given"})
 
+    # THE BAR'S LABEL DEPENDS ON THE DRAFT. On its own the threshold only
+    # suggests who to shortlist; on a draft with automatic shortlisting on
+    # (e.g. a clone of a live auto-shortlist version) the same number decides
+    # who starts an assessment. The button copy is built HERE, on the server,
+    # and it is what the human reads before clicking — so it must not say
+    # "suggest" when it means "shortlist".
+    auto_on = bool(wf.get("auto_shortlist"))
     labels = {
         "auto_score_on_apply": "score resumes on arrival",
         "auto_assign_first_round": "send the first round automatically",
         "auto_advance_rounds": "advance between rounds automatically",
         "reminders_enabled": "remind candidates",
-        "shortlist_ats_threshold": "suggest shortlisting at ATS",
+        "shortlist_ats_threshold": (
+            "automatically shortlist at ATS" if auto_on else "suggest shortlisting at ATS"
+        ),
         "hold_band": "mark near misses within (points)",
     }
     summary = ", ".join(
@@ -917,7 +926,16 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
                     label="Apply settings",
                 ),
                 rationale=str(args.get("rationale", "")).strip(),
-                risk_note=None,
+                # Moving the bar on an auto-shortlisting draft changes who is
+                # sent an assessment with no one confirming — say so in the
+                # panel the human reviews, not just in the label.
+                risk_note=(
+                    "Automatic shortlisting is on for this version: changing the "
+                    "ATS bar changes which applicants start an assessment without "
+                    "anyone confirming them."
+                    if auto_on and "shortlist_ats_threshold" in fields
+                    else None
+                ),
                 citations=[_requisition_citation(req)],
             )
         ],

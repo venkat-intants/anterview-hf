@@ -420,10 +420,17 @@ describe('PublicApply — afterwards', () => {
     await user.click(submitButton());
 
     expect(await screen.findByText('Application received')).toBeTruthy();
-    expect(screen.getByText(/nothing is decided automatically/i)).toBeTruthy();
-    // Plainly what happens now and who acts next, with the way back to an account.
+    // THE NOTICE MUST BE TRUE IN EVERY CONFIGURATION. It used to promise
+    // "nothing is decided automatically", which became false the moment an
+    // opening could shortlist on its ATS score (migration a2c4e6f8b0d3) — a
+    // false statement at the point of collection (DPDP s.5). It now discloses
+    // that steps MAY be automatic depending on the role, and keeps the one
+    // guarantee that holds everywhere: a person makes every hire or reject.
     const next = screen.getByRole('heading', { name: 'What happens next' }).closest('section') as HTMLElement;
-    expect(within(next).getByText(/nothing is decided automatically/i)).toBeTruthy();
+    expect(within(next).getByText(/may be automatic/i)).toBeTruthy();
+    expect(within(next).getByText(/every hire or reject decision is made by a person/i)).toBeTruthy();
+    // And it must not reintroduce the claim that stopped being true.
+    expect(screen.queryByText(/nothing is decided automatically/i)).toBeNull();
     expect(within(next).getByRole('link', { name: 'Track this in My applications' })).toHaveAttribute('href', '/login');
   });
 

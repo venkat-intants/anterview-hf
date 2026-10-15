@@ -671,3 +671,50 @@ def test_existing_lookup_failure_falls_through_to_scoring(client: TestClient) ->
 
     assert resp.status_code == 201, resp.text
     scorer.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# The resume scorer's injection markers reach the caller
+# ---------------------------------------------------------------------------
+
+
+def _resume_result(**over: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "candidate_name": "", "candidate_email": "", "overall": 91,
+        "breakdown": {"skills_match": 91}, "strengths": [], "concerns": [],
+        "recommendation": "strong", "summary": "s",
+    }
+    base.update(over)
+    return base
+
+
+def test_resume_score_returns_the_injection_markers_it_found(client: TestClient) -> None:
+    """The scorer always computed these, and the response model dropped them, so
+    data_gateway could not tell a score that might have been talked up from one
+    that was not. Auto-shortlist acts on that score with no person looking."""
+    token = _make_jwt(sub="data_gateway")
+    with patch(
+        "app.resume_scorer.score_resume",
+        new=AsyncMock(return_value=_resume_result(injection_markers=["resume:ignore_previous"])),
+    ):
+        resp = client.post(
+            "/internal/score-resume",
+            json={"resume_text": "x", "jd_text": "y"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["injection_markers"] == ["resume:ignore_previous"]
+
+
+def test_resume_score_reports_an_empty_list_for_a_clean_cv(client: TestClient) -> None:
+    token = _make_jwt(sub="data_gateway")
+    with patch(
+        "app.resume_scorer.score_resume", new=AsyncMock(return_value=_resume_result())
+    ):
+        resp = client.post(
+            "/internal/score-resume",
+            json={"resume_text": "x", "jd_text": "y"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["injection_markers"] == []

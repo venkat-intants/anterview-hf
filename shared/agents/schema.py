@@ -607,6 +607,41 @@ class CommitSpec(BaseModel):
             raise ValueError(f"commit path must be under {COMMIT_PATH_PREFIX}")
         return v
 
+    @field_validator("body")
+    @classmethod
+    def _no_agent_removes_a_human_gate(cls, v: dict[str, Any]) -> dict[str, Any]:
+        """No proposal may switch automatic shortlisting on or off.
+
+        Tightened 2026-10-15 (tightening direction only, same as the DELETE
+        removal above). ``auto_shortlist`` takes a person out of a step that
+        decides which candidates are assessed. Whether to do that is a choice a
+        human makes deliberately, in the workflow builder, where the
+        consequence is spelled out — not a model's suggestion accepted with one
+        click.
+
+        The settings tool already leaves the key off its allow-list, but that
+        is a control by omission: it holds only while every tool remembers.
+        Here it is structural, so a future tool — a generic settings proposal,
+        a "configure everything" helper — cannot construct the proposal at all,
+        whichever service builds it. The endpoint itself still accepts the key
+        from a human; only the agent path is closed. Searched recursively,
+        because a body may nest settings under another key.
+        """
+
+        def carries(node: Any) -> bool:
+            if isinstance(node, dict):
+                return any(k == "auto_shortlist" or carries(val) for k, val in node.items())
+            if isinstance(node, list):
+                return any(carries(item) for item in node)
+            return False
+
+        if carries(v):
+            raise ValueError(
+                "a proposal may not change automatic shortlisting — that is a "
+                "human's decision, made in the workflow builder"
+            )
+        return v
+
 
 ProposalKind = Literal[
     "interview_invite",

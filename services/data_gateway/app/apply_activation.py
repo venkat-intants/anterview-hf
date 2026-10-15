@@ -263,6 +263,7 @@ async def activate(
         await _link_to_existing(
             db, guest_user_id=user_id, target_user_id=target_id, now=now
         )
+        await _offer_to_auto_shortlist(db, target_id)
         log.info("apply.activation.linked", user_id=str(target_id))
         return {
             "email": address,
@@ -281,8 +282,44 @@ async def activate(
         password_hash=password_hash,
         now=now,
     )
+    await _offer_to_auto_shortlist(db, user_id)
     log.info("apply.activation.promoted", user_id=str(user_id))
     return {"email": address, "linked": "new"}
+
+
+# Enough for any real person's open applications at once; bounds the work an
+# activation request does inside its transaction.
+_ACTIVATION_OFFER_LIMIT = 20
+
+
+async def _offer_to_auto_shortlist(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """Offer this person's waiting applications to auto-shortlist. No commit.
+
+    Auto-shortlist requires the address to have been proven after the
+    application (workflow_runner._auto_shortlist), and this is the moment it
+    becomes proven — the score was usually written before, when the check
+    could only decline. Every other guard still applies, and
+    maybe_auto_shortlist never raises, so activation cannot fail on it.
+    """
+    from app.workflow_runner import (
+        maybe_auto_shortlist,  # noqa: PLC0415 — keeps the runner off this module's import path
+    )
+
+    rows = (
+        await db.execute(
+            text(
+                "SELECT e.id FROM enrolments e"
+                "  JOIN applicants a ON a.id = e.applicant_id"
+                " WHERE a.user_id = :u AND a.deleted_at IS NULL AND e.deleted_at IS NULL"
+                "   AND e.status = 'new' AND e.workflow_id IS NOT NULL"
+                "   AND e.current_round_id IS NULL"
+                " ORDER BY e.created_at LIMIT :n"
+            ),
+            {"u": user_id, "n": _ACTIVATION_OFFER_LIMIT},
+        )
+    ).all()
+    for (enrolment_id,) in rows:
+        await maybe_auto_shortlist(db, enrolment_id=uuid.UUID(str(enrolment_id)))
 
 
 async def _live_token_user(db: AsyncSession, raw_token: str) -> uuid.UUID:

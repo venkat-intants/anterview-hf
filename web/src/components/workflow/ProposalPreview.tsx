@@ -99,7 +99,10 @@ function SettingsDiff({ body }: { body: Record<string, unknown> }) {
     auto_assign_first_round: 'Send the first round automatically',
     auto_advance_rounds: 'Advance between rounds automatically',
     reminders_enabled: 'Remind candidates',
-    shortlist_ats_threshold: 'Suggest shortlisting at ATS',
+    // Neutral on purpose: this preview does not know whether the draft
+    // shortlists automatically, and "suggest" is false on one that does. The
+    // server-built button copy carries the mode-specific wording.
+    shortlist_ats_threshold: 'ATS shortlist bar',
     hold_band: 'Mark near misses within (points)',
   };
   return (

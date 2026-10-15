@@ -73,6 +73,7 @@ async def apply_ats_to_enrolment(
                 "UPDATE enrolments SET ats_overall = :o, ats_breakdown = CAST(:b AS jsonb),"
                 " ats_strengths = CAST(:s AS jsonb), ats_concerns = CAST(:c AS jsonb),"
                 " ats_recommendation = :r, ats_summary = :su,"
+                " ats_injection_markers = CAST(:im AS jsonb),"
                 " scored_resume_s3_key = :k, scored_at = :n, updated_at = :n"
                 " WHERE id = :e AND deleted_at IS NULL"
                 " RETURNING applicant_id, created_at"
@@ -80,6 +81,10 @@ async def apply_ats_to_enrolment(
             {"o": int(score.get("overall", 0)), "b": _json(score.get("breakdown")),
              "s": _json(score.get("strengths")), "c": _json(score.get("concerns")),
              "r": score.get("recommendation"), "su": score.get("summary"),
+             # Stored with the score they belong to, so they always describe the
+             # CV that produced THIS number. Missing (an older scorer)
+             # is stored as NULL — "not on record", never as clean.
+             "im": _json(score["injection_markers"]) if "injection_markers" in score else None,
              "k": resume_key, "n": now, "e": enrolment_id},
         )
     ).first()

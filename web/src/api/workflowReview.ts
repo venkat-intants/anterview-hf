@@ -245,15 +245,25 @@ export interface WorkflowReviewDetail {
   simulation: SimulationResult | null;
   stages: StageSetting[];
   review: ReviewState;
+  /** The fingerprint of the version THIS page is showing. Sent back on approve
+   *  so the approval binds to what the approver actually saw — a version
+   *  withdrawn, changed and resubmitted while the page was open is refused
+   *  rather than approved unseen. A content hash, not a secret. */
+  review_fingerprint: string | null;
 }
 
 export function getWorkflowReviewDetail(workflowId: string): Promise<WorkflowReviewDetail> {
   return apiGet<WorkflowReviewDetail>(`/admin/workflow-reviews/${pathId(workflowId)}`);
 }
 
-export function approveWorkflowReview(workflowId: string, note?: string): Promise<ReviewState> {
+export function approveWorkflowReview(
+  workflowId: string,
+  note?: string,
+  seenFingerprint?: string | null,
+): Promise<ReviewState> {
   return apiPost<ReviewState>(`/admin/workflow-reviews/${pathId(workflowId)}/approve`, {
     note: note?.trim() || null,
+    seen_fingerprint: seenFingerprint ?? null,
   });
 }
 

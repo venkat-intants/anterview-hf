@@ -63,6 +63,12 @@ class NoteIn(BaseModel):
     note: str | None = Field(default=None, max_length=1000)
 
 
+class ApproveIn(NoteIn):
+    # The review_fingerprint of the version on the approver's screen. See
+    # workflow_review.approve for why it is optional and what it closes.
+    seen_fingerprint: str | None = Field(default=None, max_length=128)
+
+
 class StageIn(BaseModel):
     # None is the final-decision stage.
     round_id: uuid.UUID | None = None
@@ -359,7 +365,10 @@ async def get_review_detail(
             text(
                 "SELECT version, status, name, auto_score_on_apply, auto_assign_first_round,"
                 "       auto_advance_rounds, reminders_enabled, shortlist_ats_threshold,"
-                "       hold_band FROM workflows WHERE id = :w"
+                # The approver MUST see this. Approval is the safeguard on
+                # removing the human shortlist gate; a reviewer shown everything
+                # except that would be approving it blind.
+                "       hold_band, auto_shortlist FROM workflows WHERE id = :w"
             ),
             {"w": workflow_id},
         )
@@ -429,19 +438,25 @@ async def get_review_detail(
         "simulation": await latest_simulation(db, company_id=company_id, workflow_id=workflow_id),
         "stages": await stage_settings(db, company_id=company_id, workflow_id=workflow_id),
         "review": await _review_state(db, company_id, workflow_id),
+        # Sent back on approve, so the approval binds to THIS rendering. It is a
+        # content hash, not a secret: it says nothing a reviewer cannot already see.
+        "review_fingerprint": await db.scalar(
+            text("SELECT review_fingerprint FROM workflows WHERE id = :w"), {"w": workflow_id}
+        ),
     }
 
 
 @admin_router.post("/workflow-reviews/{workflow_id}/approve")
 async def post_approve(
-    workflow_id: uuid.UUID, body: NoteIn, request: Request, ctx: SuperAdminCtxDep,
+    workflow_id: uuid.UUID, body: ApproveIn, request: Request, ctx: SuperAdminCtxDep,
     db: DbSessionDep,
 ) -> dict[str, Any]:
     uid, company_id = ctx
     comps = await _competencies(db, company_id, workflow_id)
     try:
         await approve(db, company_id=company_id, workflow_id=workflow_id, reviewer=uid,
-                      note=body.note, profile_competencies=comps, **_meta(request))
+                      note=body.note, profile_competencies=comps,
+                      seen_fingerprint=body.seen_fingerprint, **_meta(request))
     except ReviewError as exc:
         await db.rollback()
         raise _raise(exc) from exc

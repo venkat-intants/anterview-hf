@@ -83,16 +83,67 @@ def test_the_bar_comes_from_the_published_workflow_only() -> None:
     assert "w.status = 'published'" in sql
 
 
-def test_no_score_can_start_a_workflow() -> None:
-    """D-05, structurally. The runner marks a candidate shortlisted as it
-    starts them (inside _move_to_round), but it is only ever reached through
-    on_shortlisted — a person pressing the button. If the runner ever reads the
-    ATS bar itself, a score has begun advancing candidates."""
+def test_a_score_starts_a_workflow_only_through_the_opt_in_path() -> None:
+    """D-05, structurally — REWRITTEN, NOT REMOVED (migration a2c4e6f8b0d3).
+
+    This test used to be ``test_no_score_can_start_a_workflow`` and asserted
+    that the runner never read the ATS bar at all: "if the runner ever reads
+    the ATS bar itself, a score has begun advancing candidates." That was the
+    right guard for the invariant of its day, and it failed — correctly — the
+    moment auto-shortlist was built, because auto-shortlist is precisely a
+    score advancing candidates.
+
+    The product owner chose that reversal. What it did NOT authorise is a score
+    advancing candidates through any OTHER door, or without the workflow having
+    opted in. So the guard narrows rather than disappears, and still fails the
+    way the original did if a second path appears:
+
+      1. the runner reads the bar in exactly ONE function, ``_auto_shortlist``;
+      2. that function checks the opt-in BEFORE it reads the bar, so a
+         workflow that did not switch it on is never touched by a score;
+      3. round one is still started only by ``on_shortlisted`` — the automatic
+         path calls it rather than reaching ``_move_to_round`` itself.
+
+    Renamed because the old name would now be a false claim, which is a defect
+    under this repo's documentation rule, not a cosmetic one.
+    """
+    import ast
+
     import app.workflow_runner as wr
 
-    assert "shortlist_ats_threshold" not in inspect.getsource(wr)
-    assert "A human confirmed the shortlist" in inspect.getsource(wr.on_shortlisted)
-    # The bar is only ever counted, in the watcher's gathering query.
+    # A READ is the bare string used as a key — `workflow.get("shortlist_ats_
+    # threshold")` or `row["shortlist_ats_threshold"]`. Matched on a Constant
+    # whose value IS the name, which excludes prose for free: a docstring that
+    # merely mentions it is one long Constant that only contains it. (The first
+    # draft of this test matched any mention and flagged clears_shortlist_bar
+    # for its docstring — a pure predicate that takes the bar as an argument
+    # and cannot advance anyone.)
+    tree = ast.parse(inspect.getsource(wr))
+    readers = sorted(
+        fn.name
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef)
+        and any(
+            isinstance(n, ast.Constant) and n.value == "shortlist_ats_threshold"
+            for n in ast.walk(fn)
+        )
+    )
+    assert readers == ["_auto_shortlist"], (
+        f"the ATS bar is read by {readers} — a score must advance candidates "
+        "through the single opt-in path and nowhere else"
+    )
+
+    body = inspect.getsource(wr._auto_shortlist)
+    assert body.index('workflow.get("auto_shortlist")') < body.index(
+        'workflow.get("shortlist_ats_threshold")'
+    ), "the bar is read before the opt-in is checked"
+
+    assert "on_shortlisted(" in body and "_move_to_round(" not in body, (
+        "the automatic path must start round one through on_shortlisted, not "
+        "around it"
+    )
+
+    # Unchanged from the original: the watcher only ever COUNTS the bar.
     from app.agents.watch_runner import OPENING_HEALTH_SQL
 
     assert "UPDATE" not in str(OPENING_HEALTH_SQL).upper().replace("UPDATED_AT", "")

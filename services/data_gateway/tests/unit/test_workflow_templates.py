@@ -118,6 +118,9 @@ def test_timings_thresholds_and_settings_are_prefilled() -> None:
     assert payload["settings"] == {
         "auto_score_on_apply": True, "auto_assign_first_round": True,
         "auto_advance_rounds": True, "reminders_enabled": True,
+        # Pinned OFF on purpose (migration a2c4e6f8b0d3): a starter template must
+        # never be the thing that removes the human shortlist gate.
+        "auto_shortlist": False,
     }
 
 

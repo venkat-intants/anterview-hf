@@ -30,6 +30,7 @@ const SETTINGS = {
   reminders_enabled: true,
   shortlist_ats_threshold: 7,
   hold_band: 10,
+  auto_shortlist: false,
 };
 
 const EMPTY_DRAFT: Workflow = {

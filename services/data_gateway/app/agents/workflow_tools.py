@@ -159,7 +159,7 @@ async def _current_workflow(ctx: ToolContext) -> dict[str, Any] | None:
     row = (
         await _db(ctx).execute(
             text(
-                "SELECT id, version, status, name FROM workflows"
+                "SELECT id, version, status, name, auto_shortlist FROM workflows"
                 " WHERE requisition_id = CAST(:r AS uuid)"
                 "   AND company_id = CAST(:c AS uuid) AND deleted_at IS NULL"
                 "   AND status IN ('draft','published')"
@@ -823,8 +823,11 @@ async def _draft_round_criteria(args: dict[str, Any], ctx: ToolContext) -> ToolO
             "shortlist_ats_threshold": {
                 "type": "integer",
                 "description": (
-                    "0-10 ATS score at or above which an applicant is SUGGESTED to HR "
-                    "for shortlisting. It never shortlists anyone: a person confirms."
+                    "0-10 ATS bar, compared against the 0-100 score as score >= bar*10. "
+                    "On its own it only SUGGESTS applicants to HR for shortlisting. If "
+                    "the workflow's automatic shortlisting is on (a setting only HR can "
+                    "change, not this tool) the bar also shortlists them, so describe "
+                    "the effect to HR accordingly rather than promising it never does."
                 ),
             },
             "hold_band": {
@@ -853,6 +856,14 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
     # (update_settings ignores anything unrecognised), so this is the second of
     # two — but the first one a reviewer reads, and the place where "the agent
     # cannot introduce a rejection mechanism" is legible rather than implied.
+    #
+    # `auto_shortlist` IS DELIBERATELY ABSENT, and that is a decision, not a gap
+    # to fill. It removes a human step from hiring. Whether to do that is a
+    # choice a person makes on purpose, in the builder, where the consequence is
+    # spelled out — not a suggestion from a model accepted with one click. The
+    # service layer WOULD accept the key, so this omission is the control;
+    # test_auto_shortlist.py asserts the copilot cannot propose it. Do not add
+    # it here to "complete" the list.
     booleans = (
         "auto_score_on_apply",
         "auto_assign_first_round",
@@ -873,12 +884,21 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
     if not fields:
         return ToolOutput(data={"error": "no recognised settings were given"})
 
+    # THE BAR'S LABEL DEPENDS ON THE DRAFT. On its own the threshold only
+    # suggests who to shortlist; on a draft with automatic shortlisting on
+    # (e.g. a clone of a live auto-shortlist version) the same number decides
+    # who starts an assessment. The button copy is built HERE, on the server,
+    # and it is what the human reads before clicking — so it must not say
+    # "suggest" when it means "shortlist".
+    auto_on = bool(wf.get("auto_shortlist"))
     labels = {
         "auto_score_on_apply": "score resumes on arrival",
         "auto_assign_first_round": "send the first round automatically",
         "auto_advance_rounds": "advance between rounds automatically",
         "reminders_enabled": "remind candidates",
-        "shortlist_ats_threshold": "suggest shortlisting at ATS",
+        "shortlist_ats_threshold": (
+            "automatically shortlist at ATS" if auto_on else "suggest shortlisting at ATS"
+        ),
         "hold_band": "mark near misses within (points)",
     }
     summary = ", ".join(
@@ -906,7 +926,16 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
                     label="Apply settings",
                 ),
                 rationale=str(args.get("rationale", "")).strip(),
-                risk_note=None,
+                # Moving the bar on an auto-shortlisting draft changes who is
+                # sent an assessment with no one confirming — say so in the
+                # panel the human reviews, not just in the label.
+                risk_note=(
+                    "Automatic shortlisting is on for this version: changing the "
+                    "ATS bar changes which applicants start an assessment without "
+                    "anyone confirming them."
+                    if auto_on and "shortlist_ats_threshold" in fields
+                    else None
+                ),
                 citations=[_requisition_citation(req)],
             )
         ],

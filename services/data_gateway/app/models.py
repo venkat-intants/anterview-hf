@@ -1539,6 +1539,11 @@ class Enrolment(Base):
     ats_concerns: Mapped[list[Any] | None] = mapped_column(JSONB, nullable=True)
     ats_recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
     ats_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Injection marker NAMES the scorer found in the CV this score came from.
+    # NULL = not on record (a score taken before migration a2c4e6f8b0d3);
+    # [] = scanned and clean. Auto-shortlist declines a flagged score, and an
+    # unrecorded one it cannot otherwise verify.
+    ats_injection_markers: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     # Which CV produced the score, so it stays reproducible after a re-upload.
     scored_resume_s3_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     scored_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
@@ -1627,8 +1632,10 @@ class Workflow(Base):
     The automation settings live here rather than globally, which is what fixes
     the present arrangement where the one existing auto-advance hides behind two
     flags on two screens and ships disabled. Note what is *absent*: there is no
-    setting that ends a candidacy. The two human gates are not configurable
-    because they are not features (D-05).
+    setting that ends a candidacy (D-05). The FINAL decision gate is not
+    configurable. The shortlist gate is, since migration a2c4e6f8b0d3 —
+    ``auto_shortlist`` — and it only ever advances; this docstring used to say
+    both gates were unconfigurable, which stopped being true.
     """
 
     __tablename__ = "workflows"
@@ -1648,6 +1655,12 @@ class Workflow(Base):
             name="ck_workflows_shortlist_threshold",
         ),
         CheckConstraint("hold_band >= 0 AND hold_band <= 100", name="ck_workflows_hold_band"),
+        # Auto-shortlist with no bar would advance everyone, which is not a
+        # shortlist. Unrepresentable rather than discouraged. Migration a2c4e6f8b0d3.
+        CheckConstraint(
+            "NOT auto_shortlist OR (shortlist_ats_threshold IS NOT NULL AND shortlist_ats_threshold >= 1 AND auto_assign_first_round)",
+            name="ck_workflows_auto_shortlist_needs_threshold",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -1666,6 +1679,11 @@ class Workflow(Base):
     auto_advance_rounds: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     shortlist_ats_threshold: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # OFF by default. When on, an applicant whose ATS clears
+    # shortlist_ats_threshold is shortlisted by the runner instead of waiting
+    # for a person — it only ever ADVANCES; below the bar nothing changes. The
+    # final decision gate is deliberately NOT a setting (D-05, CLAUDE.md #9).
+    auto_shortlist: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     hold_band: Mapped[int] = mapped_column(SmallInteger, default=10, nullable=False)
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

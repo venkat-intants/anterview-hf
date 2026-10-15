@@ -164,9 +164,15 @@ describe('PublicExam — the finish screen is not a verdict', () => {
     await sitAndSubmit(RESULT);
     const next = screen.getByRole('heading', { name: 'What happens next' }).closest('section');
     expect(next).not.toBeNull();
+    // The old copy said "A person makes that decision, not the software" about
+    // moving on — false wherever a round auto-advances on its threshold, which
+    // predates automatic shortlisting. It now discloses that progression may
+    // be automatic and keeps the guarantee that holds everywhere.
     expect(
-      within(next as HTMLElement).getByText(/A person makes that decision/),
+      within(next as HTMLElement).getByText(/every hire or reject decision is made by a person/i),
     ).toBeInTheDocument();
+    expect(within(next as HTMLElement).getByText(/may happen automatically/i)).toBeInTheDocument();
+    expect(within(next as HTMLElement).queryByText(/A person makes that decision/)).toBeNull();
     const link = within(next as HTMLElement).getByRole('link', {
       name: 'Track this in My applications',
     });

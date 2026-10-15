@@ -142,7 +142,9 @@ describe('InterviewInvite — link states', () => {
     expect(await screen.findByText(/already completed this interview/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /begin interview/i })).not.toBeInTheDocument();
     const next = screen.getByRole('heading', { name: 'What happens next' }).closest('section') as HTMLElement;
-    expect(within(next).getByText(/will email you the next step/)).toBeInTheDocument();
+    // Promised only to those who move forward: progression may be automatic.
+    expect(within(next).getByText(/if you move forward, you will get an email with the next step/)).toBeInTheDocument();
+    expect(within(next).queryByText(/A person makes that decision/)).toBeNull();
     expect(within(next).getByRole('link', { name: 'Track this in My applications' })).toHaveAttribute('href', '/login');
   });
 });

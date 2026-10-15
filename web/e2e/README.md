@@ -105,7 +105,7 @@ The full map — every Phase 2 item, where it is tested at each level, and the g
 
 | Layer | Covers | Status |
 |---|---|---|
-| 1 | Sign-in and landing for every role, access refusals, creating an opening, the workflow builder (templates, human gates, publish blocked by issues, publish and read-only) | done — `auth`, `opening`, `workflow` specs |
+| 1 | Sign-in and landing for every role, access refusals, creating an opening, the workflow builder (templates, the human gates — the shortlist gate is now optional per workflow, `auto_shortlist`, off by default — publish blocked by issues, publish and read-only) | done — `auth`, `opening`, `workflow` specs |
 | 2 | The main journeys: public apply with consent → scored → shortlist → MCQ from the emailed link → decision queue → hire or reject with a reason; held-not-rejected; what the candidate is shown about themselves | done — the three `journey-*` specs |
 | 3 | Bulk upload, the human-review round, the company hiring board, one person applying twice, an opening dashboard with real candidates | done — `bulk-upload`, `review-round`, `company-board`, `same-person-two-openings`, `opening-dashboard` |
 | 3c | Starting an assessment from the candidate's own dashboard, without the email | done — `exam-from-dashboard` |
@@ -122,7 +122,7 @@ on demand instead of on a ten-minute timer.
 
 | Spec | The story | What it pins down |
 |---|---|---|
-| `journey-hire.spec.ts` | A candidate applies from the public page, is scored, is shortlisted, sits the exam that arrives by email, passes, and is hired | scoring moves nobody; the workflow starts at the human shortlist gate; the runner advances a candidate on a real result; hiring is refused until a reason is written, and the ledger names the person who decided |
+| `journey-hire.spec.ts` | A candidate applies from the public page, is scored, is shortlisted, sits the exam that arrives by email, passes, and is hired | scoring moves nobody (on a workflow with `auto_shortlist` off, the default these specs use); the workflow starts at the human shortlist gate; the runner advances a candidate on a real result; hiring is refused until a reason is written, and the ledger names the person who decided |
 | `journey-held.spec.ts` | The same, but they fail the exam | a threshold holds, it never rejects — nothing automated writes a rejection; the queue shows them with the reason they stopped and offers "Let them continue"; the rejection that does come is a person's, with their reason |
 | `journey-candidate-view.spec.ts` | That held candidate claims the account their confirmation email offered, and reads their own application | their stage reads "Under review" in words, and no score, percentage or threshold appears anywhere on the page |
 

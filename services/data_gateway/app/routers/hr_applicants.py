@@ -75,7 +75,7 @@ from app.scoring_client import client_message as score_client_message
 from app.utils.ownership import get_owned
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 from app.utils.sql_like import LIKE_ESCAPE, like_literal
-from app.workflow_runner import enrol_applicant, on_shortlisted
+from app.workflow_runner import enrol_applicant, maybe_auto_shortlist, on_shortlisted
 from app.workflows import scoring_on_apply_enabled
 
 log = structlog.get_logger(__name__)
@@ -585,6 +585,10 @@ async def _ingest_resume(
             if score is not None and enrolment_id is not None:
                 await apply_ats_to_enrolment(db, enrolment_id=enrolment_id, score=score,
                                              resume_key=s3_key)
+                # Same transaction as the score, before the commit. Never raises —
+                # which matters here more than anywhere: the except below deletes
+                # the uploaded CV from S3.
+                await maybe_auto_shortlist(db, enrolment_id=enrolment_id)
         await db.commit()
     except Exception as exc:  # noqa: BLE001
         await db.rollback()
@@ -796,6 +800,7 @@ async def create_applicant(
         if enrolment_id is not None:
             await apply_ats_to_enrolment(db, enrolment_id=enrolment_id, score=score,
                                          resume_key=s3_key)
+            await maybe_auto_shortlist(db, enrolment_id=enrolment_id)
         await db.commit()
     except ResumeScoreError as exc:
         log.warning("hr.applicant.score_unavailable", error=str(exc))
@@ -1780,9 +1785,19 @@ async def rescore_applicant(
         latest = await apply_ats_to_enrolment(
             db, enrolment_id=enr["id"], score=score, resume_key=a.resume_s3_key
         )
+        # A rescore can lift an applicant over the bar. Guarded to status 'new',
+        # so rescoring someone already shortlisted, held or decided moves nobody.
+        auto = await maybe_auto_shortlist(db, enrolment_id=enr["id"])
+    else:
+        auto = None
     if latest:
         _apply_score(a, score)
     await db.commit()
+    if auto is not None and auto.action == "advanced":
+        # record_transition moved applicants.status with raw SQL, and this
+        # session does not expire on commit (shared/db/engine.py), so the ORM
+        # object would still say 'new' and _to_out below would report it.
+        await db.refresh(a, ["status"])
     # Refresh the search embedding too (also backfills it if it was missing).
     await _embed_applicant(db, a, hr_uid)
     return _to_out(a)

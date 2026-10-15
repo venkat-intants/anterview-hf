@@ -801,6 +801,109 @@ counts only. No schema or route change is needed.
 
 ---
 
+## AR-11 — A workflow can shortlist applicants on their ATS score, with no person confirming
+
+| | |
+|---|---|
+| **Source finding** | Owner decision, 2026-10-15, building `auto_shortlist` (migration `a2c4e6f8b0d3`); raised as H3 by the security audit of that change |
+| **Status** | **ACCEPTED — by the owner's explicit ruling; opt-in per workflow, off by default, approval-gated, advance-only** |
+| **Owner** | `platform_owner` (support@intants.com) — accountable. `security-auditor` and `code-reviewer` (AI review agents, not people) reviewed the implementation on 2026-10-15; the merge record (the PR) states which of their findings were fixed and whether they signed off — this entry does not assert it. **A DPO co-signature is pending** — it is a person's to give and is not implied by this entry. |
+| **Trigger to revisit** | Any of: (a) a government (APSSDC/NSDC) bid, or any bid or contract that asks how candidates are selected for assessment; (b) a candidate complaint about not being progressed, or about being progressed without review; (c) any change to the ATS model, prompt or scoring scale; (d) evidence that HR stops working the below-bar queue on an auto-shortlist opening; (e) any proposal to make the FINAL decision automatic, which this entry does not cover and does not license |
+
+**The decision.** The product owner asked for a high-volume role to run from
+application to the decision queue with no manual step. The first of the
+workflow's two human gates — shortlist confirmation — is therefore optional per
+workflow. This reverses Group C's design (migration `e7a9c1d3f5b8` kept both
+gates out of the settings table "so no configuration can switch them off").
+
+**What is accepted.** On an opted-in workflow, an AI score — not a person —
+decides which applicants start an assessment. Applicants below the bar are not
+rejected, held or hidden: they stay `new`, in HR's queue, shortlistable by hand.
+But in practice, on a high-volume opening, HR may work the auto-advanced group
+and let the below-bar queue go stale. Those applicants are then ranked by a
+machine that no one has checked. If the ATS score is biased, that bias now acts
+on its own. That is the risk this entry names.
+
+**Why it is inside D-05 and CLAUDE.md #9, and where it stops.**
+- D-05 promises nothing automated ENDS a candidacy. Auto-shortlist only ever
+  advances; it writes no `held` or `rejected`. Unchanged.
+- CLAUDE.md #9 says AI must never decide hiring OUTCOMES. The final hire/reject
+  is untouched and still unsettable — no column, no request body, no proposal
+  can automate it. Whether "who is assessed" is itself an outcome is the
+  judgement this entry records; the owner ruled it is a progression step. **The
+  wording of #9 was not changed by this work** — rewording a project
+  constraint is the owner's edit to make, not an implementer's.
+
+**What makes it acceptable, as built.**
+- Off by default; starter templates pin it off explicitly.
+- Settings are draft-only, so turning it on is a new version that a super admin
+  approves. The approver is shown it (a prominent notice and the "what
+  approving changes" sentence), the version fingerprint changes when it is on
+  (so an approval of a gated version cannot publish an ungated one), and an
+  approval is refused if the version changed after the approver opened it. That
+  last check runs when the approve request carries the fingerprint the page
+  showed — the review page always sends it; a hand-made request that omits it
+  is not checked.
+- It needs a bar of at least 1 and first-round auto-assign on — enforced in the
+  service and by `ck_workflows_auto_shortlist_needs_threshold`.
+- It declines (leaves for a person) a CV flagged for prompt injection. The
+  flag is the resume scorer's own, stored with the score it describes
+  (`enrolments.ats_injection_markers`), so it concerns the CV that produced the
+  number — for a returning applicant that is not the CV on their applicant row.
+  A score with no flag on record is accepted only when the scored CV is the
+  current one and a fresh scan of it is clean; otherwise it is declined.
+- It declines anyone who did not apply themselves, decided from three facts,
+  all required. (1) The application's creating pipeline-ledger row is the
+  public apply form's: no person named, marked automated, and carrying the
+  reason only that form writes — every HR upload, single add and talent-pool
+  add names the HR user, and an actor-less row from any other path (a bulk
+  upload with no recorded uploader, a backfill) lacks the form's reason. (2)
+  The applicant's own identity holds a live `application_data` consent **to
+  this company**, which only the public apply form writes. (3) **The applicant
+  proved control of the email address after this application** — by claiming
+  their account through the emailed link. The public form accepts any typed
+  address unverified, so without (3) a stranger could submit an application in
+  someone else's name (including someone HR had uploaded) and have that person
+  sent an assessment. A candidate who claims their account is offered to
+  auto-shortlist at that moment. It does **not** read the `source` label — HR
+  chooses that at upload, so it cannot prove who filed the application.
+- Consequence of (3): a candidate who never claims their account, or who
+  already had a verified account before applying, is never auto-shortlisted;
+  they wait in HR's queue as on a manual opening. That is the fail-closed
+  direction and is deliberate.
+- Every automatic move is recorded `automated=True` with no actor and the score
+  and bar in the reason; enabling or disabling it writes its own audit row.
+- No AI copilot proposal can change it: `CommitSpec` refuses the key
+  structurally.
+- Candidate notices (EN/HI/TE) no longer claim "nothing is decided
+  automatically" or that a person reviews every application. A notice on the
+  apply page — in the page's footer, not inside the consent checkbox's own
+  text — says the CV is scored automatically and that, for some roles, a
+  candidate meeting the standard may be moved on without a person reviewing it
+  first; every notice says each hire or reject is a person's.
+
+**What is not covered.** Applicants attached to an archived workflow version
+are not auto-shortlisted. Proving the address is per account, not per
+application: when a person claims their account — through the link for ANY of
+their applications — every waiting application filed under that address is
+offered to auto-shortlist, including one someone else submitted in their name.
+That person then receives an assessment for a role they did not apply to; each
+such application also sent them its own confirmation email, and nothing is
+sent to anyone but the proven address owner. Narrowing the offer to the
+application the activation link was issued for is a possible follow-up.
+A consent row given to a second company can stay on a tombstoned guest
+identity when accounts are linked at activation (`_link_to_existing`
+de-duplicates `application_data` per person, not per company); that
+application then fails the consent check and waits for HR — the safe
+direction — but erasure does not reach the stranded row. Tracked with the
+deferred DPDP erasure work. Applicants already waiting when a version is
+published are offered to it once, at publish, at most 50 per publish; the rest
+stay in HR's queue (the builder says how many) until a rescore offers them
+again. The consent notice is the same whatever the opening's setting, so a
+candidate applying to a manual opening is told progression *may* be automatic.
+Hindi and Telugu notice wording has not been reviewed by a native speaker (the
+PH4 HI/TE review item).
+
 ## Index
 
 | ID | Risk | Source | Owner | Fires when |
@@ -815,3 +918,4 @@ counts only. No schema or route change is needed.
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
 | **AR-10** | A company `super_admin` views named candidates (and HR's free-text notes on them) on the hiring board, read-only; cannot act | Owner decision 2026-10-12 | `platform_owner` (+ `security-auditor`) | An objection to super-admin visibility of candidate names/notes, any added field/link/write on the view, a new `super_admin`-reachable route, or a candidate tool for the super-admin copilot |
+| **AR-11** | An opted-in workflow shortlists on the ATS score with no person confirming; advance-only, approval-gated, off by default | Owner decision 2026-10-15 | `platform_owner` (DPO co-sign pending) | A government bid, a progression complaint, any ATS model/prompt change, the below-bar queue going stale, or any proposal to automate the final decision |

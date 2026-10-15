@@ -489,6 +489,13 @@ async def _score_pass(db: AsyncSession, result: PassResult) -> None:
             mirror = await apply_ats_to_enrolment(
                 db, enrolment_id=eid, score=score, resume_key=resume_key
             )
+            # THE PUBLIC-APPLY PATH. A careers-page application is stored with
+            # pending_enrichment and scored here, so this is where auto-shortlist
+            # does most of its work. Imported locally: this module stays light at
+            # import time, the same reason frozen_rubric_for_round is.
+            from app.workflow_runner import maybe_auto_shortlist  # noqa: PLC0415
+
+            await maybe_auto_shortlist(db, enrolment_id=eid)
         if mirror:
             apply_ats_score(applicant, score)
         # A deferred ingest stored this row without reading it, so its name is

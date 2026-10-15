@@ -40,6 +40,10 @@ interface Props {
   onRemove: (roundId: string) => void;
   /** Full ordered list of ids, not a delta — the server takes the whole order. */
   onReorder: (roundIds: string[]) => void;
+  /** When set, the shortlist gate is automatic above this 0–10 bar. Optional
+   *  and absent by default, so the canvas shows a human gate unless told
+   *  otherwise — the safe reading for any caller that does not know. */
+  autoShortlistBar?: number | null;
 }
 
 function moveWithin<T>(items: T[], from: number, to: number): T[] {
@@ -254,6 +258,7 @@ export default function WorkflowCanvas({
   onAdd,
   onRemove,
   onReorder,
+  autoShortlistBar = null,
 }: Props): JSX.Element {
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
@@ -278,19 +283,32 @@ export default function WorkflowCanvas({
         Candidates apply
       </div>
       <span className="ml-[26px] h-4 w-px bg-[var(--ui-line-strong)]" aria-hidden="true" />
-      {/* The first human gate. Nothing below starts for anyone until a person
-          shortlists them — an ATS score can only suggest who to look at. */}
+      {/* The shortlist gate. Ordinarily a person: nothing below starts until
+          someone shortlists them and an ATS score only suggests who to look at.
+          With auto-shortlist on it is the bar instead — and this banner must
+          SAY so, because "nothing below starts until a person does" would then
+          be false on the screen HR uses to understand their own process. */}
       <div
         className="flex items-center gap-2.5 rounded-[12px] border border-border bg-[var(--ui-warn-wash)] px-2.5 py-2 text-[12px] text-foreground"
         data-testid="shortlist-gate"
+        data-mode={autoShortlistBar !== null ? 'auto' : 'manual'}
       >
         <span className="flex h-6 w-6 items-center justify-center rounded-full border border-[var(--ui-warn)] text-[var(--ui-warn)]">
           <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
-        <span>
-          <span className="font-medium text-foreground">You shortlist</span>
-          <span className="text-muted-foreground"> — nothing below starts until a person does</span>
-        </span>
+        {autoShortlistBar !== null ? (
+          <span>
+            <span className="font-medium text-foreground">Shortlisted automatically</span>
+            <span className="text-muted-foreground">
+              {` — at ATS ${autoShortlistBar * 10}/100 and above; everyone below waits for you`}
+            </span>
+          </span>
+        ) : (
+          <span>
+            <span className="font-medium text-foreground">You shortlist</span>
+            <span className="text-muted-foreground"> — nothing below starts until a person does</span>
+          </span>
+        )}
       </div>
 
       {/* Legend for the branch edges below (PH4-O3) — text, not colour alone,

@@ -151,6 +151,69 @@ const AUTOMATIONS: {
   },
 ];
 
+/* ── Auto-shortlist — removing the human shortlist gate, on purpose ─────────── */
+
+/**
+ * THE ONE GATE HR CAN NOW SWITCH OFF, AND THE ONE IT CANNOT. Turning this on
+ * means an applicant whose ATS clears the bar starts round one with no one
+ * confirming. It only ever advances people: below the bar nothing happens, and
+ * the final hire/reject is still a person's (D-05, CLAUDE.md #9).
+ *
+ * Disabled without a bar rather than allowed and refused: "shortlist
+ * automatically" with no threshold would mean everyone, and the server refuses
+ * that combination anyway. Saying so here is kinder than a failed save.
+ */
+function AutoShortlistToggle({
+  on,
+  bar,
+  autoAssign,
+  editable,
+  onChange,
+}: {
+  on: boolean;
+  bar: number | null;
+  /** "Send the first round automatically". Required on: shortlisting someone
+   *  automatically and then starting nothing would strand them. */
+  autoAssign: boolean;
+  editable: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  // A bar of 0 is no bar: `score >= 0` admits everyone, including an applicant
+  // whose CV the scorer failed on and recorded as 0. Mirrors update_settings.
+  const hasBar = bar !== null && bar >= 1;
+  const ready = hasBar && autoAssign;
+  // Turning it OFF is always allowed, whatever else is true — never trap a
+  // setting in a state the server would refuse.
+  const canToggle = editable && (ready || on);
+  return (
+    <div className="mt-4 flex items-start gap-3" data-testid="auto-shortlist-setting">
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] text-foreground">Shortlist without my confirmation</div>
+        <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
+          {!hasBar
+            ? 'Set an ATS score of at least 1 above first — without one, every applicant would be shortlisted.'
+            : !autoAssign
+              ? 'Turn on “Send the first round automatically” first — otherwise applicants would be shortlisted and then left with nothing started.'
+              : on
+              ? `Applicants who applied through your careers page, scored ${bar * 10}/100 or higher and confirmed their email start round one with no one confirming them. Everyone else — below the bar, uploaded by HR, or not yet confirmed — stays in your queue. The final decision is still yours.`
+              : 'Off: you confirm every shortlist. Turn on to let applicants above the bar start on their own.'}
+        </div>
+        {on && (
+          <p className="mt-1.5 text-[11.5px] leading-snug text-[var(--ui-warn)]">
+            This removes a human step, so a super admin sees it when approving this version.
+          </p>
+        )}
+      </div>
+      <ToggleSwitch
+        checked={on}
+        onChange={onChange}
+        label="Shortlist without my confirmation"
+        disabled={!canToggle}
+      />
+    </div>
+  );
+}
+
 function SettingsPanel({
   workflow,
   editable,
@@ -175,6 +238,7 @@ function SettingsPanel({
                 checked={Boolean(s[a.key])}
                 onChange={(next) => onPatch({ [a.key]: next } as Partial<WorkflowSettings>)}
                 label={a.label}
+                disabled={!editable}
               />
             </div>
           </div>
@@ -210,11 +274,12 @@ function SettingsPanel({
 
       <div className="border-t border-border pt-4">
         <label htmlFor="ats-threshold" className="block text-[13px] text-foreground">
-          Suggest shortlisting at ATS score
+          {s.auto_shortlist ? 'Shortlist automatically at ATS score' : 'Suggest shortlisting at ATS score'}
         </label>
         <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
-          Applicants at or above this are flagged to you as ready to shortlist. Nobody is
-          shortlisted automatically — you confirm, and that starts their first round.
+          {s.auto_shortlist
+            ? 'Applicants at or above this start their first round on their own. Below it, nobody is moved.'
+            : 'Applicants at or above this are flagged to you as ready to shortlist. You confirm, and that starts their first round.'}
         </p>
         <div className="mt-2 flex items-center gap-2">
           <input
@@ -233,6 +298,14 @@ function SettingsPanel({
           />
           <span className="text-[13px] text-muted-foreground">/ 10</span>
         </div>
+
+        <AutoShortlistToggle
+          on={Boolean(s.auto_shortlist)}
+          bar={s.shortlist_ats_threshold}
+          autoAssign={Boolean(s.auto_assign_first_round)}
+          editable={editable}
+          onChange={(next) => onPatch({ auto_shortlist: next })}
+        />
       </div>
 
       {/* PH4-O1. The final decision has no round of its own, so its owner and
@@ -526,11 +599,18 @@ export default function WorkflowBuilder(): JSX.Element {
       applyWorkflow(res);
       const started = res.started_candidates ?? 0;
       const attached = res.attached_candidates ?? 0;
+      const deferred = res.auto_shortlist_deferred ?? 0;
       toast.success(
         attached > 0
           ? `Version ${res.version} is live — ${attached} waiting candidate${attached === 1 ? '' : 's'} joined${started > 0 ? `, ${started} started round 1` : ''}`
           : `Version ${res.version} is live`,
       );
+      if (deferred > 0) {
+        // Not an error: they are in the shortlist queue, as on a manual version.
+        toast.info(
+          `${deferred} more waiting candidate${deferred === 1 ? ' was' : 's were'} not checked for automatic shortlisting at publish — review them in the shortlist queue.`,
+        );
+      }
     },
     onError: (e) => {
       setConfirmPublish(false);
@@ -946,6 +1026,9 @@ export default function WorkflowBuilder(): JSX.Element {
             {previewOpen ? (
               <Well className="mb-5">
                 <CandidatePreview
+                  autoShortlistBar={
+                    workflow.settings.auto_shortlist ? workflow.settings.shortlist_ats_threshold : null
+                  }
                   title={req.data?.title ?? 'this opening'}
                   rounds={workflow.rounds}
                 />
@@ -991,6 +1074,9 @@ export default function WorkflowBuilder(): JSX.Element {
 
             <WorkflowCanvas
               rounds={workflow.rounds}
+              autoShortlistBar={
+                workflow.settings.auto_shortlist ? workflow.settings.shortlist_ats_threshold : null
+              }
               selectedId={selectedRound}
               editable={editable}
               busy={busy}

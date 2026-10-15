@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import text
 
 from app.application_questions import answers_for
+from app.auto_close import closing_date_passed
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep, SuperAdminCtxDep
 from app.final_decision import DECISIONS, DecisionRefusedError, record_final_decision
@@ -1010,6 +1011,24 @@ async def set_requisition_status(
             status_code=400, detail=f"status must be one of {sorted(_VALID_REQ_STATUS)}"
         )
     row = await _owned(db, company_id, requisition_id)
+
+    # Moving an opening whose closing date has passed to open or paused
+    # (reopening it, or un-pausing it) would last one pass: app/auto_close.py
+    # closes it again — or, with candidates still in it, nags its owner. A new
+    # closing date is the actual decision to keep hiring, so it is asked for
+    # first. Closing, and re-saving the current status, are always allowed.
+    if (
+        new_status != "closed"
+        and new_status != row["status"]
+        and closing_date_passed(row.get("closes_at"))
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This opening's closing date has passed. Set a new closing date "
+                "in Opening details before reopening it."
+            ),
+        )
 
     # Only on the open/paused -> closed edge. Re-closing a closed opening is a
     # no-op and must not re-prompt.

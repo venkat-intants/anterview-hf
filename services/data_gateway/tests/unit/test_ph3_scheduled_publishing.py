@@ -31,6 +31,24 @@ COMPANY = uuid.UUID("22222222-2222-2222-2222-222222222222")
 SETTER = uuid.UUID("33333333-3333-3333-3333-333333333333")
 
 
+@pytest.fixture(autouse=True)
+def _auto_close_is_tested_elsewhere(monkeypatch: pytest.MonkeyPatch) -> dict[str, AsyncMock]:
+    """The pass also runs app/auto_close.py. These tests' fake session answers
+    every query with the publishing rows, which auto-close cannot read; its own
+    behaviour is pinned against a real database in
+    tests/integration/test_auto_close_db.py."""
+    from app import auto_close
+
+    mocks = {
+        "close_expired": AsyncMock(return_value=0),
+        "nudge_overdue": AsyncMock(return_value=0),
+        "next_closing_at": AsyncMock(return_value=None),
+    }
+    for name, mock in mocks.items():
+        monkeypatch.setattr(auto_close, name, mock)
+    return mocks
+
+
 def _due(**kw: object) -> dict:
     base = {
         "id": REQ,
@@ -62,6 +80,12 @@ def _factory(rows: list[dict]) -> tuple[object, AsyncMock]:
     # blocked_backlog's count. Zero unless a test says otherwise — these older
     # cases are about the publish decision, not the backlog report.
     db.scalar = AsyncMock(return_value=0)
+
+    @asynccontextmanager
+    async def _savepoint():  # noqa: ANN202 — auto-close runs in one
+        yield
+
+    db.begin_nested = _savepoint
 
     @asynccontextmanager
     async def factory():  # noqa: ANN202
@@ -513,3 +537,48 @@ async def test_a_permanently_stuck_backlog_does_not_warn_every_pass() -> None:
         assert warn.call_count == first, "an unchanged backlog warned again"
     assert first == 1, "the first sighting of a backlog must warn once"
     sp._last_blocked = -1
+
+
+@pytest.mark.asyncio
+async def test_the_pass_also_closes_expired_openings_in_the_same_transaction(
+    _auto_close_is_tested_elsewhere: dict[str, AsyncMock],
+) -> None:
+    """Same session, before the commit: no extra database wake-up for auto-close."""
+    from app.scheduled_publishing import publish_due
+
+    factory, db = _factory([])
+    await publish_due(factory)
+    for name in ("close_expired", "nudge_overdue"):
+        mock = _auto_close_is_tested_elsewhere[name]
+        mock.assert_awaited_once()
+        assert mock.await_args.args[0] is db
+    db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_an_auto_close_failure_never_blocks_scheduled_publishing(
+    _auto_close_is_tested_elsewhere: dict[str, AsyncMock],
+) -> None:
+    """Code review: housekeeping must not stall a customer-visible feature. The
+    publish still commits, and the pass reports nothing closed."""
+    from app.scheduled_publishing import publish_due
+
+    _auto_close_is_tested_elsewhere["close_expired"].side_effect = RuntimeError("fk violation")
+    factory, db = _factory([_due()])
+    result = await publish_due(factory)
+    assert result["published"] == 1
+    assert (result["auto_closed"], result["nudged"]) == (0, 0)
+    db.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_pass_reports_what_auto_close_did(
+    _auto_close_is_tested_elsewhere: dict[str, AsyncMock],
+) -> None:
+    from app.scheduled_publishing import publish_due
+
+    _auto_close_is_tested_elsewhere["close_expired"].return_value = 2
+    _auto_close_is_tested_elsewhere["nudge_overdue"].return_value = 1
+    factory, _db = _factory([])
+    result = await publish_due(factory)
+    assert (result["auto_closed"], result["nudged"]) == (2, 1)

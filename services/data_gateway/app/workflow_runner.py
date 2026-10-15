@@ -294,8 +294,12 @@ async def _load_enrolment(
     """
     row = (
         await db.execute(
+            # nosec B608: the only thing concatenated is a fixed " FOR UPDATE OF e"
+            # chosen by a bool. No caller value reaches the SQL text — the one
+            # value here is :i, bound. Bandit flags any `+` on a query string and
+            # cannot see that both sides are literals.
             text(
-                "SELECT e.id, e.company_id, e.applicant_id, e.requisition_id, e.status,"
+                "SELECT e.id, e.company_id, e.applicant_id, e.requisition_id, e.status,"  # nosec B608
                 "       e.workflow_id, e.current_round_id, e.target_job_title,"
                 "       a.full_name, a.email"
                 "  FROM enrolments e"

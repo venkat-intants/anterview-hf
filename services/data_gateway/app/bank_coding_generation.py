@@ -81,7 +81,15 @@ _URL_RE = re.compile(
 #: directional marks (U+200B-U+200F), the embedding/override controls
 #: (U+202A-U+202E), word joiner and invisible operators (U+2060-U+2064), BOM,
 #: and the soft hyphen.
-_INVISIBLE_RE = re.compile("[​-‏‪-‮⁠-⁤﻿­]")
+#: Written as \u escapes, NOT as the characters themselves. Spelled
+#: literally this class is a row of invisible glyphs: unreadable in review,
+#: meaningless in a diff, and it makes this a file carrying bidirectional
+#: controls — which is the one thing bandit's B613/trojansource check exists
+#: to flag, source that does not read the way it runs. The class is
+#: unchanged; test_invisible_re_escapes.py pins the two forms equal.
+_INVISIBLE_RE = re.compile(
+    "[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff\u00ad]"
+)
 
 
 def _scan_form(text: str) -> str:

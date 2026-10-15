@@ -263,7 +263,9 @@ describe('QuestionBankFlow - the next step strip', () => {
     mockBank({ draft: 2 }, [MCQ_AI, CODING_AI]);
     renderAt('/hr/question-banks/bank-1?stage=add');
     const strip = await screen.findByTestId('bank-next-step');
-    expect(strip).toHaveTextContent('2 drafts not yet submitted');
+    // The strip mounts before its counts arrive (a separate query); on a slow
+    // CI runner a synchronous read saw it empty. Wait for the content itself.
+    await waitFor(() => expect(strip).toHaveTextContent('2 drafts not yet submitted'));
     expect(strip).toHaveTextContent('2 written by AI');
     expect(strip).toHaveTextContent('tests nobody has run');
 
@@ -280,7 +282,7 @@ describe('QuestionBankFlow - adding questions', () => {
     mockBank({}, []);
     renderAt('/hr/question-banks/bank-1?stage=add');
     await screen.findByRole('heading', { name: 'How do you want to add questions?' });
-    expect(screen.getByTestId('bank-tally')).toHaveTextContent('no questions yet');
+    await waitFor(() => expect(screen.getByTestId('bank-tally')).toHaveTextContent('no questions yet'));
 
     const methods = [
       ['method-write', () => screen.findByRole('form', { name: 'Bank question' })],

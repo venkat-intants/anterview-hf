@@ -177,6 +177,26 @@ async def enrol_applicant(
         return RunnerOutcome(action="noop", enrolment_id=str(existing),
                              reason="already enrolled in this opening")
 
+    # A CLOSED OPENING TAKES NO NEW CANDIDATES. Checked here, the one place an
+    # enrolment is created, because the callers check at different moments or
+    # not at all — a bulk upload is accepted while the opening is open and
+    # ingested later. FOR SHARE conflicts with app/auto_close.py's FOR UPDATE,
+    # so the two serialise: either this enrolment lands first and auto-close
+    # (SKIP LOCKED, then its own re-check) leaves the opening open, or the
+    # close lands first and this refuses — never a closed opening holding
+    # people nobody was asked about (AC-12).
+    requisition_status = await db.scalar(
+        text(
+            "SELECT status FROM job_requisitions"
+            " WHERE id = :r AND deleted_at IS NULL FOR SHARE"
+        ),
+        {"r": requisition_id},
+    )
+    if requisition_status == "closed":
+        log.warning("runner.enrol_refused_closed_opening",
+                    requisition_id=str(requisition_id), applicant_id=str(applicant_id))
+        return RunnerOutcome(action="noop", reason="opening is closed")
+
     wf = await published_workflow(db, requisition_id)
     now = datetime.now(tz=UTC)
     enrolment_id = uuid.uuid4()

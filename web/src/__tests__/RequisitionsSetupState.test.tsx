@@ -110,9 +110,23 @@ describe('the openings list shows real setup state', () => {
 
     expect(within(row('Expired Role')).queryByText('accepting applications')).toBeNull();
     expect(within(row('Expired Role')).getByText('not live · closing date passed')).toBeTruthy();
-    expect(within(row('Expired Role')).getByText(/closing date passed: extend it or close/i)).toBeTruthy();
+    expect(within(row('Expired Role')).getByText(/closing date passed: closing automatically/i)).toBeTruthy();
     expect(within(row('Draft Flow Role')).queryByText('accepting applications')).toBeNull();
     expect(within(row('Draft Flow Role')).getByText('not live · no live workflow')).toBeTruthy();
+  });
+
+  it('past its closing date with candidates still in progress, points at the pipeline', async () => {
+    // Auto-close never closes over people (AC-12 / D-05); HR is sent to decide.
+    m.listRequisitions.mockResolvedValue([
+      opening({
+        id: 'z', title: 'Busy Role', approval_status: 'approved', public_apply_enabled: true,
+        closes_at: '2020-01-01T00:00:00Z', unresolved: 3,
+      }),
+    ]);
+    wrap(<Requisitions />);
+    const [row] = await screen.findAllByTestId('opening-row');
+    const next = within(row).getByText(/closing date passed: 3 still in progress — close it once they finish/i);
+    expect(next.closest('a')?.getAttribute('href')).toBe('/hr/requisitions/z?tab=pipeline');
   });
 
   it('has exactly one primary: New opening', async () => {

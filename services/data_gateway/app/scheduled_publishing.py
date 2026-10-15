@@ -42,6 +42,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app import auto_close
 from app.config import settings
 from app.models import AuditLog
 from app.publishing import APPROVED
@@ -242,6 +243,26 @@ async def publish_due(factory: async_sessionmaker[AsyncSession]) -> dict[str, in
                 "publish.scheduled.done",
                 requisition_id=str(requisition_id), company_id=str(row["company_id"]),
             )
+        # Openings past their closing date: closed when nobody is left in them,
+        # their owner nudged once when somebody is (app/auto_close.py). Same
+        # session and transaction, so it costs this loop no extra wake-up.
+        #
+        # ISOLATED. Housekeeping must never stall a customer-visible feature:
+        # a failure here (say, a notification for a user who was just
+        # deleted) rolls back only its own savepoint, and this pass's
+        # scheduled publishes still commit.
+        auto_closed = nudged = 0
+        auto_close._current["requisition_id"] = None
+        try:
+            async with db.begin_nested():
+                auto_closed = await auto_close.close_expired(db, now=now)
+                nudged = await auto_close.nudge_overdue(db, now=now)
+        except Exception as exc:  # noqa: BLE001 — see above
+            # Type and opening id only: an IntegrityError's message carries
+            # key values.
+            log.error("requisition.auto_close.pass_failed", exc_type=type(exc).__name__,
+                      requisition_id=auto_close._current.get("requisition_id"))
+            auto_closed = nudged = 0
         await db.commit()
 
         # Blocked rows are no longer claimed, so they would otherwise vanish
@@ -257,7 +278,8 @@ async def publish_due(factory: async_sessionmaker[AsyncSession]) -> dict[str, in
                 blocked=blocked, was=_last_blocked, sample=sample,
             )
             _last_blocked = blocked
-    return {"published": published, "skipped": skipped, "blocked": blocked}
+    return {"published": published, "skipped": skipped, "blocked": blocked,
+            "auto_closed": auto_closed, "nudged": nudged}
 
 
 async def next_due_at(factory: async_sessionmaker[AsyncSession]) -> datetime | None:
@@ -268,16 +290,22 @@ async def next_due_at(factory: async_sessionmaker[AsyncSession]) -> datetime | N
     that turns out to be blocked costs one pass that logs why. Waking late
     because the approval arrived after this query would be the worse error.
     """
+    now = datetime.now(tz=UTC)
     async with factory() as db:
-        return await db.scalar(
+        publish: datetime | None = await db.scalar(
             text(
                 "SELECT MIN(publish_at) FROM job_requisitions"
                 " WHERE publish_at IS NOT NULL"
                 "   AND publish_at > :now"
                 "   AND deleted_at IS NULL"
             ),
-            {"now": datetime.now(tz=UTC)},
+            {"now": now},
         )
+        # A closing date is a due time too: wake for it, so an opening closes
+        # at its date rather than up to a whole interval later.
+        closing = await auto_close.next_closing_at(db, now=now)
+    due = [d for d in (publish, closing) if d is not None]
+    return min(due) if due else None
 
 
 async def _sleep_seconds(
@@ -308,7 +336,10 @@ async def _sleep_seconds(
     It is not a practical denial of service: it needs an authenticated
     hr_manager to create and get approved many requisitions scheduled seconds
     apart, each costing more work than the pass it triggers, and
-    uq_job_requisitions_company_title forces unique titles. The 1.0s floor below
+    uq_job_requisitions_company_title forces unique titles. CLOSING dates,
+    which need no approval, are rounded up to a minute boundary before they
+    reach this function (auto_close.next_closing_at), so they cannot be used
+    to drive the loop at the 1s floor. The 1.0s floor below
     is what bounds it; raising that floor to ~5s would buy a tighter ceiling and
     still sit inside the "a few seconds" promise in tolerance_note().
 
@@ -316,7 +347,8 @@ async def _sleep_seconds(
     every pass including quiet ones - a real cost, not a saving. It rides
     ix_job_requisitions_publish_due (partial on publish_at where it is not null
     and the row is live); EXPLAIN reports an Index Only Scan, checked rather
-    than assumed.
+    than assumed. The closing-date probe added for auto-close
+    (auto_close.next_closing_at) is NOT indexed — see that module's COST note.
 
     A failure here must not stop the publisher: the interval is the fallback,
     which is exactly the behaviour before this existed.

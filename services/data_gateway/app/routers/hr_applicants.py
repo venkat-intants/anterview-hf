@@ -294,7 +294,7 @@ async def _resolve_opening(
         row = (
             await db.execute(
                 text(
-                    "SELECT id, title, level, jd_text FROM job_requisitions"
+                    "SELECT id, title, level, jd_text, status FROM job_requisitions"
                     " WHERE id = :i AND company_id = :c AND deleted_at IS NULL"
                 ),
                 {"i": requisition_id, "c": company_id},
@@ -303,7 +303,15 @@ async def _resolve_opening(
         if row is None:
             # Uniform with every other cross-tenant miss.
             raise HTTPException(status_code=404, detail="Opening not found.")
-        return {**dict(row), "created": False}
+        if row["status"] == "closed":
+            # Said up front, not discovered later: enrol_applicant refuses a
+            # closed opening, and an applicant filed with no application in
+            # the opening HR picked would be a silent surprise.
+            raise HTTPException(
+                status_code=409,
+                detail="This opening is closed. Reopen it before adding candidates.",
+            )
+        return {**{k: v for k, v in dict(row).items() if k != "status"}, "created": False}
     try:
         return await requisition_for_title(
             db, company_id=company_id, title=title, level=level, jd_text=jd_text,

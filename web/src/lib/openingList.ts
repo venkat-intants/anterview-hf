@@ -185,9 +185,18 @@ export function nextAction(r: Requisition): NextAction | null {
       break;
   }
   if (closingDatePassed(r)) {
-    // Applications stopped on their own; the opening stays open so the
-    // pipeline can finish. HR decides whether to extend the date or close it.
-    return { text: 'Closing date passed: extend it or close the opening', to: base };
+    // Applications stopped on their own. With nobody left in it the opening
+    // closes itself (data_gateway app/auto_close.py); with candidates still in
+    // progress it stays open — nobody is rejected automatically. (Anyone
+    // waiting on a DECISION was already sent to the queue above; these are
+    // mid-round, waiting on themselves.)
+    const waiting = r.unresolved ?? 0;
+    return waiting > 0
+      ? {
+          text: `Closing date passed: ${waiting} still in progress — close it once they finish`,
+          to: `${base}?tab=pipeline`,
+        }
+      : { text: 'Closing date passed: closing automatically', to: base, passive: true };
   }
   if (!isAcceptingApplications(r)) {
     const allProven = r.has_published_jd === true && r.has_published_workflow === true;

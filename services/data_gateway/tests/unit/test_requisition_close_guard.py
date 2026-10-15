@@ -227,3 +227,47 @@ async def test_invalid_status_still_rejected_first() -> None:
         await _close(db, _row("open"), {"status": "banana"})
 
     assert exc.value.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Reopening after the closing date (auto-close, app/auto_close.py)
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target", ["open", "paused"])
+async def test_a_closed_opening_past_its_date_cannot_be_reopened_without_a_new_date(
+    target: str,
+) -> None:
+    """Auto-close would shut it again on its next pass; a new closing date is
+    the actual decision to keep hiring, so it is asked for first."""
+    db = _db({})
+    row = {**_row("closed"), "closes_at": datetime(2020, 1, 1, tzinfo=UTC)}
+    with pytest.raises(HTTPException) as exc:
+        await _close(db, row, {"status": target})
+    assert exc.value.status_code == 409
+    assert "Set a new closing date" in str(exc.value.detail)
+    db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_closed_opening_with_a_future_date_reopens() -> None:
+    db = _db({})
+    row = {**_row("closed"), "closes_at": datetime(2999, 1, 1, tzinfo=UTC)}
+    out = await _close(db, row, {"status": "open"})
+    assert out.status == "open"
+
+
+@pytest.mark.asyncio
+async def test_a_paused_opening_past_its_date_cannot_be_unpaused_without_a_new_date() -> None:
+    db = _db({})
+    row = {**_row("paused"), "closes_at": datetime(2020, 1, 1, tzinfo=UTC)}
+    with pytest.raises(HTTPException) as exc:
+        await _close(db, row, {"status": "open"})
+    assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_closing_a_past_date_opening_is_always_allowed() -> None:
+    db = _db({})
+    row = {**_row("open"), "closes_at": datetime(2020, 1, 1, tzinfo=UTC)}
+    out = await _close(db, row, {"status": "closed"})
+    assert out.status == "closed"

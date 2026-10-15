@@ -49,6 +49,7 @@ import {
   type ProctorCondition,
 } from './proctorLogic';
 import type { ProctorEvent, ProctorEventSubmitter } from './types';
+import { useArmed, GATED_UNTIL_ARMED } from './useArmed';
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 const DETECT_INTERVAL_MS = 500; // ~2 fps
@@ -258,16 +259,29 @@ export function useProctoring({
   };
 
   // ── Browser-event listeners (independent of the camera) ─────────────────────
+  //
+  // GATED. `enabled` flips when the LiveKit session connects, which is also
+  // when this hook asks for the camera — so the permission prompt's own focus
+  // change used to be recorded as the candidate's first tab_blur. useArmed
+  // holds the two threshold events back until fullscreen is confirmed and that
+  // prompt has settled, then latches. `ready` is this hook's own signal that
+  // the camera pipeline has finished starting (or given up).
+  const armedRef = useArmed({ enabled, cameraEnabled: enabled, cameraSettled: ready });
+
   useEffect(() => {
     if (!enabled || !browserEvents) return;
 
+    const gated = (type: string) => GATED_UNTIL_ARMED.has(type) && !armedRef.current;
+
     const onVisibility = () => {
-      if (document.hidden) pushInstant('tab_blur');
+      if (document.hidden && !gated('tab_blur')) pushInstant('tab_blur');
     };
     const onCopy = () => pushInstant('copy');
     const onPaste = () => pushInstant('paste');
     const onFullscreen = () => {
-      if (!document.fullscreenElement) pushInstant('fullscreen_exit');
+      if (!document.fullscreenElement && !gated('fullscreen_exit')) {
+        pushInstant('fullscreen_exit');
+      }
     };
 
     document.addEventListener('visibilitychange', onVisibility);

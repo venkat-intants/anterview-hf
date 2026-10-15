@@ -146,3 +146,95 @@ describe('useExamProctor — PH4-D2 relaxed auto-submit', () => {
     expect(onAutoSubmit).not.toHaveBeenCalled();
   });
 });
+
+// ── Arming: no violation before the candidate has started ──────────────────
+//
+// THE REPORTED BUG. The listeners attach the moment `enabled` flips, which is
+// before fullscreen has been entered and before the camera permission prompt
+// has been answered — so a first-time candidate arrived at question one
+// already carrying tab_blur and fullscreen_exit, both of which drive
+// auto-submit.
+//
+// WHY THESE TESTS INSTALL A FULLSCREEN API AND THE ONES ABOVE DO NOT: jsdom
+// has none, so `isFullscreenSupported()` is false and the gate arms
+// immediately — which is the correct degradation (never lock out a browser
+// that cannot comply) but means every test above exercises the gate
+// VACUOUSLY. Without the stub here, these would pass against no gate at all.
+
+function installFullscreenApi() {
+  (document.documentElement as unknown as Record<string, unknown>).requestFullscreen = vi.fn();
+  Object.defineProperty(document, 'fullscreenElement', {
+    configurable: true, writable: true, value: null,
+  });
+}
+function uninstallFullscreenApi() {
+  delete (document.documentElement as unknown as Record<string, unknown>).requestFullscreen;
+  Object.defineProperty(document, 'fullscreenElement', {
+    configurable: true, writable: true, value: null,
+  });
+}
+function enterFullscreen() {
+  Object.defineProperty(document, 'fullscreenElement', {
+    configurable: true, writable: true, value: document.documentElement,
+  });
+  act(() => { document.dispatchEvent(new Event('fullscreenchange')); });
+}
+function leaveFullscreen() {
+  Object.defineProperty(document, 'fullscreenElement', {
+    configurable: true, writable: true, value: null,
+  });
+  act(() => { document.dispatchEvent(new Event('fullscreenchange')); });
+}
+
+describe('useExamProctor — nothing is recorded before the attempt has begun', () => {
+  afterEach(() => uninstallFullscreenApi());
+
+  it('does not post a tab_blur raised before fullscreen is entered', () => {
+    installFullscreenApi();
+    sendIntegrityEvent.mockResolvedValue({ accepted: true, violation_count: 1, max_violations: 3 });
+    const onAutoSubmit = vi.fn();
+    renderHook(() =>
+      useExamProctor({ enabled: true, attemptId: 'a1', token: 'tok', maxViolations: 3, onAutoSubmit }),
+    );
+
+    // Exactly what the camera permission dialog does to the tab.
+    tabBlur();
+
+    expect(sendIntegrityEvent).not.toHaveBeenCalled();
+    expect(onAutoSubmit).not.toHaveBeenCalled();
+  });
+
+  it('does not post a fullscreen_exit for a fullscreen never entered', () => {
+    installFullscreenApi();
+    const onAutoSubmit = vi.fn();
+    renderHook(() =>
+      useExamProctor({ enabled: true, attemptId: 'a1', token: 'tok', maxViolations: 3, onAutoSubmit }),
+    );
+
+    fullscreenExit();
+
+    expect(sendIntegrityEvent).not.toHaveBeenCalled();
+  });
+
+  it('records the FIRST real exit once the attempt has properly started', async () => {
+    // The other half, and the one that matters most: a gate that kept
+    // suppressing would be proctoring that silently does nothing.
+    installFullscreenApi();
+    sendIntegrityEvent.mockResolvedValue({ accepted: true, violation_count: 1, max_violations: 3 });
+    const onAutoSubmit = vi.fn();
+    renderHook(() =>
+      useExamProctor({ enabled: true, attemptId: 'a1', token: 'tok', maxViolations: 3, onAutoSubmit }),
+    );
+
+    enterFullscreen();           // the candidate is now set up
+    expect(sendIntegrityEvent).not.toHaveBeenCalled();  // entering is not an exit
+
+    leaveFullscreen();           // ...and this is violation number one
+
+    await waitFor(() => expect(sendIntegrityEvent).toHaveBeenCalledTimes(1));
+    expect(sendIntegrityEvent.mock.calls[0][1]).toMatchObject({
+      event_type: 'fullscreen_exit',
+    });
+  });
+});
+

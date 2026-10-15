@@ -295,3 +295,82 @@ describe('WorkflowReviews — where this version is', () => {
     expect(screen.getByTestId('decision-panel').className).toMatch(/\bsticky\b/);
   });
 });
+
+// ── The shortlist gate, as the approver sees it ─────────────────────────────
+//
+// Approval is the safeguard on removing the human shortlist gate: settings are
+// draft-only, so turning auto-shortlist on means a new version that a super
+// admin approves. That safeguard is only real if the approver is SHOWN it —
+// and until this section existed, this page rendered none of a version's
+// automation settings at all.
+
+describe('WorkflowReviews — the approver sees whether shortlisting is automatic', () => {
+  beforeEach(() => {
+    paramWorkflowId = 'wf-1';
+  });
+
+  it('warns, with the bar in real numbers, when the version shortlists on its own', async () => {
+    getWorkflowReviewDetail.mockResolvedValue({
+      ...DETAIL,
+      settings: { auto_shortlist: true, shortlist_ats_threshold: 7 },
+    });
+    renderPage();
+
+    const alert = await screen.findByTestId('review-auto-shortlist');
+    expect(alert).toHaveAttribute('role', 'alert');
+    expect(alert).toHaveTextContent(/shortlists automatically/i);
+    // 7/10 stored is 70/100 as the score is actually reported.
+    expect(alert).toHaveTextContent(/70\/100 or higher/);
+    // And what it does NOT do, which is what keeps it inside D-05.
+    expect(alert).toHaveTextContent(/below that score nobody is moved/i);
+    expect(alert).toHaveTextContent(/final hire or reject is still a person/i);
+  });
+
+  it('puts it in the one sentence an approver actually reads', async () => {
+    getWorkflowReviewDetail.mockResolvedValue({
+      ...DETAIL,
+      settings: { auto_shortlist: true, shortlist_ats_threshold: 7 },
+    });
+    renderPage();
+
+    expect(
+      await screen.findByText(/start round 1 without anyone confirming them/i),
+    ).toBeInTheDocument();
+  });
+
+  it('says a person confirms shortlists when it is off', async () => {
+    getWorkflowReviewDetail.mockResolvedValue({
+      ...DETAIL,
+      settings: { auto_shortlist: false, shortlist_ats_threshold: 7 },
+    });
+    renderPage();
+
+    const manual = await screen.findByTestId('review-manual-shortlist');
+    expect(manual).toHaveTextContent(/a person confirms every shortlist/i);
+    expect(manual).toHaveTextContent(/suggested/i);
+    expect(screen.queryByTestId('review-auto-shortlist')).not.toBeInTheDocument();
+  });
+
+  it('treats an absent setting as the human gate, not the automatic one', async () => {
+    // A version predating the column arrives with no key at all. The safe
+    // reading is the one that existed before — never "automatic".
+    getWorkflowReviewDetail.mockResolvedValue({ ...DETAIL, settings: {} });
+    renderPage();
+
+    await screen.findByTestId('review-manual-shortlist');
+    expect(screen.queryByTestId('review-auto-shortlist')).not.toBeInTheDocument();
+  });
+
+  it('does not treat a truthy non-boolean as switched on', async () => {
+    // `settings` is an untyped bag. Only the literal true means automatic.
+    getWorkflowReviewDetail.mockResolvedValue({
+      ...DETAIL,
+      settings: { auto_shortlist: 'false', shortlist_ats_threshold: 7 },
+    });
+    renderPage();
+
+    await screen.findByTestId('review-manual-shortlist');
+    expect(screen.queryByTestId('review-auto-shortlist')).not.toBeInTheDocument();
+  });
+});
+

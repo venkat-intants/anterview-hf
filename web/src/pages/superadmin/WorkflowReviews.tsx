@@ -305,7 +305,11 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
         canDecide ? (
           <WhatChanges>
             approving lets HR publish this version, and every candidate in this opening is routed
-            by the rounds below; sending it back returns it to HR as a draft to edit.
+            by the rounds below
+            {shortlistSettings(wf.settings).auto
+              ? ' — including applicants above the ATS bar, who will start round 1 without anyone confirming them'
+              : ''}
+            ; sending it back returns it to HR as a draft to edit.
           </WhatChanges>
         ) : undefined
       }
@@ -331,6 +335,8 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
               ]}
             />
           </Section>
+
+          <ShortlistingSection settings={wf.settings} />
 
           <Section
             title="Rounds & routing"
@@ -536,6 +542,67 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
 /** A kind the server sends as a bare identifier, in words an approver reads. */
 function kindLabel(kind: string): string {
   return ROUND_KIND_META[kind as RoundKind]?.label ?? kind.replace(/_/g, ' ');
+}
+
+/* ── Shortlisting — the gate a reviewer is actually approving ─────────────── */
+
+/** Read the two shortlist settings out of the untyped `settings` bag. */
+function shortlistSettings(settings: Record<string, unknown>): {
+  auto: boolean;
+  bar: number | null;
+} {
+  const raw = settings.shortlist_ats_threshold;
+  return {
+    auto: settings.auto_shortlist === true,
+    bar: typeof raw === 'number' ? raw : null,
+  };
+}
+
+/**
+ * WHY THIS SECTION EXISTS. Approval is the safeguard on removing the human
+ * shortlist gate: settings are draft-only, so turning automatic shortlisting
+ * on means a new version, and a super admin approves it before it can go
+ * live. That safeguard is only real if the approver is SHOWN the setting.
+ * Until this section existed this page rendered none of a version's
+ * automation settings at all.
+ */
+function ShortlistingSection({ settings }: { settings: Record<string, unknown> }) {
+  const { auto, bar } = shortlistSettings(settings);
+  const barPct = bar === null ? null : bar * 10;
+
+  return (
+    <Section
+      title="Shortlisting"
+      description="Who decides that an applicant starts round 1."
+    >
+      {auto ? (
+        <div
+          role="alert"
+          data-testid="review-auto-shortlist"
+          className="flex items-start gap-2.5 rounded-[12px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn)]/[0.08] p-3"
+        >
+          <AlertTriangle
+            className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]"
+            aria-hidden="true"
+          />
+          <div className="text-[13px] leading-relaxed text-foreground">
+            <p className="font-semibold">This version shortlists automatically.</p>
+            <p className="mt-1 text-muted-foreground">
+              Applicants with an ATS score of{' '}
+              <strong className="text-foreground">{barPct ?? '—'}/100 or higher</strong> start
+              round 1 with no one confirming them. Below that score nobody is moved — they stay in
+              HR&rsquo;s queue to shortlist by hand. The final hire or reject is still a person.
+            </p>
+          </div>
+        </div>
+      ) : (
+        <p className="text-[13px] text-muted-foreground" data-testid="review-manual-shortlist">
+          A person confirms every shortlist.
+          {barPct !== null ? ` Applicants scoring ${barPct}/100 or higher are suggested for it.` : ''}
+        </p>
+      )}
+    </Section>
+  );
 }
 
 export default function WorkflowReviews(): JSX.Element {

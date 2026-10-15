@@ -1060,17 +1060,45 @@ async def update_settings(
 ) -> None:
     """Change a draft's automation settings (C9). Caller commits.
 
-    Note what is not settable: nothing here can cause a rejection. The two human
-    gates are absent from the column list entirely, so no request body can
-    switch them off (D-05).
+    Note what is not settable: nothing here can cause a rejection, and the FINAL
+    decision gate is absent from the column list entirely, so no request body
+    can switch it off (D-05, CLAUDE.md #9).
+
+    The SHORTLIST gate became optional in migration a2c4e6f8b0d3 —
+    ``auto_shortlist``. This docstring used to say both gates were unsettable;
+    that stopped being true and is corrected rather than left to mislead. What
+    keeps the change inside D-05: auto-shortlist only ever advances an
+    applicant who clears the bar, and leaves everyone below it untouched.
+    The combination is checked HERE, not in the router, for the same reason
+    ``_assert_draft`` is: every caller must obey it. The DB CHECK
+    ``ck_workflows_auto_shortlist_needs_threshold`` is the backstop that makes
+    the bad state unrepresentable; this is what turns a user's mistake into a
+    sentence instead of a 500.
     """
     await _assert_draft(db, workflow_id)
     allowed = {"name", "auto_score_on_apply", "auto_assign_first_round",
                "auto_advance_rounds", "reminders_enabled", "shortlist_ats_threshold",
-               "hold_band"}
+               "hold_band", "auto_shortlist"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    if "auto_shortlist" in updates or "shortlist_ats_threshold" in updates:
+        # Merge with what is already stored: the bad state is reachable from
+        # EITHER side — turning auto-shortlist on with no bar, or clearing the
+        # bar while auto-shortlist is on.
+        current = (
+            await db.execute(
+                text("SELECT auto_shortlist, shortlist_ats_threshold FROM workflows WHERE id = :i"),
+                {"i": workflow_id},
+            )
+        ).first()
+        on = updates.get("auto_shortlist", current[0] if current else False)
+        bar = updates.get("shortlist_ats_threshold", current[1] if current else None)
+        if on and bar is None:
+            raise WorkflowError(
+                "Set an ATS shortlist threshold before turning on automatic "
+                "shortlisting — without one, every applicant would be shortlisted."
+            )
     sets = ", ".join(f"{k} = :{k}" for k in updates)
     await db.execute(
         text(f"UPDATE workflows SET {sets}, updated_at = :n WHERE id = :i"),
@@ -1355,7 +1383,7 @@ async def clone_for_edit(
             text(
                 "SELECT requisition_id, name, role_profile_id, domain_family, profile_source,"
                 "       auto_score_on_apply, auto_assign_first_round, auto_advance_rounds,"
-                "       reminders_enabled, shortlist_ats_threshold, hold_band"
+                "       reminders_enabled, shortlist_ats_threshold, hold_band, auto_shortlist"
                 "  FROM workflows WHERE id = :i AND company_id = :c AND deleted_at IS NULL"
             ),
             {"i": workflow_id, "c": company_id},
@@ -1374,12 +1402,15 @@ async def clone_for_edit(
         text(
             "UPDATE workflows SET auto_score_on_apply = :a1, auto_assign_first_round = :a2,"
             " auto_advance_rounds = :a3, reminders_enabled = :a4,"
-            " shortlist_ats_threshold = :a5, hold_band = :a6"
+            " shortlist_ats_threshold = :a5, hold_band = :a6, auto_shortlist = :a7"
             " WHERE id = :i"
         ),
         {"i": new_id, "a1": src["auto_score_on_apply"], "a2": src["auto_assign_first_round"],
          "a3": src["auto_advance_rounds"], "a4": src["reminders_enabled"],
-         "a5": src["shortlist_ats_threshold"], "a6": src["hold_band"]},
+         "a5": src["shortlist_ats_threshold"], "a6": src["hold_band"],
+         # Carried, not reset: "Edit as new version" to fix a typo must not
+         # silently re-introduce (or drop) a human gate the live version has.
+         "a7": src["auto_shortlist"]},
     )
 
     # Copy rounds, then rewire the chain using the old-to-new id map.
@@ -1626,8 +1657,24 @@ async def workflow_fingerprint(db: AsyncSession, workflow_id: uuid.UUID) -> str:
                 )
             ).mappings().all()
         ]
+    settings_part: dict[str, Any] = dict(wf) if wf else {}
+    # AUTO-SHORTLIST IS KEYED ONLY WHEN ON, and both halves of that matter.
+    #   * Present when true: it removes a human gate, so a version that turns
+    #     it on must fingerprint differently from one that does not — otherwise
+    #     an approval given to a gated version would publish an ungated one.
+    #   * Absent when false: `settings` above is the whole row, so adding the
+    #     column unconditionally would change EVERY existing workflow's hash and
+    #     strand any version approved but not yet published ("changed after it
+    #     was approved"). Same reasoning, and same shape, as the task-round key
+    #     below (PH4-D4).
+    # Read separately rather than added to the SELECT above for that reason.
+    auto_shortlist_on = await db.scalar(
+        text("SELECT auto_shortlist FROM workflows WHERE id = :i"), {"i": workflow_id}
+    )
+    if auto_shortlist_on:
+        settings_part["auto_shortlist"] = True
     payload: dict[str, Any] = {
-        "settings": dict(wf) if wf else {},
+        "settings": settings_part,
         "exams": exams,
         "rounds": [
             {k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in r.items()}

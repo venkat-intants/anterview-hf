@@ -29,6 +29,7 @@ const SETTINGS = {
   reminders_enabled: true,
   shortlist_ats_threshold: 7,
   hold_band: 10,
+  auto_shortlist: false,
 };
 
 const DRAFT: Workflow = {
@@ -932,3 +933,106 @@ describe('WorkflowBuilder — the opening setup panels have moved', () => {
     expect(link).toHaveAttribute('href', '/hr/requisitions/req-1?tab=setup');
   });
 });
+
+// ── Auto-shortlist — removing the human shortlist gate ─────────────────────
+//
+// The FIRST of the workflow's two human gates became optional (migration
+// a2c4e6f8b0d3). These pin the builder's half: the switch needs a bar, the
+// switch is genuinely disabled without one (keyboard included), and the canvas
+// stops claiming "nothing starts until a person does" once it is no longer true.
+
+async function openAutomation(user: ReturnType<typeof userEvent.setup>) {
+  renderBuilder();
+  await user.click(await screen.findByRole('tab', { name: 'Automation' }));
+}
+
+describe('WorkflowBuilder — auto-shortlist', () => {
+  it('is off by default, and says a person confirms every shortlist', async () => {
+    const user = userEvent.setup();
+    await openAutomation(user);
+
+    const sw = screen.getByRole('switch', { name: 'Shortlist without my confirmation' });
+    expect(sw).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText(/you confirm every shortlist/i)).toBeInTheDocument();
+  });
+
+  it('turns on with a bar set, sending exactly that setting', async () => {
+    const user = userEvent.setup();
+    updateSettings.mockResolvedValue({ ...DRAFT, settings: { ...SETTINGS, auto_shortlist: true } });
+    await openAutomation(user);
+
+    await user.click(screen.getByRole('switch', { name: 'Shortlist without my confirmation' }));
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith('wf-draft', { auto_shortlist: true }),
+    );
+  });
+
+  it('is GENUINELY disabled without a bar — keyboard included', async () => {
+    // The old pattern wrapped switches in pointer-events-none, which stops the
+    // mouse and nothing else: Tab + Space still flipped them. Asserted on the
+    // disabled attribute AND on a keyboard activation, since either alone would
+    // pass against a mouse-only block.
+    getWorkflow.mockResolvedValue({
+      ...DRAFT,
+      settings: { ...SETTINGS, shortlist_ats_threshold: null },
+    });
+    const user = userEvent.setup();
+    await openAutomation(user);
+
+    const sw = screen.getByRole('switch', { name: 'Shortlist without my confirmation' });
+    expect(sw).toBeDisabled();
+    sw.focus();
+    await user.keyboard(' ');
+    await user.keyboard('{Enter}');
+    expect(updateSettings).not.toHaveBeenCalled();
+    expect(screen.getByText(/every applicant would be shortlisted/i)).toBeInTheDocument();
+  });
+
+  it('can still be turned OFF even if the bar is gone', async () => {
+    // Never trap a setting in the state the server would refuse: on with no bar
+    // is unrepresentable, but if one arrived it must be switchable off.
+    getWorkflow.mockResolvedValue({
+      ...DRAFT,
+      settings: { ...SETTINGS, shortlist_ats_threshold: null, auto_shortlist: true },
+    });
+    const user = userEvent.setup();
+    await openAutomation(user);
+
+    expect(
+      screen.getByRole('switch', { name: 'Shortlist without my confirmation' }),
+    ).not.toBeDisabled();
+  });
+
+  it('tells HR what it will do, in numbers, once on', async () => {
+    getWorkflow.mockResolvedValue({ ...DRAFT, settings: { ...SETTINGS, auto_shortlist: true } });
+    const user = userEvent.setup();
+    await openAutomation(user);
+
+    // Bar 7 is 70/100 — the scale the score is actually on.
+    expect(screen.getByText(/scoring 70\/100 or higher start round one/i)).toBeInTheDocument();
+    expect(screen.getByText(/super admin sees it when approving/i)).toBeInTheDocument();
+    expect(screen.getByText('Shortlist automatically at ATS score')).toBeInTheDocument();
+  });
+
+  it('the canvas banner no longer claims a person gates the shortlist', async () => {
+    // "Nothing below starts until a person does" would be false on the one
+    // screen HR uses to understand their own process.
+    getWorkflow.mockResolvedValue({ ...DRAFT, settings: { ...SETTINGS, auto_shortlist: true } });
+    renderBuilder();
+
+    const gate = await screen.findByTestId('shortlist-gate');
+    expect(gate).toHaveAttribute('data-mode', 'auto');
+    expect(gate).toHaveTextContent(/shortlisted automatically/i);
+    expect(gate).toHaveTextContent(/70\/100/);
+    expect(gate).not.toHaveTextContent(/until a person does/i);
+  });
+
+  it('the canvas banner keeps the human gate when it is off', async () => {
+    renderBuilder();
+    const gate = await screen.findByTestId('shortlist-gate');
+    expect(gate).toHaveAttribute('data-mode', 'manual');
+    expect(gate).toHaveTextContent(/you shortlist/i);
+  });
+});
+

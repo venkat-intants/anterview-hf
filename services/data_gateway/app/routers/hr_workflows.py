@@ -178,7 +178,12 @@ async def _audit_routing_changes(
 
 
 class SettingsPatch(BaseModel):
-    """C9. Note the absence of anything that could reject a candidate."""
+    """C9. Note the absence of anything that could reject a candidate.
+
+    ``auto_shortlist`` removes the human SHORTLIST gate (migration
+    a2c4e6f8b0d3). The FINAL decision gate is deliberately still absent from
+    this model: no request body can switch it off (D-05, CLAUDE.md #9).
+    """
 
     name: str | None = Field(default=None, max_length=200)
     auto_score_on_apply: bool | None = None
@@ -187,6 +192,7 @@ class SettingsPatch(BaseModel):
     reminders_enabled: bool | None = None
     shortlist_ats_threshold: int | None = Field(default=None, ge=0, le=10)
     hold_band: int | None = Field(default=None, ge=0, le=100)
+    auto_shortlist: bool | None = None
 
 
 class OrderIn(BaseModel):
@@ -268,7 +274,7 @@ def _settings_of(row: dict[str, Any]) -> dict[str, Any]:
         k: row[k]
         for k in (
             "auto_score_on_apply", "auto_assign_first_round", "auto_advance_rounds",
-            "reminders_enabled", "shortlist_ats_threshold", "hold_band",
+            "reminders_enabled", "shortlist_ats_threshold", "hold_band", "auto_shortlist",
         )
     }
 

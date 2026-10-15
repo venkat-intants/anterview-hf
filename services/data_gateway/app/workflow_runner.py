@@ -627,11 +627,18 @@ async def _move_to_round(
 async def on_shortlisted(
     db: AsyncSession, *, enrolment_id: uuid.UUID, actor_user_id: uuid.UUID | None
 ) -> RunnerOutcome:
-    """A human confirmed the shortlist — assign the first round. Caller commits.
+    """A shortlist was confirmed — assign the first round. Caller commits.
 
-    This is the only place the workflow starts moving, and it is downstream of a
-    person pressing a button. The runner never shortlists anyone itself: an ATS
-    threshold decides who is *offered* for confirmation, never who proceeds.
+    This is the only place the workflow starts moving. Ordinarily it is
+    downstream of a person pressing a button, and an ATS threshold decides only
+    who is *offered* for confirmation.
+
+    The one exception is opt-in: a workflow with ``auto_shortlist`` on is
+    shortlisted by :func:`maybe_auto_shortlist`, which then calls this with
+    ``actor_user_id=None``. This docstring used to say the runner never
+    shortlists anyone itself; that stopped being true in migration a2c4e6f8b0d3
+    and is corrected rather than left standing. What did NOT change: nothing
+    here, or anywhere in the runner, can end a candidacy (D-05).
     """
     enrolment = await _load_enrolment(db, enrolment_id)
     if enrolment is None:
@@ -661,6 +668,138 @@ async def on_shortlisted(
     _ = actor_user_id
     return RunnerOutcome(action="advanced", enrolment_id=str(enrolment_id),
                          to_round=first["title"])
+
+
+# ---------------------------------------------------------------------------
+# Auto-shortlist — the optional removal of the human shortlist gate
+# ---------------------------------------------------------------------------
+def clears_shortlist_bar(ats_overall: int | None, threshold: int | None) -> bool:
+    """Whether an ATS score clears a workflow's shortlist bar.
+
+    ONE DEFINITION, because the scale is a trap. ``shortlist_ats_threshold`` is
+    stored 0-10 and ``ats_overall`` is 0-100; every reader compares
+    ``ats_overall >= threshold * 10`` (requisition_dashboard's
+    ``ready_to_shortlist``, agents/watch_runner). Compare without the ``* 10``
+    and a bar of 7 admits a score of 8 out of 100 — i.e. everyone.
+
+    No score, or no bar, is never a pass: an applicant whose CV has not been
+    read yet must not be advanced on the absence of evidence.
+    """
+    if ats_overall is None or threshold is None:
+        return False
+    return ats_overall >= threshold * 10
+
+
+async def maybe_auto_shortlist(db: AsyncSession, *, enrolment_id: uuid.UUID) -> RunnerOutcome:
+    """Shortlist an applicant the runner's own way, when — and only when — the
+    workflow says so and their ATS clears the bar. Caller commits. NEVER RAISES.
+
+    Called immediately after an ATS score is written (every caller of
+    ``applicant_enrichment.apply_ats_to_enrolment``; a test asserts none is
+    missed). The ordinary path is still :func:`on_shortlisted`, downstream of a
+    person pressing a button. This is the opt-in alternative, added in
+    migration a2c4e6f8b0d3 — read that docstring for why it is inside D-05.
+
+    WHAT IT WILL NOT DO, each a guard below rather than a hope:
+      * act on anyone not in status ``new``. In particular not ``held``: moving
+        a held applicant to shortlisted would silently undo a hold.
+      * act below the bar. An applicant who misses it is left exactly where
+        they were, in HR's queue — never held, never rejected (D-05).
+      * act on a workflow that is not the published one, has the switch off,
+        or has no bar.
+      * raise. It runs inside the transaction that just wrote the ATS score,
+        and losing a candidate's score because the shortlist attempt failed
+        would be a worse outcome than not shortlisting them. A savepoint
+        confines any failure to this attempt; the score still commits.
+    """
+    try:
+        async with db.begin_nested():
+            return await _auto_shortlist(db, enrolment_id)
+    except Exception as exc:  # noqa: BLE001 — see "NEVER RAISES" above
+        log.error(
+            "runner.auto_shortlist_failed",
+            enrolment_id=str(enrolment_id),
+            exc_type=type(exc).__name__,
+            exc_msg=str(exc),
+        )
+        return RunnerOutcome(action="noop", enrolment_id=str(enrolment_id),
+                             reason=f"auto-shortlist failed: {type(exc).__name__}")
+
+
+async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOutcome:
+    # LOCKED, and the status is checked under the lock. record_transition only
+    # refuses a no-op move — it cannot be told what the FROM status must be —
+    # so checking 'new' first and transitioning second would let a hold that
+    # landed in between be overwritten with a shortlist.
+    row = (
+        await db.execute(
+            text(
+                "SELECT e.status, e.workflow_id, e.current_round_id, e.company_id,"
+                "       e.ats_overall"
+                "  FROM enrolments e"
+                " WHERE e.id = :i AND e.deleted_at IS NULL"
+                " FOR UPDATE OF e"
+            ),
+            {"i": enrolment_id},
+        )
+    ).mappings().first()
+    if row is None:
+        return RunnerOutcome(action="noop", reason="enrolment not found")
+    eid = str(enrolment_id)
+    if row["status"] != "new":
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason=f"status is {row['status']}, not new")
+    if row["current_round_id"] is not None:
+        return RunnerOutcome(action="noop", enrolment_id=eid, reason="already in a round")
+    if not row["workflow_id"]:
+        return RunnerOutcome(action="noop", enrolment_id=eid, reason="no workflow attached")
+
+    workflow = await _load_workflow(db, row["workflow_id"])
+    if workflow is None:
+        return RunnerOutcome(action="noop", enrolment_id=eid, reason="workflow missing")
+    # The LIVE policy decides. An applicant still attached to an archived
+    # version is not started on a policy the team has since replaced.
+    if workflow.get("status") != "published":
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason=f"workflow is {workflow.get('status')}, not published")
+    if not workflow.get("auto_shortlist"):
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason="auto-shortlist is off for this workflow")
+
+    threshold = workflow.get("shortlist_ats_threshold")
+    score = row["ats_overall"]
+    if not clears_shortlist_bar(score, threshold):
+        # The ONLY outcome below the bar is nothing. Not held, not rejected:
+        # still 'new', still in HR's queue, still shortlistable by hand.
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason=f"ATS {score} below the bar of {threshold}/10")
+
+    previous = await record_transition(
+        db,
+        enrolment_id=enrolment_id,
+        company_id=row["company_id"],
+        to_status="shortlisted",
+        # No person did this, and the ledger must not say one did. The decision
+        # queue, analytics and an audit all read `automated` to tell the two
+        # apart; attributing it to the workflow's author would be a lie.
+        actor_user_id=None,
+        automated=True,
+        reason=f"Auto-shortlisted: ATS {score} cleared the bar of {threshold}/10",
+    )
+    if previous is None:
+        return RunnerOutcome(action="noop", enrolment_id=eid, reason="already shortlisted")
+
+    outcome = await on_shortlisted(db, enrolment_id=enrolment_id, actor_user_id=None)
+    log.info(
+        "runner.auto_shortlisted",
+        enrolment_id=eid,
+        ats=score,
+        threshold=threshold,
+        then=outcome.action,
+        to_round=outcome.to_round,
+    )
+    return RunnerOutcome(action="advanced", enrolment_id=eid, to_round=outcome.to_round,
+                         reason="auto-shortlisted")
 
 
 # ---------------------------------------------------------------------------

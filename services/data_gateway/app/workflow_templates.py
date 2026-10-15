@@ -115,6 +115,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "auto_assign_first_round": True,
     "auto_advance_rounds": True,
     "reminders_enabled": True,
+    # EXPLICITLY OFF, not merely left to the column default. A starter template
+    # must never be the thing that removes a human shortlist gate: that is a
+    # choice someone makes on purpose, in the builder, where the consequence is
+    # spelled out. Stated here so it survives a change to the DB default.
+    "auto_shortlist": False,
 }
 
 

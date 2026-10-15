@@ -359,7 +359,10 @@ async def get_review_detail(
             text(
                 "SELECT version, status, name, auto_score_on_apply, auto_assign_first_round,"
                 "       auto_advance_rounds, reminders_enabled, shortlist_ats_threshold,"
-                "       hold_band FROM workflows WHERE id = :w"
+                # The approver MUST see this. Approval is the safeguard on
+                # removing the human shortlist gate; a reviewer shown everything
+                # except that would be approving it blind.
+                "       hold_band, auto_shortlist FROM workflows WHERE id = :w"
             ),
             {"w": workflow_id},
         )

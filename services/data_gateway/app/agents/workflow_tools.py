@@ -823,8 +823,11 @@ async def _draft_round_criteria(args: dict[str, Any], ctx: ToolContext) -> ToolO
             "shortlist_ats_threshold": {
                 "type": "integer",
                 "description": (
-                    "0-10 ATS score at or above which an applicant is SUGGESTED to HR "
-                    "for shortlisting. It never shortlists anyone: a person confirms."
+                    "0-10 ATS bar, compared against the 0-100 score as score >= bar*10. "
+                    "On its own it only SUGGESTS applicants to HR for shortlisting. If "
+                    "the workflow's automatic shortlisting is on (a setting only HR can "
+                    "change, not this tool) the bar also shortlists them, so describe "
+                    "the effect to HR accordingly rather than promising it never does."
                 ),
             },
             "hold_band": {
@@ -853,6 +856,14 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
     # (update_settings ignores anything unrecognised), so this is the second of
     # two — but the first one a reviewer reads, and the place where "the agent
     # cannot introduce a rejection mechanism" is legible rather than implied.
+    #
+    # `auto_shortlist` IS DELIBERATELY ABSENT, and that is a decision, not a gap
+    # to fill. It removes a human step from hiring. Whether to do that is a
+    # choice a person makes on purpose, in the builder, where the consequence is
+    # spelled out — not a suggestion from a model accepted with one click. The
+    # service layer WOULD accept the key, so this omission is the control;
+    # test_auto_shortlist.py asserts the copilot cannot propose it. Do not add
+    # it here to "complete" the list.
     booleans = (
         "auto_score_on_apply",
         "auto_assign_first_round",

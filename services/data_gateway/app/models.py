@@ -1648,6 +1648,12 @@ class Workflow(Base):
             name="ck_workflows_shortlist_threshold",
         ),
         CheckConstraint("hold_band >= 0 AND hold_band <= 100", name="ck_workflows_hold_band"),
+        # Auto-shortlist with no bar would advance everyone, which is not a
+        # shortlist. Unrepresentable rather than discouraged. Migration a2c4e6f8b0d3.
+        CheckConstraint(
+            "NOT auto_shortlist OR shortlist_ats_threshold IS NOT NULL",
+            name="ck_workflows_auto_shortlist_needs_threshold",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
@@ -1666,6 +1672,11 @@ class Workflow(Base):
     auto_advance_rounds: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     shortlist_ats_threshold: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # OFF by default. When on, an applicant whose ATS clears
+    # shortlist_ats_threshold is shortlisted by the runner instead of waiting
+    # for a person — it only ever ADVANCES; below the bar nothing changes. The
+    # final decision gate is deliberately NOT a setting (D-05, CLAUDE.md #9).
+    auto_shortlist: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     hold_band: Mapped[int] = mapped_column(SmallInteger, default=10, nullable=False)
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)

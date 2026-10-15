@@ -128,8 +128,16 @@ export interface WorkflowSettings {
   auto_assign_first_round: boolean;
   auto_advance_rounds: boolean;
   reminders_enabled: boolean;
-  /** 0–10 ATS score at or above which an applicant is auto-shortlisted. */
+  /** 0–10 ATS bar, compared against the 0–100 score as `ats >= bar * 10`.
+   *  On its own it only SUGGESTS who to shortlist. (This comment used to say
+   *  applicants here were "auto-shortlisted", which was never true.) It
+   *  shortlists only when `auto_shortlist` is also on. */
   shortlist_ats_threshold: number | null;
+  /** Removes the human shortlist gate: an applicant clearing the bar starts
+   *  round one with no one confirming. Below the bar nothing changes. Needs a
+   *  bar — the server refuses it without one. The FINAL decision is never
+   *  automated. */
+  auto_shortlist: boolean;
   /** Percentage points below a threshold that still route to a human, not out. */
   hold_band: number | null;
 }

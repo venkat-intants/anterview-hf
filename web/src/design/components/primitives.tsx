@@ -409,18 +409,36 @@ interface ToggleSwitchProps {
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
+  /** A REAL disabled state. Callers used to wrap this in `pointer-events-none`,
+   *  which stops the mouse and nothing else: Tab + Space still flipped the
+   *  switch. Optional and false by default, so every existing caller is
+   *  unchanged until it opts in. */
+  disabled?: boolean;
 }
 
-export function ToggleSwitch({ checked, onChange, label }: ToggleSwitchProps): JSX.Element {
+export function ToggleSwitch({
+  checked,
+  onChange,
+  label,
+  disabled = false,
+}: ToggleSwitchProps): JSX.Element {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
       aria-label={label}
-      onClick={() => onChange(!checked)}
+      disabled={disabled}
+      onClick={() => {
+        // Redundant with the native `disabled` above, which stops the click
+        // ever being dispatched — that attribute is the real control, and it is
+        // what the tests exercise. Kept only as defence against a programmatic
+        // call; removing it alone changes no observable behaviour.
+        if (!disabled) onChange(!checked);
+      }}
       className={cn(
         'relative h-6 w-11 flex-none rounded-pill border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+        'disabled:cursor-not-allowed disabled:opacity-50',
         // Off: a recessed track with a hairline, so it reads on white cards as
         // well as on black. On: the signal accent.
         checked

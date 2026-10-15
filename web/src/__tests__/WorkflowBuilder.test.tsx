@@ -1010,7 +1010,11 @@ describe('WorkflowBuilder — auto-shortlist', () => {
     await openAutomation(user);
 
     // Bar 7 is 70/100 — the scale the score is actually on.
-    expect(screen.getByText(/scoring 70\/100 or higher start round one/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/scored 70\/100 or higher and confirmed their email start round one/i),
+    ).toBeInTheDocument();
+    // Who it does NOT apply to — HR must not read it as "everyone above the bar".
+    expect(screen.getByText(/uploaded by HR, or not yet confirmed/i)).toBeInTheDocument();
     expect(screen.getByText(/super admin sees it when approving/i)).toBeInTheDocument();
     expect(screen.getByText('Shortlist automatically at ATS score')).toBeInTheDocument();
   });

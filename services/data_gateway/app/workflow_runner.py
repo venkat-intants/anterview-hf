@@ -115,6 +115,15 @@ class RunnerOutcome:
 # ---------------------------------------------------------------------------
 # C5 — enrolment
 # ---------------------------------------------------------------------------
+# The ledger reason ONLY the public apply form writes on an enrolment's
+# creating row. Auto-shortlist requires it (with a NULL, automated actor), so an
+# enrolment some other system path creates with no person named — a bulk upload
+# whose uploader is unknown, a backfill — is never mistaken for a
+# self-application. The string predates the constant: every public-apply row
+# already written carries it, which is why it was kept.
+PUBLIC_APPLY_REASON = "enrolled on application"
+
+
 async def enrol_applicant(
     db: AsyncSession,
     *,
@@ -125,7 +134,9 @@ async def enrol_applicant(
     target_level: str = "mid",
     target_jd_text: str | None = None,
     actor_user_id: uuid.UUID | None = None,
-    reason: str = "enrolled on application",
+    # Not PUBLIC_APPLY_REASON: a caller that does not say why it enrols someone
+    # must not be read as the public form (auto-shortlist keys on that reason).
+    reason: str = "enrolled",
     resume_s3_key: str | None = None,
     source: str = UNTRACKED,
     source_detail: str | None = None,
@@ -772,7 +783,7 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
                 "       (EXISTS (SELECT 1 FROM stage_transitions st"
                 "                 WHERE st.enrolment_id = e.id AND st.from_status IS NULL"
                 "                   AND st.to_status = 'new' AND st.actor_user_id IS NULL"
-                "                   AND st.automated)"
+                "                   AND st.automated AND st.reason = :public_reason)"
                 "        AND NOT EXISTS (SELECT 1 FROM stage_transitions st"
                 "                 WHERE st.enrolment_id = e.id AND st.from_status IS NULL"
                 "                   AND (st.actor_user_id IS NOT NULL OR NOT st.automated))"
@@ -785,8 +796,27 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
                 "            WHERE c.user_id = a.user_id"
                 "              AND c.consent_type = 'application_data'"
                 "              AND c.purpose = 'recruitment'"
-                "              AND c.granted AND c.revoked_at IS NULL)"
-                "       ) AS self_consented"
+                "              AND c.granted AND c.revoked_at IS NULL"
+                # To THIS company. One identity can hold applicant rows at
+                # several companies once activation links them, and a consent
+                # given to one is not a consent to another's automated step.
+                "              AND c.evidence ->> 'company_id' = e.company_id::text)"
+                "       ) AS self_consented,"
+                # THE ADDRESS WAS PROVEN, AFTER THIS APPLICATION. The public form
+                # takes any typed address unverified, so an anonymous caller can
+                # make both facts above true for somebody else's address — and
+                # auto-shortlist would then email that person an assessment.
+                # Activation (the emailed link) is the only proof of the mailbox
+                # this product has, and it must postdate the enrolment: an
+                # address proven before, for an earlier application, says
+                # nothing about who submitted this one. A candidate who claims
+                # their account is offered to auto-shortlist at that moment
+                # (apply_activation._offer_to_auto_shortlist).
+                "       EXISTS (SELECT 1 FROM users u"
+                "                WHERE u.id = a.user_id AND u.deleted_at IS NULL"
+                "                  AND u.email_verified_at IS NOT NULL"
+                "                  AND u.email_verified_at >= e.created_at"
+                "       ) AS address_proven"
                 "  FROM enrolments e"
                 "  JOIN applicants a ON a.id = e.applicant_id"
                 " WHERE e.id = :i AND e.deleted_at IS NULL"
@@ -794,7 +824,7 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
                 # locked — it is the CV text, which nothing here writes.
                 " FOR UPDATE OF e"
             ),
-            {"i": enrolment_id},
+            {"i": enrolment_id, "public_reason": PUBLIC_APPLY_REASON},
         )
     ).mappings().first()
     if row is None:
@@ -827,6 +857,9 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
     if not row["self_consented"]:
         return RunnerOutcome(action="noop", enrolment_id=eid,
                              reason="no application consent from the applicant on record")
+    if not row["address_proven"]:
+        return RunnerOutcome(action="noop", enrolment_id=eid,
+                             reason="applicant has not confirmed their email since applying")
 
     workflow = await _load_workflow(db, row["workflow_id"])
     if workflow is None:

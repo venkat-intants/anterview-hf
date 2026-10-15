@@ -195,7 +195,7 @@ function AutoShortlistToggle({
             : !autoAssign
               ? 'Turn on “Send the first round automatically” first — otherwise applicants would be shortlisted and then left with nothing started.'
               : on
-              ? `Applicants scoring ${bar * 10}/100 or higher start round one with no one confirming them. Everyone below stays in your queue. The final decision is still yours.`
+              ? `Applicants who applied through your careers page, scored ${bar * 10}/100 or higher and confirmed their email start round one with no one confirming them. Everyone else — below the bar, uploaded by HR, or not yet confirmed — stays in your queue. The final decision is still yours.`
               : 'Off: you confirm every shortlist. Turn on to let applicants above the bar start on their own.'}
         </div>
         {on && (

@@ -852,25 +852,42 @@ on its own. That is the risk this entry names.
   number — for a returning applicant that is not the CV on their applicant row.
   A score with no flag on record is accepted only when the scored CV is the
   current one and a fresh scan of it is clean; otherwise it is declined.
-- It declines anyone who did not apply themselves. This is decided from two
-  facts HR cannot set, and both are required: the application's creating
-  pipeline-ledger row was written by the system with no person named (every HR
-  upload, single add and talent-pool add names the HR user), and the applicant's
-  own identity holds a live `application_data` consent, which only the public
-  apply form writes. It does **not** read the `source` label — HR chooses that
-  at upload, so it cannot prove who filed the application.
+- It declines anyone who did not apply themselves, decided from three facts,
+  all required. (1) The application's creating pipeline-ledger row is the
+  public apply form's: no person named, marked automated, and carrying the
+  reason only that form writes — every HR upload, single add and talent-pool
+  add names the HR user, and an actor-less row from any other path (a bulk
+  upload with no recorded uploader, a backfill) lacks the form's reason. (2)
+  The applicant's own identity holds a live `application_data` consent **to
+  this company**, which only the public apply form writes. (3) **The applicant
+  proved control of the email address after this application** — by claiming
+  their account through the emailed link. The public form accepts any typed
+  address unverified, so without (3) a stranger could submit an application in
+  someone else's name (including someone HR had uploaded) and have that person
+  sent an assessment. A candidate who claims their account is offered to
+  auto-shortlist at that moment. It does **not** read the `source` label — HR
+  chooses that at upload, so it cannot prove who filed the application.
+- Consequence of (3): a candidate who never claims their account, or who
+  already had a verified account before applying, is never auto-shortlisted;
+  they wait in HR's queue as on a manual opening. That is the fail-closed
+  direction and is deliberate.
 - Every automatic move is recorded `automated=True` with no actor and the score
   and bar in the reason; enabling or disabling it writes its own audit row.
 - No AI copilot proposal can change it: `CommitSpec` refuses the key
   structurally.
 - Candidate notices (EN/HI/TE) no longer claim "nothing is decided
-  automatically" or that a person reviews every application. The notice beside
-  the consent checkbox says the CV is scored automatically and that, for some
-  roles, a candidate meeting the standard may be moved on without a person
-  reviewing it first; every notice says each hire or reject is a person's.
+  automatically" or that a person reviews every application. A notice on the
+  apply page — in the page's footer, not inside the consent checkbox's own
+  text — says the CV is scored automatically and that, for some roles, a
+  candidate meeting the standard may be moved on without a person reviewing it
+  first; every notice says each hire or reject is a person's.
 
 **What is not covered.** Applicants attached to an archived workflow version
-are not auto-shortlisted. Applicants already waiting when a version is
+are not auto-shortlisted. A person who receives the confirmation email for
+an application someone else submitted in their name, and then claims the
+account anyway, has proven the address — their application can then be
+auto-shortlisted, though the confirmation email told them what was applied
+for. Applicants already waiting when a version is
 published are offered to it once, at publish, at most 50 per publish; the rest
 stay in HR's queue (the builder says how many) until a rescore offers them
 again. The consent notice is the same whatever the opening's setting, so a
@@ -892,4 +909,4 @@ PH4 HI/TE review item).
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
 | **AR-10** | A company `super_admin` views named candidates (and HR's free-text notes on them) on the hiring board, read-only; cannot act | Owner decision 2026-10-12 | `platform_owner` (+ `security-auditor`) | An objection to super-admin visibility of candidate names/notes, any added field/link/write on the view, a new `super_admin`-reachable route, or a candidate tool for the super-admin copilot |
-| **AR-11** | An opted-in workflow shortlists on the ATS score with no person confirming; advance-only, approval-gated, off by default | Owner decision 2026-10-15 | `platform_owner` (+ `security-auditor`; DPO co-sign pending) | A government bid, a progression complaint, any ATS model/prompt change, the below-bar queue going stale, or any proposal to automate the final decision |
+| **AR-11** | An opted-in workflow shortlists on the ATS score with no person confirming; advance-only, approval-gated, off by default | Owner decision 2026-10-15 | `platform_owner` (DPO co-sign pending) | A government bid, a progression complaint, any ATS model/prompt change, the below-bar queue going stale, or any proposal to automate the final decision |

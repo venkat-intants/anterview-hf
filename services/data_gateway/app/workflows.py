@@ -1082,6 +1082,14 @@ async def update_settings(
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return
+    # An explicit null for a switch is refused here rather than reaching the
+    # NOT NULL column as an IntegrityError (a 500). For auto_shortlist it also
+    # matters to the check below: None is falsy, so it would have been read as
+    # "off" while writing something that is neither.
+    for key in ("auto_score_on_apply", "auto_assign_first_round", "auto_advance_rounds",
+                "reminders_enabled", "auto_shortlist"):
+        if key in updates and not isinstance(updates[key], bool):
+            raise WorkflowError(f"{key} must be true or false.")
     if {"auto_shortlist", "shortlist_ats_threshold", "auto_assign_first_round"} & updates.keys():
         # Merge with what is already stored: each bad state is reachable from
         # EITHER side — turning auto-shortlist on, or changing the setting it
@@ -1277,10 +1285,16 @@ SELECT count(*) FILTER (WHERE status = 'shortlisted') AS shortlisted,
 """
 
 _ATTACH_WAITING_SQL = """
-UPDATE enrolments SET workflow_id = :w, updated_at = now()
- WHERE requisition_id = :r AND deleted_at IS NULL AND workflow_id IS NULL
-   AND current_round_id IS NULL AND status NOT IN ('hired', 'rejected')
-RETURNING id, status
+WITH attached AS (
+    UPDATE enrolments SET workflow_id = :w, updated_at = now()
+     WHERE requisition_id = :r AND deleted_at IS NULL AND workflow_id IS NULL
+       AND current_round_id IS NULL AND status NOT IN ('hired', 'rejected')
+    RETURNING id, status, created_at
+)
+-- Oldest application first, so when publish offers only the first
+-- PUBLISH_AUTO_SHORTLIST_LIMIT to auto-shortlist, the ones offered are the
+-- ones who have waited longest — not whatever order the UPDATE happened in.
+SELECT id, status FROM attached ORDER BY created_at, id
 """
 
 

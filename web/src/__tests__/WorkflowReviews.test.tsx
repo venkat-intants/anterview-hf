@@ -326,7 +326,8 @@ describe('WorkflowReviews — the approver sees whether shortlisting is automati
     // 7/10 stored is 70/100 as the score is actually reported.
     expect(alert).toHaveTextContent(/70\/100 or higher/);
     // And what it does NOT do, which is what keeps it inside D-05.
-    expect(alert).toHaveTextContent(/below that score nobody is moved/i);
+    expect(alert).toHaveTextContent(/applied through the careers page/i);
+    expect(alert).toHaveTextContent(/below that score, uploaded by HR, or not yet confirmed/i);
     expect(alert).toHaveTextContent(/final hire or reject is still a person/i);
   });
 

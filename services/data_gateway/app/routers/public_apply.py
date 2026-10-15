@@ -84,7 +84,7 @@ from app.routers.consent import _hash_value
 from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
 from app.session_revocation import revoke_all_sessions_strict
 from app.utils.request_ip import extract_client_ip, extract_user_agent
-from app.workflow_runner import enrol_applicant
+from app.workflow_runner import PUBLIC_APPLY_REASON, enrol_applicant
 
 log = structlog.get_logger(__name__)
 
@@ -1129,6 +1129,7 @@ async def submit_draft(
             resume_s3_key=row["resume_s3_key"],
             source=source,
             source_detail=source_detail,
+            reason=PUBLIC_APPLY_REASON,
         )
         if checked_answers and outcome.enrolment_id:
             await store_answers(
@@ -1606,6 +1607,7 @@ async def submit_application(
             # from the historical rows nobody was tracking at all.
             source=source,
             source_detail=source_detail,
+            reason=PUBLIC_APPLY_REASON,
         )
         # Same transaction as the enrolment they belong to: an application
         # whose answers did not land is not a complete application, and the

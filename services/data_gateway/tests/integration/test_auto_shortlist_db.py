@@ -21,6 +21,7 @@ import pytest
 import pytest_asyncio
 from shared.db.engine import build_engine, build_session_factory
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import workflow_runner as wr
@@ -96,11 +97,14 @@ async def _build(db: AsyncSession, *, consent: str | None = "granted") -> F:
         await db.execute(
             text(
                 "INSERT INTO dpdp_consent_ledger"
-                " (id, user_id, consent_type, granted, granted_at, purpose, revoked_at)"
+                " (id, user_id, consent_type, granted, granted_at, purpose, revoked_at, evidence)"
                 " VALUES (:i, :u, 'application_data', true, now(), 'recruitment',"
-                "         CASE WHEN :revoked THEN now() END)"
+                "         CASE WHEN :revoked THEN now() END,"
+                "         jsonb_build_object('company_id', CAST(:co AS text)))"
             ),
-            {"i": uuid.uuid4(), "u": f.candidate, "revoked": consent == "revoked"},
+            {"i": uuid.uuid4(), "u": f.candidate, "revoked": consent == "revoked",
+             # The shape public_apply._record_apply_consent writes.
+             "co": str(uuid.uuid4() if consent == "other_company" else f.company)},
         )
     return f
 
@@ -108,13 +112,32 @@ async def _build(db: AsyncSession, *, consent: str | None = "granted") -> F:
 async def _enrol(
     db: AsyncSession, f: F, *, actor: uuid.UUID | None, source: str = "careers_site",
     markers: list[str] | None | str = "clean", scored_key: str = CV_KEY,
+    reason: str | None = None, verified: str | None = "after",
 ) -> uuid.UUID:
-    """Enrol through the real writer, then score through the real writer."""
+    """Enrol through the real writer, then score through the real writer.
+
+    `reason` defaults to what the caller would write: the public form's marker
+    for an actor-less (self) application, HR's wording otherwise. `verified`
+    stamps the applicant's address as proven after ("after") or before
+    ("before") the enrolment, or leaves it unproven (None).
+    """
+    if verified == "before":
+        await db.execute(text("UPDATE users SET email_verified_at = now() - interval '1 day'"
+                              " WHERE id = :u"), {"u": f.candidate})
     out = await wr.enrol_applicant(
         db, company_id=f.company, applicant_id=f.applicant, requisition_id=f.requisition,
         target_job_title="Engineer", actor_user_id=actor, source=source,
+        reason=reason or (wr.PUBLIC_APPLY_REASON if actor is None else "added by HR upload"),
     )
     eid = uuid.UUID(out.enrolment_id or "")
+    if verified == "after":
+        # clock_timestamp(), not now(): now() is the transaction start, which
+        # precedes the enrolment's created_at (stamped in Python).
+        await db.execute(
+            text("UPDATE users SET email_verified_at = clock_timestamp() + interval '1 second'"
+                 " WHERE id = :u"),
+            {"u": f.candidate},
+        )
     # Nothing is published in this fixture, so attach the workflow by hand.
     await db.execute(text("UPDATE enrolments SET workflow_id = :w WHERE id = :e"),
                      {"w": f.workflow, "e": eid})
@@ -218,3 +241,176 @@ async def test_no_markers_on_record_for_another_cv_is_not_clean(db: AsyncSession
     out = await wr._auto_shortlist(db, eid)
     assert out.action == "noop"
     assert "no injection check on record" in (out.reason or "")
+
+
+# ---------------------------------------------------------------------------
+# Code review SHOULD FIX 2 — the rollback, the CHECK and the publish cap, on
+# a real database rather than against mocks.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_a_shortlist_whose_round_did_not_start_is_undone_in_the_database(
+    db: AsyncSession, _stub_workflow: AsyncMock
+) -> None:
+    """The savepoint must take the status change AND its ledger row with it,
+    leaving the applicant 'new' where HR's queue will show them."""
+    _stub_workflow.return_value = wr.RunnerOutcome(action="noop", reason="workflow has no rounds")
+    f = await _build(db)
+    eid = await _enrol(db, f, actor=None)
+
+    out = await wr.maybe_auto_shortlist(db, enrolment_id=eid)
+
+    assert out.action == "noop"
+    assert (out.reason or "").startswith("undone:")
+    assert await db.scalar(text("SELECT status FROM enrolments WHERE id = :e"), {"e": eid}) == "new"
+    assert await _shortlist_rows(db, eid) == []
+    # The surrounding transaction is still usable — the caller goes on to
+    # commit the score this call was made after.
+    assert await db.scalar(text("SELECT ats_overall FROM enrolments WHERE id = :e"),
+                           {"e": eid}) == 90
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("threshold", "assign"),
+    [(None, True), (0, True), (7, False)],
+    ids=["no-bar", "zero-bar", "first-round-manual"],
+)
+async def test_the_check_refuses_every_incoherent_auto_shortlist(
+    db: AsyncSession, threshold: int | None, assign: bool
+) -> None:
+    f = await _build(db)
+    sp = await db.begin_nested()
+    with pytest.raises(DBAPIError, match="ck_workflows_auto_shortlist_needs_threshold"):
+        await db.execute(
+            text(
+                "UPDATE workflows SET auto_shortlist = true, shortlist_ats_threshold = :t,"
+                " auto_assign_first_round = :a WHERE id = :w"
+            ),
+            {"t": threshold, "a": assign, "w": f.workflow},
+        )
+    await sp.rollback()
+    # ... and the coherent combination is accepted.
+    await db.execute(
+        text("UPDATE workflows SET auto_shortlist = true, shortlist_ats_threshold = 7,"
+             " auto_assign_first_round = true WHERE id = :w"),
+        {"w": f.workflow},
+    )
+
+
+@pytest.mark.asyncio
+async def test_publish_offers_at_most_the_limit_oldest_first_and_counts_the_rest(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Real enrolments through the real attach query; the publish validation
+    and the per-applicant runner are stubbed, because this is about which
+    applicants are offered and how many."""
+    from app.routers import hr_workflows
+    from app.workflows import ValidationReport
+
+    f = await _build(db)
+    limit = hr_workflows.PUBLISH_AUTO_SHORTLIST_LIMIT
+    total = limit + 5
+    ids: list[uuid.UUID] = []
+    for i in range(total):
+        a, e = uuid.uuid4(), uuid.uuid4()
+        await db.execute(
+            text("INSERT INTO applicants (id, company_id, full_name, target_job_title)"
+                 " VALUES (:a, :c, 'P', 'Engineer')"),
+            {"a": a, "c": f.company},
+        )
+        await db.execute(
+            text("INSERT INTO enrolments (id, company_id, requisition_id, applicant_id,"
+                 " target_job_title, status, created_at, updated_at)"
+                 " VALUES (:e, :c, :r, :a, 'Engineer', 'new',"
+                 "         now() - make_interval(secs => :age), now())"),
+            {"e": e, "c": f.company, "r": f.requisition, "a": a, "age": total - i},
+        )
+        ids.append(e)  # oldest first
+
+    offered: list[uuid.UUID] = []
+
+    async def offer(_db: Any, *, enrolment_id: uuid.UUID) -> wr.RunnerOutcome:
+        offered.append(enrolment_id)
+        return wr.RunnerOutcome(action="noop")
+
+    monkeypatch.setattr(hr_workflows, "maybe_auto_shortlist", offer)
+    monkeypatch.setattr(hr_workflows, "publish", AsyncMock(return_value=ValidationReport()))
+    monkeypatch.setattr(hr_workflows, "_profile_competencies", AsyncMock(return_value=None))
+    monkeypatch.setattr(hr_workflows, "get_workflow", AsyncMock(return_value={}))
+    monkeypatch.setattr(db, "commit", AsyncMock())  # keep it inside the test transaction
+
+    out = await hr_workflows.publish_workflow(f.workflow, (f.hr, f.company), db)
+
+    assert out["attached_candidates"] == total
+    assert out["auto_shortlist_deferred"] == total - limit
+    assert offered == ids[:limit]
+
+
+# ---------------------------------------------------------------------------
+# Security re-audit #2 — M-1, M-2, L-1, and the activation hook
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+@pytest.mark.parametrize("verified", [None, "before"], ids=["never", "before-this-application"])
+async def test_an_address_not_proven_since_this_application_is_not_advanced(
+    db: AsyncSession, verified: str | None
+) -> None:
+    """M-1. Anyone can type an address into the public form. Without proof of
+    the mailbox AFTER this application, it may not be the owner applying."""
+    f = await _build(db)
+    eid = await _enrol(db, f, actor=None, verified=verified)
+    out = await wr._auto_shortlist(db, eid)
+    assert out.action == "noop"
+    assert "confirmed their email" in (out.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_consent_given_to_another_company_does_not_count(db: AsyncSession) -> None:
+    """M-2."""
+    f = await _build(db, consent="other_company")
+    eid = await _enrol(db, f, actor=None)
+    out = await wr._auto_shortlist(db, eid)
+    assert out.action == "noop"
+    assert "consent" in (out.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_an_actorless_row_that_is_not_the_public_form_is_not_a_self_application(
+    db: AsyncSession,
+) -> None:
+    """L-1. A bulk upload whose uploader is unknown writes a NULL-actor,
+    automated creating row — indistinguishable without the public form's
+    marker. (bulk_ingest passes its own reason.)"""
+    f = await _build(db)
+    eid = await _enrol(db, f, actor=None, reason="added by HR bulk upload")
+    out = await wr._auto_shortlist(db, eid)
+    assert out.action == "noop"
+    assert "HR-created" in (out.reason or "")
+
+
+@pytest.mark.asyncio
+async def test_claiming_the_account_offers_the_waiting_application(
+    db: AsyncSession, _stub_workflow: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The score is usually written before the candidate activates, when the
+    proven-address check can only decline. Activation is when it becomes true,
+    so activation must offer the application again — or nobody is ever
+    auto-shortlisted. Driven through activate() itself; only the token lookup
+    and its consumption are stubbed (the token is not what is under test)."""
+    from app import apply_activation
+
+    f = await _build(db)
+    eid = await _enrol(db, f, actor=None, verified=None)
+    assert (await wr._auto_shortlist(db, eid)).action == "noop"  # not yet proven
+
+    address = await db.scalar(text("SELECT email FROM users WHERE id = :u"), {"u": f.candidate})
+    await db.execute(text("UPDATE applicants SET email = :e WHERE id = :a"),
+                     {"e": address, "a": f.applicant})
+    monkeypatch.setattr(apply_activation, "_live_token_user", AsyncMock(return_value=f.candidate))
+    monkeypatch.setattr(apply_activation, "_consume", AsyncMock())
+    monkeypatch.setattr(apply_activation.settings, "password_hash_rounds", 4)
+
+    out = await apply_activation.activate(db, raw_token="t", new_password="a-long-test-passphrase")
+
+    assert out["linked"] == "new"
+    assert [(r.actor_user_id, r.automated) for r in await _shortlist_rows(db, eid)] == [(None, True)]
+    _stub_workflow.assert_awaited_once()

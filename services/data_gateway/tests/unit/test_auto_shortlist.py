@@ -110,6 +110,7 @@ def _row(**over: Any) -> dict[str, Any]:
         # refusals the security audit added (H2: injection, M5: provenance).
         "self_created": True,
         "self_consented": True,
+        "address_proven": True,
         "ats_injection_markers": [],
         "scored_resume_s3_key": "resumes/a/cv-1.pdf",
         "current_resume_key": "resumes/a/cv-1.pdf",
@@ -775,7 +776,7 @@ class TestHrUploadedApplicantsAreNotContactedAutomatically:
         # Created by the system: a NULL-actor, automated creating row ...
         assert "st.from_status IS NULL" in sql
         assert "st.actor_user_id IS NULL" in sql
-        assert "AND st.automated)" in sql
+        assert "AND st.automated AND st.reason = :public_reason)" in sql
         # ... and no creating row naming a person, or marked manual (an HR
         # account deleted later leaves actor NULL but automated false).
         assert "AND NOT EXISTS" in sql
@@ -786,6 +787,39 @@ class TestHrUploadedApplicantsAreNotContactedAutomatically:
         assert "c.consent_type = 'application_data'" in sql
         assert "c.purpose = 'recruitment'" in sql
         assert "c.granted AND c.revoked_at IS NULL" in sql
+        # Re-audit #2: the public form's own marker (L-1), consent to THIS
+        # company (M-2), and an address proven after this application (M-1).
+        assert "AND st.reason = :public_reason)" in sql
+        assert "c.evidence ->> 'company_id' = e.company_id::text" in sql
+        assert "u.email_verified_at >= e.created_at" in sql
+
+    @pytest.mark.asyncio
+    async def test_an_address_not_proven_since_applying_is_left_for_a_person(
+        self, wired: dict[str, AsyncMock]
+    ) -> None:
+        """Security re-audit #2, M-1. The public form accepts any typed address,
+        so without this anyone could have somebody else sent an assessment."""
+        out = await wr._auto_shortlist(
+            _db_returning(_row(address_proven=False, ats_overall=99)), uuid.uuid4()
+        )
+        assert out.action == "noop"
+        assert "confirmed their email" in (out.reason or "")
+        wired["record_transition"].assert_not_awaited()
+
+    def test_only_the_public_form_writes_the_self_application_marker(self) -> None:
+        """L-1. The marker is what tells a real application from any other
+        actor-less creating row, so no other enrol_applicant caller may pass it,
+        and the default must not be it."""
+        from app import bulk_ingest, talent_pools
+        from app.routers import hr_applicants, public_apply
+
+        assert wr.PUBLIC_APPLY_REASON == "enrolled on application"
+        default = inspect.signature(wr.enrol_applicant).parameters["reason"].default
+        assert default != wr.PUBLIC_APPLY_REASON
+        for mod in (bulk_ingest, talent_pools, hr_applicants):
+            assert "PUBLIC_APPLY_REASON" not in inspect.getsource(mod), mod.__name__
+            assert '"enrolled on application"' not in inspect.getsource(mod), mod.__name__
+        assert inspect.getsource(public_apply).count("reason=PUBLIC_APPLY_REASON") == 2
 
     def test_the_creating_row_records_whether_a_person_filed_the_applicant(self) -> None:
         """The provenance check leans on enrol_applicant's creating row. If that
@@ -1077,3 +1111,21 @@ async def test_creating_from_a_template_still_reaches_apply(monkeypatch: pytest.
     assert seen["request"] is request
     # Templates pin the human gate ON (auto_shortlist off), never unset.
     assert seen["auto"] is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["auto_shortlist", "auto_assign_first_round", "reminders_enabled"])
+async def test_an_explicit_null_switch_is_refused_not_a_500(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    """Code review SHOULD FIX 1. {"auto_shortlist": null} survives exclude_unset;
+    it used to reach the NOT NULL column as an IntegrityError (a 500), and the
+    coherence check read the None as "off"."""
+    from app import workflows
+
+    monkeypatch.setattr(workflows, "_assert_draft", AsyncMock())
+    db = MagicMock()
+    db.execute = AsyncMock()
+    with pytest.raises(workflows.WorkflowError, match="must be true or false"):
+        await workflows.update_settings(db, workflow_id=uuid.uuid4(), fields={key: None})
+    db.execute.assert_not_awaited()

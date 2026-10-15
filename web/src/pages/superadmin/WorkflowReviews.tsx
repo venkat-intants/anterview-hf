@@ -591,10 +591,11 @@ function ShortlistingSection({ settings }: { settings: Record<string, unknown> }
           <div className="text-[13px] leading-relaxed text-foreground">
             <p className="font-semibold">This version shortlists automatically.</p>
             <p className="mt-1 text-muted-foreground">
-              Applicants with an ATS score of{' '}
-              <strong className="text-foreground">{barPct ?? '—'}/100 or higher</strong> start
-              round 1 with no one confirming them. Below that score nobody is moved — they stay in
-              HR&rsquo;s queue to shortlist by hand. The final hire or reject is still a person.
+              Applicants who applied through the careers page, scored{' '}
+              <strong className="text-foreground">{barPct ?? '—'}/100 or higher</strong> and
+              confirmed their email start round 1 with no one confirming them. Everyone else —
+              below that score, uploaded by HR, or not yet confirmed — stays in HR&rsquo;s queue to
+              shortlist by hand. The final hire or reject is still a person.
             </p>
           </div>
         </div>

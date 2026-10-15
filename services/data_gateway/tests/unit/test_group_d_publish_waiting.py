@@ -41,7 +41,10 @@ async def test_attaching_returns_who_moved_and_their_status() -> None:
                                           workflow_id=uuid.uuid4())
     assert got == [(a, "shortlisted"), (b, "new")]
     sql = " ".join(str(db.execute.call_args.args[0]).split())
-    assert sql.startswith("UPDATE enrolments SET workflow_id = :w")
+    assert "UPDATE enrolments SET workflow_id = :w" in sql
+    # Oldest first: publish offers only the first PUBLISH_AUTO_SHORTLIST_LIMIT
+    # to auto-shortlist, so the order decides who is offered.
+    assert sql.endswith("ORDER BY created_at, id")
 
 
 def test_publish_attaches_and_starts_only_the_already_shortlisted() -> None:

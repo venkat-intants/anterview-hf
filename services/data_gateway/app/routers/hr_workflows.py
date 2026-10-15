@@ -868,8 +868,11 @@ async def publish_workflow(
     # would hold row locks and time the publish out. At most
     # PUBLISH_AUTO_SHORTLIST_LIMIT are offered here; the rest stay 'new' in
     # HR's queue — exactly where a version without auto-shortlist leaves them —
-    # and the response says how many, so the builder can tell HR. A later
-    # rescore offers each of them again.
+    # and the response says how many, so the builder can tell HR. Offered
+    # oldest application first (attach_waiting_candidates orders them). The
+    # deferred are NOT retried automatically: only a rescore would offer them
+    # again, and a scored applicant is rarely rescored, so in practice they
+    # wait for a person, as they would on a manual version.
     attached = await attach_waiting_candidates(
         db, requisition_id=wf["requisition_id"], workflow_id=workflow_id
     )

@@ -37,6 +37,7 @@ import {
   type ApplicantStatus,
 } from '@/api/applicants';
 import { listRequisitions, type Requisition } from '@/api/requisitions';
+import ViewCvButton from '@/components/hr/ViewCvButton';
 import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
 import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
 import { useSourceOptions } from '@/lib/sourceOptions';
@@ -355,6 +356,14 @@ function ApplicantDrawer({
                   View full profile <ArrowRight size={12} aria-hidden="true" />
                 </Link>
               )}
+              {a.has_cv ? (
+                <div className="mt-2">
+                  {/* With one application, the CV it was sent with (the one
+                      its score came from); with several, their latest — each
+                      application below then opens its own. */}
+                  <ViewCvButton applicantId={a.id} enrolmentId={only?.enrolment_id} />
+                </div>
+              ) : null}
             </div>
           </div>
         </DialogHeader>
@@ -486,6 +495,16 @@ function ApplicantDrawer({
                           </p>
                         </div>
                         <div className="flex w-full flex-wrap items-center justify-end gap-1.5 sm:w-auto">
+                          {a.has_cv ? (
+                            // The CV this application was submitted with —
+                            // the one its score was computed from.
+                            <ViewCvButton
+                              applicantId={a.id}
+                              enrolmentId={app.enrolment_id}
+                              label="CV"
+                              ariaLabel={`View the CV sent for ${app.opening_title ?? 'this opening'}`}
+                            />
+                          ) : null}
                           <Button
                             type="button"
                             variant="secondary"

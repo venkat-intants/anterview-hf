@@ -50,6 +50,16 @@ _NAME_ESCAPE = re.compile(rb"#([0-9A-Fa-f]{2})")
 
 def _decoded_names(data: bytes) -> bytes:
     return _NAME_ESCAPE.sub(lambda m: bytes([int(m.group(1), 16)]), data)
+
+
+def pdf_has_active_content(data: bytes) -> bool:
+    """True when a PDF carries markers of content that can run or carry another
+    file (see _PDF_ACTIVE). The one definition, shared by every path that
+    stores or SERVES an uploaded PDF — including HR opening a CV in the
+    browser (routers/hr_applicants.get_applicant_resume)."""
+    return bool(_PDF_ACTIVE.search(_decoded_names(data)))
+
+
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._ -]+")
 
 
@@ -122,7 +132,7 @@ def check(data: bytes, filename: str | None, *, max_bytes: int) -> CheckedFile:
     if kind is None:
         raise DocumentRejectedError("Upload a PDF, JPEG or PNG file.")
     content_type, extension = kind
-    if content_type == "application/pdf" and _PDF_ACTIVE.search(_decoded_names(data)):
+    if content_type == "application/pdf" and pdf_has_active_content(data):
         raise DocumentRejectedError(
             "This PDF contains scripts or embedded files, which we cannot accept. "
             "Save or print it as a plain PDF and upload that."
@@ -210,7 +220,7 @@ def check_corpus(data: bytes, filename: str | None, *, max_bytes: int) -> Checke
             "We take PDF, Word (.docx), plain text and Markdown files.", code="unsupported_type"
         )
     content_type, extension = kind
-    if content_type == "application/pdf" and _PDF_ACTIVE.search(_decoded_names(data)):
+    if content_type == "application/pdf" and pdf_has_active_content(data):
         raise DocumentRejectedError(
             "This PDF contains scripts or embedded files, which we cannot accept. "
             "Save or print it as a plain PDF and upload that.",

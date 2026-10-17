@@ -54,7 +54,9 @@ const bulkUploadApplicants = vi.fn();
 const getUploadProgress = vi.fn();
 const whyMatch = vi.fn();
 const listApplications = vi.fn();
+const openApplicantCv = vi.fn();
 vi.mock('../api/applicants', () => ({
+  openApplicantCv: (...a: unknown[]) => openApplicantCv(...a) as unknown,
   listApplications: (...a: unknown[]) => listApplications(...a) as unknown,
   listApplicants: (...a: unknown[]) => listApplicants(...a) as unknown,
   getReindexStatus: (...a: unknown[]) => getReindexStatus(...a) as unknown,
@@ -711,5 +713,54 @@ describe('Applicants — the open applicant survives a round trip (QA ANTHIRE-00
     renderPage('/hr/applicants?view=nobody');
     await screen.findAllByText('Bhavya Nair');
     expect(screen.queryByLabelText('Bhavya Nair applicant details')).not.toBeInTheDocument();
+  });
+});
+
+describe('Applicants — View CV beside the score', () => {
+  it('offers the CV when one is stored', async () => {
+    listApplicants.mockResolvedValue([{ ...SCORED, has_cv: true }]);
+    renderPage('/hr/applicants?view=ap-1');
+    const dialog = await screen.findByLabelText('Bhavya Nair applicant details');
+    expect(within(dialog).getByRole('button', { name: 'View CV' })).toBeInTheDocument();
+  });
+
+  it('with one application, the header opens the CV that application was sent with', async () => {
+    listApplicants.mockResolvedValue([{ ...SCORED, has_cv: true }]);
+    openApplicantCv.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderPage('/hr/applicants?view=ap-1');
+    const dialog = await screen.findByLabelText('Bhavya Nair applicant details');
+    // The header button learns the application once it has loaded.
+    await waitFor(() => expect(listApplications).toHaveBeenCalled());
+    await waitFor(async () => {
+      openApplicantCv.mockClear();
+      await user.click(within(dialog).getByRole('button', { name: 'View CV' }));
+      expect(openApplicantCv).toHaveBeenCalledWith('ap-1', 'en-ap-1');
+    });
+  });
+
+  it('with several applications, each opens the CV it was sent with', async () => {
+    listApplicants.mockResolvedValue([{ ...SCORED, has_cv: true }]);
+    const base = (await listApplications('ap-1')) as Record<string, unknown>[];
+    listApplications.mockResolvedValue([
+      base[0],
+      { ...base[0], enrolment_id: 'en-2', opening_title: 'Data Analyst', is_latest: false },
+    ]);
+    openApplicantCv.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderPage('/hr/applicants?view=ap-1');
+    await user.click(
+      await screen.findByRole('button', { name: 'View the CV sent for Backend Engineer' }),
+    );
+    expect(openApplicantCv).toHaveBeenCalledWith('ap-1', 'en-ap-1');
+    await user.click(screen.getByRole('button', { name: 'View the CV sent for Data Analyst' }));
+    expect(openApplicantCv).toHaveBeenLastCalledWith('ap-1', 'en-2');
+  });
+
+  it('offers nothing when no CV file is on record', async () => {
+    listApplicants.mockResolvedValue([{ ...SCORED, has_cv: false }]);
+    renderPage('/hr/applicants?view=ap-1');
+    const dialog = await screen.findByLabelText('Bhavya Nair applicant details');
+    expect(within(dialog).queryByRole('button', { name: 'View CV' })).not.toBeInTheDocument();
   });
 });

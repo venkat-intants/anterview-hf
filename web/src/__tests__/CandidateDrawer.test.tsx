@@ -23,10 +23,12 @@ import type { ApplicationAnswer } from '../api/questions';
 const getApplicant = vi.fn();
 const listRoundResults = vi.fn();
 const listApplications = vi.fn();
+const openApplicantCv = vi.fn();
 vi.mock('../api/applicants', () => ({
   getApplicant: (...a: unknown[]) => getApplicant(...a) as unknown,
   listRoundResults: (...a: unknown[]) => listRoundResults(...a) as unknown,
   listApplications: (...a: unknown[]) => listApplications(...a) as unknown,
+  openApplicantCv: (...a: unknown[]) => openApplicantCv(...a) as unknown,
 }));
 
 describe('CandidateDrawer — opened from one application (B5)', () => {
@@ -1290,5 +1292,28 @@ describe('CandidateDrawer', () => {
       renderDrawer({ enrolmentId: 'en-1' });
       expect(await screen.findByRole('button', { name: /History/ })).toHaveAttribute('aria-expanded', 'true');
     });
+  });
+});
+
+
+describe('CandidateDrawer — View CV beside the resume match', () => {
+  it('opens the CV behind the score', async () => {
+    getApplicant.mockResolvedValue(applicant({ has_cv: true }));
+    listRoundResults.mockResolvedValue([]);
+    listAnswers.mockResolvedValue([]);
+    openApplicantCv.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderDrawer();
+    await user.click(await screen.findByRole('button', { name: 'View CV' }));
+    expect(openApplicantCv).toHaveBeenCalledWith('ap-1', undefined);
+  });
+
+  it('offers nothing when no CV file is stored', async () => {
+    getApplicant.mockResolvedValue(applicant({ has_cv: false }));
+    listRoundResults.mockResolvedValue([]);
+    listAnswers.mockResolvedValue([]);
+    renderDrawer();
+    await screen.findByText('A solid backend match.');
+    expect(screen.queryByRole('button', { name: 'View CV' })).not.toBeInTheDocument();
   });
 });

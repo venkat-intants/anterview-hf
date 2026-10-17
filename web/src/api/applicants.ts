@@ -2,7 +2,7 @@
 // Calls data_gateway (VITE_API_BASE_URL) via the central client. Tenant-scoped
 // server-side by the HR's company — the frontend just consumes its own list.
 
-import { apiGet, apiPost, clientFetch, uploadWithProgress } from './client';
+import { apiGet, apiPost, clientFetch, fetchBlobWithAuth, uploadWithProgress } from './client';
 import { pathId } from './pathId';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -45,6 +45,8 @@ export interface Applicant {
    * opposite things.
    */
   pending_enrichment?: boolean;
+  /** A CV file is stored — offer "View CV". Absent on an older backend. */
+  has_cv?: boolean;
   created_at: string;
   /** Linked candidate user id (set after interview-invite redeem); null otherwise. */
   user_id?: string | null;
@@ -286,4 +288,58 @@ export function listRoundResults(
 ): Promise<RoundResult[]> {
   const q = enrolmentId ? `?enrolment_id=${encodeURIComponent(enrolmentId)}` : '';
   return apiGet<RoundResult[]>(`/hr/applicants/${pathId(applicantId)}/round-results${q}`);
+}
+
+
+/**
+ * Open a candidate's CV (PDF) in a new tab.
+ *
+ * The file is behind HR auth, so it cannot be a plain link: it is fetched with
+ * the session's token and shown from a short-lived blob URL. The tab is opened
+ * FIRST, synchronously inside the click, because a window.open after an await
+ * is treated as a popup and blocked; it is closed again if the fetch fails.
+ * With `enrolmentId`, the CV that application was submitted with (the one its
+ * score came from).
+ */
+export async function openApplicantCv(
+  applicantId: string,
+  enrolmentId?: string | null,
+): Promise<void> {
+  const tab = window.open('', '_blank');
+  if (!tab) {
+    // Checked BEFORE fetching: the server audits every view, and a CV nobody
+    // could see must not be recorded as seen. Never fall back to this tab —
+    // replacing the HR console with a PDF loses the person's place.
+    throw new Error('Your browser blocked the new tab. Allow pop-ups for this site, then try again.');
+  }
+  try {
+    const query = enrolmentId ? `?enrolment_id=${encodeURIComponent(enrolmentId)}` : '';
+    const res = await fetchBlobWithAuth(
+      `${API_BASE}/hr/applicants/${pathId(applicantId)}/resume${query}`,
+    );
+    if (!res.ok) {
+      let detail = 'The CV could not be opened.';
+      try {
+        const body = (await res.json()) as { detail?: unknown };
+        if (typeof body.detail === 'string') detail = body.detail;
+      } catch {
+        // not JSON — keep the generic sentence
+      }
+      throw new Error(detail);
+    }
+    const pdf = new Blob([await res.blob()], { type: 'application/pdf' });
+    const url = URL.createObjectURL(pdf);
+    try {
+      tab.opener = null;
+      tab.location.href = url;
+    } catch (err) {
+      URL.revokeObjectURL(url);
+      throw err;
+    }
+    // Long enough for the viewer to load it; the tab keeps its own copy.
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (err) {
+    tab.close();
+    throw err;
+  }
 }

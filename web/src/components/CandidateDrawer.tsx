@@ -55,6 +55,7 @@ import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import ViewCvButton from '@/components/hr/ViewCvButton';
 
 // Each block of the drawer is a titled section divided from the last by a
 // hairline — the drawer is a long read, so the rhythm does the grouping.
@@ -65,6 +66,8 @@ const CONTROL =
 
 export interface DrawerCandidate {
   applicant_id: string;
+  /** A CV file is stored (offer "View CV"). */
+  has_cv?: boolean;
   full_name: string;
   email?: string | null;
   target_job_title?: string;
@@ -822,6 +825,13 @@ export default function CandidateDrawer({
                       <span className="text-[13px] text-muted-foreground">/100</span>
                     </span>
                   </div>
+                  {candidate.has_cv && applicantId ? (
+                    <div className="mt-2">
+                      {/* The CV behind this score: the application's own when
+                          opened from one, otherwise their latest. */}
+                      <ViewCvButton applicantId={applicantId} enrolmentId={enrolmentId} />
+                    </div>
+                  ) : null}
                   {candidate.ats_summary ? (
                     <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
                       {candidate.ats_summary}

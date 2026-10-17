@@ -466,6 +466,40 @@ what changed is worth stating plainly:
 - **No scanner added this wave**, per the recommendation on file. If a lead
   wants one, it is a separate story, not folded into this wave's checklist.
 
+**CV amendment (2026-10-17) — HR opening a CV in the browser fires trigger (b).**
+`GET /hr/applicants/{id}/resume` (`routers/hr_applicants.py::get_applicant_resume`)
+serves a candidate's stored CV so HR can read it beside the ATS score — the
+first path that renders a candidate-uploaded file in the browser. Until then HR
+only ever saw text extracted from a CV. CVs arrive from anyone, through the
+unauthenticated public apply form, so this is the widest uploader population of
+any path in this entry. What applies to it, and where it differs from the
+"isolation in delivery" bullet above:
+
+- **Served BY the API, not by a pre-signed link.** The file is streamed through
+  data_gateway (`Content-Type: application/pdf`, `X-Content-Type-Options:
+  nosniff`, `Cache-Control: no-store, private`, `Content-Disposition: inline`
+  with a fixed filename that names no person), so the object store's address
+  never reaches a browser. The console shows it from a blob URL built with an
+  explicit `application/pdf` type, in a new tab whose `opener` is cleared.
+- **The same active-content check, at serve time.** A CV that is not a PDF
+  (`%PDF-` magic), or whose names spell JavaScript, launch actions, embedded
+  files, rich media or XFA (`document_storage.pdf_has_active_content`, `#xx`
+  escapes decoded), is refused and the refusal audited
+  (`applicant.resume.refused_active_content`). CV UPLOAD paths do not yet run
+  this check, so such a file can still be stored and scored as text; it is
+  only never served.
+- **Who.** `hr_manager` of the applicant's own company only (`get_hr_company`,
+  pinned by `tests/unit/test_hr_view_cv_route.py`); a company `super_admin` has
+  no route to a named candidate's CV. Every view is audited
+  (`applicant.resume.viewed`, ids, byte size and which stored file was served).
+- **What is still NOT true.** The byte scan misses markers inside compressed
+  object streams, exactly as above, and a crafted PDF can still exploit a
+  vulnerable viewer — including a desktop reader where an organisation has
+  switched the browser's PDF viewer off. Nothing is scanned for malware.
+- **Not decided here (owner's call).** CVs have no retention clock, so a
+  rejected or closed application's CV stays viewable until erasure. That is a
+  DPDP storage-limitation question tied to CV retention, not to this route.
+
 ---
 
 ## AR-7 — Portfolio external links are never fetched, and reviewers see them cold
@@ -913,7 +947,7 @@ PH4 HI/TE review item).
 | **AR-3** | Candidate code executes on JDoodle | AG-05 | `platform_owner` | Residency bid, confidential-IP customer, or free-tier exhaustion |
 | **AR-4** | No production avatar gate; `custom` unimplemented | AG-06 residue | `cto-architect` | Production `APP_ENV`, residency bid, or 2026-11-28 sunset review |
 | **AR-5** | **CLOSED 2026-09-26** — decision rationale, ledger reason and three related fields are now redacted on erasure | PH4 Wave 1 M4(b) | `platform_owner` (+ `security-auditor`) | — (fixed; kept for citations, see the entry) |
-| **AR-6** | Preboarding documents, task artifacts, materials and the corpus are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4, PH5-E2 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
+| **AR-6** | Preboarding documents, task artifacts, materials, the corpus and CVs opened by HR are allow-listed, not malware-scanned | PH4 D4-3, extended PH4-D4, PH5-E2 | `platform_owner` (+ `security-auditor`) | A scanning requirement, in-app rendering or processing, a malicious-file report, or Tier-2 |
 | **AR-7** | Portfolio external links are validated and stored, never fetched server-side | PH4-D4 | `platform_owner` (+ `security-auditor`) | Server-side link preview, a phishing/malware report, or a stricter allow-list requirement |
 | **AR-8** | **NARROWED 2026-09-28** — erasure now finds and flags a candidate's name inside an HR-uploaded corpus document, but still cannot remove it | PH5-E2 | `platform_owner` (+ `security-auditor`) | Erasure-into-documents REMOVAL requirement, a flagged document confirmed to contain candidate data, or auto-ingested candidate content |
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |

@@ -24,7 +24,17 @@ from typing import Annotated, Any
 
 import structlog
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile, status
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, BeforeValidator, EmailStr, Field
 from sqlalchemy import column, exists, or_, select, table, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +52,7 @@ from app.database import DbSessionDep
 from app.decision_reasons import ReasonError
 from app.decision_reasons import resolve as resolve_reason
 from app.dependencies import HrCtxDep, get_hr_company
+from app.document_storage import pdf_has_active_content
 from app.embedding_client import (
     EXPLANATION_UNAVAILABLE,
     EmbeddingError,
@@ -69,7 +80,12 @@ from app.requisitions import (
     record_transition,
     requisition_for_title,
 )
-from app.routers.resume import _delete_from_s3, _extract_pdf_text, _upload_to_s3
+from app.routers.resume import (
+    _delete_from_s3,
+    _download_from_s3,
+    _extract_pdf_text,
+    _upload_to_s3,
+)
 from app.scoring_client import ResumeScoreError, score_resume_remote
 from app.scoring_client import client_message as score_client_message
 from app.utils.ownership import get_owned
@@ -239,6 +255,9 @@ class ApplicantOut(BaseModel):
     # as in-progress rather than as a weak candidate — those look identical in
     # a list and mean opposite things.
     pending_enrichment: bool = False
+    # Whether a CV file is stored, so the console offers "View CV" only when
+    # there is one. A flag, never the storage key (see _to_out).
+    has_cv: bool = False
 
 
 class WhyMatchOut(BaseModel):
@@ -388,6 +407,7 @@ def _to_out(a: Applicant) -> ApplicantOut:
         created_at=a.created_at.isoformat(),
         user_id=str(a.user_id) if a.user_id else None,
         pending_enrichment=a.pending_enrichment,
+        has_cv=bool(a.resume_s3_key),
     )
 
 
@@ -1809,6 +1829,157 @@ async def rescore_applicant(
     # Refresh the search embedding too (also backfills it if it was missing).
     await _embed_applicant(db, a, hr_uid)
     return _to_out(a)
+
+
+#: A CV is a PDF; every upload path refuses anything else. Checked again on the
+#: way out, so a stored object that is not a PDF is never served as one.
+_PDF_MAGIC = b"%PDF-"
+
+
+def _object_missing(exc: BaseException) -> bool:
+    """A CV object that is not there (never uploaded, deleted, erased) — as
+    opposed to storage being unreachable, which must not read as "no CV"."""
+    from app.local_storage import LocalStorageError  # noqa: PLC0415
+
+    if isinstance(exc, FileNotFoundError):
+        return True
+    # Local disk: only "no object at <key>" is missing. "No object storage is
+    # configured" or an unsafe key is a deployment problem, not "no CV".
+    if isinstance(exc, LocalStorageError):
+        return str(exc).startswith("no object at")
+    # botocore's ClientError carries a dict; anything else with a .response
+    # (an HTTP library's response object) is not a missing-object answer.
+    resp = getattr(exc, "response", None)
+    err = resp.get("Error", {}) if isinstance(resp, dict) else {}
+    code = str(err.get("Code", "")) if isinstance(err, dict) else ""
+    return code in {"NoSuchKey", "404", "NotFound"}
+
+
+@router.get(
+    "/applicants/{applicant_id}/resume",
+    responses={200: {"content": {"application/pdf": {}}}},
+)
+async def get_applicant_resume(
+    applicant_id: uuid.UUID,
+    request: Request,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+    enrolment_id: Annotated[
+        uuid.UUID | None,
+        Query(description="The application whose CV to show (the one it was submitted with)"),
+    ] = None,
+) -> Response:
+    """The candidate's CV file, for HR to read beside the score.
+
+    HR managers only, own company only (HrCtxDep + _get_owned: a miss in
+    another tenant is the same 404 as a missing applicant). With
+    ``enrolment_id`` it serves the CV THAT application was submitted with —
+    the one its score was computed from — because a returning candidate's
+    newer CV lives on their newer application, not the applicant row. An
+    application from before CVs were pinned to applications carries no key of
+    its own; it falls back to the applicant's CV, which may be newer than the
+    one it was scored on.
+
+    Streamed through this service rather than redirected to a signed bucket
+    URL, so the object store's address never reaches a browser and nothing
+    can be re-shared or cached outside the session that asked. Every view is
+    audited (ids and size only) — this is a person's CV.
+    """
+    hr_uid, company_id = ctx
+    a = await _get_owned(db, company_id, applicant_id)
+    key: str | None
+    if enrolment_id is not None:
+        row = (
+            await db.execute(
+                text(
+                    "SELECT applied_resume_s3_key, scored_resume_s3_key FROM enrolments"
+                    " WHERE id = :e AND applicant_id = :a AND company_id = :c"
+                    "   AND deleted_at IS NULL"
+                ),
+                {"e": enrolment_id, "a": a.id, "c": company_id},
+            )
+        ).first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Application not found.")
+        key = row[0] or row[1] or a.resume_s3_key
+        source = "applied" if row[0] else "scored" if row[1] else "applicant"
+    else:
+        key = a.resume_s3_key
+        source = "applicant"
+    if not key:
+        raise HTTPException(status_code=404, detail="No CV file is on record for this applicant.")
+    try:
+        raw = await _download_from_s3(key)
+    except Exception as exc:  # noqa: BLE001 — classified below
+        missing = _object_missing(exc)
+        # Type only: a storage error's message can carry the object key.
+        log.warning("hr.applicant.resume_unavailable", applicant_id=str(a.id),
+                    exc_type=type(exc).__name__, missing=missing)
+        if missing:
+            raise HTTPException(
+                status_code=404, detail="The CV file could not be found in storage."
+            ) from None
+        # An outage must not read as "this candidate has no CV".
+        raise HTTPException(
+            status_code=503, detail="CV storage is not responding. Try again in a moment."
+        ) from None
+    # Whole file in memory: CVs are capped at upload (_MAX_RESUME_BYTES, 5 MB
+    # here; the public form has its own cap). An object far past that — a
+    # legacy or out-of-band upload — is not served.
+    if len(raw) > 2 * _MAX_RESUME_BYTES:
+        log.warning("hr.applicant.resume_too_large", applicant_id=str(a.id), bytes=len(raw))
+        raise HTTPException(status_code=422, detail="The stored CV is too large to open here.")
+    if not raw.startswith(_PDF_MAGIC):
+        log.warning("hr.applicant.resume_not_pdf", applicant_id=str(a.id))
+        raise HTTPException(status_code=404, detail="The stored CV is not a readable PDF.")
+    # A CV can come from anyone, through the public form, and until this route
+    # HR only ever saw text extracted from it. Served as a file, a PDF carrying
+    # scripts, launch actions or embedded files would run in HR's PDF viewer —
+    # or in a desktop reader where the browser viewer is switched off. Refused
+    # with the same check preboarding documents and the corpus use
+    # (ACCEPTED-RISKS AR-6), and the refusal is audited.
+    if pdf_has_active_content(raw):
+        log.warning("hr.applicant.resume_active_content", applicant_id=str(a.id))
+        db.add(AuditLog(
+            actor_id=hr_uid, actor_type="user", action="applicant.resume.refused_active_content",
+            resource_type="applicant", resource_id=a.id,
+            details={"company_id": str(company_id),
+                     "enrolment_id": str(enrolment_id) if enrolment_id else None,
+                     "source": source},
+            ip_address=extract_client_ip(request), user_agent=extract_user_agent(request),
+        ))
+        await db.commit()
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "This CV contains scripts or embedded files, so it cannot be opened here. "
+                "Its extracted text and score are unaffected."
+            ),
+        )
+
+    db.add(AuditLog(
+        actor_id=hr_uid, actor_type="user", action="applicant.resume.viewed",
+        resource_type="applicant", resource_id=a.id,
+        details={"company_id": str(company_id),
+                 "enrolment_id": str(enrolment_id) if enrolment_id else None,
+                 # Which file was served: the application's own, its scored
+                 # copy, or (older applications) the applicant's latest CV.
+                 "source": source,
+                 "bytes": len(raw)},
+        ip_address=extract_client_ip(request), user_agent=extract_user_agent(request),
+    ))
+    await db.commit()
+    return Response(
+        content=raw,
+        media_type="application/pdf",
+        headers={
+            # inline: open in the browser's viewer. A fixed filename: the
+            # person's name stays out of headers, logs and download folders.
+            "Content-Disposition": 'inline; filename="cv.pdf"',
+            "Cache-Control": "no-store, private",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/applicants/{applicant_id}/why-match", response_model=WhyMatchOut)

@@ -134,7 +134,7 @@ def _requisition_citation(req: dict[str, Any]) -> Citation:
     return Citation(
         kind="job",
         id=str(req["id"]),
-        label=f"Opening — {req['title']}",
+        label=f"Opening - {req['title']}",
         # The workflow CANVAS, not the requisition dashboard: this copilot only
         # ever runs from the builder, and the answer is always about the process
         # being designed. A declared view rather than an inline path — the
@@ -182,7 +182,7 @@ async def _current_workflow(ctx: ToolContext) -> dict[str, Any] | None:
         "The job opening whose hiring workflow is being designed, together with "
         "its role model: the competencies that matter for this role, their "
         "weights, and what weak/adequate/strong evidence looks like for each. "
-        "Call this FIRST — every design decision should refer to it."
+        "Call this FIRST - every design decision should refer to it."
     ),
     parameters={"type": "object", "properties": {}},
     data_class="company_scoped",
@@ -222,7 +222,7 @@ async def _get_opening_under_design(_args: dict[str, Any], ctx: ToolContext) -> 
             "note": (
                 "Use these competency ids verbatim when drafting. The rating "
                 "scale for each is fixed by the platform and copied onto a "
-                "round automatically — do not write your own."
+                "round automatically - do not write your own."
             ),
         },
         citations=[
@@ -230,7 +230,7 @@ async def _get_opening_under_design(_args: dict[str, Any], ctx: ToolContext) -> 
             Citation(
                 kind="role_profile",
                 id=profile.profile_id,
-                label=f"Role model — {profile.job_title}",
+                label=f"Role model - {profile.job_title}",
             ),
         ],
     )
@@ -479,7 +479,7 @@ def _normalise_rounds(
         )
 
     if len(raw) > MAX_ROUNDS:
-        notes.append(f"kept the first {MAX_ROUNDS} rounds — that is the maximum")
+        notes.append(f"kept the first {MAX_ROUNDS} rounds - that is the maximum")
     return rounds, notes
 
 
@@ -503,7 +503,7 @@ def _round_summary(rounds: list[dict[str, Any]]) -> str:
     description=(
         "Propose a complete hiring workflow for this opening: an ordered list "
         "of rounds with thresholds and the competencies each assesses. Produces "
-        "a preview on the user's canvas — it does NOT create anything. Use when "
+        "a preview on the user's canvas - it does NOT create anything. Use when "
         "the opening has no workflow yet, or when redesigning from scratch."
     ),
     parameters={
@@ -536,7 +536,7 @@ def _round_summary(rounds: list[dict[str, Any]]) -> str:
                             "items": {"type": "string"},
                             "description": (
                                 "Ids from get_opening_under_design. The rating "
-                                "scale is attached automatically — do not "
+                                "scale is attached automatically - do not "
                                 "invent competencies or write anchor text."
                             ),
                         },
@@ -583,7 +583,7 @@ async def _draft_hiring_workflow(args: dict[str, Any], ctx: ToolContext) -> Tool
 
     proposal = Proposal(
         kind="workflow",
-        title=f"Hiring process — {req['title']}",
+        title=f"Hiring process - {req['title']}",
         summary=f"{len(rounds)} rounds · {_round_summary(rounds)}",
         commit=CommitSpec(
             method="POST",
@@ -659,14 +659,14 @@ async def _draft_workflow_round(args: dict[str, Any], ctx: ToolContext) -> ToolO
     wf = await _current_workflow(ctx)
     if wf is None:
         return ToolOutput(
-            data={"error": "no workflow yet — use draft_hiring_workflow instead"}
+            data={"error": "no workflow yet - use draft_hiring_workflow instead"}
         )
     if wf["status"] != "draft":
         return ToolOutput(
             data={
                 "error": (
                     f"version {wf['version']} is published and cannot be "
-                    "changed. The user must open it as a new version first — "
+                    "changed. The user must open it as a new version first - "
                     "the 'Edit as new version' button on the canvas."
                 )
             }
@@ -687,7 +687,7 @@ async def _draft_workflow_round(args: dict[str, Any], ctx: ToolContext) -> ToolO
     needs_exam = r["kind"] in EXAM_BACKED_KINDS
     proposal = Proposal(
         kind="workflow_round",
-        title=f"Add round — {r['title']}",
+        title=f"Add round - {r['title']}",
         summary=(
             f"{r['kind'].replace('_', ' ')}"
             + (f" · advance at {r['pass_threshold']:g}%" if r["pass_threshold"] else "")
@@ -730,7 +730,7 @@ async def _draft_workflow_round(args: dict[str, Any], ctx: ToolContext) -> ToolO
     description=(
         "Propose what an EXISTING round assesses, replacing its current "
         "competencies. Produces a preview; changes nothing. Give competency ids "
-        "from get_opening_under_design — the rating scale for each is attached "
+        "from get_opening_under_design - the rating scale for each is attached "
         "automatically."
     ),
     parameters={
@@ -811,7 +811,7 @@ async def _draft_round_criteria(args: dict[str, Any], ctx: ToolContext) -> ToolO
     description=(
         "Propose the automation settings for the draft: what happens without "
         "anyone pressing a button. Produces a preview; changes nothing. There "
-        "is no setting that rejects a candidate — do not offer one."
+        "is no setting that rejects a candidate - do not offer one."
     ),
     parameters={
         "type": "object",
@@ -910,7 +910,7 @@ async def _draft_workflow_settings(args: dict[str, Any], ctx: ToolContext) -> To
         data={
             "settings": fields,
             "note": (
-                "Nothing changed. None of these can reject a candidate — "
+                "Nothing changed. None of these can reject a candidate - "
                 "below-threshold results go to the decision queue for a person."
             ),
         },

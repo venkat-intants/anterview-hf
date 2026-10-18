@@ -30,7 +30,7 @@ FAIL: list[str] = []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" — {detail}" if not cond and detail else ""))
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" - {detail}" if not cond and detail else ""))
 
 
 class _FakeTestResult:
@@ -110,7 +110,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://smoke") as c:
-        print("\nPH4-D2 — a coding round, published")
+        print("\nPH4-D2 - a coding round, published")
         r = await c.post("/hr/exams", json={"title": "Coding screen", "kind": "coding",
                                             "allow_retake": True})
         exam = r.json()
@@ -148,7 +148,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.patch(f"/hr/exams/{exam_id}/rounds/{round_id}", json={"status": "published"})
         check("HR publishes the round", r.json().get("status") == "published", r.text[:200])
 
-        print("\nPH4-D2 — two applicants, one with an accommodation")
+        print("\nPH4-D2 - two applicants, one with an accommodation")
         applicant_a, applicant_b = uuid.uuid4(), uuid.uuid4()
         async with factory() as db:
             await db.execute(
@@ -170,7 +170,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("HR records an accommodation for A", r.status_code == 201 and bool(accommodation_id),
               r.text[:200])
 
-        print("\nPH4-D2 — assignment: the link's deadline is extended for A only")
+        print("\nPH4-D2 - assignment: the link's deadline is extended for A only")
         r = await c.post(f"/hr/exams/{exam_id}/assignments",
                          json={"applicant_ids": [str(applicant_a), str(applicant_b)]})
         assigned = {row["applicant_id"]: row for row in r.json()}
@@ -184,7 +184,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         token_a = assigned[str(applicant_a)]["magic_link"].split("#")[-1]
         token_b = assigned[str(applicant_b)]["magic_link"].split("#")[-1]
 
-        print("\nPH4-D2 — the candidate take payload: adjusted for A, unchanged for B")
+        print("\nPH4-D2 - the candidate take payload: adjusted for A, unchanged for B")
         headers_a = {"X-Exam-Token": token_a}
         headers_b = {"X-Exam-Token": token_b}
         r = await c.get("/exam", headers=headers_a)
@@ -202,7 +202,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               take_b["time_limit_seconds"] == 60
               and take_b["sections"][0]["time_limit_seconds"] == 60, r.text[:300])
 
-        print("\nPH4-D2 — same answers score the same; only the deadline differs")
+        print("\nPH4-D2 - same answers score the same; only the deadline differs")
         r = await c.post("/exam/start", headers=headers_a)
         start_a = r.json()
         attempt_a = start_a["attempt_id"]
@@ -276,7 +276,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("HR's history names who recorded the adjustment",
               bool(rows) and bool(rows[0].get("recorded_by_name")), str(rows[:1])[:300])
 
-        print("\nPH4-D2 — the interviewer sees only the interviewer note")
+        print("\nPH4-D2 - the interviewer sees only the interviewer note")
         req_id, wf_id, wround_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
         enrolment_a, enrolment_c, applicant_c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
         scorecard_a, scorecard_c = uuid.uuid4(), uuid.uuid4()
@@ -337,7 +337,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         del app.dependency_overrides[get_current_user]
         app.dependency_overrides[get_hr_company] = lambda: (acting["hr"], acting["company"])
 
-        print("\nPH4-D2 — a super admin has no route here")
+        print("\nPH4-D2 - a super admin has no route here")
         # The real get_hr_company (with its embedded hr_manager role check) must
         # run here — the shortcut override above bypasses that check entirely,
         # which would make this a false pass regardless of the caller's role.
@@ -350,7 +350,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         del app.dependency_overrides[get_current_user]
         app.dependency_overrides[get_hr_company] = lambda: (acting["hr"], acting["company"])
 
-        print("\nPH4-D2 — revoking removes the adjustment going forward")
+        print("\nPH4-D2 - revoking removes the adjustment going forward")
         r = await c.post(f"/hr/accommodations/{accommodation_id}/revoke", json={"reason": "no longer needed"})
         check("HR revokes the accommodation", r.status_code == 200, r.text[:200])
         r = await c.get("/exam", headers=headers_a)
@@ -366,7 +366,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             )).scalar()
             check("…and zero extra time frozen onto it", row == 0, str(row))
 
-        print("\nPH4-D2 — tenant isolation")
+        print("\nPH4-D2 - tenant isolation")
         other_cid = uuid.uuid4()
         async with factory() as db:
             await db.execute(
@@ -383,7 +383,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         acting["hr"] = hr_a
         acting["company"] = cid
 
-        print("\nPH4-D2 — retention")
+        print("\nPH4-D2 - retention")
         from app import accommodations as accommodations_svc
 
         applicant_d = uuid.uuid4()

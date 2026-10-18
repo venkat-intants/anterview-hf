@@ -95,7 +95,7 @@ function offer(over: Partial<CandidateOffer> = {}): CandidateOffer {
 const kinds = (xs: ReturnType<typeof deriveCandidateActions>): CandidateActionKind[] =>
   xs.map((a) => a.kind);
 
-describe('deriveCandidateActions — every kind', () => {
+describe('deriveCandidateActions - every kind', () => {
   const cases: Array<{
     name: string;
     apps: MyApplication[];
@@ -197,7 +197,7 @@ describe('deriveCandidateActions — every kind', () => {
   });
 });
 
-describe('deriveCandidateActions — order', () => {
+describe('deriveCandidateActions - order', () => {
   it('puts an assessment under way ahead of an earlier deadline', () => {
     const q = deriveCandidateActions(
       [
@@ -309,7 +309,7 @@ describe('deriveCandidateActions — order', () => {
   });
 });
 
-describe('deriveCandidateActions — what is NOT waiting on the candidate', () => {
+describe('deriveCandidateActions - what is NOT waiting on the candidate', () => {
   it('says "with the hiring team" when applications are open and nothing is waiting', () => {
     const q = deriveCandidateActions([app()], [], []);
     expect(kinds(q)).toEqual(['with_team']);
@@ -400,7 +400,7 @@ describe('deriveCandidateActions — what is NOT waiting on the candidate', () =
   });
 });
 
-describe('deriveCandidateActions — placing loops and offers', () => {
+describe('deriveCandidateActions - placing loops and offers', () => {
   it('places a loop or offer on its application only by application_id', () => {
     const q = deriveCandidateActions(
       [

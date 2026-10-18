@@ -1276,7 +1276,7 @@ def _events(loop: dict[str, Any], sessions: list[dict[str, Any]], job_title: str
             uid=f"{s['id']}@{host}", sequence=int(loop.get("itinerary_version") or 0),
             starts_at=datetime.fromisoformat(s["starts_at"]),
             ends_at=datetime.fromisoformat(s["ends_at"]),
-            summary=f"{s['title']} — {job_title}".strip(" —"),
+            summary=f"{s['title']} - {job_title}" if job_title else s["title"],
             description=f"Interview for {job_title}." if job_title else "Interview.",
             location=s["location"] or "", cancelled=s["status"] == "cancelled",
         ))

@@ -30,7 +30,7 @@ PASS, FAIL = [], []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def seed(f) -> dict:
@@ -183,7 +183,7 @@ async def main() -> None:
             " JOIN jobs j ON j.id = i.job_id WHERE i.applicant_id = :a"),
             {"a": s["priya"]})).mappings().first()
     check("an invite for her Python application is created", r2.status_code == 201, r2.text[:200])
-    check("…linked to it, and set up for the Python role — not her latest (Nurse)",
+    check("…linked to it, and set up for the Python role - not her latest (Nurse)",
           inv is not None and inv["enrolment_id"] == s["priya_python"]
           and inv["title"] == "Python Developer" and inv["jd_text"] == "JD for Python Developer",
           str(inv))
@@ -197,7 +197,7 @@ async def main() -> None:
     check("a decision that does not name an application is refused", d0.status_code == 409)
     d1 = await ac.post(f"/hr/applicants/{s['priya']}/decision",
                        json={"decision": "hired", "enrolment_id": str(s["priya_nurse"])})
-    check("hiring from an application still 'new' is refused — whatever the person's row says",
+    check("hiring from an application still 'new' is refused - whatever the person's row says",
           d1.status_code == 409, d1.text[:160])
     # PH4-O4: reason_code is required for a final decision.
     d2 = await ac.post(f"/hr/applicants/{s['priya']}/decision",

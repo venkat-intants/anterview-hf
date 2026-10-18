@@ -197,7 +197,7 @@ async def test_an_hr_manager_is_not_refused_on_the_same_routes(
     for method, path, body in _ROUTES:
         status = await _call(client, method, path, body, headers)
         assert status != 403, (
-            f"hr_manager was refused {method} {path} — the negative cases in this "
+            f"hr_manager was refused {method} {path} - the negative cases in this "
             f"file therefore prove nothing about the ROLE gate"
         )
 
@@ -227,7 +227,7 @@ async def test_the_route_table_here_covers_every_route_the_two_routers_mount() -
                 continue
             mounted.add((method, path))
 
-    assert mounted, "the scan found no pools/rediscovery routes — has this gone blind?"
+    assert mounted, "the scan found no pools/rediscovery routes - has this gone blind?"
 
     covered = {
         (method, path.replace(str(_POOL), "{pool_id}").replace(str(_MEMBER), "{member_id}"))

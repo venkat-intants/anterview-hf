@@ -103,7 +103,7 @@ function renderInspector(editable: boolean) {
   );
 }
 
-describe('RoundInspector — interview kit', () => {
+describe('RoundInspector - interview kit', () => {
   beforeEach(() => {
     api.getRoundKit.mockReset().mockResolvedValue(KIT);
     api.updateRoundKit.mockReset().mockResolvedValue(KIT);

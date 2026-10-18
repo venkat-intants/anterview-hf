@@ -760,7 +760,7 @@ async def _interview_completed(db: AsyncSession, result: SweepResult) -> None:
             body=(
                 f"{r['full_name']} finished their interview"
                 + (f" · {r['job_title']}" if r["job_title"] else "")
-                + " — scorecard ready"
+                + " - scorecard ready"
             ),
             link="/hr/interviews",
             dedupe_key=f"interview_completed:{r['id']}",

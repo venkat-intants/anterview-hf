@@ -61,8 +61,8 @@ import { FRESHNESS_TONE, freshnessChipLabel } from '@/components/hr/rediscoveryD
 
 const EMPTY_UNIVERSE_TEXT =
   'No candidates have opted in yet. Rediscovery searches only candidates who chose to be kept for future openings. New applicants can opt in on your application form from today; candidates who applied earlier appear here only if they opt in themselves.';
-const KEYWORD_ONLY_TEXT = 'Semantic search is unavailable — matching keywords only';
-const UNEXPLAINED_HEADING = 'Matched on similarity only — nothing here says why';
+const KEYWORD_ONLY_TEXT = 'Semantic search is unavailable - matching keywords only';
+const UNEXPLAINED_HEADING = 'Matched on similarity only - nothing here says why';
 
 export default function Rediscovery(): JSX.Element {
   const universeQuery = useQuery({
@@ -136,7 +136,7 @@ export default function Rediscovery(): JSX.Element {
         </p>
       ) : universeQuery.data ? (
         <p role="status" className="text-[12.5px] text-muted-foreground">
-          Searching {eligible.toLocaleString()} of {total.toLocaleString()} applicants — the rest
+          Searching {eligible.toLocaleString()} of {total.toLocaleString()} applicants - the rest
           have not opted in.
         </p>
       ) : null}

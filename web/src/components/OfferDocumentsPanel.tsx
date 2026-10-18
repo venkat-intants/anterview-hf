@@ -37,7 +37,7 @@ const STATE_TONE: Record<DocumentState, TagTone> = {
 
 const STATE_LABEL: Record<DocumentState, string> = {
   outstanding: 'Outstanding',
-  submitted: 'Submitted — awaiting review',
+  submitted: 'Submitted - awaiting review',
   verified: 'Verified',
   rejected: 'Rejected',
   replacement_requested: 'Replacement requested',
@@ -192,7 +192,7 @@ function DocumentRow({ offerId, item }: { offerId: string; item: ChecklistItem }
               disabled={(needsReason && !reasonReady) || reviewMut.isPending}
               onClick={() => reviewMut.mutate(pendingAction)}
             >
-              {reviewMut.isPending ? 'Saving…' : `Confirm — ${ACTION_LABEL[pendingAction]}`}
+              {reviewMut.isPending ? 'Saving…' : `Confirm - ${ACTION_LABEL[pendingAction]}`}
             </Button>
             <Button
               type="button"
@@ -265,7 +265,7 @@ export default function OfferDocumentsPanel({ offerId }: { offerId: string }) {
             {data.history.map((h, i) => (
               <li key={i} className="text-[13px] text-[var(--ui-soft)]">
                 {h.action.replace(/_/g, ' ')}
-                {h.actor_name ? ` — ${h.actor_name}` : ''}
+                {h.actor_name ? ` - ${h.actor_name}` : ''}
                 <span className="ml-1.5 text-[12px] text-muted-foreground">
                   {new Date(h.at).toLocaleString()}
                 </span>

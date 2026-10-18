@@ -74,7 +74,7 @@ function ConversionRate({ value }: { value: number | null }): JSX.Element {
   if (value === null) {
     return (
       <span className="inline-flex items-center gap-1">
-        <span className="text-[var(--ui-soft)]">—</span>
+        <span className="text-[var(--ui-soft)]">-</span>
         <span className="text-muted-foreground">(not enough data yet)</span>
       </span>
     );
@@ -248,7 +248,7 @@ const GROUP_TABS = [
 const COHORT_HELP: Record<CohortBasis, string> = {
   application: 'Application cohort: people who applied in this period.',
   decision:
-    'Decision cohort: applications decided (hired or rejected) in this period — the fair way to compare outcomes.',
+    'Decision cohort: applications decided (hired or rejected) in this period - the fair way to compare outcomes.',
   hire: 'Hire cohort: people hired in this period.',
 };
 
@@ -295,7 +295,7 @@ function CohortControls({
         {filters.cohort === 'application' ? (
           <p className="mt-1 text-[13px] text-[var(--ui-info)]">
             Comparing outcomes (hire rates)? Applications still in progress make this cohort read
-            low —{' '}
+            low -{' '}
             <button
               type="button"
               onClick={() => onChange({ cohort: 'decision' })}
@@ -512,7 +512,7 @@ export function HRAnalyticsPage(): JSX.Element {
     <Page width="workspace">
       <PageHeader
         title="Analytics"
-        description="Governed hiring metrics — versioned, auditable, recomputed from the underlying records every time you look."
+        description="Governed hiring metrics - versioned, auditable, recomputed from the underlying records every time you look."
       />
 
       {forbidden ? (

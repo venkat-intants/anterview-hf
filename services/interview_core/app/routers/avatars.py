@@ -73,7 +73,7 @@ _CATALOG_RESPONSE = AvatarListResponse(
     description=(
         "Returns the full catalog of avatars the candidate can select before "
         "starting an interview session. Pass the chosen ``id`` as ``avatar_id`` "
-        "in POST /api/sessions. Only client-safe fields are returned — "
+        "in POST /api/sessions. Only client-safe fields are returned - "
         "``replica_id`` and ``voice`` are server-side only."
     ),
 )

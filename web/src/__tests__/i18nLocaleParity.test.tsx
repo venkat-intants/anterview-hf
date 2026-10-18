@@ -32,7 +32,7 @@ function bundle(lng: string): string[] {
   return keyPaths(i18n.getResourceBundle(lng, 'translation'));
 }
 
-describe('i18n — EN / HI / TE parity', () => {
+describe('i18n - EN / HI / TE parity', () => {
   it('has a real English dictionary to compare against', () => {
     // Guards the guard: if the bundle failed to load, every comparison below
     // would pass against an empty set and this file would prove nothing.

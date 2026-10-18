@@ -125,7 +125,7 @@ beforeEach(() => {
   getOfferDocuments.mockResolvedValue(EMPTY_DOCS);
 });
 
-describe('OfferDetail — fields', () => {
+describe('OfferDetail - fields', () => {
   it('renders the candidate, job title and status', async () => {
     getOffer.mockResolvedValue(offer());
     renderPage();
@@ -166,7 +166,7 @@ describe('OfferDetail — fields', () => {
   });
 });
 
-describe('OfferDetail — actions only where legal', () => {
+describe('OfferDetail - actions only where legal', () => {
   it('a draft offers submit and withdraw, nothing else', async () => {
     getOffer.mockResolvedValue(offer({ status: 'draft' }));
     renderPage();
@@ -255,7 +255,7 @@ describe('OfferDetail — actions only where legal', () => {
   });
 });
 
-describe('OfferDetail — withdrawing', () => {
+describe('OfferDetail - withdrawing', () => {
   it('withdraws with an optional reason', async () => {
     const user = userEvent.setup();
     getOffer.mockResolvedValue(offer({ status: 'draft' }));
@@ -271,7 +271,7 @@ describe('OfferDetail — withdrawing', () => {
   });
 });
 
-describe('OfferDetail — documents review', () => {
+describe('OfferDetail - documents review', () => {
   it('requires a reason to reject, but not to verify', async () => {
     const user = userEvent.setup();
     getOffer.mockResolvedValue(
@@ -307,7 +307,7 @@ describe('OfferDetail — documents review', () => {
     await screen.findByText('PAN card');
 
     await user.click(screen.getByRole('button', { name: 'Reject' }));
-    const confirmReject = screen.getByRole('button', { name: /Confirm — Reject/ });
+    const confirmReject = screen.getByRole('button', { name: /Confirm - Reject/ });
     expect(confirmReject).toBeDisabled();
     await user.type(screen.getByLabelText(/tell the candidate/i), 'Blurry scan');
     expect(confirmReject).toBeEnabled();
@@ -320,7 +320,7 @@ describe('OfferDetail — documents review', () => {
   });
 });
 
-describe('OfferDetail — preboarding', () => {
+describe('OfferDetail - preboarding', () => {
   it('surfaces the server’s refusal naming the missing documents', async () => {
     const user = userEvent.setup();
     getOffer.mockResolvedValue(
@@ -411,7 +411,7 @@ const PRIMARY_BY_STATE: [string, Partial<OfferDetailShape>, string | null][] = [
   ['withdrawn', { status: 'withdrawn', withdrawn_at: AT, withdraw_reason: 'Position closed' }, null],
 ];
 
-describe('OfferDetail — one primary action, driven by status', () => {
+describe('OfferDetail - one primary action, driven by status', () => {
   it.each(PRIMARY_BY_STATE)('%s', async (_label, over, primary) => {
     getOffer.mockResolvedValue(offer(over));
     renderPage();
@@ -466,7 +466,7 @@ describe('OfferDetail — one primary action, driven by status', () => {
   });
 });
 
-describe('OfferDetail — submit while the form is dirty', () => {
+describe('OfferDetail - submit while the form is dirty', () => {
   it('is disabled with the reason beside it, and enabled again once saved', async () => {
     const user = userEvent.setup();
     getOffer.mockResolvedValue(offer());
@@ -494,7 +494,7 @@ describe('OfferDetail — submit while the form is dirty', () => {
   });
 });
 
-describe('OfferDetail — documents appear only once accepted', () => {
+describe('OfferDetail - documents appear only once accepted', () => {
   it.each([
     ['draft', { status: 'draft' }],
     ['sent', { status: 'sent', sent_at: AT }],
@@ -527,7 +527,7 @@ describe('OfferDetail — documents appear only once accepted', () => {
   });
 });
 
-describe('OfferDetail — History is a record, so it is closed by default', () => {
+describe('OfferDetail - History is a record, so it is closed by default', () => {
   const entry = (n: number, action = 'created') => ({
     action,
     actor_type: 'user',

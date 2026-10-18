@@ -276,7 +276,7 @@ export function BankQuestionDetailPane({
       {newVersionMode ? (
         <Well className="border border-[var(--accent)]" data-testid="new-version-note">
           <p className="text-[13px] text-foreground">
-            Saving creates version {q.version + 1} as a new draft — this{' '}
+            Saving creates version {q.version + 1} as a new draft - this{' '}
             {STATUS_WORD[q.status].toLowerCase()} version is unchanged.
           </p>
         </Well>
@@ -297,7 +297,7 @@ export function BankQuestionDetailPane({
         <>
           {!isDraft ? (
             <p className="text-[13px] text-muted-foreground">
-              This question is {STATUS_WORD[q.status].toLowerCase()} — only a draft can be edited.
+              This question is {STATUS_WORD[q.status].toLowerCase()} - only a draft can be edited.
               {q.status === 'approved' || q.status === 'retired'
                 ? ' Start a new version to change it.'
                 : ''}

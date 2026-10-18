@@ -46,7 +46,7 @@ afterEach(() => {
   Object.defineProperty(document, 'hidden', { value: false, configurable: true });
 });
 
-describe('useExamProctor — not relaxed (baseline)', () => {
+describe('useExamProctor - not relaxed (baseline)', () => {
   it('auto-submits once the server confirms the threshold is reached', async () => {
     sendIntegrityEvent.mockResolvedValue({
       accepted: true,
@@ -67,7 +67,7 @@ describe('useExamProctor — not relaxed (baseline)', () => {
   });
 });
 
-describe('useExamProctor — PH4-D2 relaxed auto-submit', () => {
+describe('useExamProctor - PH4-D2 relaxed auto-submit', () => {
   it('never auto-submits from the async response alone when max_violations is null', async () => {
     // Before the fix: `1 >= null` is `1 >= 0` in JS, which is true — this
     // reproduces the exact false-positive the type-and-logic fix closes.
@@ -186,7 +186,7 @@ function leaveFullscreen() {
   act(() => { document.dispatchEvent(new Event('fullscreenchange')); });
 }
 
-describe('useExamProctor — nothing is recorded before the attempt has begun', () => {
+describe('useExamProctor - nothing is recorded before the attempt has begun', () => {
   afterEach(() => uninstallFullscreenApi());
 
   it('does not post a tab_blur raised before fullscreen is entered', () => {

@@ -65,7 +65,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('DryRunPanel — before anything has run', () => {
+describe('DryRunPanel - before anything has run', () => {
   it('says it has not run yet, and offers to run it', async () => {
     getSimulation.mockResolvedValue(null);
     renderPanel();
@@ -74,7 +74,7 @@ describe('DryRunPanel — before anything has run', () => {
   });
 });
 
-describe('DryRunPanel — a recorded result', () => {
+describe('DryRunPanel - a recorded result', () => {
   it('shows the status, counts, findings and who ran it', async () => {
     getSimulation.mockResolvedValue(RESULT);
     renderPanel();
@@ -91,7 +91,7 @@ describe('DryRunPanel — a recorded result', () => {
   it('warns when the workflow changed since this run', async () => {
     getSimulation.mockResolvedValue({ ...RESULT, stale: true });
     renderPanel();
-    expect(await screen.findByText(/Stale — the workflow changed since this run/)).toBeTruthy();
+    expect(await screen.findByText(/Stale - the workflow changed since this run/)).toBeTruthy();
   });
 
   it('lists scenarios only once expanded, each with its steps', async () => {

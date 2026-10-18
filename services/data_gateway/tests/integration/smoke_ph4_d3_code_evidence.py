@@ -31,7 +31,7 @@ FAIL: list[str] = []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" — {detail}" if not cond and detail else ""))
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" - {detail}" if not cond and detail else ""))
 
 
 class _FakeTestResult:
@@ -191,7 +191,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://smoke") as c:
-        print("\nPH4-D3 — a coding round with a reference solution, published")
+        print("\nPH4-D3 - a coding round with a reference solution, published")
         r = await c.post("/hr/exams", json={"title": "Coding screen", "kind": "coding",
                                             "allow_retake": True})
         exam = r.json()
@@ -221,7 +221,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.patch(f"/hr/exams/{exam_id}/rounds/{round_id}", json={"status": "published"})
         check("HR publishes the round", r.json().get("status") == "published", r.text[:200])
 
-        print("\nPH4-D3 — three candidates: A and B near-identical, C different")
+        print("\nPH4-D3 - three candidates: A and B near-identical, C different")
         applicant_a, applicant_b, applicant_c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
         async with factory() as db:
             await db.execute(
@@ -265,7 +265,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 )).first()
                 original_scores[aid] = (row[0], row[1])
 
-        print("\nPH4-D3 — the sweep analyses all three and compares them")
+        print("\nPH4-D3 - the sweep analyses all three and compares them")
         # analyse_pending is GLOBAL and batched, by design: it is the
         # platform's background job, not scoped to one exam. On a database
         # with a backlog of other pending attempts -- which is what the full
@@ -314,7 +314,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the pair signal is exactly (A, B), never C",
               pair_attempt_ids == {attempts[applicant_a], attempts[applicant_b]}, str(pair_attempt_ids))
 
-        print("\nPH4-D3 — grading is untouched by analysis")
+        print("\nPH4-D3 - grading is untouched by analysis")
         async with factory() as db:
             for aid, attempt_id in attempts.items():
                 row = (await db.execute(
@@ -324,7 +324,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 check(f"attempt {aid} score/status unchanged after the sweep",
                       (row[0], row[1]) == original_scores[aid], f"{row} vs {original_scores[aid]}")
 
-        print("\nPH4-D3 — evidence, tenant isolation, and audited source reads")
+        print("\nPH4-D3 - evidence, tenant isolation, and audited source reads")
         aid_a = attempts[applicant_a]
         r = await c.get(f"/hr/exams/{exam_id}/attempts/{aid_a}/code-evidence")
         evidence = r.json()
@@ -380,7 +380,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         del app.dependency_overrides[get_current_user]
         app.dependency_overrides[get_hr_company] = lambda: (acting["hr"], acting["company"])
 
-        print("\nPH4-D3 — a confirmed finding changes no status")
+        print("\nPH4-D3 - a confirmed finding changes no status")
         signal_id = pair_signals[0]["id"]
         r = await c.post(
             "/hr/code-integrity-findings",
@@ -403,7 +403,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # here at all (a hand-assigned exam), which is itself the proof: the
         # finding endpoint has no code path that could reach one.
 
-        print("\nPH4-D3 — an injected analyser failure still leaves the attempt graded")
+        print("\nPH4-D3 - an injected analyser failure still leaves the attempt graded")
         applicant_e = uuid.uuid4()
         async with factory() as db:
             await db.execute(
@@ -450,7 +450,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("E's attempt is still submitted and graded despite the failure",
               attempt_row[0] == "submitted" and attempt_row[1] is not None, str(attempt_row))
 
-        print("\nPH4-D3 — analysis disabled is a documented no-op")
+        print("\nPH4-D3 - analysis disabled is a documented no-op")
         applicant_f = uuid.uuid4()
         async with factory() as db:
             await db.execute(
@@ -486,7 +486,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             )
         check("...and no report exists for F while disabled", int(no_report or 0) == 0, str(no_report))
 
-        print("\nPH4-D3 — retention redacts source, deletes evidence, keeps the score")
+        print("\nPH4-D3 - retention redacts source, deletes evidence, keeps the score")
         async with factory() as db:
             dry = await purge(db, retention_days=0, dry_run=True)
             await db.commit()

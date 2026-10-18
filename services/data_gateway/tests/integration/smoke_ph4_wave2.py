@@ -30,7 +30,7 @@ FAIL: list[str] = []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" — {detail}" if not cond and detail else ""))
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" - {detail}" if not cond and detail else ""))
 
 
 SENSITIVE = ("applicants", "enrolments", "stage_transitions", "email_events", "notifications",
@@ -90,7 +90,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             {"id": "communication", "name": "Communication", "weight": 0.4}]
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://smoke") as c:
-        print("\nPH4-O3 — building a branching workflow")
+        print("\nPH4-O3 - building a branching workflow")
         r = await c.post(f"/hr/requisitions/{req}/workflows", json={})
         wf = r.json().get("id") if r.status_code in (200, 201) else None
         check("HR starts a draft", bool(wf), f"{r.status_code} {r.text[:160]}")
@@ -174,7 +174,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("…and the workflow is back as it was",
               [x["id"] for x in sorted(r.json()["rounds"], key=lambda x: x["position"])] == order)
 
-        print("\nPH4-O2 — dry run")
+        print("\nPH4-O2 - dry run")
         before = await counts()
         r = await c.post(f"/hr/workflows/{wf}/simulate")
         sim = r.json() if r.status_code == 200 else {}
@@ -186,7 +186,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                  for s in sc["steps"]}
         check("its synthetic candidates take every branch of the screen",
               {(screen, "pass"), (screen, "fast_track"), (screen, "fail")} <= taken, str(taken))
-        check("every scenario ends at a person — the final decision or a hold",
+        check("every scenario ends at a person - the final decision or a hold",
               {sc["end"] for sc in sim.get("scenarios", [])} <= {"decision", "held"})
         check("errors and warnings are counted apart, and it did not fail",
               sim.get("status") in ("passed", "warnings") and sim.get("errors") == 0, str(sim.get("status")))
@@ -199,7 +199,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 " AND resource_id = :w"), {"w": uuid.UUID(wf)})
         check("the dry run is audited", audited == 1, str(audited))
 
-        print("\nPH4-O6 — review and approval")
+        print("\nPH4-O6 - review and approval")
         r = await c.post(f"/hr/workflows/{wf}/publish")
         check("an unapproved version cannot be published", r.status_code == 409
               and "not been approved" in r.text, f"{r.status_code} {r.text[:160]}")
@@ -246,7 +246,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 " AND action LIKE 'workflow.review.%'"), {"w": uuid.UUID(wf)})
         check("every review action is audited", ev == 4, str(ev))
 
-        print("\nPH4-O3 — branches on real candidates")
+        print("\nPH4-O3 - branches on real candidates")
         from app.workflow_runner import record_result
 
         people: dict[str, uuid.UUID] = {}
@@ -285,12 +285,12 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               o1.action == "advanced" and where.get(people["Fast Fatima"]) == "Final panel", str(o1))
         check("70% takes the pass branch to the tech review",
               where.get(people["Middle Mohan"]) == "Tech review", str(o2))
-        check("30% is routed to the second look — not held, not rejected",
+        check("30% is routed to the second look - not held, not rejected",
               o3.action == "routed" and where.get(people["Low Lakshmi"]) == "Second look review",
               str(o3))
         check("nobody's status became an outcome", statuses <= {"shortlisted"}, str(statuses))
 
-        print("\nPH4-O1 — stage owners, SLAs, exceptions")
+        print("\nPH4-O1 - stage owners, SLAs, exceptions")
         r = await c.put(f"/hr/workflows/{wf}/stages",
                         json={"round_id": second, "owner_user_id": str(hr2), "sla_hours": 1})
         stage = next((s for s in r.json() if s["round_id"] == second), {}) if r.status_code == 200 else {}

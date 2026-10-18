@@ -95,7 +95,7 @@ async def enrich(c: object, cid: uuid.UUID, slug: str, hr_id: uuid.UUID, job_id:
              "st": json.dumps(["Relevant projects", "Clear communication", f"Solid {title} basics"]),
              "cn": json.dumps(["Limited large-scale experience"] if ats < 80 else ["Long notice period"]),
              "rec": rec, "sum": f"{name} scores {ats}/100 for {title} ({level}).",
-             "resume": f"{name} — {level} {title}.", "ts": ago(days=14 - i)},
+             "resume": f"{name} - {level} {title}.", "ts": ago(days=14 - i)},
         )
 
     # ---- exam attempts (only if the company has an exam) ----
@@ -179,7 +179,7 @@ async def enrich(c: object, cid: uuid.UUID, slug: str, hr_id: uuid.UUID, job_id:
     )).all()
     feed = [
         ("applicant_scored", "New applicant scored", "Vivek Iyer scored 91/100 for Backend Engineer.", "/hr/applicants", 6, False),
-        ("interview_completed", "Interview completed", "Karthik Rao finished the avatar interview — 8.6/10.", "/hr/interviews", 11, False),
+        ("interview_completed", "Interview completed", "Karthik Rao finished the avatar interview - 8.6/10.", "/hr/interviews", 11, False),
         ("invite_sent", "Interview invite sent", "Invite sent to Aisha Khan (Frontend Engineer).", "/hr/interviews", 1, True),
     ]
     for (uid_row,) in hr_rows:
@@ -199,7 +199,7 @@ async def main() -> None:
         job_id = (await c.execute(
             text("SELECT id FROM jobs WHERE is_active = true ORDER BY created_at LIMIT 1"))).scalar()
         if job_id is None:
-            print("No active job found — cannot seed interviews. Aborting.")
+            print("No active job found - cannot seed interviews. Aborting.")
             return
         companies = (await c.execute(text(
             "SELECT DISTINCT co.id, co.name, co.slug, "
@@ -214,7 +214,7 @@ async def main() -> None:
             await enrich(c, cid, slug, hr_id, job_id)
             print(f"  enriched: {name} (slug={slug})")
     await eng.dispose()
-    print("\nDone — every HR company now has a populated dashboard.")
+    print("\nDone - every HR company now has a populated dashboard.")
 
 
 if __name__ == "__main__":

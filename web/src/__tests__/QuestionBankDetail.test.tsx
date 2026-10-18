@@ -151,7 +151,7 @@ beforeEach(() => {
   listBankQuestions.mockResolvedValue([DRAFT_Q, APPROVED_V2, RETIRED_V1]);
 });
 
-describe('QuestionBankDetail — the editor is draft-only', () => {
+describe('QuestionBankDetail - the editor is draft-only', () => {
   it('shows a draft read-only first, and is fully editable once Edit is chosen', async () => {
     const user = userEvent.setup();
     const detail: BankQuestionDetail = { question: DRAFT_Q, versions: [DRAFT_Q], used_in_exams: [] };
@@ -172,7 +172,7 @@ describe('QuestionBankDetail — the editor is draft-only', () => {
     const detail: BankQuestionDetail = {
       question: APPROVED_V2,
       versions: [RETIRED_V1, APPROVED_V2],
-      used_in_exams: [{ exam_id: 'exam-1', exam_title: 'Backend Engineer — Round 1' }],
+      used_in_exams: [{ exam_id: 'exam-1', exam_title: 'Backend Engineer - Round 1' }],
     };
     getBankQuestion.mockResolvedValue(detail);
     renderPage('approved');
@@ -242,13 +242,13 @@ describe('QuestionBankDetail — the editor is draft-only', () => {
   });
 });
 
-describe('QuestionBankDetail — version history and usage', () => {
+describe('QuestionBankDetail - version history and usage', () => {
   it('lists every version and switches the selection when one is clicked', async () => {
     const user = userEvent.setup();
     const detail: BankQuestionDetail = {
       question: APPROVED_V2,
       versions: [RETIRED_V1, APPROVED_V2],
-      used_in_exams: [{ exam_id: 'exam-1', exam_title: 'Backend Engineer — Round 1' }],
+      used_in_exams: [{ exam_id: 'exam-1', exam_title: 'Backend Engineer - Round 1' }],
     };
     getBankQuestion.mockResolvedValue({ ...detail, question: APPROVED_V2 });
     renderPage('approved');
@@ -261,7 +261,7 @@ describe('QuestionBankDetail — version history and usage', () => {
 
     // Used-in-exams is shown with a link to the exam.
     expect(
-      screen.getByRole('link', { name: 'Backend Engineer — Round 1' }),
+      screen.getByRole('link', { name: 'Backend Engineer - Round 1' }),
     ).toHaveAttribute('href', '/hr/exams/exam-1');
 
     getBankQuestion.mockResolvedValue({ ...detail, question: RETIRED_V1 });

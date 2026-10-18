@@ -69,7 +69,7 @@ export default function ProposalCard({
     try {
       await commitProposal(proposal);
       setState('done');
-      toast.success(`${proposal.title} — done`);
+      toast.success(`${proposal.title} - done`);
       onCommitted?.(proposal);
     } catch (err) {
       // Stay on 'failed' rather than reverting to 'idle': the user needs to

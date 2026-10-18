@@ -10,7 +10,7 @@ import type { StageHistoryEntry } from '@/api/requisitions';
 export function describeMove(h: StageHistoryEntry): string {
   let what: string;
   if (h.from_status === null) {
-    what = `Applied — ${h.to_status}`;
+    what = `Applied - ${h.to_status}`;
   } else if (h.from_status !== h.to_status) {
     what = `${h.from_status} → ${h.to_status}`;
   } else if (h.to_round) {

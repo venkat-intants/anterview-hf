@@ -120,7 +120,7 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
             className="h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]"
             aria-hidden="true"
           />
-          Stale — the workflow changed since this run.
+          Stale - the workflow changed since this run.
         </Well>
       ) : null}
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted-foreground">
@@ -193,7 +193,7 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
           <ol className="mt-2 divide-y divide-border">
             {simulation.scenarios.map((s) => (
               <li key={s.id} className="py-2 text-[12px] text-[var(--ui-soft)]">
-                <span className="font-medium text-foreground">{s.id}</span> — {s.description} —{' '}
+                <span className="font-medium text-foreground">{s.id}</span> - {s.description} -{' '}
                 {s.end === 'decision'
                   ? 'reaches a decision'
                   : s.end === 'held'
@@ -245,7 +245,7 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
       setMode(null);
       setNote('');
       invalidate();
-      toast.success('Approved — HR can publish it now');
+      toast.success('Approved - HR can publish it now');
     },
     onError: (e) => toast.error(errText(e, 'Could not approve this version')),
   });
@@ -310,7 +310,7 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
             approving lets HR publish this version, and every candidate in this opening is routed
             by the rounds below
             {shortlistSettings(wf.settings).auto
-              ? ' — including applicants above the ATS bar, who will start round 1 without anyone confirming them'
+              ? ' - including applicants above the ATS bar, who will start round 1 without anyone confirming them'
               : ''}
             ; sending it back returns it to HR as a draft to edit.
           </WhatChanges>
@@ -386,7 +386,7 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
                       ) : null}
                       {r.task.kind === 'portfolio' ? (
                         <p className="mt-1.5 text-[12px] text-muted-foreground">
-                          {r.task.min_artifacts}–{r.task.max_artifacts} artifacts &middot;{' '}
+                          {r.task.min_artifacts}-{r.task.max_artifacts} artifacts &middot;{' '}
                           {r.task.allow_files && r.task.allow_links
                             ? 'files or links'
                             : r.task.allow_files
@@ -499,7 +499,7 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
                 renderItem={(h) => (
                   <li className="text-[12.5px] text-[var(--ui-soft)]">
                     {ACTION_WORDS[h.action]}
-                    {h.actor_name ? ` — ${h.actor_name}` : ''}
+                    {h.actor_name ? ` - ${h.actor_name}` : ''}
                     <span className="ml-1.5 text-[12px] text-[var(--ui-faint)]">
                       {new Date(h.at).toLocaleString()}
                     </span>
@@ -531,7 +531,7 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
           />
         ) : (
           <NothingToDecide>
-            This version is {wf.review.review_status.replace('_', ' ')} — nothing for you to decide
+            This version is {wf.review.review_status.replace('_', ' ')} - nothing for you to decide
             right now.
           </NothingToDecide>
         )
@@ -592,9 +592,9 @@ function ShortlistingSection({ settings }: { settings: Record<string, unknown> }
             <p className="font-semibold">This version shortlists automatically.</p>
             <p className="mt-1 text-muted-foreground">
               Applicants who applied through the careers page, scored{' '}
-              <strong className="text-foreground">{barPct ?? '—'}/100 or higher</strong> and
-              confirmed their email start round 1 with no one confirming them. Everyone else —
-              below that score, uploaded by HR, or not yet confirmed — stays in HR&rsquo;s queue to
+              <strong className="text-foreground">{barPct ?? '-'}/100 or higher</strong> and
+              confirmed their email start round 1 with no one confirming them. Everyone else -
+              below that score, uploaded by HR, or not yet confirmed - stays in HR&rsquo;s queue to
               shortlist by hand. The final hire or reject is still a person.
             </p>
           </div>

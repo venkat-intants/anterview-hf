@@ -8,10 +8,10 @@ import { PUBLISHED_REASON, TAKEN_REASON, roundLockReason } from '../lib/examLock
 describe('examLocks', () => {
   it('matches the backend sentences verbatim', () => {
     expect(PUBLISHED_REASON).toBe(
-      'This round is published — its content is fixed. Unpublish it while nobody has ' +
+      'This round is published - its content is fixed. Unpublish it while nobody has ' +
         'taken it, or duplicate it to make changes.',
     );
-    expect(TAKEN_REASON).toBe('This round has been taken — its content is fixed.');
+    expect(TAKEN_REASON).toBe('This round has been taken - its content is fixed.');
   });
 
   it('locks a published round with PUBLISHED_REASON', () => {

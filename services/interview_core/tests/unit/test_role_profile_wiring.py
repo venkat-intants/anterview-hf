@@ -41,8 +41,8 @@ def test_instructions_without_a_profile_keep_the_legacy_structure() -> None:
     stay intact.
     """
     text = _interviewer_instructions("Backend Engineer", "en")
-    assert "Q1  — Ask the candidate to introduce themselves." in text
-    assert "Q7–Q9 — Behavioural questions" in text
+    assert "Q1  - Ask the candidate to introduce themselves." in text
+    assert "Q7-Q9 - Behavioural questions" in text
     assert "[ROLE MODEL]" not in text
     assert "[QUESTION PLAN]" not in text
 
@@ -55,7 +55,7 @@ def test_instructions_with_a_profile_use_the_role_driven_plan() -> None:
     assert "[QUESTION PLAN]" in text
     assert "Mechanical & Manufacturing" in text
     # The fixed split must be gone — it is what made every role look the same.
-    assert "Q7–Q9 — Behavioural questions" not in text
+    assert "Q7-Q9 - Behavioural questions" not in text
 
 
 def test_role_driven_plan_covers_every_enforced_turn() -> None:
@@ -68,7 +68,7 @@ def test_role_driven_plan_covers_every_enforced_turn() -> None:
         "Staff Nurse", "en", role_profile=_profile("Staff Nurse")
     )
     for i in range(1, MAX_CANDIDATE_ANSWERS + 1):
-        assert f"Q{i} —" in text
+        assert f"Q{i} -" in text
 
 
 def test_two_different_roles_produce_different_interviews() -> None:

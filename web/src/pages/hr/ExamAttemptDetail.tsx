@@ -264,7 +264,7 @@ export default function ExamAttemptDetail() {
                 <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
                   <StatCard
                     label="Score"
-                    value={scorePercent !== null ? `${scorePercent}%` : '—'}
+                    value={scorePercent !== null ? `${scorePercent}%` : '-'}
                     delta={passed ? 'passed' : 'did not pass'}
                     trend={passed ? 'up' : 'flat'}
                   />
@@ -273,20 +273,20 @@ export default function ExamAttemptDetail() {
                     value={
                       attempt && attempt.score_raw !== null && attempt.score_max !== null
                         ? `${attempt.score_raw}/${attempt.score_max}`
-                        : '—'
+                        : '-'
                     }
                     delta="raw / max"
                     trend="flat"
                   />
                   <StatCard
                     label="MCQ correct"
-                    value={mcqEntries.length > 0 ? `${mcqCorrect}/${mcqEntries.length}` : '—'}
+                    value={mcqEntries.length > 0 ? `${mcqCorrect}/${mcqEntries.length}` : '-'}
                     delta={`${totalQuestions} question${totalQuestions !== 1 ? 's' : ''}`}
                     trend="flat"
                   />
                   <StatCard
                     label="Pass mark"
-                    value={passThreshold !== null ? `${passThreshold}%` : '—'}
+                    value={passThreshold !== null ? `${passThreshold}%` : '-'}
                     delta="threshold"
                     trend="flat"
                   />
@@ -313,7 +313,7 @@ export default function ExamAttemptDetail() {
                                 </p>
                                 {q && !correct && (
                                   <p className="mt-1 text-[12.5px] text-muted-foreground">
-                                    Correct answer: {q.options[q.correct_index] ?? '—'}
+                                    Correct answer: {q.options[q.correct_index] ?? '-'}
                                   </p>
                                 )}
                               </div>

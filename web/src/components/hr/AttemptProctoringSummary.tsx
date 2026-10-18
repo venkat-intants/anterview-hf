@@ -192,7 +192,7 @@ export default function AttemptProctoringSummary({
         >
           <Info size={13} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span>
-            This timeline is incomplete — some events could not be recorded during the attempt. Read
+            This timeline is incomplete - some events could not be recorded during the attempt. Read
             what follows as a partial record, and not as evidence about the candidate.
           </span>
         </p>
@@ -208,7 +208,7 @@ export default function AttemptProctoringSummary({
             aria-hidden="true"
           />
           <span>
-            Camera proctoring was not enabled for this attempt — presence, multiple-face and gaze
+            Camera proctoring was not enabled for this attempt - presence, multiple-face and gaze
             signals were not measured.
             {otherEventsTotal === 0 ? ' No other proctoring events were recorded either.' : ''}
           </span>
@@ -229,7 +229,7 @@ export default function AttemptProctoringSummary({
           <Info size={13} className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span>
             This round required the camera, and no camera signal was recorded. That can mean the
-            candidate was simply present throughout, or that the camera never started — permission
+            candidate was simply present throughout, or that the camera never started - permission
             declined, or the detector failing to load. This record cannot tell those apart, so
             please do not read it as either.
           </span>
@@ -287,7 +287,7 @@ export default function AttemptProctoringSummary({
                       >
                         {formatTime(e.started_at)}
                         {e.duration_seconds != null
-                          ? ` — lasted ${formatDuration(e.duration_seconds)}`
+                          ? ` - lasted ${formatDuration(e.duration_seconds)}`
                           : ''}
                       </li>
                     ))}
@@ -310,7 +310,7 @@ export default function AttemptProctoringSummary({
           <div className="flex items-center gap-1.5">
             <Info size={12} className="text-muted-foreground" aria-hidden="true" />
             <p className="text-[13px] font-semibold text-foreground">
-              Looked away from the screen — informational only
+              Looked away from the screen - informational only
             </p>
           </div>
           {gazeCount === 0 ? (
@@ -321,14 +321,14 @@ export default function AttemptProctoringSummary({
             <ul className="mt-1 flex flex-col gap-0.5" aria-label="Looked-away occurrences">
               {gazeEvents.map((e, i) => (
                 <li key={`gaze-${i}`} className="font-mono text-[12px] text-muted-foreground">
-                  {formatTime(e.started_at)} — looked away for{' '}
+                  {formatTime(e.started_at)} - looked away for{' '}
                   {formatDuration(e.duration_seconds ?? 0)}
                 </li>
               ))}
             </ul>
           )}
           <p className="mt-1.5 text-[12px] leading-relaxed text-muted-foreground">
-            This alone never ends an exam and is the least reliable signal here — looking away has
+            This alone never ends an exam and is the least reliable signal here - looking away has
             many innocent explanations (thinking, a motor or visual difference, assistive
             technology). It is shown for context, not as evidence.
           </p>
@@ -344,7 +344,7 @@ export default function AttemptProctoringSummary({
           {data.integrity_score !== null ? (
             <>
               Integrity score{' '}
-              <span className="font-mono text-foreground">{data.integrity_score}/100</span> — a
+              <span className="font-mono text-foreground">{data.integrity_score}/100</span> - a
               weighted summary of the events above. It does not decide anything about the candidate;
               HR reviews the timeline.
             </>

@@ -101,7 +101,7 @@ def test_plan_block_lists_every_turn_exactly_once() -> None:
     plans = plan_interview(_p("Site Engineer - Civil"), 10)
     block = render_plan_block(plans)
     for i in range(1, 11):
-        assert f"Q{i} —" in block
+        assert f"Q{i} -" in block
     assert "do not read the plan aloud" in block.lower()
 
 

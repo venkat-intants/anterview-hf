@@ -511,7 +511,7 @@ class ToolSpec(BaseModel):
                 f"tool {self.name!r} is data_class={self.data_class!r} but names "
                 f"role(s) {overreach!r}, which that class does not permit "
                 f"(allowed: {sorted(permitted)}). Either the data class is "
-                f"wrong or this is a privilege widening — change "
+                f"wrong or this is a privilege widening - change "
                 f"DATA_CLASS_ROLES deliberately if the latter."
             )
 
@@ -637,7 +637,7 @@ class CommitSpec(BaseModel):
 
         if carries(v):
             raise ValueError(
-                "a proposal may not change automatic shortlisting — that is a "
+                "a proposal may not change automatic shortlisting - that is a "
                 "human's decision, made in the workflow builder"
             )
         return v

@@ -43,7 +43,7 @@ CANDIDATE_INPUTS: list[str] = [
 
 @pytest.mark.skipif(
     not settings.gemini_api_key,
-    reason="GEMINI_API_KEY not set — skipping live integration test",
+    reason="GEMINI_API_KEY not set - skipping live integration test",
 )
 async def test_real_gemini_3_turn_conversation(capsys: pytest.CaptureFixture[str]) -> None:
     """End-to-end: 3 candidate inputs -> 4 interviewer turns -> closing."""

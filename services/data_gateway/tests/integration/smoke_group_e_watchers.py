@@ -25,7 +25,7 @@ PASS, FAIL = [], []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def main() -> None:  # noqa: PLR0915 — one linear script
@@ -160,7 +160,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
     check("…leaving out the held, the human review, the closed and the other company",
           s is not None and {n for _, n in s.candidates} == {"Asha", "Bala", "Chen"}, str(s))
     check("the alert names the opening and the round",
-          stall is not None and stall.title == "Python Developer — Technical Test pipeline has stalled",
+          stall is not None and stall.title == "Python Developer - Technical Test pipeline has stalled",
           str(stall.title if stall else None))
     check("…and says how many have waited past the threshold",
           stall is not None
@@ -171,7 +171,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
 
     stalled = [x for x in findings if x.watcher == "stalled_applicants"]
     check("stalled applicants are reported per opening, and not for a closed one",
-          [x.title for x in stalled] == ["1 applicant(s) stalled over 10 days — Designer"],
+          [x.title for x in stalled] == ["1 applicant(s) stalled over 10 days - Designer"],
           str([x.title for x in stalled]))
     check("…and nobody in a round or awaiting a person is double-counted there",
           all(n.name not in {"Asha", "Held", "Reviewer"} for n in data.stalled),
@@ -201,7 +201,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
     check("another company's opening is not found", r.status_code == 404, str(r.status_code))
     dash = (await ac.get(f"/hr/requisitions/{py}/dashboard")).json()
     check("the opening's dashboard shows the stall under Needs attention",
-          any(i["title"] == "Python Developer — Technical Test pipeline has stalled"
+          any(i["title"] == "Python Developer - Technical Test pipeline has stalled"
               for i in dash.get("attention", [])), str(dash.get("attention"))[:300])
 
     await ac.aclose()

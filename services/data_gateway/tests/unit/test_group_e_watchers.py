@@ -142,7 +142,7 @@ async def test_attention_can_be_read_for_one_opening(monkeypatch: pytest.MonkeyP
     assert len(everything.items) == 3
     assert one.total == 2
     assert all(any(c.kind == "job" and c.id == str(rid) for c in i.citations) for i in one.items)
-    assert any(i.title == "Python Developer — Technical Test pipeline has stalled"
+    assert any(i.title == "Python Developer - Technical Test pipeline has stalled"
                for i in one.items)
 
 

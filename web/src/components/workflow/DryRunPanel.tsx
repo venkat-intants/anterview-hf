@@ -110,7 +110,7 @@ function ScenarioRow({ scenario }: { scenario: SimulationScenario }) {
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left"
       >
         <span className="min-w-0 truncate text-[12.5px] text-foreground">
-          {scenario.id} — {scenario.description}
+          {scenario.id} - {scenario.description}
         </span>
         <span className="flex shrink-0 items-center gap-2 text-[12px] text-muted-foreground">
           {endLabel}
@@ -139,7 +139,7 @@ function ScenarioRow({ scenario }: { scenario: SimulationScenario }) {
                         : 'held for a person'}
                 </span>
               ) : null}
-              {s.error ? <span className="text-[var(--ui-danger)]"> — {s.error}</span> : null}
+              {s.error ? <span className="text-[var(--ui-danger)]"> - {s.error}</span> : null}
             </li>
           ))}
         </ol>
@@ -217,7 +217,7 @@ export default function DryRunPanel({ workflowId }: { workflowId: string }): JSX
                 className="h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]"
                 aria-hidden="true"
               />
-              Stale — the workflow changed since this run.
+              Stale - the workflow changed since this run.
             </p>
           ) : null}
           <div className="flex flex-wrap items-center gap-2">

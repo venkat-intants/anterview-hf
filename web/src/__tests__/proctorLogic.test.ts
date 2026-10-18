@@ -227,7 +227,7 @@ describe('no frame/landmark data ever leaves this module (camera-proctoring cont
     expect(JSON.stringify(signals).length).toBeLessThan(200);
   });
 
-  it('a ranged event carries only {type, started_at, ended_at} — no signals, frames or metadata', () => {
+  it('a ranged event carries only {type, started_at, ended_at} - no signals, frames or metadata', () => {
     const opened: CondState = { since: T0, openIso: new Date(T0).toISOString() };
     const { emit } = advanceCondition('face_absent', opened, false, T0 + 4000, MIN);
     expect(emit).not.toBeNull();

@@ -74,7 +74,7 @@ describe('CITATION_ROUTES resolve to mounted routes', () => {
     expect(
       matched,
       `CITATION_ROUTES.${kind} points at ${template}, and App.tsx mounts no route ` +
-        `that matches ${url} — the chip is a live link to the NotFound page. Mount a ` +
+        `that matches ${url} - the chip is a live link to the NotFound page. Mount a ` +
         `route that opens that record rather than repointing the citation at a list.`,
     ).not.toBeNull();
   });

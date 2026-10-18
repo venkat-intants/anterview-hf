@@ -150,11 +150,11 @@ class _Bank:
             raise svc.QuestionBankError(409, "Only a submitted question can be reviewed.")
         if actor in (q.created_by_user_id, q.submitted_by_user_id):
             raise svc.QuestionBankError(
-                403, "You wrote or submitted this question — another reviewer must approve it."
+                403, "You wrote or submitted this question - another reviewer must approve it."
             )
         if actor in self.editors.get(qid, set()):
             raise svc.QuestionBankError(
-                403, "You changed this question's content — another reviewer must approve it."
+                403, "You changed this question's content - another reviewer must approve it."
             )
         q.status = "approved"
         self.approved.append(qid)

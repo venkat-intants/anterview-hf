@@ -76,7 +76,7 @@ class OverviewResponse(BaseModel):
     total_candidates: int = Field(..., description="Non-deleted users.")
     total_interviews: int = Field(..., description="Non-deleted sessions.")
     completed_interviews: int
-    completion_rate: float = Field(..., description="Fraction 0.0–1.0; 0 when no interviews.")
+    completion_rate: float = Field(..., description="Fraction 0.0-1.0; 0 when no interviews.")
     avg_composite_score: float | None = Field(None, description="Rounded to 2 dp; null if none.")
     avg_duration_seconds: float | None = Field(None, description="Rounded to 1 dp; null if none.")
     interviews_today: int

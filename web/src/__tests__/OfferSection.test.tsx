@@ -96,7 +96,7 @@ beforeEach(() => {
   listOfferTemplates.mockResolvedValue([TEMPLATE]);
 });
 
-describe('OfferSection — create only once hired', () => {
+describe('OfferSection - create only once hired', () => {
   it('hides "Create offer" for a candidate who is not yet a hire', async () => {
     renderSection('interviewed');
     await screen.findByText(/An offer can be created once this application is recorded as a hire\./);
@@ -154,7 +154,7 @@ describe('OfferSection — create only once hired', () => {
   });
 });
 
-describe('OfferSection — the list', () => {
+describe('OfferSection - the list', () => {
   it('links each offer to its detail page', async () => {
     listEnrolmentOffers.mockResolvedValue([OFFER]);
     renderSection('hired');

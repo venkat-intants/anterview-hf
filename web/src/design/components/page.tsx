@@ -516,7 +516,7 @@ export function DataList({ items, columns = 2, className }: DataListProps): JSX.
         <div key={i} className="min-w-0">
           <dt className="text-[12.5px] font-medium text-muted-foreground">{item.label}</dt>
           <dd className="mt-0.5 break-words text-[14.5px] text-foreground">
-            {item.value === undefined || item.value === null || item.value === '' ? '—' : item.value}
+            {item.value === undefined || item.value === null || item.value === '' ? '-' : item.value}
           </dd>
         </div>
       ))}

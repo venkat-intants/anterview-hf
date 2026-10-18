@@ -55,7 +55,7 @@ function renderShell(path: string, roles: string[]) {
   );
 }
 
-describe('AppShell — candidate', () => {
+describe('AppShell - candidate', () => {
   it('hides the top-bar New interview button on the dashboard', async () => {
     renderShell('/dashboard', ['candidate']);
     await screen.findByRole('navigation', { name: 'Primary' });

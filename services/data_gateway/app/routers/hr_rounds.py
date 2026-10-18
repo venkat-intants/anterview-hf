@@ -684,7 +684,7 @@ def _require_section_kind(sec: ExamSection, expected: str) -> None:
     if sec.kind != expected:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"This is a {sec.kind} section — expected {expected}.",
+            detail=f"This is a {sec.kind} section - expected {expected}.",
         )
 
 

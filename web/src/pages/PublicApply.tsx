@@ -180,7 +180,7 @@ function SeedPanel({
       </div>
 
       <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
-        Development build only — this panel is not in a production bundle. Each CV is sent
+        Development build only - this panel is not in a production bundle. Each CV is sent
         as its own application with a name guessed from the filename and a
         {' '}<code className="text-[var(--ui-soft)]">@seed.example.com</code> address, so nothing here can
         email a real person. Sent one at a time: the endpoint allows six a minute and this
@@ -765,7 +765,7 @@ export default function PublicApply(): JSX.Element {
         if (/too many requests/i.test(message)) {
           setSeedRows((prev) =>
             prev.map((r, j) =>
-              j === i ? { ...r, status: 'waiting', detail: 'rate limited — waiting' } : r,
+              j === i ? { ...r, status: 'waiting', detail: 'rate limited - waiting' } : r,
             ),
           );
           await new Promise((resolve) => setTimeout(resolve, 61_000));

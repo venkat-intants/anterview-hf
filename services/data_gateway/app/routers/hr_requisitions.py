@@ -1051,7 +1051,7 @@ async def set_requisition_status(
                     "unresolved": pending,
                     "message": (
                         f"{pending} candidate(s) are still in this opening. "
-                        "Decide on each, or close anyway — they stay in the "
+                        "Decide on each, or close anyway - they stay in the "
                         "decision queue either way and are never rejected "
                         "automatically."
                     ),
@@ -1758,7 +1758,7 @@ class JdContentIn(BaseModel):
             return None
         cleaned = [" ".join(v.split())[:300] for v in value if v and v.strip()]
         if len(cleaned) > 60:
-            raise ValueError("that is more than 60 items — trim the list")
+            raise ValueError("that is more than 60 items - trim the list")
         return cleaned
 
 

@@ -71,7 +71,7 @@ async def main() -> None:
             ]
             candidate_turns = sum(1 for t in turns if t["role"] == "candidate")
             if candidate_turns < 2:
-                print(f"  SKIP {sid} — only {candidate_turns} candidate answer(s).")
+                print(f"  SKIP {sid} - only {candidate_turns} candidate answer(s).")
                 continue
 
             job_title = job[0] if job else "the role"

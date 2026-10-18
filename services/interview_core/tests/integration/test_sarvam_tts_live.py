@@ -39,7 +39,7 @@ async def test_sarvam_tts_live_english() -> None:
       4. The first 4 bytes are ``b"RIFF"`` — confirming WAV format.
     """
     if not settings.sarvam_api_key:
-        pytest.skip("SARVAM_API_KEY not set — skipping live Sarvam TTS test")
+        pytest.skip("SARVAM_API_KEY not set - skipping live Sarvam TTS test")
 
     adapter = SarvamTTSAdapter(
         api_key=settings.sarvam_api_key,
@@ -68,7 +68,7 @@ async def test_sarvam_tts_live_english() -> None:
         )
     except TTSError as exc:
         pytest.fail(
-            f"Sarvam TTS returned an error — "
+            f"Sarvam TTS returned an error - "
             f"status={exc.status}, body={exc.body!r}. "
             "Check request shape and API key."
         )

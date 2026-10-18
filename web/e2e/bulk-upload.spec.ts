@@ -56,13 +56,13 @@ test.describe('bulk upload', () => {
 
     // ── The panel follows the batch, naming the opening it is filing into ────
     const panel = page.getByText(
-      new RegExp(`(Processing upload|Upload finished) — ${opening.title}`),
+      new RegExp(`(Processing upload|Upload finished) - ${opening.title}`),
     );
     await expect(panel).toBeVisible();
 
     // Reading and scoring happen in the reconciler; run it rather than wait.
     await runBackgroundPasses(request);
-    await expect(page.getByText(`Upload finished — ${opening.title}`)).toBeVisible({
+    await expect(page.getByText(`Upload finished - ${opening.title}`)).toBeVisible({
       timeout: 60_000,
     });
     await expect(page.getByText('4 of 4 files read')).toBeVisible();

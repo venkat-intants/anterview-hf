@@ -128,7 +128,7 @@ function QuestionRow({
           <span>
             {question.answer_count}{' '}
             {question.answer_count === 1 ? 'applicant has' : 'applicants have'} answered this, so
-            the wording is fixed — changing it would rewrite what they were asked. Retire it and add
+            the wording is fixed - changing it would rewrite what they were asked. Retire it and add
             a new one instead; their answers stay on file.
           </span>
         </p>

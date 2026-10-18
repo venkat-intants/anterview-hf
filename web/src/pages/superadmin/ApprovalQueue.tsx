@@ -180,7 +180,7 @@ function Row({ row }: { row: PendingApproval }): JSX.Element {
             {reject.isPending
               ? 'Sending back…'
               : rejecting
-                ? 'Confirm — send back'
+                ? 'Confirm - send back'
                 : 'Request changes'}
           </Button>
         </div>

@@ -140,7 +140,7 @@ async def call_gemini_json(
     # when the real answer is that nothing was configured.
     if not (api_key or "").strip():
         raise error_cls(
-            "No GEMINI_API_KEY is configured — set one, or set LLM_PROVIDER=groq."
+            "No GEMINI_API_KEY is configured - set one, or set LLM_PROVIDER=groq."
         )
 
     url = f"{api_base_url}/models/{model}:generateContent"

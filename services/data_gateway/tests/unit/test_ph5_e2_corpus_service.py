@@ -207,7 +207,7 @@ async def test_the_upload_audit_row_carries_facts_and_neither_the_title_nor_the_
     db = ingest_session()
     install_store(monkeypatch, corpus, StoreSpy(db))
 
-    await ingest(db, title="Sensitive — Priya's grievance handbook", filename="priya-notes.txt")
+    await ingest(db, title="Sensitive - Priya's grievance handbook", filename="priya-notes.txt")
 
     assert len(db.added) == 1
     entry = db.added[0]
@@ -719,7 +719,7 @@ def test_the_only_place_a_corpus_embedding_lives_is_the_chunk_row() -> None:
         for match in re.finditer(r"(?:UPDATE|INSERT INTO)\s+(\w+)[^;\"']*embedding", body):
             hits += 1
             assert match.group(1) == "corpus_chunks", f"{name} writes an embedding to {match.group(1)}"
-    assert hits >= 2, "the embedding writes moved — re-verify what a delete has to purge"
+    assert hits >= 2, "the embedding writes moved - re-verify what a delete has to purge"
 
 
 # ---------------------------------------------------------------------------

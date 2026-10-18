@@ -251,8 +251,8 @@ beforeEach(() => {
   });
 });
 
-describe('Applicants — bulk upload', () => {
-  it('files the batch under the chosen opening — and nothing else', async () => {
+describe('Applicants - bulk upload', () => {
+  it('files the batch under the chosen opening - and nothing else', async () => {
     // E5: the opening is a real requisition id. A typed role is not an opening,
     // so the role, level and job description are the opening's, not the form's.
     const user = userEvent.setup();
@@ -327,7 +327,7 @@ describe('Applicants — bulk upload', () => {
 
     const panel = await screen.findByTestId('upload-progress');
     expect(getUploadProgress).toHaveBeenCalledWith('batch-1');
-    expect(within(panel).getByText(/Processing upload — Staff Nurse/)).toBeInTheDocument();
+    expect(within(panel).getByText(/Processing upload - Staff Nurse/)).toBeInTheDocument();
     expect(within(panel).getByText('2 of 3 files read')).toBeInTheDocument();
     expect(within(panel).getByText(/1 waiting · 1 added · 1 being scored/)).toBeInTheDocument();
     expect(within(panel).getByText('scan.pdf')).toBeInTheDocument();
@@ -335,7 +335,7 @@ describe('Applicants — bulk upload', () => {
   });
 });
 
-describe('Applicants — list', () => {
+describe('Applicants - list', () => {
   it('shows each applicant with their role and ATS score', async () => {
     renderPage();
 
@@ -369,7 +369,7 @@ describe('Applicants — list', () => {
   });
 });
 
-describe('Applicants — search and filter', () => {
+describe('Applicants - search and filter', () => {
   it('sends the search phrase to the server, not to a client-side filter', async () => {
     // Hybrid pgvector + full-text ranking lives in data_gateway. Filtering the
     // already-fetched page here would drop every semantic match.
@@ -423,7 +423,7 @@ describe('Applicants — search and filter', () => {
   });
 });
 
-describe('Applicants — search-index backfill', () => {
+describe('Applicants - search-index backfill', () => {
   it('stays out of the way when every resume is already indexed', async () => {
     const { client } = renderPage();
 
@@ -467,13 +467,13 @@ describe('Applicants — search-index backfill', () => {
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
-        'Some resumes could not be indexed — try again shortly.',
+        'Some resumes could not be indexed - try again shortly.',
       ),
     );
   });
 });
 
-describe('Applicants — per-applicant actions', () => {
+describe('Applicants - per-applicant actions', () => {
   it('acts on the applicant whose row was opened', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -623,7 +623,7 @@ describe('Applicants — per-applicant actions', () => {
 // with no fallback, so held, interviewed and hired applicants rendered an EMPTY
 // badge. The server sends six. `held` matters most: it is the D-05 state —
 // below a round threshold, awaiting a person — and the one that must be seen.
-describe('Applicants — status badges', () => {
+describe('Applicants - status badges', () => {
   it.each([
     ['held', 'Held'],
     ['interviewed', 'Interviewed'],
@@ -652,7 +652,7 @@ describe('Applicants — status badges', () => {
 // PH5-E1. `/hr/applicants/{id}` is CITATION_ROUTES.applicant AND .scorecard, and
 // the href every evidence-graph node carries (with ?enrolment= and a #section).
 // App.tsx mounted only the list, so all of those opened the 404 page.
-describe('Applicants — applicant citation deep link', () => {
+describe('Applicants - applicant citation deep link', () => {
   it('opens the candidate drawer on the person named in the URL', async () => {
     renderPage('/hr/applicants/ap-2');
     expect(await screen.findByRole('dialog')).toHaveTextContent('drawer ap-2');
@@ -687,7 +687,7 @@ describe('Applicants — applicant citation deep link', () => {
   });
 });
 
-describe('Applicants — the open applicant survives a round trip (QA ANTHIRE-004)', () => {
+describe('Applicants - the open applicant survives a round trip (QA ANTHIRE-004)', () => {
   it('reopens the applicant named in ?view= when the page loads, e.g. on Back from the full profile', async () => {
     renderPage('/hr/applicants?view=ap-1');
     expect(await screen.findByLabelText('Bhavya Nair applicant details')).toBeInTheDocument();
@@ -716,7 +716,7 @@ describe('Applicants — the open applicant survives a round trip (QA ANTHIRE-00
   });
 });
 
-describe('Applicants — View CV beside the score', () => {
+describe('Applicants - View CV beside the score', () => {
   it('offers the CV when one is stored', async () => {
     listApplicants.mockResolvedValue([{ ...SCORED, has_cv: true }]);
     renderPage('/hr/applicants?view=ap-1');

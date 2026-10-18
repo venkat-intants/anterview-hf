@@ -53,7 +53,7 @@ describe('useDialogFocus', () => {
     await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  it('traps Tab inside the dialog — wraps last back to first', async () => {
+  it('traps Tab inside the dialog - wraps last back to first', async () => {
     const user = userEvent.setup();
     render(<Harness />);
     await user.click(screen.getByRole('button', { name: 'Open dialog' }));
@@ -66,7 +66,7 @@ describe('useDialogFocus', () => {
     expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
   });
 
-  it('traps Shift+Tab inside the dialog — wraps first back to last', async () => {
+  it('traps Shift+Tab inside the dialog - wraps first back to last', async () => {
     const user = userEvent.setup();
     render(<Harness />);
     await user.click(screen.getByRole('button', { name: 'Open dialog' }));

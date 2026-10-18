@@ -241,7 +241,7 @@ SELECT e.id,
        -- invite does not move the enrolment status. The invitation existed only
        -- in an email, so a candidate who missed it had no way to learn of it.
        --
-       -- 'invited' only — deliberately. A 'consumed' invite means the interview
+       -- 'invited' only - deliberately. A 'consumed' invite means the interview
        -- has already been started, and offering to start it again from here
        -- would be a second, misleading entry point; that path resumes from the
        -- candidate's own link or resume cookie.
@@ -289,7 +289,7 @@ SELECT e.id,
   -- safe to re-enter mid-way: /exam/start resumes the attempt already open and
   -- keeps its original deadline, so a fresh link cannot reset anyone's clock.
   -- The round must be published, the exam not closed, and a scheduled round
-  -- inside its join window — ALL the gates the exam page applies, so the page
+  -- inside its join window - ALL the gates the exam page applies, so the page
   -- never offers a button that leads nowhere. That last one was missing, and
   -- the cost of missing it is not cosmetic: pressing the button rotates the
   -- token, and only the HMAC is stored, so an offer the exam page then refuses
@@ -896,7 +896,7 @@ async def mint_my_exam_link(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 "This assessment is already open in another tab. Opening it here "
-                "will close it there — your answers so far and your time remaining "
+                "will close it there - your answers so far and your time remaining "
                 "are unaffected."
             ),
         )

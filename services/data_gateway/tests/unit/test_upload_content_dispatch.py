@@ -240,7 +240,7 @@ class TestDispatchFollowsContent:
         openpyxl = pytest.importorskip("openpyxl")
 
         def fail_if_called(*_a: object, **_kw: object) -> object:
-            pytest.fail("load_workbook was reached — a .docx got past the predicate")
+            pytest.fail("load_workbook was reached - a .docx got past the predicate")
 
         monkeypatch.setattr(openpyxl, "load_workbook", fail_if_called)
 
@@ -436,7 +436,7 @@ class TestNoLegitimateUploadBreaks:
         # rather than failing the decode. Without this, a change away from
         # errors="replace" would not be caught here (security review 2026-10-06).
         assert "\ufffd" in rows[1][0], (
-            f"expected a replacement character in {rows[1][0]!r} — if the decode "
+            f"expected a replacement character in {rows[1][0]!r} - if the decode "
             "now raises or succeeds exactly, this file's handling has changed"
         )
 
@@ -477,7 +477,7 @@ class TestSpreadsheetXmlHardening:
         openpyxl_xml = pytest.importorskip("openpyxl.xml")
 
         assert openpyxl_xml.DEFUSEDXML is True, (
-            "openpyxl's XML hardening is off in this environment — install "
+            "openpyxl's XML hardening is off in this environment - install "
             "defusedxml, and check OPENPYXL_DEFUSEDXML is unset or exactly 'True'"
         )
 
@@ -512,7 +512,7 @@ class TestSpreadsheetXmlHardening:
 
         flat = "".join(c for row in rows for c in row)
         pytest.fail(
-            f"the sheet parsed and returned {len(flat)} characters — entity "
+            f"the sheet parsed and returned {len(flat)} characters - entity "
             "expansion is enabled, so openpyxl is not running defused"
         )
 
@@ -556,7 +556,7 @@ class TestTheHardeningCheckItself:
 
         assert "DEFUSEDXML" in str(exc.value)
         assert "OPENPYXL_DEFUSEDXML" in str(exc.value), (
-            "the message must name the env var — that is the failure mode an "
+            "the message must name the env var - that is the failure mode an "
             "`import defusedxml` check would have missed entirely, because "
             "OPENPYXL_DEFUSEDXML=true (lowercase) disables the hardening with the "
             "package installed and correct"
@@ -643,7 +643,7 @@ class TestTheHardeningCheckItself:
             if isinstance(stmt, ast.Try) and calls(stmt, "assert_xlsx_parser_hardened")
         ]
         assert guarded, (
-            "the boot check is not inside a try/except — an unhandled raise here "
+            "the boot check is not inside a try/except - an unhandled raise here "
             "takes authentication down for the platform over a spreadsheet env var"
         )
 
@@ -850,6 +850,6 @@ class TestTheRoutesMapTheOutcomesCorrectly:
         # modules for unrelated reasons, so the assertion passed whatever happened
         # to the mapping (security review 2026-10-06). Match the expression.
         assert '500 if "not installed" in str(exc)' in source.replace("'", '"'), (
-            f"{module} no longer maps a missing dependency to a 500 — a server-side "
+            f"{module} no longer maps a missing dependency to a 500 - a server-side "
             "fault would be reported to the uploader as their 400"
         )

@@ -52,7 +52,7 @@ VALID_STATUSES: frozenset[str] = frozenset(
 TERMINAL_STATUSES: frozenset[str] = frozenset({"hired", "rejected"})
 
 HIRE_UNDONE_ONLY_BY_REJECTION = (
-    "A hire is undone only by recording a rejection, with a reason — from the "
+    "A hire is undone only by recording a rejection, with a reason - from the "
     "decision queue. It cannot be moved back into the pipeline."
 )
 
@@ -799,7 +799,7 @@ async def split_requisition(
             # Usually a stale page: someone was moved or merged meanwhile.
             raise ValueError(
                 f"{len(chosen) - len(moving)} of those candidates are not in this opening"
-                " — reload the page and choose again"
+                " - reload the page and choose again"
             )
     else:
         moving = [r for r in rows if normalise_title(r["target_job_title"] or "") in wanted]
@@ -807,7 +807,7 @@ async def split_requisition(
         raise ValueError("none of those titles have candidates in this opening")
     if len(moving) == len(rows):
         raise ValueError(
-            "that would move every candidate out — rename the opening instead of splitting it"
+            "that would move every candidate out - rename the opening instead of splitting it"
         )
 
     running = sorted({r["full_name"] for r in moving if r["workflow_id"] is not None})
@@ -954,7 +954,7 @@ async def merge_requisitions(
     if has_workflow:
         raise ValueError(
             f"'{titles[source_id]}' has its own hiring workflow. Its candidates are assessed "
-            "against it, so merging would change what they are assessed on — merge the other "
+            "against it, so merging would change what they are assessed on - merge the other "
             "way round, or decide on them first"
         )
     both = (

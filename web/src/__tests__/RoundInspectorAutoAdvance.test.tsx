@@ -77,7 +77,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('RoundInspector — the per-round auto-advance toggle', () => {
+describe('RoundInspector - the per-round auto-advance toggle', () => {
   it('shows the workflow default as its own third state, not as "automatic"', () => {
     renderInspector(round({ auto_advance: null }));
     expect(select().value).toBe('inherit');
@@ -91,7 +91,7 @@ describe('RoundInspector — the per-round auto-advance toggle', () => {
     expect(select().value).toBe(expected);
   });
 
-  it('patches null — not false — when HR goes back to the workflow default', async () => {
+  it('patches null - not false - when HR goes back to the workflow default', async () => {
     // The distinction the tri-state exists for: "no opinion" must not be
     // written as "hold", or changing the workflow default would stop reaching
     // this round.
@@ -110,7 +110,7 @@ describe('RoundInspector — the per-round auto-advance toggle', () => {
   });
 });
 
-describe('RoundInspector — what the hold copy promises', () => {
+describe('RoundInspector - what the hold copy promises', () => {
   // Each clause below is a claim about workflow_runner. If one is removed there,
   // this test is the thing that says so.
   it('promises the notification the runner now sends', () => {

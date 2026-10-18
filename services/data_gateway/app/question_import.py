@@ -185,7 +185,7 @@ log = structlog.get_logger(__name__)
 
 #: The one sentence every unreadable-file path answers with. Written once because
 #: it was written three times, and two of those were a copy of the first.
-_UNREADABLE = "Could not read that file — is it a valid .xlsx or .csv?"
+_UNREADABLE = "Could not read that file - is it a valid .xlsx or .csv?"
 
 #: An OOXML package starts with the local-file-header magic of a zip, AT OFFSET 0.
 #: Offset 0 matters: ``zipfile`` finds the end-of-central-directory record by
@@ -373,7 +373,7 @@ def assert_xlsx_parser_hardened() -> None:
         raise RuntimeError(
             "openpyxl is installed but its XML hardening is OFF "
             "(openpyxl.xml.DEFUSEDXML is False), so uploaded .xlsx files would be "
-            "parsed with entity expansion enabled — a kilobyte of billion-laughs "
+            "parsed with entity expansion enabled - a kilobyte of billion-laughs "
             "becomes gigabytes of heap. Either install defusedxml (pinned in "
             "requirements.txt) or unset OPENPYXL_DEFUSEDXML, which disables the "
             "hardening unless it is exactly the string 'True'."
@@ -403,7 +403,7 @@ def _read_csv(content: bytes) -> list[list[str]]:
         # about their file; the library's text goes to the log.
         log.warning("question_import.csv_unreadable", error=str(exc))
         raise SpreadsheetError(
-            "Could not read that CSV — check for an unclosed quote or a cell "
+            "Could not read that CSV - check for an unclosed quote or a cell "
             "larger than 128 KB."
         ) from exc
 
@@ -585,7 +585,7 @@ def parse_mcq_rows(rows: list[list[str]]) -> tuple[list[dict[str, Any]], list[Ro
         if used > MAX_ROWS:
             errors.append(RowError(
                 rownum,
-                f"stopped after {MAX_ROWS} rows — split the file and import the rest",
+                f"stopped after {MAX_ROWS} rows - split the file and import the rest",
             ))
             break
         prompt = cells[0] if cells else ""

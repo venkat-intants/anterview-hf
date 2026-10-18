@@ -172,7 +172,7 @@ def _refuse_unless_local() -> None:
                  "truncate another. Set both or neither.")
     if not target.endswith(_SMOKE_DB_SUFFIX):
         sys.exit(f"refusing: {target!r} does not end in {_SMOKE_DB_SUFFIX!r}. These smokes drop, "
-                 "recreate and truncate — they run only against a database named as disposable.")
+                 "recreate and truncate - they run only against a database named as disposable.")
 
 
 Result = tuple[str, bool, str, str]
@@ -238,7 +238,7 @@ def _run_ph3() -> None:
             capture_output=True, text=True, check=True, timeout=120,
         )
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        skipped.append(f"smoke_ph3_apply.py — could not create {PH3_DB}: {exc}")
+        skipped.append(f"smoke_ph3_apply.py - could not create {PH3_DB}: {exc}")
         return
 
     env = {**ENV, "DATABASE_URL": PH3_URL, "SMOKE_DATABASE_URL": PH3_URL, "DATABASE_SSL": ""}
@@ -247,9 +247,9 @@ def _run_ph3() -> None:
         cwd=SERVICE_ROOT, env=env, capture_output=True, text=True, timeout=900,
     )
     if proc.returncode != 0:
-        skipped.append(f"smoke_ph3_apply.py — migrating {PH3_DB} failed:\n{proc.stderr[-600:]}")
+        skipped.append(f"smoke_ph3_apply.py - migrating {PH3_DB} failed:\n{proc.stderr[-600:]}")
         return
-    print(f"— {PH3_DB}, created and migrated to head", flush=True)
+    print(f"- {PH3_DB}, created and migrated to head", flush=True)
     _run(["smoke_ph3_apply.py"], env)
 
 
@@ -258,14 +258,14 @@ def _run_scorecard_retry() -> None:
     missing = [k for k, v in S3_FOR_SCORECARDS.items() if not v]
     if missing:
         skipped.append(
-            "smoke_group_a_scorecard_retry.py — object storage is not configured "
+            "smoke_group_a_scorecard_retry.py - object storage is not configured "
             f"({', '.join(missing)} unset). See README.md."
         )
         return
     for what, url in (("S3_ENDPOINT_URL", S3_FOR_SCORECARDS["S3_ENDPOINT_URL"]),
                       ("FEEDBACK_BILLING_URL", FEEDBACK_BILLING_URL)):
         if not _is_local(url):
-            skipped.append(f"smoke_group_a_scorecard_retry.py — {what} is not local; "
+            skipped.append(f"smoke_group_a_scorecard_retry.py - {what} is not local; "
                            "smokes only write to local services.")
             return
     try:
@@ -273,11 +273,11 @@ def _run_scorecard_retry() -> None:
             r.read()
     except OSError as exc:
         skipped.append(
-            f"smoke_group_a_scorecard_retry.py — no feedback_billing at "
+            f"smoke_group_a_scorecard_retry.py - no feedback_billing at "
             f"{FEEDBACK_BILLING_URL} ({exc}). See README.md."
         )
         return
-    print(f"— feedback_billing answering at {FEEDBACK_BILLING_URL}", flush=True)
+    print(f"- feedback_billing answering at {FEEDBACK_BILLING_URL}", flush=True)
     _run(["smoke_group_a_scorecard_retry.py"],
          {**ENV, "FEEDBACK_BILLING_URL": FEEDBACK_BILLING_URL, **S3_FOR_SCORECARDS})
 
@@ -287,12 +287,12 @@ def _run_wave4() -> None:
     missing = [k for k, v in S3_FOR_DOCUMENTS.items() if not v]
     if missing:
         skipped.append(
-            "smoke_ph4_wave4.py — object storage is not configured "
+            "smoke_ph4_wave4.py - object storage is not configured "
             f"({', '.join(missing)} unset). See README.md."
         )
         return
     if not _is_local(S3_FOR_DOCUMENTS["S3_ENDPOINT"]):
-        skipped.append("smoke_ph4_wave4.py — S3_ENDPOINT is not local; "
+        skipped.append("smoke_ph4_wave4.py - S3_ENDPOINT is not local; "
                        "smokes only upload to a local bucket.")
         return
     _run(["smoke_ph4_wave4.py"], {**ENV, **S3_FOR_DOCUMENTS})
@@ -302,12 +302,12 @@ def main() -> int:
     _refuse_unless_local()
     for name in BACKFILL_PAIR:
         _seeded_at_head()
-        print(f"— seeded before Group B, migrated to head, for {name}", flush=True)
+        print(f"- seeded before Group B, migrated to head, for {name}", flush=True)
         _run([name])
 
     _fresh_database()
     _setup([PY_EXE, "-m", "alembic", "upgrade", "head"], "upgrade to head")
-    print("— clean database at head", flush=True)
+    print("- clean database at head", flush=True)
     _run(sorted(
         p.name for p in HERE.glob("smoke_*.py")
         if p.name not in SPECIAL and p.name not in BACKFILL_PAIR

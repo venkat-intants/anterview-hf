@@ -39,7 +39,7 @@ export default function MetricCell({
   ) : null;
 
   if (!result) {
-    return <span className="text-[13px] text-muted-foreground">—</span>;
+    return <span className="text-[13px] text-muted-foreground">-</span>;
   }
 
   if (result.kind === 'count') {
@@ -78,7 +78,7 @@ export default function MetricCell({
     // anywhere, tooltip included.
     const suppressedTooltip =
       result.suppressed && result.value !== null
-        ? `${result.value.toFixed(1)}% (${result.numerator ?? '—'} of ${result.denominator}), too few to compare reliably`
+        ? `${result.value.toFixed(1)}% (${result.numerator ?? '-'} of ${result.denominator}), too few to compare reliably`
         : undefined;
     return (
       <span
@@ -89,12 +89,12 @@ export default function MetricCell({
           <span className="text-muted-foreground">too few to compare</span>
         ) : (
           <span className="font-semibold text-foreground">
-            {result.value === null ? '—' : `${result.value.toFixed(1)}%`}
+            {result.value === null ? '-' : `${result.value.toFixed(1)}%`}
           </span>
         )}
         <span className="text-muted-foreground">(</span>
         {result.numerator === null ? (
-          <span className="text-muted-foreground">—</span>
+          <span className="text-muted-foreground">-</span>
         ) : numeratorClickable ? (
           <button
             type="button"
@@ -191,7 +191,7 @@ export default function MetricCell({
         <span className="text-muted-foreground">too few to compare</span>
       ) : (
         <span className="font-semibold text-foreground">
-          {result.value === null ? '—' : result.value.toLocaleString('en-IN')}
+          {result.value === null ? '-' : result.value.toLocaleString('en-IN')}
         </span>
       )}
       <span className="text-[12px] text-muted-foreground" title={`n=${result.n}`}>

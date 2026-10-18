@@ -75,7 +75,7 @@ test.describe('a round a person judges', () => {
     const afterHold = await stageHistory(api, enrolment.id);
     expect(
       afterHold.filter((h) => h.to_status === 'rejected'),
-      'a reviewer declining is not a rejection — that is a separate, explicit act',
+      'a reviewer declining is not a rejection - that is a separate, explicit act',
     ).toHaveLength(0);
 
     // ── A person can overrule the hold ──────────────────────────────────────

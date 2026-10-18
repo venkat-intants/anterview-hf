@@ -46,7 +46,7 @@ const column = (name: string): HTMLElement =>
     `section[aria-labelledby="col-${name}"]`,
   ) as HTMLElement;
 
-describe('PipelineBoard — nothing here moves anybody', () => {
+describe('PipelineBoard - nothing here moves anybody', () => {
   it('has no draggable cards', () => {
     // The whole point. A stage is derived from what happened; dropping
     // somebody into a column would either lie or fabricate the event.
@@ -79,7 +79,7 @@ describe('PipelineBoard — nothing here moves anybody', () => {
   });
 });
 
-describe('PipelineBoard — the columns', () => {
+describe('PipelineBoard - the columns', () => {
   it('puts each candidate under where they are', () => {
     renderBoard([
       row({ full_name: 'New Person', status: 'new' }),
@@ -166,7 +166,7 @@ describe('PipelineBoard — the columns', () => {
   });
 });
 
-describe('PipelineBoard — the score on a card', () => {
+describe('PipelineBoard - the score on a card', () => {
   it('shows the furthest score a candidate has reached', () => {
     renderBoard([
       row({ ats_overall: 78, best_exam_percent: 64, interview_score: 7.8 }),

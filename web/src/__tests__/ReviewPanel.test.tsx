@@ -58,7 +58,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('ReviewPanel — draft', () => {
+describe('ReviewPanel - draft', () => {
   it('offers to submit for review, with an optional note', async () => {
     getReview.mockResolvedValue(state());
     submitForReview.mockResolvedValue({
@@ -76,7 +76,7 @@ describe('ReviewPanel — draft', () => {
 
     await waitFor(() => expect(submitForReview).toHaveBeenCalledWith('wf-1', 'Please look soon'));
     expect(onChanged).toHaveBeenCalledWith(expect.objectContaining({ review_status: 'in_review' }));
-    expect(toastSuccess).toHaveBeenCalledWith('Submitted for review — 2 approvers notified');
+    expect(toastSuccess).toHaveBeenCalledWith('Submitted for review - 2 approvers notified');
   });
 
   it('renders a 422 validation-report detail rather than a bare failure', async () => {
@@ -118,7 +118,7 @@ describe('ReviewPanel — draft', () => {
   });
 });
 
-describe('ReviewPanel — changes requested', () => {
+describe('ReviewPanel - changes requested', () => {
   it('shows the reviewer note and still offers to resubmit', async () => {
     getReview.mockResolvedValue(
       state({ review_status: 'changes_requested', note: 'Add a human review round.', reviewed_by_name: 'Priya SA' }),
@@ -130,7 +130,7 @@ describe('ReviewPanel — changes requested', () => {
   });
 });
 
-describe('ReviewPanel — in review', () => {
+describe('ReviewPanel - in review', () => {
   it('is locked, and offers to withdraw', async () => {
     getReview.mockResolvedValue(
       state({ review_status: 'in_review', submitted_by_name: 'Rekha HR' }),
@@ -148,7 +148,7 @@ describe('ReviewPanel — in review', () => {
   });
 });
 
-describe('ReviewPanel — approved', () => {
+describe('ReviewPanel - approved', () => {
   it('offers to reopen, warning it will need approving again', async () => {
     getReview.mockResolvedValue(state({ review_status: 'approved', reviewed_by_name: 'Priya SA' }));
     reopenForEdits.mockResolvedValue(state({ review_status: 'draft' }));
@@ -162,7 +162,7 @@ describe('ReviewPanel — approved', () => {
   });
 });
 
-describe('ReviewPanel — history', () => {
+describe('ReviewPanel - history', () => {
   it('is collapsible and shows who did what, when', async () => {
     getReview.mockResolvedValue(
       state({
@@ -175,8 +175,8 @@ describe('ReviewPanel — history', () => {
     renderPanel();
     await screen.findByText('Draft');
 
-    expect(screen.queryByText(/Submitted for review — Rekha HR/)).toBeNull();
+    expect(screen.queryByText(/Submitted for review - Rekha HR/)).toBeNull();
     await user.click(screen.getByRole('button', { name: /history/i }));
-    expect(screen.getByText(/Submitted for review — Rekha HR/)).toBeTruthy();
+    expect(screen.getByText(/Submitted for review - Rekha HR/)).toBeTruthy();
   });
 });

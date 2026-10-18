@@ -64,7 +64,7 @@ test.describe('an opening with candidates in it', () => {
     ).toBeVisible();
     await expect(
       held.getByText(candidate.name),
-      'and names them — a count alone is not something anyone acts on',
+      'and names them - a count alone is not something anyone acts on',
     ).toBeVisible();
     await expect(
       held.getByText(/Aptitude: \d+% against a \d+% threshold/),

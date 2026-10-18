@@ -43,7 +43,7 @@ export interface NudgeItem {
 }
 
 export const NUDGES: NudgeItem[] = [
-  { id: 'n1', title: 'Polish your STAR answers', body: 'Your problem-solving dipped on the last attempt — try 2 timed drills.', tone: 'amber' },
+  { id: 'n1', title: 'Polish your STAR answers', body: 'Your problem-solving dipped on the last attempt - try 2 timed drills.', tone: 'amber' },
   { id: 'n2', title: 'New role matches you', body: 'Backend Engineer L2 fits your top skills. Take the exam this week.', tone: 'electric' },
   { id: 'n3', title: 'Streak milestone', body: 'One more day of practice unlocks your 6-day streak badge.', tone: 'forest' },
 ];

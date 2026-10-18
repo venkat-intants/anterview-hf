@@ -247,8 +247,8 @@ def _fake_detail_row_with_scorecard() -> dict[str, Any]:
                 "confidence": 8,
             },
             "rationale": {
-                "communication": "Clear and well-structured (8 — exceeds tier).",
-                "technical": "Solid depth on most topics (7 — meets tier).",
+                "communication": "Clear and well-structured (8 - exceeds tier).",
+                "technical": "Solid depth on most topics (7 - meets tier).",
                 "problem_solving": "Structured reasoning with examples (7).",
                 "confidence": "Composed and assertive throughout (8).",
             },
@@ -1070,7 +1070,7 @@ def test_csv_zero_composite_score_renders_as_zero_not_empty() -> None:
     reader = csv_mod.DictReader(io.StringIO(header + line))
     parsed = next(reader)
     assert parsed["composite_score"] == "0.0", (
-        f"Expected '0.0' but got {parsed['composite_score']!r} — "
+        f"Expected '0.0' but got {parsed['composite_score']!r} - "
         "falsy-zero bug: 0.0 or '' evaluates to ''"
     )
 

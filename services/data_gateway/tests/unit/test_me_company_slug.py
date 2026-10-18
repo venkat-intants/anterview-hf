@@ -83,7 +83,7 @@ class TestThePositionalUnpackStaysAligned:
         ]
 
         assert order == sorted(order), (
-            "the SELECT list order changed — c.slug must be the LAST column, after "
+            "the SELECT list order changed - c.slug must be the LAST column, after "
             "notify_login_email and before FROM, or the g(i) indices have shifted"
         )
 
@@ -99,7 +99,7 @@ class TestThePositionalUnpackStaysAligned:
         assert "company_slug" in indices, "company_slug is not built from a g(i)"
         assert indices["company_slug"] == max(indices.values()), (
             f"company_slug is at g({indices['company_slug']}) but the highest index "
-            f"in use is g({max(indices.values())}) — a column was inserted rather "
+            f"in use is g({max(indices.values())}) - a column was inserted rather "
             "than appended, and every index past it now reads the wrong column"
         )
 
@@ -117,7 +117,7 @@ class TestThePositionalUnpackStaysAligned:
 
         assert match is not None, f"{field} is no longer built from a g(i)"
         assert int(match.group(1)) == expected, (
-            f"{field} moved from g({expected}) to g({match.group(1)}) — if that was "
+            f"{field} moved from g({expected}) to g({match.group(1)}) - if that was "
             "deliberate, the SELECT order changed and every sibling index needs "
             "re-checking against it"
         )

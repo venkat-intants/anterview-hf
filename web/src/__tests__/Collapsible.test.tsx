@@ -32,7 +32,7 @@ afterEach(() => {
   delete window.matchMedia;
 });
 
-describe('Collapsible — a real disclosure', () => {
+describe('Collapsible - a real disclosure', () => {
   it('is a button in a heading that names the region it controls', () => {
     render(
       <Collapsible title="Activity" count={3} noun="event">
@@ -143,7 +143,7 @@ describe('Collapsible — a real disclosure', () => {
   });
 });
 
-describe('Collapsible — remembers the choice', () => {
+describe('Collapsible - remembers the choice', () => {
   it('stores it under the key and restores it on the next mount', async () => {
     const user = userEvent.setup();
     const { unmount } = render(
@@ -212,7 +212,7 @@ describe('Collapsible — remembers the choice', () => {
   });
 });
 
-describe('Collapsible — motion', () => {
+describe('Collapsible - motion', () => {
   it('is instant under prefers-reduced-motion: reduce', async () => {
     reduced(true);
     const user = userEvent.setup();

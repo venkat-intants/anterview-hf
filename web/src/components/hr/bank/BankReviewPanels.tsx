@@ -157,7 +157,7 @@ export function SendPanel({
       } else {
         // The expected answer in a one-person company, so it is worded as the
         // rule rather than as a failure.
-        toast.warning('Nothing could be approved by you — another reviewer must');
+        toast.warning('Nothing could be approved by you - another reviewer must');
       }
     },
     onError: (e: unknown) => toast.error(errText(e, 'Could not approve these')),

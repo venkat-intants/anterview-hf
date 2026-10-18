@@ -425,7 +425,7 @@ async def test_post_integrity_consent_checked_before_persist(client: AsyncClient
 
     assert resp.status_code == 403, resp.text
     assert add_calls == [], (
-        "db.add() must NOT be called when consent is absent — "
+        "db.add() must NOT be called when consent is absent - "
         "events must be rejected before any DB write"
     )
 

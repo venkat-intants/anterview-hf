@@ -57,7 +57,7 @@ function createXhrMock(status: number, responseText: string): FakeXhr {
   return mock;
 }
 
-describe('uploadCorpusDocument — multipart shape', () => {
+describe('uploadCorpusDocument - multipart shape', () => {
   const OrigXHR = global.XMLHttpRequest;
 
   beforeEach(() => {
@@ -161,7 +161,7 @@ describe('uploadCorpusDocument — multipart shape', () => {
   });
 });
 
-describe('replaceCorpusDocument — multipart shape', () => {
+describe('replaceCorpusDocument - multipart shape', () => {
   const OrigXHR = global.XMLHttpRequest;
 
   beforeEach(() => {
@@ -240,7 +240,7 @@ describe('reindexCorpusDocument', () => {
         Promise.resolve({
           detail: {
             failure_code: 'not_failed',
-            message: 'This document is not stuck — there is nothing to reindex.',
+            message: 'This document is not stuck - there is nothing to reindex.',
           },
         }),
     } as unknown as Response);
@@ -250,7 +250,7 @@ describe('reindexCorpusDocument', () => {
     await promise.catch((err: unknown) => {
       expect((err as ApiError).status).toBe(409);
       expect(corpusErrorMessage(err, 'fallback')).toBe(
-        'This document is not stuck — there is nothing to reindex.',
+        'This document is not stuck - there is nothing to reindex.',
       );
     });
   });

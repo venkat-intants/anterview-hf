@@ -72,7 +72,7 @@ async def entrypoint(ctx: JobContext) -> None:
         ),
         room=ctx.room,
     )
-    log.info("agent session started — should be speaking now")
+    log.info("agent session started - should be speaking now")
 
 
 if __name__ == "__main__":

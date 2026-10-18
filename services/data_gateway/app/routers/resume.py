@@ -638,7 +638,7 @@ async def list_resumes(
     description=(
         "Returns metadata for the currently active resume version, or null when "
         "no resume has been uploaded yet. 'No resume on file' is a normal empty "
-        "state — not an error — so this returns 200/null rather than 404 (which "
+        "state - not an error - so this returns 200/null rather than 404 (which "
         "would surface as a console/network error in the browser)."
     ),
 )
@@ -739,7 +739,7 @@ async def set_current_resume(
     description=(
         "Deletes the specified resume version from the database AND performs a "
         "best-effort deletion of the corresponding S3 object (DPDP Act 2023 "
-        "§17 right-to-erasure requirement — personal data must be removed from "
+        "§17 right-to-erasure requirement - personal data must be removed from "
         "all storage tiers). "
         "If the S3 deletion fails the DB deletion still completes and the error "
         "is logged; a future cleanup job can sweep unreferenced objects. "

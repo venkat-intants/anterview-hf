@@ -29,7 +29,7 @@ describe('sameOriginUrl', () => {
   });
 });
 
-describe('sameOriginUrl — forms that must never pass', () => {
+describe('sameOriginUrl - forms that must never pass', () => {
   it.each([
     ['a javascript: URL', 'javascript:alert(1)'],
     ['userinfo naming our host', `https://${window.location.host}@evil.example.com/offer`],

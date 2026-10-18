@@ -108,7 +108,7 @@ describe('the contract', () => {
   });
 });
 
-describe('step 1 — role basics', () => {
+describe('step 1 - role basics', () => {
   it('opens on step 1 with the title focused, and one primary: Continue', async () => {
     renderList();
     const dialog = await openDialog();
@@ -170,7 +170,7 @@ describe('Back never loses input', () => {
   });
 });
 
-describe('step 2 — budget, all four or none', () => {
+describe('step 2 - budget, all four or none', () => {
   async function toBudget() {
     const user = userEvent.setup();
     renderList();
@@ -185,7 +185,7 @@ describe('step 2 — budget, all four or none', () => {
     const user = await toBudget();
     await user.click(continueBtn());
     expect(await screen.findByTestId('new-opening-step-review')).toBeTruthy();
-    expect(screen.getByText('Not set — add it in Setup')).toBeTruthy();
+    expect(screen.getByText('Not set - add it in Setup')).toBeTruthy();
   });
 
   it('an amount alone is refused, with the missing parts named', async () => {
@@ -226,7 +226,7 @@ describe('step 2 — budget, all four or none', () => {
   });
 });
 
-describe('step 3 — review and create', () => {
+describe('step 3 - review and create', () => {
   it('creates with only what was entered, then lands on the new opening\'s Setup tab', async () => {
     const user = userEvent.setup();
     renderList();

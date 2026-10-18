@@ -76,7 +76,7 @@ function ExcerptPane({
           one. Said inside the pane, where the missing code would have been. */}
       {unavailable && blocks.length === 0 ? (
         <p className="px-2.5 py-6 text-[12px] leading-relaxed text-[var(--ui-faint)]">
-          This submission cannot be lined up against the other one — the two were fingerprinted by
+          This submission cannot be lined up against the other one - the two were fingerprinted by
           different versions of the comparison, so there is nothing to highlight. Re-run the
           analysis for this attempt to compare them. The counts above still stand.
         </p>
@@ -252,7 +252,7 @@ export default function CodeSimilarityCompare({
           ) : null}
 
           <p className="mb-3 font-mono text-[12px] text-[var(--ui-faint)]">
-            containment {thisContainment != null ? pct(thisContainment) : '—'}
+            containment {thisContainment != null ? pct(thisContainment) : '-'}
             {otherContainment != null ? ` / ${pct(otherContainment)}` : ''} · jaccard{' '}
             {pct(signal.jaccard)} · {signal.shared_fingerprints} shared fingerprints
           </p>
@@ -290,7 +290,7 @@ export default function CodeSimilarityCompare({
               {matchedRegions.length === 0 && !otherExcerpt.regions_unavailable ? (
                 <p className="mt-2 text-[12px] text-[var(--ui-faint)]">
                   {signal.reference_kind === 'reference_solution'
-                    ? 'Matched line ranges are not available for a reference-solution comparison — see the raw counts above.'
+                    ? 'Matched line ranges are not available for a reference-solution comparison - see the raw counts above.'
                     : 'No matched line ranges could be located for this pair.'}
                 </p>
               ) : null}
@@ -320,7 +320,7 @@ export default function CodeSimilarityCompare({
             </fieldset>
             <label className="block">
               <span className="text-[12px] text-[var(--ui-soft)]">
-                Rationale (required, {FINDING_RATIONALE_MIN}–{FINDING_RATIONALE_MAX} characters)
+                Rationale (required, {FINDING_RATIONALE_MIN}-{FINDING_RATIONALE_MAX} characters)
               </span>
               <textarea
                 value={rationale}

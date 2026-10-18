@@ -95,7 +95,7 @@ async def call_groq_json(
     # message needed to say.
     if not (api_key or "").strip():
         raise error_cls(
-            "No GROQ_API_KEY is configured — set one, or set LLM_PROVIDER=gemini."
+            "No GROQ_API_KEY is configured - set one, or set LLM_PROVIDER=gemini."
         )
 
     url = f"{api_base_url.rstrip('/')}/chat/completions"

@@ -134,7 +134,7 @@ async def run_multiturn() -> int:
 
             if finish_reason == "MAX_TOKENS":
                 msg = (
-                    f"turn {turn_idx}: finishReason=MAX_TOKENS — "
+                    f"turn {turn_idx}: finishReason=MAX_TOKENS - "
                     f"model spent budget on thoughts; raise GEMINI_MAX_TOKENS"
                 )
                 print(f"FAIL: {msg}", file=sys.stderr)
@@ -160,7 +160,7 @@ async def run_multiturn() -> int:
         return 1
 
     print("-" * 78)
-    print("RESULT: PASS — gemini-2.5-flash multi-turn works on free tier.")
+    print("RESULT: PASS - gemini-2.5-flash multi-turn works on free tier.")
     return 0
 
 

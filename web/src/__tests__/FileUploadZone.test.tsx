@@ -57,7 +57,7 @@ describe('FileUploadZone', () => {
         accept="application/pdf"
         maxBytes={MAX_BYTES}
         onUpload={onUpload}
-        existingFileLabel="Resume on file — upload a new one to replace it"
+        existingFileLabel="Resume on file - upload a new one to replace it"
       />,
     );
     expect(screen.getByText(/resume on file/i)).toBeInTheDocument();
@@ -164,7 +164,7 @@ describe('FileUploadZone', () => {
     });
   });
 
-  it('drop zone is keyboard accessible — has tabIndex 0 and can receive focus', () => {
+  it('drop zone is keyboard accessible - has tabIndex 0 and can receive focus', () => {
     const onUpload = vi.fn();
     render(
       <FileUploadZone

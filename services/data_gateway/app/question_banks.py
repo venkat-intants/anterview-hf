@@ -563,7 +563,7 @@ async def create_imported_bulk(
         if digest in seen:
             duplicates.append({
                 "row": int(item.get("row") or 0),
-                "message": "already in this bank — skipped",
+                "message": "already in this bank - skipped",
             })
             continue
         seen.add(digest)
@@ -672,7 +672,7 @@ async def review(
     # act on this question, whatever its state.
     if action == "approve" and actor in (q.created_by_user_id, q.submitted_by_user_id):
         raise QuestionBankError(
-            403, "You wrote or submitted this question — another reviewer must approve it."
+            403, "You wrote or submitted this question - another reviewer must approve it."
         )
     # "Not the author" also means not anyone who changed the content. The
     # check above sees only created_by/submitted_by, so a reviewer could edit
@@ -690,11 +690,11 @@ async def review(
         )
         if wrote is not None:
             raise QuestionBankError(
-                403, "You changed this question's content — another reviewer must approve it."
+                403, "You changed this question's content - another reviewer must approve it."
             )
     if action == "request_changes" and actor == q.submitted_by_user_id:
         raise QuestionBankError(
-            403, "You submitted this question — another reviewer must request changes."
+            403, "You submitted this question - another reviewer must request changes."
         )
     now = datetime.now(tz=UTC)
     if action == "approve":

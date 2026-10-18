@@ -100,7 +100,7 @@ describe('candidate surfaces are localised in every Day-1 language', () => {
         if (NOT_TRANSLATED.has(leaf)) continue;
         expect(
           other[key],
-          `${lang}.${name}.${key} is still the English string — a silent fallback`,
+          `${lang}.${name}.${key} is still the English string - a silent fallback`,
         ).not.toBe(value);
       }
     }

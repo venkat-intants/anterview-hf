@@ -127,7 +127,7 @@ function ReviewRow({ row, approve, requestChanges, invalidate, openContent }: Ro
 
       {row.own_submission ? (
         <p className="mt-3 rounded-[12px] bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[13px] text-muted-foreground">
-          {row.reason ?? 'You wrote or submitted this question — another reviewer must decide it.'}
+          {row.reason ?? 'You wrote or submitted this question - another reviewer must decide it.'}
         </p>
       ) : mode === null ? (
         <div className="mt-3 flex flex-wrap gap-2">

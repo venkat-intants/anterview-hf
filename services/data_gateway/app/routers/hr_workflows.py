@@ -1017,7 +1017,7 @@ async def post_round_review(
     if row["current_round_id"] is None:
         raise HTTPException(
             status_code=409,
-            detail="This candidate is not on a round — record the final decision instead.",
+            detail="This candidate is not on a round - record the final decision instead.",
         )
     if row["kind"] not in HUMAN_EVALUATED_KINDS:
         raise HTTPException(

@@ -1,7 +1,7 @@
 // Register page — full_name + email + password → POST /auth/register → /dashboard
 // Design: AuthLayout split shell. The form leads; the DPDP consent checkbox
 //         sits directly above its submit, and the SSO options (conic-G Google
-//         badge, Naipunyam disabled) follow, gated by the same checkbox.
+//         badge) follows, gated by the same checkbox.
 // Logic: RHF + zodResolver (full_name 2–100, email, password 8–128),
 //        registerUser()→getMe()→setAuth→/dashboard, isPending/aria-busy,
 //        toast errors, all t() keys. No role tabs (role is server-assigned).
@@ -47,18 +47,6 @@ function GoogleBadge() {
       style={{ background: 'conic-gradient(from -45deg,#ea4335,#fbbc05,#34a853,#4285f4,#ea4335)' }}
     >
       G
-    </span>
-  );
-}
-
-// ── Naipunyam badge ───────────────────────────────────────────────────────────
-function NaipunyamBadge() {
-  return (
-    <span
-      aria-hidden="true"
-      className="flex h-5 w-5 items-center justify-center rounded-[6px] bg-[var(--ui-ok-wash)] text-[12px] font-bold text-[var(--ui-ok)]"
-    >
-      न
     </span>
   );
 }
@@ -266,17 +254,6 @@ export default function Register() {
         >
           <GoogleBadge />
           {t('auth.signUpWithGoogle')}
-        </button>
-
-        {/* Naipunyam — disabled (no live handler; see gap report) */}
-        <button
-          type="button"
-          disabled
-          aria-disabled="true"
-          className={`${ssoBase} border border-[var(--ui-line-strong)] bg-[var(--ui-inset)] text-foreground opacity-50 cursor-not-allowed`}
-        >
-          <NaipunyamBadge />
-          Sign up with Naipunyam SSO
         </button>
       </div>
 

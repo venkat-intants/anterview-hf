@@ -107,7 +107,7 @@ export function PublicApplyCard({
       }
     >
       <p className="text-[13px] leading-relaxed text-muted-foreground">
-        Publishes a page anyone with the link can apply through. Off by default — a link that leaks
+        Publishes a page anyone with the link can apply through. Off by default - a link that leaks
         should not open a channel you did not choose to open.
       </p>
 

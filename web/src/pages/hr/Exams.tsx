@@ -133,7 +133,7 @@ export default function Exams() {
         kind,
       }),
     onSuccess: (e) => {
-      toast.success('Exam created — add questions next');
+      toast.success('Exam created - add questions next');
       setTitle('');
       setMinutes('');
       setThreshold('60');

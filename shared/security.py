@@ -247,7 +247,7 @@ def assert_strong_secrets(app_env: str | None, secrets: dict[str, str | None]) -
     if weak:
         raise ValueError(
             f"Refusing to start in {app_env!r}: weak or placeholder secret(s): "
-            f"{', '.join(weak)}. Set strong random values — generate one with: "
+            f"{', '.join(weak)}. Set strong random values - generate one with: "
             'python -c "import secrets; print(secrets.token_hex(32))"'
         )
 
@@ -299,7 +299,7 @@ def forbid_private_signing_key(service_name: str, env: Mapping[str, str] | None 
         if (value or "").strip():
             raise ValueError(
                 f"{service_name!r} must never hold {_PRIVATE_KEY_ENV_VAR} "
-                f"(found as {name!r}) — only data_gateway signs tokens (see "
+                f"(found as {name!r}) - only data_gateway signs tokens (see "
                 "docs/ACCEPTED-RISKS.md AR-2). Remove it from this service's "
                 "environment; verification only ever needs JWT_PUBLIC_KEYS."
             )

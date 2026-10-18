@@ -175,16 +175,16 @@ beforeEach(() => {
   rescheduleInvite.mockResolvedValue(INVITED);
 });
 
-describe('HRInterviews — invite form', () => {
+describe('HRInterviews - invite form', () => {
   it('offers only eligible applicants, flagging who already has a live link', async () => {
     renderPage();
 
     // The <select> renders before its options do, so wait on an OPTION.
-    await screen.findByRole('option', { name: /bhavya nair — exam passed/i });
+    await screen.findByRole('option', { name: /bhavya nair - exam passed/i });
     const select = screen.getByLabelText('Applicant');
     // Inviting someone twice mints a second paid session — say so in the list.
     expect(
-      within(select).getByRole('option', { name: /chetan iyer — shortlisted \(already invited\)/i }),
+      within(select).getByRole('option', { name: /chetan iyer - shortlisted \(already invited\)/i }),
     ).toBeInTheDocument();
   });
 
@@ -281,7 +281,7 @@ describe('HRInterviews — invite form', () => {
   });
 });
 
-describe('HRInterviews — invite list', () => {
+describe('HRInterviews - invite list', () => {
   it('links a completed interview to its scorecard and shows the score', async () => {
     renderPage();
 
@@ -397,7 +397,7 @@ describe('HRInterviews — invite list', () => {
 // IS the screen for an AI interview, so the citation focuses the row.
 // ---------------------------------------------------------------------------
 
-describe('HRInterviews — interview citation deep link', () => {
+describe('HRInterviews - interview citation deep link', () => {
   it('focuses the cited invite row', async () => {
     renderPage(`/hr/interviews/${COMPLETED.invite_id}`);
 
@@ -486,7 +486,7 @@ describe('HRInterviews — interview citation deep link', () => {
 
   it("surfaces the server's refusal rather than a generic failure", async () => {
     setInviteAvatarMode.mockRejectedValue(
-      new Error('This interview is already consumed — the mode is fixed once the candidate starts.'),
+      new Error('This interview is already consumed - the mode is fixed once the candidate starts.'),
     );
     const user = userEvent.setup();
     renderPage();

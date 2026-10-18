@@ -61,8 +61,8 @@ INGEST_BATCH = 25
 # backoff, before the file is reported as failed.
 MAX_INGEST_ATTEMPTS = 5
 
-UNREADABLE = "Could not read the PDF — it may be encrypted, a scan, or not a PDF."
-GAVE_UP = "Could not be processed after repeated attempts — try uploading it again."
+UNREADABLE = "Could not read the PDF - it may be encrypted, a scan, or not a PDF."
+GAVE_UP = "Could not be processed after repeated attempts - try uploading it again."
 OPENING_GONE = "The opening was removed before this file was processed."
 
 HR_COLLECTED_CONSENT = "hr_collected_application"

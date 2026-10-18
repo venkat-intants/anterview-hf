@@ -191,7 +191,7 @@ async def _create_company_user(
     if role_id is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Role '{role}' is not provisioned — run database migrations.",
+            detail=f"Role '{role}' is not provisioned - run database migrations.",
         )
     user_id = uuid.uuid4()
     now = datetime.now(tz=UTC)

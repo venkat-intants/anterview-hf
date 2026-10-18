@@ -114,7 +114,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
       }),
     onSuccess: (_created, v) => {
       toast.success(
-        `Super admin ${v.email} created for ${company.name} — a set-password link was emailed.`,
+        `Super admin ${v.email} created for ${company.name} - a set-password link was emailed.`,
       );
       setCreateOpen(false);
       void qc.invalidateQueries({ queryKey: ['company-admin', company.id] });
@@ -153,7 +153,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
 
   return (
     <SectionCard
-      title={`Super admin — ${company.name}`}
+      title={`Super admin - ${company.name}`}
       icon={ShieldCheck}
       description="One super admin per company. They log in, reset the password, then create HR managers."
       action={
@@ -220,7 +220,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
           {/* Credential-delivery hint */}
           <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
             <KeyRound className="h-3.5 w-3.5 text-[var(--ui-info)]" aria-hidden="true" />A secure
-            “set your password” link is emailed to them — no password is shared here.
+            “set your password” link is emailed to them - no password is shared here.
           </p>
         </>
       )}
@@ -336,7 +336,7 @@ function FeatureFlagsTab(): JSX.Element {
             />
             <div>
               <p className="text-[14px] font-semibold text-foreground">
-                Feature flags unavailable — run the latest migration.
+                Feature flags unavailable - run the latest migration.
               </p>
               <p className="mt-1 text-[12.5px] text-muted-foreground">
                 The{' '}

@@ -846,7 +846,7 @@ async def set_invite_avatar_mode(
         raise HTTPException(
             status_code=409,
             detail=(
-                f"This interview is already {inv.status} — the mode is fixed once "
+                f"This interview is already {inv.status} - the mode is fixed once "
                 "the candidate starts. Revoke it and send a new invite to change it."
             ),
         )

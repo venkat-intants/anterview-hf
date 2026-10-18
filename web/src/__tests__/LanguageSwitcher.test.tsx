@@ -135,10 +135,10 @@ describe('Landing page i18n integration', () => {
   it('shows English headline by default', async () => {
     renderLandingWithSwitcher();
     // The Landing hero headline is hardcoded English copy.
-    // The h1 reads "Practise the interview before it counts."
+    // The h1 reads "Hire faster, with a fair first round for every applicant."
     await waitFor(() => {
       expect(
-        screen.getByRole('heading', { name: /practise the interview before it counts/i }),
+        screen.getByRole('heading', { name: /hire faster, with a fair first round for every applicant/i }),
       ).toBeInTheDocument();
     });
   });

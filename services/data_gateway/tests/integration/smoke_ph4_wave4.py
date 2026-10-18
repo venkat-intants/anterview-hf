@@ -32,7 +32,7 @@ PDF = b"%PDF-1.7\n1 0 obj << /Type /Catalog >> endobj\ntrailer << >>\n%%EOF\n"
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" — {detail}" if not cond and detail else ""))
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" - {detail}" if not cond and detail else ""))
 
 
 async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bottom
@@ -130,7 +130,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://smoke") as c:
         ledger_before = await ledger()
-        print("\nPH4-A3 — templates and drafting")
+        print("\nPH4-A3 - templates and drafting")
         r = await c.post("/hr/offer-templates",
                          json={"name": "Standard FT", "currency": "INR", "pay_period": "annual",
                                "probation_months": 6, "notice_period_days": 60, "valid_days": 7,
@@ -161,7 +161,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post(f"/hr/offers/{o1}/send")
         check("an unapproved offer cannot be sent", r.status_code == 409, r.text[:160])
 
-        print("\nPH4-A3 — approval (D4-2)")
+        print("\nPH4-A3 - approval (D4-2)")
         r = await c.post(f"/hr/offers/{o1}/submit")
         check("HR submits for approval", r.status_code == 200
               and r.json()["status"] == "pending_approval", r.text[:160])
@@ -204,7 +204,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             link = await db.scalar(text(
                 "SELECT link FROM notifications WHERE user_id = :u AND link LIKE '%' || :o"
                 " ORDER BY created_at DESC LIMIT 1"), {"u": admin, "o": o1})
-        check("staff opening an offer — its pay included — is audited, by console",
+        check("staff opening an offer - its pay included - is audited, by console",
               seen.get("hr", 0) >= 1 and seen.get("super_admin", 0) >= 1, str(seen))
         check("the super admin's notice opens the approval page",
               link == f"/superadmin/offer-approvals/{o1}", str(link))
@@ -213,7 +213,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                                              " WHERE id = :o"), {"o": uuid.UUID(o1)})).one()
         check("approval records who and when", decided[0] == admin and decided[1] is not None)
 
-        print("\nPH4-A3 — delivery and the candidate's answer")
+        print("\nPH4-A3 - delivery and the candidate's answer")
         r = await c.post(f"/hr/offers/{o1}/send")
         check("HR sends the approved offer", r.json().get("status") == "sent", r.text[:160])
         mail = await last_mail("offer_ready", o1)
@@ -282,7 +282,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               prow.get("status") == "hired" and prow.get("offer_outcome") == "offer_accepted",
               str(prow)[:200])
 
-        print("\nPH4-A4 — documents")
+        print("\nPH4-A4 - documents")
         r = await c.post(f"/hr/requisitions/{req}/document-requirements",
                          json={"name": "Passport", "doc_type": "identity", "mandatory": True,
                                "requires_expiry": True})
@@ -364,7 +364,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the candidate is told of every upload, so one they did not send is noticed",
               "अपलोड नहीं किया" in await last_mail("document_received", doc1))
 
-        print("\nPH4-A3 — the lifetime lock on wrong codes (M1)")
+        print("\nPH4-A3 - the lifetime lock on wrong codes (M1)")
         async with factory() as db:
             await db.execute(text("UPDATE offers SET code_failures = 19 WHERE id = :o"),
                              {"o": uuid.UUID(o1)})
@@ -491,7 +491,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post(f"/hr/documents/{doc4}/review", json={"action": "verify"})
         check("HR verifies the current passport", r.json().get("state") == "verified", r.text[:160])
 
-        print("\nPH4-A4 — preboarding and the HRMS handoff")
+        print("\nPH4-A4 - preboarding and the HRMS handoff")
         r = await c.post(f"/hr/offers/{o1}/hrms-export")
         check("no handoff before preboarding is complete", r.status_code == 409, r.text[:160])
         r = await c.post(f"/hr/offers/{o1}/preboarding-complete")
@@ -518,7 +518,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                "document.verified", "document.downloaded", "offer.hrms_exported"} <= set(audit),
               str(sorted(audit)))
 
-        print("\nPH4-A3 — withdraw, the portal, and the hire")
+        print("\nPH4-A3 - withdraw, the portal, and the hire")
         r = await c.post(f"/hr/enrolments/{e2}/offers", json={"base_salary": 1800000})
         o2 = r.json()["id"]
         acting["hr"] = hr2
@@ -537,7 +537,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post("/offer/code", headers={"X-Offer-Token": tok2}, json={"purpose": "accept"})
         check("a withdrawn offer cannot be answered", r.status_code == 409, r.text[:160])
 
-        print("\nPH4-A3 — a declined offer, the hire count, and expiry")
+        print("\nPH4-A3 - a declined offer, the hire count, and expiry")
         r = await c.post(f"/hr/enrolments/{e2}/offers", json={"base_salary": 1850000})
         o3 = r.json()["id"]
         async with factory() as db:
@@ -573,7 +573,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         funnel = (await c.get("/hr/analytics")).json()["funnel"]["hired"]
         board = next((o for o in (await c.get("/admin/hiring-board")).json()["openings"]
                       if o["requisition_id"] == str(req)), {})
-        check("every count of hires says the same number — dashboard, funnel and board",
+        check("every count of hires says the same number - dashboard, funnel and board",
               funnel == after and board.get("hired") == after,
               f"dashboard {after} funnel {funnel} board {board.get('hired')}")
 
@@ -619,7 +619,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               and "rejection" in r.json().get("detail", ""), r.text[:200])
         check("nothing in the offer journey wrote the stage ledger", await ledger() == ledger_before)
 
-        print("\nPH4-A4 — retention")
+        print("\nPH4-A4 - retention")
         from app.preboarding import purge_documents
 
         await backdate("UPDATE offers SET preboarding_completed_at = now() - interval '100 days'"

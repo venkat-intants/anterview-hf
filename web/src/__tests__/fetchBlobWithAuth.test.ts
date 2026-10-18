@@ -63,7 +63,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('fetchBlobWithAuth — happy path', () => {
+describe('fetchBlobWithAuth - happy path', () => {
   it('returns the raw Response without parsing the body', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(makeBinaryResponse(200, 'a,b,c')));
 
@@ -108,7 +108,7 @@ describe('fetchBlobWithAuth — happy path', () => {
   });
 });
 
-describe('fetchBlobWithAuth — token expired mid-session', () => {
+describe('fetchBlobWithAuth - token expired mid-session', () => {
   it('refreshes and retries once, returning the successful retry', async () => {
     const fetchMock = vi
       .fn()
@@ -141,7 +141,7 @@ describe('fetchBlobWithAuth — token expired mid-session', () => {
     expect(getToken()).toBe('brand-new-token');
   });
 
-  it('does not retry more than once — a second 401 is returned as-is', async () => {
+  it('does not retry more than once - a second 401 is returned as-is', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(makeBinaryResponse(401, ''))
@@ -174,7 +174,7 @@ describe('fetchBlobWithAuth — token expired mid-session', () => {
   });
 });
 
-describe('attemptRefresh — single-flight slot', () => {
+describe('attemptRefresh - single-flight slot', () => {
   // Regression: the logged-out probe AuthProvider fires on mount short-circuits
   // on the missing csrf cookie WITHOUT awaiting, which used to leave the
   // single-flight slot holding an already-settled `false`. Every later refresh
@@ -210,7 +210,7 @@ describe('attemptRefresh — single-flight slot', () => {
   });
 });
 
-describe('downloadQuestionTemplate — survives an expiry at the call site', () => {
+describe('downloadQuestionTemplate - survives an expiry at the call site', () => {
   beforeEach(() => {
     // jsdom implements neither object URLs nor anchor-triggered downloads.
     const urlShim = URL as unknown as {

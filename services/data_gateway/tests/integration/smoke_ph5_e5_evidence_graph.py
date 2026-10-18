@@ -40,7 +40,7 @@ FAIL: list[str] = []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" — {detail}" if not cond and detail else ""))
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" - {detail}" if not cond and detail else ""))
 
 
 NOW = datetime.now(tz=UTC)
@@ -1039,7 +1039,7 @@ async def main() -> None:
         if n.kind == "human_scorecard" and n.source.id == str(correction_id)
     )
     check(
-        "a redacted scorecard's lifecycle alone says so — content stays populated",
+        "a redacted scorecard's lifecycle alone says so - content stays populated",
         redacted_card.lifecycle == "redacted" and redacted_card.content is not None
         and redacted_card.content_hidden_reason is None,
         f"lifecycle={redacted_card.lifecycle} content_hidden_reason={redacted_card.content_hidden_reason}",

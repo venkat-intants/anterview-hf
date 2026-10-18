@@ -92,7 +92,7 @@ def test_get_prompt_hi() -> None:
         "expected the canonical HI constant; got a different object"
     )
     assert _contains_script(prompt, _DEVANAGARI), (
-        "HI prompt contains no Devanagari characters — was it reverted to "
+        "HI prompt contains no Devanagari characters - was it reverted to "
         "pure English or Roman-transliterated Hinglish? Native script is "
         "required for correct Sarvam TTS pronunciation."
     )
@@ -109,7 +109,7 @@ def test_get_prompt_te() -> None:
         "expected the canonical TE constant; got a different object"
     )
     assert _contains_script(prompt, _TELUGU), (
-        "TE prompt contains no Telugu characters — was it reverted to pure "
+        "TE prompt contains no Telugu characters - was it reverted to pure "
         "English or Roman-transliterated Tenglish? Native script is required "
         "for correct Sarvam TTS pronunciation."
     )
@@ -210,7 +210,7 @@ def test_prompt_pii_collection_forbidden_clause(
     """
     haystack = prompt.lower()
     assert any(marker in haystack for marker in negation_markers), (
-        f"{language} prompt has no prohibition marker from {negation_markers!r} — "
+        f"{language} prompt has no prohibition marker from {negation_markers!r} - "
         "PII-collection guardrail may have been lost in the register switch"
     )
 
@@ -292,7 +292,7 @@ def test_persona_delta_appears_after_rules_block(
 
     assert anchor_idx != -1, (
         f"language={language!r}: rules-block anchor {rules_anchor!r} not "
-        "found in rendered prompt — base prompt may have been refactored "
+        "found in rendered prompt - base prompt may have been refactored "
         "without updating this test"
     )
     assert marker_idx != -1, (
@@ -303,7 +303,7 @@ def test_persona_delta_appears_after_rules_block(
         f"persona={persona!r} language={language!r}: persona marker landed "
         f"BEFORE the rules-block anchor (marker_idx={marker_idx}, "
         f"anchor_idx={anchor_idx}). Persona deltas MUST be appended after "
-        "the rules block — see docs/interview-persona-design-ai.md §3."
+        "the rules block - see docs/interview-persona-design-ai.md §3."
     )
 
 
@@ -328,7 +328,7 @@ def test_render_without_persona_preserves_legacy_output() -> None:
     )
     assert rendered_default == rendered_explicit_none
     assert "[PERSONA:" not in rendered_default, (
-        "Persona marker leaked into the no-persona render path — "
+        "Persona marker leaked into the no-persona render path - "
         "backwards-compat broken"
     )
 
@@ -355,7 +355,7 @@ def test_context_block_included_when_company_set() -> None:
         company_name="Acme",
     )
     assert "[CONTEXT]" in rendered, (
-        "[CONTEXT] block missing even though company_name was set — "
+        "[CONTEXT] block missing even though company_name was set - "
         "context enrichment did not fire"
     )
     assert "Company: Acme" in rendered, (
@@ -375,7 +375,7 @@ def test_context_block_omitted_when_all_empty() -> None:
         max_turns=5,
     )
     assert "[CONTEXT]" not in rendered, (
-        "[CONTEXT] block leaked into a context-free render — "
+        "[CONTEXT] block leaked into a context-free render - "
         "backwards-compat broken (legacy prompt must be byte-identical)"
     )
 
@@ -403,7 +403,7 @@ def test_resume_text_truncated_to_1500_chars() -> None:
     assert "A" * 1500 in rendered, "first 1500 resume chars were dropped"
     # The overflow sentinel sits at index 1500 — past the cap — and must be gone.
     assert overflow_marker not in rendered, (
-        "resume_text was not truncated at 1500 chars — overflow chars leaked "
+        "resume_text was not truncated at 1500 chars - overflow chars leaked "
         "into the prompt and will inflate per-turn token cost"
     )
 
@@ -430,6 +430,6 @@ def test_interview_type_screening_vs_technical() -> None:
     assert "screening interview" in screening
     assert "technical interview" in technical
     assert screening != technical, (
-        "interview_type had no effect on the rendered prompt — the opening "
+        "interview_type had no effect on the rendered prompt - the opening "
         "line is not parameterised on interview_type"
     )

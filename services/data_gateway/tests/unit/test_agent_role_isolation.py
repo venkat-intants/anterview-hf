@@ -173,7 +173,7 @@ def test_every_tenant_scoped_query_filters_on_the_context_company() -> None:
             continue
         assert "ctx.company_id" in source, (
             f"{spec.name} is {spec.data_class} and queries the database, but its "
-            "handler never references ctx.company_id — it may be reading across "
+            "handler never references ctx.company_id - it may be reading across "
             "tenants"
         )
 

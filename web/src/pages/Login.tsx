@@ -1,6 +1,6 @@
 // Login page — email + password form → POST /auth/login → redirect to /dashboard
 // Design: AuthLayout split shell. Password sign-in leads; the consent-gated
-//         SSO options (conic-G Google badge, Naipunyam disabled) follow it.
+//         the Google SSO option (conic-G badge) follows it.
 // Logic: RHF + zodResolver, login()→getMe()→setAuth, role-aware redirect,
 //        must_change_password guard, isPending/aria-busy, toast errors, all t() keys.
 
@@ -38,18 +38,6 @@ function GoogleBadge() {
       style={{ background: 'conic-gradient(from -45deg,#ea4335,#fbbc05,#34a853,#4285f4,#ea4335)' }}
     >
       G
-    </span>
-  );
-}
-
-// ── Naipunyam badge ───────────────────────────────────────────────────────────
-function NaipunyamBadge() {
-  return (
-    <span
-      aria-hidden="true"
-      className="flex h-5 w-5 items-center justify-center rounded-[6px] bg-[var(--ui-ok-wash)] text-[12px] font-bold text-[var(--ui-ok)]"
-    >
-      न
     </span>
   );
 }
@@ -224,17 +212,6 @@ export default function Login() {
         >
           <GoogleBadge />
           {t('auth.signInWithGoogle')}
-        </button>
-
-        {/* Naipunyam — disabled (no live handler; see gap report) */}
-        <button
-          type="button"
-          disabled
-          aria-disabled="true"
-          className={`${ssoBase} border border-[var(--ui-line-strong)] bg-[var(--ui-inset)] text-foreground opacity-50 cursor-not-allowed`}
-        >
-          <NaipunyamBadge />
-          Sign in with Naipunyam SSO
         </button>
       </div>
 

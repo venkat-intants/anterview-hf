@@ -93,7 +93,7 @@ export function BankSetupPanel({ bank, guard, onCreated }: Props): JSX.Element {
         <input
           id="bank-name"
           autoComplete="off"
-          placeholder="e.g. Backend Engineer — Core"
+          placeholder="e.g. Backend Engineer - Core"
           aria-invalid={errors.name ? true : undefined}
           aria-describedby={errors.name ? 'bank-name-error' : undefined}
           className={`${FIELD} h-11`}

@@ -17,7 +17,7 @@ const BASE: ProctorIndicatorSignals = {
   cameraWarning: null,
 };
 
-describe('deriveProctorIndicatorStatus — priority order', () => {
+describe('deriveProctorIndicatorStatus - priority order', () => {
   it('is "ok" once everything is settled, available and no warning', () => {
     expect(deriveProctorIndicatorStatus(BASE)).toBe('ok');
   });
@@ -63,7 +63,7 @@ describe('deriveProctorIndicatorStatus — priority order', () => {
   });
 });
 
-describe('ProctorIndicator — rendering', () => {
+describe('ProctorIndicator - rendering', () => {
   it('is an accessible, non-interruptive live region', () => {
     render(<ProctorIndicator {...BASE} />);
     const el = screen.getByRole('status');

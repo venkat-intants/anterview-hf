@@ -225,7 +225,7 @@ async def test_post_consent_idempotent_second_call_returns_200(
         result = await db.execute(stmt)
         rows = result.scalars().all()
 
-    assert len(rows) == 1, f"Expected 1 row, got {len(rows)} — duplicate insert detected"
+    assert len(rows) == 1, f"Expected 1 row, got {len(rows)} - duplicate insert detected"
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +344,7 @@ async def test_evidence_ip_hash_is_sha256_hex_not_raw_ip(
     # Must NOT be the raw IP (defensive: check a few known raw values)
     raw_candidates = [_TEST_CLIENT_IP, "127.0.0.1", "unknown", "::1"]
     for raw in raw_candidates:
-        assert ip_hash != raw, f"ip_hash equals raw value '{raw}' — PII stored in plaintext!"
+        assert ip_hash != raw, f"ip_hash equals raw value '{raw}' - PII stored in plaintext!"
 
     # Verify it actually matches the expected hash computation.
     # ASGITransport (httpx.AsyncClient): request.client.host == "127.0.0.1"
@@ -401,7 +401,7 @@ async def test_concurrent_posts_collapse_to_one_row(
 
     # Both must return the same consent_id.
     assert consent_ids[0] == consent_ids[1], (
-        f"Concurrent POSTs returned different consent_ids: {consent_ids} — "
+        f"Concurrent POSTs returned different consent_ids: {consent_ids} - "
         "duplicate rows may have been inserted"
     )
 
@@ -419,7 +419,7 @@ async def test_concurrent_posts_collapse_to_one_row(
         rows = result.scalars().all()
 
     assert len(rows) == 1, (
-        f"Expected exactly 1 active consent row, found {len(rows)} — "
+        f"Expected exactly 1 active consent row, found {len(rows)} - "
         "concurrent insert was not deduplicated"
     )
 
@@ -620,7 +620,7 @@ async def test_revoked_consent_blocks_session_creation(
     assert status_after.json()["consented"] is False, (
         "After DELETE /consent, GET /consent/status must return consented=false. "
         "has_active_consent (interview_core consent gate) uses the same predicate "
-        "and would therefore also return False — blocking session creation with 403."
+        "and would therefore also return False - blocking session creation with 403."
     )
 
 
@@ -675,14 +675,14 @@ def test_extract_client_ip_no_trusted_proxies_ignores_xff(
 
     assert ip == "testclient", (
         f"With trusted_proxy_count=0, expected 'testclient' (direct host) "
-        f"but got '{ip}' — spoofed XFF was not ignored"
+        f"but got '{ip}' - spoofed XFF was not ignored"
     )
 
     # Additionally verify the hash contract: ip_hash must match testclient, not 1.2.3.4.
     ip_hash = _hash_value(ip)
     spoofed_hash = _hash_value("1.2.3.4")
     assert ip_hash != spoofed_hash, (
-        "ip_hash should differ from the spoofed IP hash — audit integrity broken"
+        "ip_hash should differ from the spoofed IP hash - audit integrity broken"
     )
 
 
@@ -761,7 +761,7 @@ def test_extract_client_ip_attacker_spoof_blocked(
     ip = _extract_client_ip(request)
 
     assert ip == "198.51.100.7", (
-        f"Expected '198.51.100.7' (rightmost, trusted entry) but got '{ip}' — "
+        f"Expected '198.51.100.7' (rightmost, trusted entry) but got '{ip}' - "
         "attacker-prepended XFF entry leaked through the trusted-proxy gate"
     )
 
@@ -931,11 +931,11 @@ async def test_delete_revokes_both_voice_and_video_when_both_active(
     # Both consent types must appear in the items list.
     item_types = {i["consent_type"] for i in items}
     assert "interview_voice_recording" in item_types, (
-        "voice consent type missing from revocation items — DELETE /consent did NOT "
+        "voice consent type missing from revocation items - DELETE /consent did NOT "
         "revoke interview_voice_recording"
     )
     assert "video_capture" in item_types, (
-        "video_capture consent type missing from revocation items — DELETE /consent "
+        "video_capture consent type missing from revocation items - DELETE /consent "
         "did NOT revoke video_capture. This is the bug this test guards against."
     )
 
@@ -958,7 +958,7 @@ async def test_delete_revokes_both_voice_and_video_when_both_active(
         "voice_recording DB row must have revoked_at set after DELETE /consent"
     )
     assert video_row.revoked_at is not None, (
-        "video_capture DB row must have revoked_at set after DELETE /consent — "
+        "video_capture DB row must have revoked_at set after DELETE /consent - "
         "this is the regression this fix addresses"
     )
 
@@ -1077,7 +1077,7 @@ async def test_after_full_withdrawal_status_is_false_for_both_types(
         "voice consent must show consented=false after full withdrawal"
     )
     assert video_status.json()["consented"] is False, (
-        "video_capture consent must show consented=false after full withdrawal — "
+        "video_capture consent must show consented=false after full withdrawal - "
         "this is the regression this fix addresses"
     )
 
@@ -1120,5 +1120,5 @@ async def test_video_capture_revocation_blocks_future_interview(
     assert status_after.json()["consented"] is False, (
         "video_capture consent must be immediately inactive after DELETE /consent. "
         "The consent guard in interview_core uses the same DB predicate and would "
-        "therefore also return False — blocking webcam-proctored sessions."
+        "therefore also return False - blocking webcam-proctored sessions."
     )

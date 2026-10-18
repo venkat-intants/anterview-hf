@@ -1218,7 +1218,7 @@ async def _grade_and_finalize(
                 title=f"{ctx.applicant.full_name} submitted "
                       f"{ctx.exam_round.title or ctx.exam.title}",
                 body=(
-                    f"{percent:.0f}% — "
+                    f"{percent:.0f}% - "
                     + ("at or above the pass mark" if passed else "below the pass mark")
                     + (" (time ran out)" if expired else "")
                 ),

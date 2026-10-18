@@ -103,7 +103,7 @@ test.describe('workflow builder', () => {
     await admin.goto(`/superadmin/workflow-reviews/${draft!.id}`);
     await admin.getByRole('button', { name: 'Approve' }).click();
     await admin.getByRole('button', { name: 'Confirm approval' }).click();
-    await expect(admin.getByText(/Approved — HR can publish it now/)).toBeVisible();
+    await expect(admin.getByText(/Approved - HR can publish it now/)).toBeVisible();
     await adminContext.close();
 
     // ── Back to HR: now, and only now, it can be published ──────────────────

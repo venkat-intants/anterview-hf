@@ -77,7 +77,7 @@ function errText(e: unknown, fallback: string): string {
 }
 
 function days(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '—';
+  if (n === null || n === undefined) return '-';
   const r = Math.round(n * 10) / 10;
   return `${r} day${r === 1 ? '' : 's'}`;
 }
@@ -208,7 +208,7 @@ function CloseUnresolvedPanel({
         {pendingClose} candidate{pendingClose === 1 ? '' : 's'} still undecided
       </h3>
       <p className="mt-1.5 text-[13px] leading-relaxed text-foreground">
-        Closing does not reject them. They stay in the decision queue exactly as they are — nothing
+        Closing does not reject them. They stay in the decision queue exactly as they are - nothing
         here ends a candidacy without you. Decide on them now, or close the opening and come back to
         them.
       </p>
@@ -382,7 +382,7 @@ function HeldPool({
       title="Held for your decision"
       className={className}
       data-testid="held-pool"
-      description="Below a round’s threshold. Held, not rejected — they wait for a person."
+      description="Below a round’s threshold. Held, not rejected - they wait for a person."
       actions={
         <span className="rounded-full bg-[var(--ui-inset-strong)] px-2.5 py-1 text-[12px] font-semibold tabular-nums text-[var(--ui-soft)]">
           <Pause className="mr-1 inline h-3 w-3" aria-hidden="true" />
@@ -496,13 +496,13 @@ function TimingAndScores({ data }: { data: Dashboard }) {
           <div className="flex justify-between gap-3">
             <span className="text-[var(--ui-soft)]">Average resume match</span>
             <span className="tabular-nums text-foreground">
-              {scores.avg_ats === null ? '—' : `${Math.round(scores.avg_ats)}/100`}
+              {scores.avg_ats === null ? '-' : `${Math.round(scores.avg_ats)}/100`}
             </span>
           </div>
           <div className="flex justify-between gap-3">
             <span className="text-[var(--ui-soft)]">Average across assessed rounds</span>
             <span className="tabular-nums text-foreground">
-              {scores.avg_composite === null ? '—' : `${Math.round(scores.avg_composite)}%`}
+              {scores.avg_composite === null ? '-' : `${Math.round(scores.avg_composite)}%`}
             </span>
           </div>
         </div>
@@ -608,7 +608,7 @@ function PipelineTab({
         <p className="flex items-start gap-1.5 text-[13px] text-muted-foreground">
           <Globe className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {readOnly
-            ? 'Read-only — HR controls whether this opening takes applications.'
+            ? 'Read-only - HR controls whether this opening takes applications.'
             : 'Switch this on or off, and schedule it, from the Setup tab.'}
         </p>
         {readOnly ? null : (
@@ -973,7 +973,7 @@ export default function RequisitionDashboard({
         <SegTabs tabs={TABS} active={tab} onChange={chooseTab} />
         {/* Demoted: a quiet freshness note, not a header line of its own. */}
         <p className="text-[12px] text-muted-foreground">
-          Live — refreshes on its own
+          Live - refreshes on its own
           {dash.dataUpdatedAt
             ? ` · updated ${ago(new Date(dash.dataUpdatedAt).toISOString())}`
             : ''}

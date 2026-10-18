@@ -145,7 +145,7 @@ def test_consent_type_literals_match_data_gateway() -> None:
     assert _DG_CONSENT_ROUTER.is_file(), (
         f"{_DG_CONSENT_ROUTER} not found. This test pins interview_core's "
         "consent vocabulary against data_gateway's; if the router moved, "
-        "re-point the path — do not delete the pin."
+        "re-point the path - do not delete the pin."
     )
 
     dg = _module_level_str_constants(_DG_CONSENT_ROUTER)
@@ -159,6 +159,6 @@ def test_consent_type_literals_match_data_gateway() -> None:
         "data_gateway writes webcam consent as "
         f"{dg.get('_VIDEO_CONSENT_TYPE')!r} but interview_core's proctoring "
         f"gate queries {VIDEO_CONSENT_TYPE!r} (DPDP-5). Proctoring events would "
-        "be rejected for candidates who did consent, or — if the drift is the "
-        "other way — accepted for candidates who did not."
+        "be rejected for candidates who did consent, or - if the drift is the "
+        "other way - accepted for candidates who did not."
     )

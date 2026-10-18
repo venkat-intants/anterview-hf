@@ -14,7 +14,7 @@ export function formatDate(iso: string): string {
 
 /** Format a duration in whole seconds as "Xm Ys", or "—" when null. */
 export function formatDuration(seconds: number | null): string {
-  if (seconds === null) return '—';
+  if (seconds === null) return '-';
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}m ${s}s`;

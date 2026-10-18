@@ -34,7 +34,7 @@ describe('the canvas journey', () => {
     renderCanvas([round({})]);
     expect(screen.getByText('Candidates apply')).toBeTruthy();
     expect(screen.getByTestId('shortlist-gate').textContent).toMatch(
-      /You shortlist — nothing below starts until a person does/,
+      /You shortlist - nothing below starts until a person does/,
     );
   });
 
@@ -57,7 +57,7 @@ describe('the canvas journey', () => {
   });
 });
 
-describe('the canvas — branches (PH4-O3)', () => {
+describe('the canvas - branches (PH4-O3)', () => {
   it('draws no legend and no branch text when nothing branches', () => {
     renderCanvas([round({ id: 'a', title: 'Aptitude' })]);
     expect(screen.queryByTestId('branch-legend')).toBeNull();

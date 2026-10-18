@@ -95,7 +95,7 @@ beforeEach(() => {
   getAdminOffer.mockResolvedValue(DETAIL);
 });
 
-describe('OfferApprovals — the queue', () => {
+describe('OfferApprovals - the queue', () => {
   it('lists a waiting offer, with compensation, linking to its detail', async () => {
     renderPage();
     await screen.findByText('Kiran Rao · Backend Engineer');
@@ -112,7 +112,7 @@ describe('OfferApprovals — the queue', () => {
   });
 });
 
-describe('OfferApprovals — one offer in full', () => {
+describe('OfferApprovals - one offer in full', () => {
   beforeEach(() => {
     paramOfferId = 'offer-1';
   });
@@ -196,7 +196,7 @@ describe('OfferApprovals — one offer in full', () => {
   });
 });
 
-describe('OfferApprovals — where this offer is', () => {
+describe('OfferApprovals - where this offer is', () => {
   beforeEach(() => {
     paramOfferId = 'offer-1';
   });

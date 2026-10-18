@@ -26,7 +26,7 @@ function renderCell(result: MedianMeanMetricResult) {
   );
 }
 
-describe('MetricCell — suppressed median/mean', () => {
+describe('MetricCell - suppressed median/mean', () => {
   it('shows the real value and n on hover for a suppressed NON-check-in metric (time to hire, interviewer score)', () => {
     renderCell({
       metric: 'time_to_hire_days',

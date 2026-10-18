@@ -105,7 +105,7 @@ beforeEach(() => {
   });
 });
 
-describe('ExamAttemptDetail — the Code evidence tab', () => {
+describe('ExamAttemptDetail - the Code evidence tab', () => {
   it('shows the tab when the attempt has a coding question, and switches into it', async () => {
     const user = userEvent.setup();
     renderAttempt();
@@ -138,7 +138,7 @@ describe('ExamAttemptDetail — the Code evidence tab', () => {
   });
 });
 
-describe('ExamAttemptDetail — PH4-D2 time-adjustment badge', () => {
+describe('ExamAttemptDetail - PH4-D2 time-adjustment badge', () => {
   it('shows the exact percentage this attempt was given', async () => {
     getAttemptBreakdown.mockResolvedValue({
       ...CODING_BREAKDOWN,
@@ -167,7 +167,7 @@ describe('ExamAttemptDetail — PH4-D2 time-adjustment badge', () => {
     expect(screen.queryByText(/Time adjustment applied/)).not.toBeInTheDocument();
   });
 
-  it('carries no note or basis — only the two facts the server returns', async () => {
+  it('carries no note or basis - only the two facts the server returns', async () => {
     getAttemptBreakdown.mockResolvedValue({
       ...CODING_BREAKDOWN,
       adjustment: { extra_time_percent: 25, extra_time_seconds: 900, auto_submit_relaxed: true },

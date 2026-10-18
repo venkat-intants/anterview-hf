@@ -242,7 +242,7 @@ async def test_resume_scorer_frames_resume_and_reports_markers() -> None:
 
     assert result["injection_markers"], (
         "an injection attempt in the CV must be reported on the result, not "
-        "silently dropped — the score it may have moved is what HR reads"
+        "silently dropped - the score it may have moved is what HR reads"
     )
     assert all(m.startswith("resume:") for m in result["injection_markers"])
 

@@ -411,7 +411,7 @@ export default function EvidenceTrail(): JSX.Element {
                       {trace.data.omitted.map((o, i) => (
                         <span key={o.kind}>
                           {i > 0 ? '; ' : ''}
-                          {o.kind.replace(/_/g, ' ')} — {o.reason}
+                          {o.kind.replace(/_/g, ' ')} - {o.reason}
                         </span>
                       ))}
                     </p>

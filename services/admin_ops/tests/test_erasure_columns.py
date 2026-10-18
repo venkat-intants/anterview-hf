@@ -73,7 +73,7 @@ _KEPT: dict[str, dict[str, str]] = {
         "notify_login_email": "a UI setting",
         "onboarding_completed_at": "account state",
         "onboarding_skipped_at": "account state",
-        "target_level": "entry / mid / senior — not identifying",
+        "target_level": "entry / mid / senior - not identifying",
         "company_id": "tenant",
         "must_change_password": "account state",
         "created_at": "timestamps",

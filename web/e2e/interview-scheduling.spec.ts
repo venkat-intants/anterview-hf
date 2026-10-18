@@ -116,7 +116,7 @@ test.describe('an interview is scheduled', () => {
     await expect(loop.getByRole('alert')).toHaveCount(0);
     await loop.getByRole('button', { name: 'Add session' }).click();
     await expect(
-      loop.getByText('No time set yet — waiting on the candidate to choose one.'),
+      loop.getByText('No time set yet - waiting on the candidate to choose one.'),
     ).toBeVisible();
 
     await loop.getByRole('button', { name: 'Send to candidate' }).click();
@@ -172,7 +172,7 @@ test.describe('an interview is scheduled', () => {
       .first()
       .click();
     await expect(
-      loop.getByText('No time set yet — waiting on the candidate to choose one.'),
+      loop.getByText('No time set yet - waiting on the candidate to choose one.'),
       'the candidate’s choice reaches HR',
     ).toHaveCount(0);
 

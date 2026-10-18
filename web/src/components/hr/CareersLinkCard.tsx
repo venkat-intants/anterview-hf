@@ -50,7 +50,7 @@ export default function CareersLinkCard({
       icon={Globe}
       className={className}
       data-testid="careers-link-card"
-      description="Every opening you publish appears here. Candidates can browse and apply without an account — share it on your site, in a post, or on a printed notice."
+      description="Every opening you publish appears here. Candidates can browse and apply without an account - share it on your site, in a post, or on a printed notice."
     >
       <div className="flex items-center gap-1 rounded-[12px] border border-border bg-[var(--ui-inset)] py-1 pl-3 pr-1">
         <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-[var(--ui-soft)]">

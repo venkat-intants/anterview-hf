@@ -92,10 +92,10 @@ Experience   : {{ experience_level }}
 Language     : {{ lang_name }}
 
 ## Scoring axes (each 0-10, calibrated to tier)
-1. Communication       — clarity, structure, fluency in {{ lang_name }}
-2. Technical Knowledge — depth, correctness, NOS-aligned competency
-3. Problem Solving     — reasoning quality, structured thinking, examples
-4. Confidence          — composure, conviction, voice steadiness
+1. Communication       - clarity, structure, fluency in {{ lang_name }}
+2. Technical Knowledge - depth, correctness, NOS-aligned competency
+3. Problem Solving     - reasoning quality, structured thinking, examples
+4. Confidence          - composure, conviction, voice steadiness
 
 ## Calibration anchors
 - 0-3  : Clear weakness; cannot perform at this tier.
@@ -130,7 +130,7 @@ Language     : {{ lang_name }}
     {"area": <string>, "suggestion": <string>},
     {"area": <string>, "suggestion": <string>}
   ],
-  "summary": "<2-3 sentences — overall verdict, calibrated to tier>"
+  "summary": "<2-3 sentences - overall verdict, calibrated to tier>"
 }
 
 Rules:
@@ -138,10 +138,10 @@ Rules:
 - "improvements" must be actionable, not generic.
 - "rationale": for EACH of the four axes write 3-5 sentences explaining WHY that
   exact score was given. You MUST: (a) cite specific evidence from the
-  transcript — paraphrase what the candidate actually said or did (never quote
+  transcript - paraphrase what the candidate actually said or did (never quote
   PII); (b) name the calibration band it falls in (e.g. "meets tier
   expectations (6-7)"); (c) state concretely what the candidate would need to
-  demonstrate to score higher. Ground every claim in the transcript — do NOT
+  demonstrate to score higher. Ground every claim in the transcript - do NOT
   invent details that were not said. If the candidate barely spoke on an axis,
   say so explicitly and explain how that limited the score.
 - "axis_feedback": for EACH of the four axes give
@@ -149,7 +149,7 @@ Rules:
       observed on that axis, each grounded in the transcript (paraphrase, never
       quote PII). If nothing went wrong on an axis (score 8+), return [].
   (b) "how_to_improve": 2-4 short bullets of SPECIFIC, actionable practice
-      steps for that axis — things the candidate can do before the next
+      steps for that axis - things the candidate can do before the next
       interview (e.g. "practise answering in full sentences using the STAR
       structure"), not vague advice like "improve communication".
   Each bullet must be one sentence, self-contained, and about THIS axis only.

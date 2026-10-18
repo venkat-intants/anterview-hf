@@ -77,7 +77,7 @@ def refusal(
     if decision == "hired":
         if status == "rejected":
             return 409, (
-                "This application was rejected. Hiring over a rejection is refused — "
+                "This application was rejected. Hiring over a rejection is refused - "
                 "reopening a rejected candidate is a separate decision."
             )
         reached_a_person = awaits_human or (
@@ -85,7 +85,7 @@ def refusal(
         )
         if not reached_a_person:
             return 409, (
-                "They have not reached a decision yet — they are still in the workflow. "
+                "They have not reached a decision yet - they are still in the workflow. "
                 "A hire can be recorded once they finish it or are held for you."
             )
     return None

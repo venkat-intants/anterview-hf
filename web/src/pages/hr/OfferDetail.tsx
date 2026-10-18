@@ -88,7 +88,7 @@ function errText(e: unknown, fallback: string): string {
 }
 
 function fmt(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString() : '—';
+  return iso ? new Date(iso).toLocaleString() : '-';
 }
 
 function downloadJson(filename: string, data: unknown): void {
@@ -229,7 +229,7 @@ function OfferFields({
     >
       {!editable ? (
         <Well className="mb-5 text-[13px] text-muted-foreground">
-          This offer is {offerStatusWord(offer.status)} — it can be changed only as a draft or once
+          This offer is {offerStatusWord(offer.status)} - it can be changed only as a draft or once
           it has been sent back.
         </Well>
       ) : null}
@@ -254,7 +254,7 @@ function OfferFields({
                 onChange={(e) => set('employment_type', e.target.value)}
                 className={inputCls}
               >
-                <option value="">—</option>
+                <option value="">-</option>
                 {EMPLOYMENT_TYPES.map((t) => (
                   <option key={t} value={t}>
                     {t.replace('_', ' ')}
@@ -315,7 +315,7 @@ function OfferFields({
                 onChange={(e) => set('pay_period', e.target.value)}
                 className={inputCls}
               >
-                <option value="">—</option>
+                <option value="">-</option>
                 {PAY_PERIODS.map((p) => (
                   <option key={p} value={p}>
                     {p}
@@ -465,7 +465,7 @@ function useOfferLifecycle(offer: OfferDetailShape) {
   const resendMut = useMutation({
     mutationFn: () => resendOffer(offer.id),
     onSuccess: () => {
-      toast.success('Sent a fresh link — the old one no longer works');
+      toast.success('Sent a fresh link - the old one no longer works');
       void invalidate();
     },
     onError: (e: unknown) => toast.error(errText(e, 'Could not re-send this offer')),
@@ -518,7 +518,7 @@ type OfferLifecycle = ReturnType<typeof useOfferLifecycle>;
 
 /** Why "Submit for approval" is unavailable while the form holds unsaved work. */
 const SUBMIT_BLOCK_REASON: Partial<Record<SaveState, string>> = {
-  unsaved: 'Save your changes first — approval is requested for the saved offer.',
+  unsaved: 'Save your changes first - approval is requested for the saved offer.',
   saving: 'Saving your changes…',
   error: 'The last save failed. Fix it or save again before submitting.',
 };
@@ -672,7 +672,7 @@ function OfferApprovalTrack({
           {offer.status === 'accepted' && offer.preboarding_completed_at
             ? // The HRMS export is still on the Documents tab, so this is not "nothing".
               'Preboarding is complete. The HRMS export is on the Documents tab.'
-            : `This offer is ${offerStatusWord(offer.status)} — there is nothing left to do here.`}
+            : `This offer is ${offerStatusWord(offer.status)} - there is nothing left to do here.`}
         </p>
       ) : null}
     </div>
@@ -801,7 +801,7 @@ function OfferLoaded({ offer }: { offer: OfferDetailShape }) {
                 className="absolute -left-[25px] top-1.5 h-2 w-2 rounded-full border border-border bg-primary"
               />
               {offerActionWord(h.action)}
-              {h.actor_name ? ` — ${h.actor_name}` : ''}
+              {h.actor_name ? ` - ${h.actor_name}` : ''}
               <span className="mt-0.5 block text-[12px] tabular-nums text-muted-foreground">
                 {new Date(h.at).toLocaleString()}
               </span>

@@ -23,7 +23,7 @@ export default function QuestionReviews(): JSX.Element {
           />
         }
         title="Question reviews"
-        description="Bank questions submitted for review — approved by anyone other than whoever wrote or submitted them. Oldest submission first."
+        description="Bank questions submitted for review - approved by anyone other than whoever wrote or submitted them. Oldest submission first."
       />
 
       <QuestionReviewQueue

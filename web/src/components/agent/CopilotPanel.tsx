@@ -88,9 +88,9 @@ const SCOPE_FALLBACK = 'Only the records your role is allowed to see.';
 
 /** Explanation shown when a run ended early, so a short answer is not a mystery. */
 const STOP_NOTE: Partial<Record<AgentChatResponse['stop_reason'], string>> = {
-  max_steps: 'I hit my step limit — try asking something more specific.',
+  max_steps: 'I hit my step limit - try asking something more specific.',
   token_budget: 'That needed more context than I can hold at once. Try narrowing it.',
-  llm_error: 'The language model was unreachable. Your data is fine — try again.',
+  llm_error: 'The language model was unreachable. Your data is fine - try again.',
   no_llm: 'No language model is configured for this deployment.',
 };
 

@@ -334,7 +334,7 @@ def attention_items(f: DashboardFacts) -> list[dict[str, Any]]:
     if f.scoring_failed:
         add("scoring_failed", "warning",
             f"{_plural(f.scoring_failed, 'application')} could not be scored",
-            "Scoring gave up after repeated attempts — usually an unreadable CV. Open them "
+            "Scoring gave up after repeated attempts - usually an unreadable CV. Open them "
             "to check the file.", "/hr/applicants")
 
     if f.scoring_pending:
@@ -387,16 +387,16 @@ def manual_steps(p: dict[str, Any], requisition_id: str) -> list[dict[str, Any]]
     threshold = p.get("shortlist_threshold")
     steps = [
         ("ready_to_shortlist", ready,
-         f"Scored at or above the {threshold}/10 bar — confirm the shortlist to start round one",
+         f"Scored at or above the {threshold}/10 bar - confirm the shortlist to start round one",
          "/hr/applicants"),
         ("to_screen", int(p.get("not_started") or 0) - ready,
          "New applicants to screen and shortlist", "/hr/applicants"),
         ("awaiting_review", int(p.get("awaiting_review") or 0),
-         "On a human review round — record the review", decisions),
+         "On a human review round - record the review", decisions),
         ("held", int(p.get("held") or 0),
-         "Held below a round threshold — let them continue, or decide", decisions),
+         "Held below a round threshold - let them continue, or decide", decisions),
         ("finished", int(p.get("finished") or 0),
-         "Finished every round — record the final decision", decisions),
+         "Finished every round - record the final decision", decisions),
     ]
     return [
         {"key": key, "count": count, "label": label, "link": link}

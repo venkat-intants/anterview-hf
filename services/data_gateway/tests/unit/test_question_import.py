@@ -547,7 +547,7 @@ def test_a_lied_about_dimension_cannot_amplify_a_tiny_upload() -> None:
     openpyxl = pytest.importorskip("openpyxl")
     assert openpyxl
     payload = _dimension_bomb(20_000)
-    assert len(payload) < qi.MAX_IMPORT_BYTES, "the payload must be small — that is the attack"
+    assert len(payload) < qi.MAX_IMPORT_BYTES, "the payload must be small - that is the attack"
 
     rows = qi.read_spreadsheet("bomb.xlsx", payload)
 

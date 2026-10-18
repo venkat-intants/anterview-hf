@@ -142,14 +142,14 @@ def test_times_are_shown_in_the_candidate_s_zone_across_dst() -> None:
 def test_the_calendar_file_is_rfc_5545() -> None:
     from app.schedule_core import IcsEvent, ics
 
-    cal = ics([IcsEvent("s1@x", 2, _t(7), _t(8), "Panel; round 2, the long one — " + "x" * 80,
+    cal = ics([IcsEvent("s1@x", 2, _t(7), _t(8), "Panel; round 2, the long one - " + "x" * 80,
                         "Line one\nLine two", "Room 4")], now=_t(0))
     lines = cal.split("\r\n")
     assert cal.endswith("\r\n") and lines[0] == "BEGIN:VCALENDAR"
     assert "DTSTART:20260921T070000Z" in lines and "SEQUENCE:2" in lines
     assert all(len(line.encode()) <= 75 for line in lines)
     unfolded = cal.replace("\r\n ", "")
-    assert "SUMMARY:Panel\\; round 2\\, the long one — " in unfolded
+    assert "SUMMARY:Panel\\; round 2\\, the long one - " in unfolded
     assert "DESCRIPTION:Line one\\nLine two" in unfolded
     assert "METHOD:PUBLISH" in lines and "STATUS:CONFIRMED" in lines
 

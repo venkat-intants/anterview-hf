@@ -75,7 +75,7 @@ beforeEach(() => {
   retireQuestion.mockResolvedValue(undefined);
 });
 
-describe('QuestionEditor — the freeze is visible before you type', () => {
+describe('QuestionEditor - the freeze is visible before you type', () => {
   it('lets an unanswered question be reworded', async () => {
     renderEditor();
     const field = await screen.findByLabelText('Question 1');
@@ -115,7 +115,7 @@ describe('QuestionEditor — the freeze is visible before you type', () => {
   });
 });
 
-describe('QuestionEditor — authoring', () => {
+describe('QuestionEditor - authoring', () => {
   it('will not add a question with no wording', async () => {
     const user = userEvent.setup();
     renderEditor();
@@ -214,7 +214,7 @@ describe('QuestionEditor — authoring', () => {
   });
 });
 
-describe('QuestionEditor — the empty state', () => {
+describe('QuestionEditor - the empty state', () => {
   it('says an empty list is a valid choice, not a missing step', async () => {
     listQuestions.mockResolvedValue([]);
     renderEditor();

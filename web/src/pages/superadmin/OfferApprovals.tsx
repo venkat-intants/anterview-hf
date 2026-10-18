@@ -45,7 +45,7 @@ function errText(e: unknown, fallback: string): string {
 }
 
 function money(o: OfferOut): string {
-  if (!o.base_salary) return '—';
+  if (!o.base_salary) return '-';
   const amount = Number(o.base_salary).toLocaleString();
   return `${o.currency ?? ''} ${amount}${o.pay_period ? ` / ${o.pay_period}` : ''}`.trim();
 }
@@ -109,7 +109,7 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
       setMode(null);
       setNote('');
       invalidate();
-      toast.success('Approved — HR can send it now');
+      toast.success('Approved - HR can send it now');
     },
     onError: (e: unknown) => toast.error(errText(e, 'Could not approve this offer')),
   });
@@ -197,18 +197,18 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
           >
             <DataList
               items={[
-                { label: 'Employment type', value: o.employment_type?.replace('_', ' ') ?? '—' },
-                { label: 'Start date', value: o.start_date ?? '—' },
-                { label: 'Location', value: o.location ?? '—' },
+                { label: 'Employment type', value: o.employment_type?.replace('_', ' ') ?? '-' },
+                { label: 'Start date', value: o.start_date ?? '-' },
+                { label: 'Location', value: o.location ?? '-' },
                 {
                   label: 'Probation',
-                  value: o.probation_months != null ? `${o.probation_months} months` : '—',
+                  value: o.probation_months != null ? `${o.probation_months} months` : '-',
                 },
                 {
                   label: 'Notice period',
-                  value: o.notice_period_days != null ? `${o.notice_period_days} days` : '—',
+                  value: o.notice_period_days != null ? `${o.notice_period_days} days` : '-',
                 },
-                { label: 'Offer window', value: o.valid_days ? `${o.valid_days} days` : '—' },
+                { label: 'Offer window', value: o.valid_days ? `${o.valid_days} days` : '-' },
                 ...(o.bonus ? [{ label: 'Bonus', value: o.bonus }] : []),
                 ...(o.equity ? [{ label: 'Equity', value: o.equity }] : []),
                 ...(o.benefits ? [{ label: 'Benefits', value: o.benefits }] : []),
@@ -244,7 +244,7 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
                 renderItem={(h) => (
                   <li className="text-[13.5px] text-foreground">
                     {offerActionWord(h.action)}
-                    {h.actor_name ? ` — ${h.actor_name}` : ''}
+                    {h.actor_name ? ` - ${h.actor_name}` : ''}
                     <span className="ml-2 text-[12.5px] text-muted-foreground">
                       {new Date(h.at).toLocaleString()}
                     </span>
@@ -273,7 +273,7 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
           />
         ) : (
           <NothingToDecide>
-            This offer is {o.status.replace('_', ' ')} — nothing for you to decide right now.
+            This offer is {o.status.replace('_', ' ')} - nothing for you to decide right now.
           </NothingToDecide>
         )
       }

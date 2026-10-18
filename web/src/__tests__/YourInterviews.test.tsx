@@ -91,7 +91,7 @@ beforeEach(async () => {
   await i18n.changeLanguage('en');
 });
 
-describe('YourInterviews — states', () => {
+describe('YourInterviews - states', () => {
   it('shows a loading state', () => {
     api.listMyInterviewLoops.mockImplementation(() => new Promise(() => undefined));
     renderComp();
@@ -112,7 +112,7 @@ describe('YourInterviews — states', () => {
   });
 });
 
-describe('YourInterviews — a scheduled session', () => {
+describe('YourInterviews - a scheduled session', () => {
   it('shows the job title, time, duration, location and interviewers', async () => {
     api.listMyInterviewLoops.mockResolvedValue([loop()]);
     renderComp();
@@ -122,7 +122,7 @@ describe('YourInterviews — a scheduled session', () => {
     expect(screen.getByText('With Asha Rao')).toBeInTheDocument();
   });
 
-  it('never offers to reschedule or cancel — only HR can move a booked session (A2 #23)', async () => {
+  it('never offers to reschedule or cancel - only HR can move a booked session (A2 #23)', async () => {
     api.listMyInterviewLoops.mockResolvedValue([loop()]);
     renderComp();
     await screen.findByText('Backend Engineer');
@@ -132,7 +132,7 @@ describe('YourInterviews — a scheduled session', () => {
   });
 });
 
-describe('YourInterviews — choosing a time', () => {
+describe('YourInterviews - choosing a time', () => {
   it('groups offered times and lets the candidate pick one', async () => {
     api.listMyInterviewLoops.mockResolvedValue([awaitingLoop()]);
     api.getMySessionSlots.mockResolvedValue(['2026-09-25T05:00:00.000Z', '2026-09-25T06:00:00.000Z']);
@@ -199,7 +199,7 @@ describe('YourInterviews — choosing a time', () => {
   });
 });
 
-describe('YourInterviews — calendar download', () => {
+describe('YourInterviews - calendar download', () => {
   it('downloads the loop’s calendar file', async () => {
     api.listMyInterviewLoops.mockResolvedValue([loop()]);
     api.downloadMyLoopIcs.mockResolvedValue(undefined);

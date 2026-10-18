@@ -219,7 +219,7 @@ async def update_question(
             raise QuestionError(
                 "Candidates have already answered this question, so its "
                 + " and ".join(frozen)
-                + " cannot change. Retire it and add a new one instead — that "
+                + " cannot change. Retire it and add a new one instead - that "
                 "keeps their answers attached to what they were actually asked."
             )
 

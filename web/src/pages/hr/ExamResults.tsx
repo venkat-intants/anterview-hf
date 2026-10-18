@@ -46,7 +46,7 @@ function formatDate(iso: string): string {
 }
 
 function formatDuration(submittedAt: string | null): string {
-  if (!submittedAt) return '—';
+  if (!submittedAt) return '-';
   return formatDate(submittedAt);
 }
 
@@ -135,7 +135,7 @@ export default function ExamResults() {
         description={
           <span className="break-words font-mono text-[13px]">
             exam #{examId} · {list.length} attempt{list.length !== 1 ? 's' : ''} · {passedCount}{' '}
-            passed · pass ≥ {exam?.pass_threshold ?? '—'}%
+            passed · pass ≥ {exam?.pass_threshold ?? '-'}%
           </span>
         }
         actions={
@@ -165,8 +165,8 @@ export default function ExamResults() {
           <StatCard label="Top score" value={`${topScore}%`} delta="best attempt" trend="flat" />
           <StatCard
             label="Pass rate"
-            value={list.length > 0 ? `${Math.round((passedCount / list.length) * 100)}%` : '—'}
-            delta={`≥ ${exam?.pass_threshold ?? '—'}% threshold`}
+            value={list.length > 0 ? `${Math.round((passedCount / list.length) * 100)}%` : '-'}
+            delta={`≥ ${exam?.pass_threshold ?? '-'}% threshold`}
             trend={passedCount > 0 ? 'up' : 'flat'}
           />
         </div>
@@ -175,7 +175,7 @@ export default function ExamResults() {
       {/* ── Results table ── */}
       {showSimilarity && (
         <p className="text-[13px] leading-relaxed text-muted-foreground">
-          Similarity signals are automated and unreviewed — similar code is not evidence of
+          Similarity signals are automated and unreviewed - similar code is not evidence of
           misconduct on its own. See an attempt&rsquo;s own Code evidence tab for detail.
         </p>
       )}
@@ -228,7 +228,7 @@ export default function ExamResults() {
                     colSpan={showSimilarity ? 6 : 5}
                     className="px-6 py-12 text-center text-[14px] text-muted-foreground"
                   >
-                    No attempts yet — assign the exam and share the links.
+                    No attempts yet - assign the exam and share the links.
                   </td>
                 </tr>
               )}
@@ -282,12 +282,12 @@ function AttemptRow({
         className={cn(TD, 'text-right text-[15px] font-semibold tabular-nums')}
         style={{ color: scoreColor(a.score_percent) }}
       >
-        {a.score_percent !== null ? `${a.score_percent}%` : '—'}
+        {a.score_percent !== null ? `${a.score_percent}%` : '-'}
       </td>
 
       {/* Submitted */}
       <td className={cn(TD, 'font-mono text-[13px] text-muted-foreground')}>
-        {a.submitted_at ? formatDuration(a.submitted_at) : '—'}
+        {a.submitted_at ? formatDuration(a.submitted_at) : '-'}
       </td>
 
       {/* Status — a tinted pill that always carries its word. */}
@@ -315,7 +315,7 @@ function AttemptRow({
           {similarityCount > 0 ? (
             <span className="text-[var(--ui-warn)]">{similarityCount}</span>
           ) : (
-            '—'
+            '-'
           )}
         </td>
       )}

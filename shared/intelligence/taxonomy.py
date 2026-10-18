@@ -94,7 +94,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "cloud engineer", "api", "microservices", "database administrator",
         ),
         summary=(
-            "Builds, tests and maintains software systems — writing code, "
+            "Builds, tests and maintains software systems - writing code, "
             "reviewing others' code, debugging production issues and shipping "
             "changes safely."
         ),
@@ -127,7 +127,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "data warehouse", "etl", "mis executive",
         ),
         summary=(
-            "Turns raw data into decisions — sourcing and cleaning data, "
+            "Turns raw data into decisions - sourcing and cleaning data, "
             "analysing it, and communicating what it means to people who will "
             "act on it."
         ),
@@ -206,7 +206,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "town planning", "architect",
         ),
         summary=(
-            "Plans, supervises or executes construction work — reading drawings, "
+            "Plans, supervises or executes construction work - reading drawings, "
             "controlling quality and quantity on site, and keeping work safe and "
             "on schedule."
         ),
@@ -234,7 +234,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "ward", "patient care", "medical assistant", "asha", "hospital",
         ),
         summary=(
-            "Delivers clinical or patient-facing care — following protocol, "
+            "Delivers clinical or patient-facing care - following protocol, "
             "observing and escalating changes in a patient's condition, and "
             "maintaining hygiene and documentation."
         ),
@@ -262,7 +262,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "marketing executive", "growth", "lead generation",
         ),
         summary=(
-            "Finds, qualifies and closes business — building relationships, "
+            "Finds, qualifies and closes business - building relationships, "
             "handling objections and working to a number."
         ),
         specs=(
@@ -284,7 +284,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "backend process", "csr", "customer care",
         ),
         summary=(
-            "Resolves customer issues over voice or chat — understanding the "
+            "Resolves customer issues over voice or chat - understanding the "
             "problem quickly, following process, and keeping the customer calm "
             "and informed."
         ),
@@ -307,7 +307,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "credit analyst", "banking", "loan officer",
         ),
         summary=(
-            "Keeps financial records accurate and compliant — recording "
+            "Keeps financial records accurate and compliant - recording "
             "transactions, reconciling, reporting and meeting statutory "
             "deadlines."
         ),
@@ -330,7 +330,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "receptionist", "personnel", "employee relations",
         ),
         summary=(
-            "Runs people and office processes — hiring, onboarding, records, "
+            "Runs people and office processes - hiring, onboarding, records, "
             "employee queries and day-to-day coordination."
         ),
         specs=(
@@ -351,7 +351,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "curriculum", "tgt", "pgt", "assistant professor", "training officer",
         ),
         summary=(
-            "Teaches or trains learners — planning what to cover, explaining it "
+            "Teaches or trains learners - planning what to cover, explaining it "
             "so it lands, and checking whether it actually did."
         ),
         specs=(
@@ -373,7 +373,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "vendor management", "last mile",
         ),
         summary=(
-            "Moves and accounts for goods — planning stock and transport, "
+            "Moves and accounts for goods - planning stock and transport, "
             "coordinating vendors and drivers, and keeping records that match "
             "reality."
         ),
@@ -396,7 +396,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "guest relations", "travel", "tourism",
         ),
         summary=(
-            "Serves customers or guests in person — delivering the experience "
+            "Serves customers or guests in person - delivering the experience "
             "consistently, handling rushes and complaints, and keeping standards "
             "up."
         ),
@@ -418,7 +418,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "seed", "fertilizer", "agri extension", "food processing",
         ),
         summary=(
-            "Works in crop, livestock or food production — applying agronomic "
+            "Works in crop, livestock or food production - applying agronomic "
             "practice, managing inputs and seasons, and advising or supervising "
             "on the ground."
         ),
@@ -441,7 +441,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "interior design",
         ),
         summary=(
-            "Creates work for an audience and a brief — interpreting the "
+            "Creates work for an audience and a brief - interpreting the "
             "requirement, iterating on feedback, and defending or changing "
             "choices for good reasons."
         ),
@@ -463,7 +463,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "risk officer", "kyc", "aml",
         ),
         summary=(
-            "Applies law or regulation to real situations — reading the "
+            "Applies law or regulation to real situations - reading the "
             "requirement precisely, assessing risk and advising on what can and "
             "cannot be done."
         ),
@@ -486,7 +486,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
             "beautician", "tailor", "driver",
         ),
         summary=(
-            "Performs a skilled manual trade — working to standard with the "
+            "Performs a skilled manual trade - working to standard with the "
             "right tools, diagnosing faults, and finishing the job safely."
         ),
         specs=(
@@ -504,7 +504,7 @@ _FAMILIES: tuple[DomainFamily, ...] = (
         label="General Professional",
         keywords=(),
         summary=(
-            "Performs the duties of the role competently — applying the "
+            "Performs the duties of the role competently - applying the "
             "knowledge it requires, executing reliably, and working well with "
             "the people around them."
         ),

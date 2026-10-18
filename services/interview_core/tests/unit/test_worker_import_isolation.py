@@ -110,7 +110,7 @@ def test_worker_import_walker_sees_the_real_dependencies() -> None:
     reachable = _transitive_app_imports(_WORKER_MODULE)
 
     assert _WORKER_MODULE in reachable, (
-        f"{_WORKER_MODULE} did not resolve to a file under {_APP_ROOT} — the "
+        f"{_WORKER_MODULE} did not resolve to a file under {_APP_ROOT} - the "
         "walker is broken, not the worker. Fix the resolver before trusting "
         "the pin below."
     )
@@ -136,8 +136,8 @@ def test_worker_does_not_import_the_graph_prompt_island() -> None:
         "independently. Production (every LiveKit session) uses "
         "interview_worker._interviewer_instructions(); graph/prompts.py is an "
         "island reachable only through the unexecuted app.agent import chain. "
-        "Anyone who hardens graph/prompts.py — injection framing around "
-        "resume_text / jd_text / candidate speech — is NOT protecting "
+        "Anyone who hardens graph/prompts.py - injection framing around "
+        "resume_text / jd_text / candidate speech - is NOT protecting "
         "production while that stays true.\n\n"
         "If you wired the graph into the worker deliberately, that is a real "
         "architecture change: update docs/ARCH-realtime-interview.md, confirm "

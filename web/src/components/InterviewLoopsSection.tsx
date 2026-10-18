@@ -379,7 +379,7 @@ function AddSessionForm({
       <div>
         <label htmlFor={`${uid}-start`} className={labelCls}>
           Start time
-          {loop.self_schedule ? ' (optional — leave blank for the candidate to choose)' : ''}
+          {loop.self_schedule ? ' (optional - leave blank for the candidate to choose)' : ''}
         </label>
         <input
           id={`${uid}-start`}
@@ -652,7 +652,7 @@ function SessionRow({
           <p className="mt-0.5 text-[12px] text-muted-foreground">
             {session.starts_at
               ? `${formatSessionWhen(session.starts_at, candidateTimezone)} · ${session.duration_minutes} min`
-              : 'No time set yet — waiting on the candidate to choose one.'}
+              : 'No time set yet - waiting on the candidate to choose one.'}
             {session.location ? ` · ${session.location}` : ''}
           </p>
         </div>

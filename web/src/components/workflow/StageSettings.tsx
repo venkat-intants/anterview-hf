@@ -123,7 +123,7 @@ export default function StageSettings({ workflowId, roundId, label }: Props): JS
       </div>
       <p className="text-[12px] leading-relaxed text-muted-foreground">
         Who is answerable for this stage, and how long before it is overdue. This never moves a
-        candidate — it only tells your team where to look.
+        candidate - it only tells your team where to look.
       </p>
       <button
         type="button"

@@ -114,7 +114,7 @@ beforeEach(() => {
   workflowsApi.getWorkflow.mockResolvedValue(undefined);
 });
 
-describe('CalibrationTab — read-only copy', () => {
+describe('CalibrationTab - read-only copy', () => {
   it('states the banner: patterns not assessments, and never changes a scorecard or decision', async () => {
     schedulingApi.getCalibration.mockResolvedValue(calibration());
     renderTab();
@@ -150,7 +150,7 @@ describe('CalibrationTab — read-only copy', () => {
   });
 });
 
-describe('CalibrationTab — states', () => {
+describe('CalibrationTab - states', () => {
   it('shows a loading state', () => {
     schedulingApi.getCalibration.mockImplementation(() => new Promise(() => undefined));
     renderTab();
@@ -172,7 +172,7 @@ describe('CalibrationTab — states', () => {
   });
 });
 
-describe('CalibrationTab — suppression (security fix)', () => {
+describe('CalibrationTab - suppression (security fix)', () => {
   it('says so in words, and never falls back to showing a zero', async () => {
     schedulingApi.getCalibration.mockResolvedValue(
       calibration({
@@ -204,7 +204,7 @@ describe('CalibrationTab — suppression (security fix)', () => {
   });
 });
 
-describe('CalibrationTab — flags in words (PH5-E4 §4.3 wording)', () => {
+describe('CalibrationTab - flags in words (PH5-E4 §4.3 wording)', () => {
   it('states the paired-gap sentence with the server’s own same-direction count', async () => {
     schedulingApi.getCalibration.mockResolvedValue(
       calibration({
@@ -260,7 +260,7 @@ describe('CalibrationTab — flags in words (PH5-E4 §4.3 wording)', () => {
     expect(screen.queryByText(/in \d+ of \d+ the gap/)).not.toBeInTheDocument();
   });
 
-  it('names no candidates — the API sends none, and this tab does not invent any', async () => {
+  it('names no candidates - the API sends none, and this tab does not invent any', async () => {
     schedulingApi.getCalibration.mockResolvedValue(
       calibration({ interviewers: [interviewerRow({ mean_delta: -0.8, flag: 'lower' })] }),
     );
@@ -270,7 +270,7 @@ describe('CalibrationTab — flags in words (PH5-E4 §4.3 wording)', () => {
   });
 });
 
-describe('CalibrationTab — never ranks interviewers', () => {
+describe('CalibrationTab - never ranks interviewers', () => {
   it('always lists interviewers alphabetically, regardless of the API order', async () => {
     schedulingApi.getCalibration.mockResolvedValue(
       calibration({
@@ -300,7 +300,7 @@ describe('CalibrationTab — never ranks interviewers', () => {
   });
 });
 
-describe('CalibrationTab — criteria table', () => {
+describe('CalibrationTab - criteria table', () => {
   it('shows the panel distribution, mean and a suppressed cell as "too few to compare"', async () => {
     schedulingApi.getCalibration.mockResolvedValue(
       calibration({
@@ -370,7 +370,7 @@ describe('CalibrationTab — criteria table', () => {
   });
 });
 
-describe('CalibrationTab — judgements drill-down', () => {
+describe('CalibrationTab - judgements drill-down', () => {
   function judgements(
     over: Partial<CalibrationJudgementsResponse> = {},
   ): CalibrationJudgementsResponse {
@@ -473,7 +473,7 @@ describe('CalibrationTab — judgements drill-down', () => {
   });
 });
 
-describe('CalibrationTab — "How is this calculated?"', () => {
+describe('CalibrationTab - "How is this calculated?"', () => {
   it('shows the spec, thresholds and registry hash, and closes on Escape', async () => {
     schedulingApi.getCalibration.mockResolvedValue(
       calibration({ interviewers: [interviewerRow()] }),
@@ -492,7 +492,7 @@ describe('CalibrationTab — "How is this calculated?"', () => {
   });
 });
 
-describe('CalibrationTab — round picker', () => {
+describe('CalibrationTab - round picker', () => {
   it('lists job_simulation and portfolio rounds, and labels an archived version', async () => {
     schedulingApi.getCalibration.mockResolvedValue(calibration());
     workflowsApi.listWorkflows.mockResolvedValue([
@@ -660,7 +660,7 @@ describe('CalibrationTab — round picker', () => {
   });
 });
 
-describe('CalibrationTab — filters', () => {
+describe('CalibrationTab - filters', () => {
   it('sends the chosen opening as a filter, and clears the round with it', async () => {
     schedulingApi.getCalibration.mockResolvedValue(calibration());
     const user = userEvent.setup();

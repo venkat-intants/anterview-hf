@@ -40,7 +40,7 @@ function ev(action: string, actor: string): OfferHistoryEntry {
 type StepStates = string[];
 const states = (o: TrackOffer): StepStates => offerTrack(o).steps.map((s) => s.state);
 
-describe('offerTrack — step states per status', () => {
+describe('offerTrack - step states per status', () => {
   const cases: [string, TrackOffer, StepStates][] = [
     ['draft', offer('draft'), ['current', 'todo', 'todo', 'todo', 'todo']],
     [
@@ -104,7 +104,7 @@ describe('offerTrack — step states per status', () => {
   });
 });
 
-describe('offerTrack — who and when', () => {
+describe('offerTrack - who and when', () => {
   it('puts the actor from the history under each completed step', () => {
     const o = offer('approved', {
       submitted_at: AT,
@@ -164,7 +164,7 @@ describe('offerTrack — who and when', () => {
   );
 });
 
-describe('offerPrimary — the one forward step HR can take', () => {
+describe('offerPrimary - the one forward step HR can take', () => {
   const rows: [OfferStatus, string | null, string | null][] = [
     ['draft', null, 'submit'],
     ['rejected', null, 'submit'],
@@ -182,7 +182,7 @@ describe('offerPrimary — the one forward step HR can take', () => {
   });
 });
 
-describe('offerSecondary — the quieter actions the state machine allows', () => {
+describe('offerSecondary - the quieter actions the state machine allows', () => {
   const rows: [OfferStatus, string | null, string[]][] = [
     ['draft', null, ['withdraw']],
     ['pending_approval', null, ['recall', 'withdraw']],
@@ -202,11 +202,11 @@ describe('offerSecondary — the quieter actions the state machine allows', () =
   });
 });
 
-describe('offerNeeds — what a list row asks of the reader', () => {
+describe('offerNeeds - what a list row asks of the reader', () => {
   const docs = { mandatory_total: 2, awaiting_review: 0 };
   const rows: [OfferStatus, string | null, number, string, boolean][] = [
     ['draft', null, 0, 'Yours to submit', true],
-    ['rejected', null, 0, 'Sent back — yours to revise', true],
+    ['rejected', null, 0, 'Sent back - yours to revise', true],
     ['approved', null, 0, 'Yours to send', true],
     ['pending_approval', null, 0, 'With the company admin', false],
     ['sent', null, 0, 'Waiting on the candidate', false],

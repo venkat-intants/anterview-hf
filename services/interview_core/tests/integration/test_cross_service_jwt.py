@@ -96,7 +96,7 @@ async def test_cross_service_jwt_live(ic_client: AsyncClient) -> None:
     Skipped automatically when data_gateway is not running on port 8002.
     """
     if not await _data_gateway_available():
-        pytest.skip("data_gateway not running on port 8002 — skipping live test")
+        pytest.skip("data_gateway not running on port 8002 - skipping live test")
 
     email = _unique_email()
     async with AsyncClient(base_url=DATA_GATEWAY_URL, timeout=10.0) as gw:

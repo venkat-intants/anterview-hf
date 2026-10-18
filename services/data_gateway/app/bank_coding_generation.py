@@ -269,7 +269,7 @@ def _validate_one(
     elif reference_raw is not None and not isinstance(reference_raw, str):
         warnings.append("the reference solution was not text and was removed")
     if reference is None:
-        warnings.append("no reference solution — write one before sending this for review")
+        warnings.append("no reference solution - write one before sending this for review")
 
     # Last, the SAME model the exam and bank authoring routes validate with, so
     # nothing reaches the preview that `questions/bulk` would then refuse.

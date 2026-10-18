@@ -258,7 +258,7 @@ beforeEach(() => {
   getAnalyticsMembers.mockResolvedValue(membersFixture());
 });
 
-describe('OutcomeSignalsSection — banner and title', () => {
+describe('OutcomeSignalsSection - banner and title', () => {
   it('titles the section and states the DPDP-safe banner', async () => {
     renderSection();
     expect(
@@ -272,7 +272,7 @@ describe('OutcomeSignalsSection — banner and title', () => {
   });
 });
 
-describe('OutcomeSignalsSection — rows are bands, never "All"', () => {
+describe('OutcomeSignalsSection - rows are bands, never "All"', () => {
   it('shows the band row and never a row for the overall "All" group', async () => {
     renderSection();
     expect(await screen.findByText('4 and above')).toBeInTheDocument();
@@ -286,7 +286,7 @@ describe('OutcomeSignalsSection — rows are bands, never "All"', () => {
   });
 });
 
-describe('OutcomeSignalsSection — cohort toggle', () => {
+describe('OutcomeSignalsSection - cohort toggle', () => {
   it('refetches with cohort=decision on toggle', async () => {
     getOutcomeSignals.mockImplementation((opts: { cohort?: string } = {}) =>
       Promise.resolve(
@@ -311,7 +311,7 @@ describe('OutcomeSignalsSection — cohort toggle', () => {
   });
 });
 
-describe('OutcomeSignalsSection — drill-down', () => {
+describe('OutcomeSignalsSection - drill-down', () => {
   it('drills into a band cell with score_band, and the row carries the interviewer score and an evidence-trail link', async () => {
     const user = userEvent.setup();
     renderSection();

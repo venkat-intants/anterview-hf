@@ -200,7 +200,7 @@ async def test_create_session_job_query_filters_soft_deleted(client: AsyncClient
     ]
     assert job_queries, f"no Job SELECT captured; got: {captured}"
     assert "deleted_at" in job_queries[0].lower() and "is null" in job_queries[0].lower(), (
-        f"Job lookup must filter deleted_at IS NULL — got SQL: {job_queries[0]}"
+        f"Job lookup must filter deleted_at IS NULL - got SQL: {job_queries[0]}"
     )
 
 

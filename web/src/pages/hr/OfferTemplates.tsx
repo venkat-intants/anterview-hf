@@ -140,7 +140,7 @@ function TemplateForm({
             onChange={(e) => set('employment_type', e.target.value)}
             className={inputCls}
           >
-            <option value="">—</option>
+            <option value="">-</option>
             {EMPLOYMENT_TYPES.map((t) => (
               <option key={t} value={t}>
                 {t.replace('_', ' ')}
@@ -158,7 +158,7 @@ function TemplateForm({
             onChange={(e) => set('pay_period', e.target.value)}
             className={inputCls}
           >
-            <option value="">—</option>
+            <option value="">-</option>
             {PAY_PERIODS.map((p) => (
               <option key={p} value={p}>
                 {p}
@@ -349,7 +349,7 @@ export default function OfferTemplates() {
     <Page width="form">
       <PageHeader
         title="Offer templates"
-        description="Reusable starting points for an offer. Compensation is never part of a template — every offer sets its own base salary."
+        description="Reusable starting points for an offer. Compensation is never part of a template - every offer sets its own base salary."
       />
 
       <Toolbar

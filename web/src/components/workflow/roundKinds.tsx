@@ -74,7 +74,7 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
     kind: 'ai_interview',
     label: 'AI interview',
     blurb:
-      'A live voice interview. The competencies you pick here are what it probes — and only those.',
+      'A live voice interview. The competencies you pick here are what it probes - and only those.',
     icon: Video,
     tone: 'pink',
     needsExam: false,

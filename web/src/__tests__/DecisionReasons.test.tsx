@@ -57,7 +57,7 @@ beforeEach(() => {
   api.updateDecisionReason.mockResolvedValue({ ...REASONS[0], active: false });
 });
 
-describe('DecisionReasons — listing', () => {
+describe('DecisionReasons - listing', () => {
   it('shows each reason with what it applies to and whether it needs an explanation', async () => {
     renderPage();
 
@@ -92,7 +92,7 @@ describe('DecisionReasons — listing', () => {
   });
 });
 
-describe('DecisionReasons — creating a reason', () => {
+describe('DecisionReasons - creating a reason', () => {
   it('sends exactly label, applies_to and requires_explanation', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -124,7 +124,7 @@ describe('DecisionReasons — creating a reason', () => {
   });
 });
 
-describe('DecisionReasons — retiring and reactivating', () => {
+describe('DecisionReasons - retiring and reactivating', () => {
   it('retires an active reason without deleting it', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -171,7 +171,7 @@ describe('DecisionReasons — retiring and reactivating', () => {
   });
 });
 
-describe('DecisionReasons — renaming', () => {
+describe('DecisionReasons - renaming', () => {
   it('renames a reason in place', async () => {
     const user = userEvent.setup();
     renderPage();

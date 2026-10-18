@@ -382,7 +382,7 @@ function PoolsList(): JSX.Element {
                       </td>
                       <td className="py-2.5 pr-3 text-foreground">{p.member_count}</td>
                       <td className="py-2.5 pr-3 text-muted-foreground">
-                        {p.created_by_name ?? '—'}
+                        {p.created_by_name ?? '-'}
                       </td>
                       <td className="py-2.5 pr-3 text-muted-foreground">{fmtDate(p.updated_at)}</td>
                       <td className="py-2.5 pr-3">
@@ -714,7 +714,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
               {freshnessChipLabel(m.evidence_freshness)}
             </StatusTag>
           ) : (
-            <span className="text-[12px] text-muted-foreground">—</span>
+            <span className="text-[12px] text-muted-foreground">-</span>
           )}
           <p className="mt-1 text-[12px] text-muted-foreground">
             {m.evidence_reviewed_at
@@ -1132,7 +1132,7 @@ function AddCandidatesDialog({
             <ul className="space-y-0.5 text-[12px] text-[var(--ui-danger)]">
               {skipped.map((s) => (
                 <li key={s.applicantId}>
-                  {s.name} — {t(`hrPools.skipReason.${s.reason}`)}
+                  {s.name} - {t(`hrPools.skipReason.${s.reason}`)}
                 </li>
               ))}
             </ul>

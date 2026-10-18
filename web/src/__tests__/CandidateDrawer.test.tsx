@@ -31,7 +31,7 @@ vi.mock('../api/applicants', () => ({
   openApplicantCv: (...a: unknown[]) => openApplicantCv(...a) as unknown,
 }));
 
-describe('CandidateDrawer — opened from one application (B5)', () => {
+describe('CandidateDrawer - opened from one application (B5)', () => {
   it("shows that application's resume match, not the latest one's", async () => {
     // The person's row describes their LATEST application (Backend, 78). The
     // pipeline opened their older one (Data Analyst), which scored 41.
@@ -314,7 +314,7 @@ beforeEach(() => {
   });
 });
 
-describe('CandidateDrawer — 90-day check-in (PH5 wave-1 follow-up A1)', () => {
+describe('CandidateDrawer - 90-day check-in (PH5 wave-1 follow-up A1)', () => {
   it('shows the check-in section only once the application is hired', async () => {
     getApplicant.mockResolvedValue(applicant({ status: 'shortlisted' }));
     listApplications.mockResolvedValue([
@@ -1296,7 +1296,7 @@ describe('CandidateDrawer', () => {
 });
 
 
-describe('CandidateDrawer — View CV beside the resume match', () => {
+describe('CandidateDrawer - View CV beside the resume match', () => {
   it('opens the CV behind the score', async () => {
     getApplicant.mockResolvedValue(applicant({ has_cv: true }));
     listRoundResults.mockResolvedValue([]);

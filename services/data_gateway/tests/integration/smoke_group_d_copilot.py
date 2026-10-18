@@ -45,7 +45,7 @@ PASS, FAIL = [], []
 
 def check(label, cond, detail=""):
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def call(name, args, ctx):
@@ -202,7 +202,7 @@ async def main() -> None:
               str(body["rounds"][1]["criteria"])[:200])
         check("probes travel with it too",
               all(c["probes"] for c in body["rounds"][1]["criteria"]))
-        check("no risk note — a draft reaches nobody", proposal.risk_note is None)
+        check("no risk note - a draft reaches nobody", proposal.risk_note is None)
 
         print("\n--- what the model cannot smuggle in ---")
         res, data = await call(

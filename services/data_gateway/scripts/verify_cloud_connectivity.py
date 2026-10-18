@@ -47,7 +47,7 @@ async def check_postgres() -> tuple[bool, str]:
 
     if not ssl_val:
         return False, (
-            "DATABASE_SSL is not set — expected 'require' for Prisma endpoint. "
+            "DATABASE_SSL is not set - expected 'require' for Prisma endpoint. "
             "Check .env."
         )
 
@@ -94,9 +94,9 @@ async def check_postgres() -> tuple[bool, str]:
         await engine.dispose()
 
         detail = (
-            f"OK — {pg_ver[:60]}\n"
+            f"OK - {pg_ver[:60]}\n"
             f"  pgvector: {vec_ver}\n"
-            f"  tables ({len(tables)}): {', '.join(tables) if tables else '(none — run alembic upgrade head)'}"
+            f"  tables ({len(tables)}): {', '.join(tables) if tables else '(none - run alembic upgrade head)'}"
         )
         return True, detail
 
@@ -129,7 +129,7 @@ async def check_redis() -> tuple[bool, str]:
         pong = await client.ping()
         await client.aclose()
         if pong:
-            return True, f"OK — PONG received from {url.split('@')[-1]}"
+            return True, f"OK - PONG received from {url.split('@')[-1]}"
         return False, "PING returned falsy value"
     except Exception as exc:
         return False, f"Redis connection error: {type(exc).__name__}: {exc}"
@@ -156,7 +156,7 @@ async def main() -> int:
         print("All checks PASSED.")
         return 0
     else:
-        print("One or more checks FAILED — review errors above.")
+        print("One or more checks FAILED - review errors above.")
         return 1
 
 

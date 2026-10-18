@@ -98,7 +98,7 @@ beforeEach(() => {
   schedulingApi.getMyAvailability.mockResolvedValue([]);
 });
 
-describe('InterviewerConsole — listing assignments', () => {
+describe('InterviewerConsole - listing assignments', () => {
   it('shows each assignment with its state, candidate, role and round', async () => {
     listAssignments.mockResolvedValue([LATE, ASSIGNED, SUBMITTED]);
     renderConsole();
@@ -161,7 +161,7 @@ describe('InterviewerConsole — listing assignments', () => {
     expect(screen.getByText(/Loading your interviews/)).toBeInTheDocument();
   });
 
-  it('never shows another interviewer’s work — only what the endpoint returns', async () => {
+  it('never shows another interviewer’s work - only what the endpoint returns', async () => {
     // Scoping is server-side; the console renders exactly what came back.
     listAssignments.mockResolvedValue([ASSIGNED]);
     renderConsole();
@@ -172,7 +172,7 @@ describe('InterviewerConsole — listing assignments', () => {
   });
 });
 
-describe('InterviewerConsole — page copy', () => {
+describe('InterviewerConsole - page copy', () => {
   it('says a scorecard never decides an outcome', async () => {
     listAssignments.mockResolvedValue([]);
     renderConsole();
@@ -205,7 +205,7 @@ const WINDOW: AvailabilityWindow = {
   ends_at: '2026-09-22T10:00:00.000Z',
 };
 
-describe('InterviewerConsole — upcoming interviews', () => {
+describe('InterviewerConsole - upcoming interviews', () => {
   beforeEach(() => {
     listAssignments.mockResolvedValue([]);
   });
@@ -235,7 +235,7 @@ describe('InterviewerConsole — upcoming interviews', () => {
   });
 });
 
-describe('InterviewerConsole — my availability', () => {
+describe('InterviewerConsole - my availability', () => {
   beforeEach(() => {
     listAssignments.mockResolvedValue([]);
   });

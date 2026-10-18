@@ -82,7 +82,7 @@ def _tok(token: str) -> dict[str, str]:
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
     mark = "PASS" if cond else "FAIL"
-    print(f"  {mark}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {mark}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 def tiny_pdf(lines: list[str]) -> bytes:
@@ -252,7 +252,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://smoke") as client:
         # ── PH3-B2: unapproved means invisible ────────────────────────
-        print("\nPH3-B2 — an unapproved opening is not public")
+        print("\nPH3-B2 - an unapproved opening is not public")
         r = await client.get(f"/apply/{req}")
         check("the posting 404s while unapproved", r.status_code == 404, str(r.status_code))
 
@@ -274,7 +274,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               f"{r.status_code} {r.text[:120]}")
 
         # ── The approval round trip ───────────────────────────────────
-        print("\nPH3-B2 — submit, then the super admin approves")
+        print("\nPH3-B2 - submit, then the super admin approves")
         r = await client.post(
             f"/hr/requisitions/{req}/approval/submit", json={"note": "Backfill for Priya"}
         )
@@ -302,7 +302,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               r.text[:140])
 
         # ── PH3-B4c: consent first ────────────────────────────────────
-        print("\nPH3-B4c — a draft cannot be saved without consent")
+        print("\nPH3-B4c - a draft cannot be saved without consent")
         r = await client.post(
             f"/apply/{req}/draft",
             json={"email": "priya@example.com", "consent_granted": False},
@@ -333,7 +333,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("a draft did NOT create an applicant", applicants == 0, f"{applicants} applicants")
 
         # ── Resume it ─────────────────────────────────────────────────
-        print("\nPH3-B4c — resume from the link")
+        print("\nPH3-B4c - resume from the link")
         r = await client.get("/apply/draft", headers=_tok(token))
         check("the link reopens the draft", r.status_code == 200 and
               r.json()["email"] == "priya@example.com", f"{r.status_code} {r.text[:140]}")
@@ -353,7 +353,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("a bogus token 404s", r.status_code == 404, str(r.status_code))
 
         # ── PH3-B5: the confirmation step ─────────────────────────────
-        print("\nPH3-B5 — confirm what the CV said")
+        print("\nPH3-B5 - confirm what the CV said")
         r = await client.post("/apply/draft/submit", headers=_tok(token))
         check("submission refused with no CV", r.status_code == 422, str(r.status_code))
 
@@ -387,7 +387,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               r.json()["confirmed"] is True, f"{r.status_code} {r.text[:140]}")
 
         # ── Submit ────────────────────────────────────────────────────
-        print("\nPH3-B4c — the draft becomes an application")
+        print("\nPH3-B4c - the draft becomes an application")
         r = await client.post("/apply/draft/submit", headers=_tok(token))
         body = r.json() if r.status_code in (200, 201) else {}
         check("the application is created", r.status_code == 201 and
@@ -416,7 +416,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the link stops working once submitted", r.status_code == 404, str(r.status_code))
 
         # ── PH3-B4b: cooldown ─────────────────────────────────────────
-        print("\nPH3-B4b — reapplication cooldown")
+        print("\nPH3-B4b - reapplication cooldown")
         async with factory() as db:
             enr = await db.scalar(text("SELECT id FROM enrolments LIMIT 1"))
             await db.execute(text(
@@ -466,7 +466,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # row it mints, so the second company anyone ever drafted at (or the
         # first, if that address already belonged to any account anywhere)
         # hit the unique index and surfaced as an unrecoverable 503.
-        print("\nREGRESSION — a draft-created user must not collide on users.email")
+        print("\nREGRESSION - a draft-created user must not collide on users.email")
 
         r = await client.post(
             f"/apply/{other_req}/draft",
@@ -530,7 +530,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # victim's own link died silently.
         #
         # This walks the actual attack, through the real endpoints.
-        print("\nSECURITY — a stranger who knows the email gets nothing")
+        print("\nSECURITY - a stranger who knows the email gets nothing")
 
         victim_email = "victim@example.com"
         r = await client.post(
@@ -577,7 +577,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               f"{r.status_code} {r.text[:140]}")
 
         # ── The data principal can erase their own draft ──────────────
-        print("\nDPDP — a draft-only candidate can erase their own data")
+        print("\nDPDP - a draft-only candidate can erase their own data")
         # Resolved by the victim's OWN token, not by their address. Both the
         # victim and the attacker hold a draft carrying this email — that is the
         # whole point of the section above — so "the most recent draft with this
@@ -626,7 +626,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # Source-inspection tests cannot see this: it is an interaction between
         # two modules and a database. So this exercises the real repair against
         # real rows, and then runs the executor's own matching logic over them.
-        print("\nDPDP — a draft survives activation and is still erasable")
+        print("\nDPDP - a draft survives activation and is still erasable")
 
         from app.apply_activation import _link_to_existing
 

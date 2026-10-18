@@ -125,7 +125,7 @@ test.describe('a coding round', () => {
       row.round_results[0].graded_by,
       'graded by running the code, not by a person',
     ).not.toBe('human');
-    expect(row.held, 'and they were not held — they passed').toBe(false);
+    expect(row.held, 'and they were not held - they passed').toBe(false);
     expect(enrolment.id).toBeTruthy();
   });
 });

@@ -79,13 +79,13 @@ def _mypy_paths(block: str) -> set[str]:
     match = re.search(
         r"run: >-\s*\n\s*mypy\s+(.*?)\s*--ignore-missing-imports", block, re.DOTALL
     )
-    assert match is not None, "the shared job no longer runs mypy — this test is stale"
+    assert match is not None, "the shared job no longer runs mypy - this test is stale"
     return {arg for arg in match.group(1).split() if not arg.startswith("-")}
 
 
 def _pytest_paths(block: str) -> set[str]:
     match = re.search(r"run: python -m pytest (.*)", block)
-    assert match is not None, "the shared job no longer runs pytest — this test is stale"
+    assert match is not None, "the shared job no longer runs pytest - this test is stale"
     return {arg for arg in match.group(1).split() if not arg.startswith("-")}
 
 
@@ -129,7 +129,7 @@ def test_ci_yaml_is_where_we_think_it_is() -> None:
     A checker that silently stops matching prints OK forever, which is the
     failure mode this whole file is about.
     """
-    assert CI_YAML.is_file(), f"{CI_YAML} not found — parents[2] no longer the repo root"
+    assert CI_YAML.is_file(), f"{CI_YAML} not found - parents[2] no longer the repo root"
     assert "\n  shared:\n" in CI_YAML.read_text(encoding="utf-8")
 
 
@@ -139,7 +139,7 @@ def test_every_shared_code_path_is_type_checked() -> None:
     assert not missing, (
         "these paths under shared/ hold code that the CI `shared` job's "
         f"Type-check step never sees: {sorted(missing)}. mypy takes explicit "
-        "arguments — unlisted means unchecked, and it looks identical to a pass. "
+        "arguments - unlisted means unchecked, and it looks identical to a pass. "
         "Add them to the `mypy ...` line in .github/workflows/ci.yml."
     )
 
@@ -166,7 +166,7 @@ def test_every_shared_test_directory_is_collected() -> None:
     assert not missing, (
         "these directories hold tests that the CI `shared` job never collects: "
         f"{sorted(missing)}. Add them to the `pytest ...` line in "
-        ".github/workflows/ci.yml — the suites pass locally and run nowhere."
+        ".github/workflows/ci.yml - the suites pass locally and run nowhere."
     )
 
 

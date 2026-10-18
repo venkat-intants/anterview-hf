@@ -96,7 +96,7 @@ export default function MetricInfoDialog({
                     <span key={dimName}>
                       {dim ? dim.label : dimName}
                       {dim?.description ? (
-                        <span className="text-muted-foreground"> — {dim.description}</span>
+                        <span className="text-muted-foreground"> - {dim.description}</span>
                       ) : null}
                     </span>
                   );

@@ -102,7 +102,7 @@ function CreateOfferForm({
           }}
           className={selectCls}
         >
-          <option value="">No template — start from scratch</option>
+          <option value="">No template - start from scratch</option>
           {(templates.data ?? []).map((tpl) => (
             <option key={tpl.id} value={tpl.id}>
               {tpl.name}
@@ -139,8 +139,8 @@ function CreateOfferForm({
         </div>
       </div>
       <p className="text-[12.5px] text-muted-foreground">
-        Job title defaults to {jobTitle ?? 'this opening'}. Everything else — dates, benefits, terms
-        — is filled in on the offer itself.
+        Job title defaults to {jobTitle ?? 'this opening'}. Everything else - dates, benefits, terms
+        - is filled in on the offer itself.
       </p>
       <Button
         type="button"

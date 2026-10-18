@@ -83,7 +83,7 @@ beforeEach(() => {
   workflowsApi.listWorkflows.mockResolvedValue([]);
 });
 
-describe('InterviewPanel — tabs', () => {
+describe('InterviewPanel - tabs', () => {
   it('opens on Workload', async () => {
     renderPage();
     expect(

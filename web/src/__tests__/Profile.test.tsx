@@ -109,7 +109,7 @@ beforeEach(() => {
   });
 });
 
-describe('Profile — rendering', () => {
+describe('Profile - rendering', () => {
   it('shows the saved profile as text, not as an always-open form', async () => {
     await renderHydrated();
 
@@ -199,7 +199,7 @@ describe('Profile — rendering', () => {
   });
 });
 
-describe('Profile — saving', () => {
+describe('Profile - saving', () => {
   it('sends the candidate-only fields for a candidate', async () => {
     const user = userEvent.setup();
     await renderHydrated();
@@ -309,7 +309,7 @@ describe('Profile — saving', () => {
   });
 });
 
-describe('Profile — avatar upload', () => {
+describe('Profile - avatar upload', () => {
   it('refuses a non-image file', async () => {
     // applyAccept:false reproduces the real hazard: `accept="image/*"` is a
     // filter hint, not a constraint — a user can switch the picker to "All

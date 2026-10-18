@@ -26,7 +26,7 @@ export function nextSetupStage(r: SetupFields & Partial<SetupText>): { stage: st
       return {
         stage: 'Budget and approval',
         detail: r.approval_note
-          ? `sent back — “${r.approval_note}”. Revise and resubmit.`
+          ? `sent back - “${r.approval_note}”. Revise and resubmit.`
           : 'sent back. Revise and resubmit.',
       };
     case 'pending_approval':

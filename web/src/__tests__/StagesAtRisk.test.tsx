@@ -72,7 +72,7 @@ describe('StagesAtRisk', () => {
     getSlaBoard.mockResolvedValue([row(1)]);
     const user = userEvent.setup();
     renderPage();
-    await user.click(await screen.findByRole('button', { name: /Candidate 1 — Aptitude exam/ }));
+    await user.click(await screen.findByRole('button', { name: /Candidate 1 - Aptitude exam/ }));
     expect(screen.getByRole('dialog')).toHaveTextContent('drawer ap-1');
   });
 });

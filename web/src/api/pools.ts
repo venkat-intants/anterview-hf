@@ -281,7 +281,7 @@ export const POOL_FAILURE_SENTENCES: Record<string, string> = {
   pool_limit_reached: "Your company has reached its limit on talent pools.",
   pool_not_found: 'That pool could not be found.',
   member_not_found: 'That member could not be found.',
-  not_eligible: 'This candidate cannot be added right now — their rediscovery consent is not active.',
+  not_eligible: 'This candidate cannot be added right now - their rediscovery consent is not active.',
   invalid_name: 'Give the pool a name.',
   requisition_not_open: 'That opening is not open for new applications.',
   stale_evidence_unreviewed: 'This evidence has not been reviewed recently.',

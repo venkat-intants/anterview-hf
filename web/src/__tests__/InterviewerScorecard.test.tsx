@@ -157,7 +157,7 @@ beforeEach(() => {
   api.requestCorrection.mockResolvedValue({ scorecard_id: '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f42', corrects: '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41' });
 });
 
-describe('InterviewerScorecard — loading and error', () => {
+describe('InterviewerScorecard - loading and error', () => {
   it('shows a loading state before the scorecard arrives', () => {
     api.getScorecard.mockImplementation(() => new Promise(() => undefined));
     renderPage();
@@ -178,7 +178,7 @@ describe('InterviewerScorecard — loading and error', () => {
   });
 });
 
-describe('InterviewerScorecard — the interview kit tab', () => {
+describe('InterviewerScorecard - the interview kit tab', () => {
   it('opens on the kit tab, showing instructions, HR notes and per-criterion guidance', async () => {
     renderPage();
 
@@ -200,7 +200,7 @@ describe('InterviewerScorecard — the interview kit tab', () => {
     expect(screen.getByText('Strong')).toBeInTheDocument();
   });
 
-  it('works with no custom kit — the no-kit fallback', async () => {
+  it('works with no custom kit - the no-kit fallback', async () => {
     api.getScorecardKit.mockResolvedValue(kit({ has_custom_kit: false, instructions: null, interviewer_notes_from_hr: null }));
     renderPage();
 
@@ -228,7 +228,7 @@ describe('InterviewerScorecard — the interview kit tab', () => {
   });
 });
 
-describe('InterviewerScorecard — the scorecard tab', () => {
+describe('InterviewerScorecard - the scorecard tab', () => {
   async function openScorecardTab() {
     const user = userEvent.setup();
     renderPage();
@@ -240,7 +240,7 @@ describe('InterviewerScorecard — the scorecard tab', () => {
   it('scores a criterion by clicking', async () => {
     const user = await openScorecardTab();
 
-    const group = screen.getByRole('radiogroup', { name: 'Score — System design' });
+    const group = screen.getByRole('radiogroup', { name: 'Score - System design' });
     const four = within(group).getByRole('radio', { name: 'Score 4' });
     expect(four).toHaveAttribute('aria-checked', 'false');
     await user.click(four);
@@ -250,7 +250,7 @@ describe('InterviewerScorecard — the scorecard tab', () => {
   it('follows the radio-group keyboard pattern: one tab stop, arrows move and select', async () => {
     const user = await openScorecardTab();
 
-    const group = screen.getByRole('radiogroup', { name: 'Score — System design' });
+    const group = screen.getByRole('radiogroup', { name: 'Score - System design' });
     const radios = within(group).getAllByRole('radio');
     // One Tab stop per group — score 1 while nothing is chosen.
     expect(radios.map((r) => r.getAttribute('tabindex'))).toEqual(['0', '-1', '-1', '-1', '-1']);
@@ -272,7 +272,7 @@ describe('InterviewerScorecard — the scorecard tab', () => {
   it('makes "not assessed" mutually exclusive with a score', async () => {
     const user = await openScorecardTab();
 
-    const group = screen.getByRole('radiogroup', { name: 'Score — System design' });
+    const group = screen.getByRole('radiogroup', { name: 'Score - System design' });
     await user.click(within(group).getByRole('radio', { name: 'Score 3' }));
     expect(within(group).getByRole('radio', { name: 'Score 3' })).toHaveAttribute('aria-checked', 'true');
 
@@ -286,7 +286,7 @@ describe('InterviewerScorecard — the scorecard tab', () => {
   it('saves a draft with the scores, evidence and summary entered', async () => {
     const user = await openScorecardTab();
 
-    const group = screen.getByRole('radiogroup', { name: 'Score — System design' });
+    const group = screen.getByRole('radiogroup', { name: 'Score - System design' });
     await user.click(within(group).getByRole('radio', { name: 'Score 5' }));
     await user.type(screen.getAllByLabelText('Evidence')[0], 'Walked through sharding unprompted.');
     await user.type(screen.getByLabelText('Overall summary'), 'Strong candidate.');
@@ -311,7 +311,7 @@ describe('InterviewerScorecard — the scorecard tab', () => {
     expect(api.submitScorecard).not.toHaveBeenCalled();
     // `.` rather than a literal apostrophe: the component uses a typographic
     // "can’t" (curly quote), matching this codebase's convention elsewhere.
-    expect(screen.getByText(/can.t be edited — only corrected/i)).toBeInTheDocument();
+    expect(screen.getByText(/can.t be edited - only corrected/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /confirm submit/i }));
     await waitFor(() => expect(api.submitScorecard).toHaveBeenCalledTimes(1));
@@ -330,7 +330,7 @@ describe('InterviewerScorecard — the scorecard tab', () => {
   });
 });
 
-describe('InterviewerScorecard — read-only, superseded and correction', () => {
+describe('InterviewerScorecard - read-only, superseded and correction', () => {
   it('disables every control when can_edit is false and there is nothing to correct', async () => {
     api.getScorecard.mockResolvedValue(detail({ can_edit: false, can_correct: false, status: 'submitted', state: 'submitted' }));
     const user = userEvent.setup();
@@ -370,7 +370,7 @@ describe('InterviewerScorecard — read-only, superseded and correction', () => 
     await user.type(screen.getByLabelText(/why does this need correcting/i), 'Too short');
     expect(startButton).toBeDisabled();
 
-    await user.type(screen.getByLabelText(/why does this need correcting/i), ' — realised the wrong evidence was recorded.');
+    await user.type(screen.getByLabelText(/why does this need correcting/i), ' - realised the wrong evidence was recorded.');
     expect(startButton).not.toBeDisabled();
 
     await user.click(startButton);
@@ -414,7 +414,7 @@ describe('InterviewerScorecard — read-only, superseded and correction', () => 
     expect(await screen.findByText(/Correcting the earlier scorecard/)).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Scorecard' }));
     expect(screen.getByLabelText('Overall summary')).toHaveValue('Corrected summary');
-    const group = screen.getByRole('radiogroup', { name: 'Score — System design' });
+    const group = screen.getByRole('radiogroup', { name: 'Score - System design' });
     expect(within(group).getByRole('radio', { name: 'Score 4' })).toHaveAttribute('aria-checked', 'true');
     // And none of the first page's transient state (the correction form).
     expect(screen.queryByLabelText(/why does this need correcting/i)).not.toBeInTheDocument();
@@ -426,16 +426,16 @@ describe('InterviewerScorecard — read-only, superseded and correction', () => 
 // about a candidate's accommodations: `adjustments_note`, verbatim, and
 // nothing else — no basis, no internal note, no who recorded it. Nothing here
 // fetches anything beyond what getScorecard already returns.
-describe('InterviewerScorecard — adjustments (PH4-D2)', () => {
+describe('InterviewerScorecard - adjustments (PH4-D2)', () => {
   it('renders the adjustments note when the server sends one', async () => {
     api.getScorecard.mockResolvedValue(
-      detail({ adjustments_note: 'Extra time granted — no other change to the round.' }),
+      detail({ adjustments_note: 'Extra time granted - no other change to the round.' }),
     );
     renderPage();
 
     expect(await screen.findByText('Deepa Menon')).toBeInTheDocument();
     const note = screen.getByRole('note', { name: 'Adjustments' });
-    expect(note).toHaveTextContent('Extra time granted — no other change to the round.');
+    expect(note).toHaveTextContent('Extra time granted - no other change to the round.');
   });
 
   it('shows nothing at all when there is no adjustments note', async () => {
@@ -460,7 +460,7 @@ describe('InterviewerScorecard — adjustments (PH4-D2)', () => {
   });
 });
 
-describe('InterviewerScorecard — the route parameter', () => {
+describe('InterviewerScorecard - the route parameter', () => {
   it('refuses an id that is not a scorecard id, and requests nothing', async () => {
     renderPage('x', '/interviewer/scorecards/..%2F..%2Fhr%2Frounds%2Fabc%2Fkit');
     expect(await screen.findByText('Scorecard not found.')).toBeInTheDocument();

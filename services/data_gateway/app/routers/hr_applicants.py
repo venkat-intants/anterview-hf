@@ -718,7 +718,7 @@ async def create_applicant(
         if already is not None:
             raise HTTPException(
                 status_code=409,
-                detail=f"{already} is already in this opening — open their record instead.",
+                detail=f"{already} is already in this opening - open their record instead.",
             )
 
     applicant_id = existing_id or uuid.uuid4()
@@ -922,7 +922,7 @@ async def bulk_upload_applicants(
     if len(files) > _MAX_BULK_FILES:
         raise HTTPException(
             status_code=413,
-            detail=f"Up to {_MAX_BULK_FILES} resumes per batch — you sent {len(files)}.",
+            detail=f"Up to {_MAX_BULK_FILES} resumes per batch - you sent {len(files)}.",
         )
     opening = (
         await db.execute(
@@ -976,7 +976,7 @@ async def bulk_upload_applicants(
         except Exception as exc:  # noqa: BLE001 — one file's storage failure is that file's
             log.warning("hr.applicant.bulk.store_failed", error_type=type(exc).__name__)
             staged.append(StagedFile(item_id, fname, None, len(raw),
-                                     "Could not store the file — try it again."))
+                                     "Could not store the file - try it again."))
             continue
         stored_keys.append(key)
         staged.append(StagedFile(item_id, fname, key, len(raw)))

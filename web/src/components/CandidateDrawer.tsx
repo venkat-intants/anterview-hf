@@ -166,7 +166,7 @@ function RoundScores({
                 {r.position + 1}. {r.round_title}
               </span>
               <span className={cn('text-[15px] font-semibold', scoreTone(r.percent))}>
-                {r.percent === null ? '—' : `${Math.round(r.percent)}%`}
+                {r.percent === null ? '-' : `${Math.round(r.percent)}%`}
               </span>
             </div>
 
@@ -194,7 +194,7 @@ function RoundScores({
                         {c.name}
                       </span>
                       <span className={cn('text-[12px]', scoreTone(c.score))}>
-                        {c.score === null ? '—' : Math.round(c.score)}
+                        {c.score === null ? '-' : Math.round(c.score)}
                       </span>
                     </div>
                     {c.evidence ? (
@@ -274,7 +274,7 @@ function AssignInterviewersForm({
       // silently dropping it.
       toast.success(
         res.already_assigned.length > 0
-          ? `Assigned ${res.created.length} — ${res.already_assigned.length} already had this round`
+          ? `Assigned ${res.created.length} - ${res.already_assigned.length} already had this round`
           : `Assigned ${res.created.length} interviewer${res.created.length === 1 ? '' : 's'}`,
       );
       setSelected([]);
@@ -534,7 +534,7 @@ function HumanInterviewSection({
                               >
                                 <span className="text-[var(--ui-soft)]">{c.competency_name}</span>
                                 <span className="text-foreground">
-                                  {s.not_assessed ? 'not assessed' : (s.score ?? '—')}
+                                  {s.not_assessed ? 'not assessed' : (s.score ?? '-')}
                                 </span>
                               </div>
                             );
@@ -614,7 +614,7 @@ function HumanInterviewSection({
                     <ul className="mt-1.5 flex flex-col gap-1.5 pl-2">
                       {superseded.map((sc) => (
                         <li key={sc.scorecard_id} className="text-[12px] text-muted-foreground">
-                          {sc.interviewer_name} — corrected
+                          {sc.interviewer_name} - corrected
                           {sc.correction_reason ? `: ${sc.correction_reason}` : ''}
                         </li>
                       ))}
@@ -1067,8 +1067,8 @@ export default function CandidateDrawer({
                               {/* O4: the structured reason label, when this move recorded
                                   one, alongside the free-text reason. Historical rows
                                   have neither and render exactly as before. */}
-                              {h.reason_label ? ` — ${h.reason_label}` : ''}
-                              {h.reason ? `${h.reason_label ? ': ' : ' — '}${h.reason}` : ''}
+                              {h.reason_label ? ` - ${h.reason_label}` : ''}
+                              {h.reason ? `${h.reason_label ? ': ' : ' - '}${h.reason}` : ''}
                             </p>
                           </li>
                         );

@@ -191,7 +191,7 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
       }),
     onSuccess: (res) => {
       setAiPreview(res.questions);
-      if (res.questions.length === 0) toast.error('No questions generated — try again.');
+      if (res.questions.length === 0) toast.error('No questions generated - try again.');
     },
     // No toast: the failure is shown inline, with the server's own sentence.
   });
@@ -223,7 +223,7 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
     onSuccess: (res) => {
       setImportResult(res);
       if (res.added > 0) toast.success(`${res.added} question(s) imported`);
-      else toast.error('No questions imported — check the file.');
+      else toast.error('No questions imported - check the file.');
       refresh();
     },
     onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Import failed'),
@@ -498,7 +498,7 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
               >
                 <input
                   className={cn(inputCls, 'text-[13px]')}
-                  placeholder="Topic — e.g. React hooks or Junior Python Developer"
+                  placeholder="Topic - e.g. React hooks or Junior Python Developer"
                   value={aiTopic}
                   onChange={(e) => setAiTopic(e.target.value)}
                   aria-label="AI topic"
@@ -645,7 +645,7 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
             <div className="space-y-2.5">
               <p className="text-[12px] text-muted-foreground">
                 Upload <span className="text-foreground">.xlsx</span> or{' '}
-                <span className="text-foreground">.csv</span>: Question · Option A–D · Correct
+                <span className="text-foreground">.csv</span>: Question · Option A-D · Correct
                 (A/B/C/D) · Points.
               </p>
               <div className="flex flex-wrap items-center gap-2">
@@ -717,7 +717,7 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
 
       {locked && (
         <div className="flex items-center gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[12px] text-muted-foreground">
-          <Lock size={13} aria-hidden="true" /> Questions are locked — see the banner above.
+          <Lock size={13} aria-hidden="true" /> Questions are locked - see the banner above.
         </div>
       )}
     </div>
@@ -940,7 +940,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
       await navigator.clipboard.writeText(link);
       toast.success('Link copied');
     } catch {
-      toast.error('Could not copy — select and copy manually.');
+      toast.error('Could not copy - select and copy manually.');
     }
   }
 
@@ -974,7 +974,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
       >
         {applicants.length === 0 ? (
           <p className="px-2 py-2 text-[12px] text-muted-foreground">
-            No applicants yet — add them under Applicants.
+            No applicants yet - add them under Applicants.
           </p>
         ) : (
           applicants.map((a) => (
@@ -1036,7 +1036,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
           className="space-y-1.5 rounded-[14px] border border-[var(--ui-ok)] bg-[var(--ui-ok-wash)] p-3"
         >
           <p className="text-[12px] font-semibold text-[var(--ui-ok)]">
-            Share these links — shown once only:
+            Share these links - shown once only:
           </p>
           {minted.map((m) => (
             <div key={m.assignment_id} className="flex items-center gap-2 text-[12px]">
@@ -1420,7 +1420,7 @@ function RoundPanel({
                 <span className="font-medium text-foreground">Require camera proctoring</span>
                 <span className="mt-0.5 block text-[12px] leading-relaxed text-[var(--ui-faint)]">
                   Candidates are asked for camera access before the round starts and cannot begin
-                  without it. Detection runs entirely in their browser — no video or
+                  without it. Detection runs entirely in their browser - no video or
                   image is recorded or sent anywhere, only timestamped events. Leave off and the
                   round still records fullscreen, tab-switch and clipboard activity.
                 </span>
@@ -1517,7 +1517,7 @@ function RoundPanel({
             {/* Section list */}
             {round.sections.length === 0 ? (
               <p className="text-[12.5px] text-muted-foreground">
-                No sections yet — add one above.
+                No sections yet - add one above.
               </p>
             ) : (
               <div className="space-y-2">
@@ -1736,7 +1736,7 @@ export default function ExamEditor() {
                 <EmptyState
                   icon={Sparkles}
                   title="No rounds yet"
-                  description="No rounds yet — add the first round below."
+                  description="No rounds yet - add the first round below."
                 />
               </Reveal>
             ) : (

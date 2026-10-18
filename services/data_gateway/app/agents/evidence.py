@@ -121,7 +121,7 @@ def _document_warning(source: str, markers: list[str]) -> str:
     return (
         f"The candidate's {source} contains text that attempts to instruct an "
         f"automated reviewer (markers: {', '.join(markers)}). It was not acted "
-        "on, but the panel's narrative read this document — treat its wording "
+        "on, but the panel's narrative read this document - treat its wording "
         "with that in mind."
     )
 
@@ -240,7 +240,7 @@ async def _exam_signal(db: AsyncSession, company_id: str, applicant_id: str) -> 
             Citation(
                 kind="exam_attempt",
                 id=str(attempt.id),
-                label=f"Exam attempt — {attempt.title}",
+                label=f"Exam attempt - {attempt.title}",
                 # The ATTEMPT's own id, and the kind's own route: /hr/exams/
                 # attempts/{id} is now mounted (ExamAttemptRedirect), so the chip
                 # lands on the attempt rather than on its exam. It used to send
@@ -290,7 +290,7 @@ async def _coding_signal(db: AsyncSession, company_id: str, applicant_id: str) -
             Citation(
                 kind="exam_attempt",
                 id=str(attempt.id),
-                label=f"Coding attempt — {attempt.title}",
+                label=f"Coding attempt - {attempt.title}",
                 href=citation_href("exam_attempt", str(attempt.id)),
             )
         ],
@@ -347,7 +347,7 @@ async def _interview_signal(
             Citation(
                 kind="scorecard",
                 id=str(row.scorecard_id),
-                label=f"Interview scorecard — {name}",
+                label=f"Interview scorecard - {name}",
                 # Was unset, so the panel's scorecard chip was unopenable — the
                 # same defect PH5-E1 fixed in tools.get_applicant_detail and
                 # missed here. Built from the APPLICANT id, since there is no

@@ -79,7 +79,7 @@ const UNATTRIBUTED_REPLY: AgentChatResponse = {
 const A_PROPOSAL: Proposal = {
   id: 'p-1',
   kind: 'interview_invite',
-  title: 'Interview invite — Asha Rao',
+  title: 'Interview invite - Asha Rao',
   summary: 'Backend Engineer · EN · emailed to the candidate',
   commit: {
     method: 'POST',
@@ -132,7 +132,7 @@ beforeEach(() => {
   });
 });
 
-describe('CopilotPanel — citations (PH5-E1)', () => {
+describe('CopilotPanel - citations (PH5-E1)', () => {
   it('shows the "answered from your records" banner and a source chip when evidence was used', async () => {
     askAgent.mockResolvedValue(EVIDENCED_REPLY);
     renderPanel();
@@ -185,7 +185,7 @@ describe('CopilotPanel — citations (PH5-E1)', () => {
     renderPanel();
     await ask('who should I invite next?');
 
-    await screen.findByText('Interview invite — Asha Rao');
+    await screen.findByText('Interview invite - Asha Rao');
     const cautions = await screen.findAllByText(
       /Records were read for this answer, but no claim in it is tied/,
     );

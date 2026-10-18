@@ -78,7 +78,7 @@ beforeEach(() => {
   api.getAttemptProctoring.mockResolvedValue(WITH_EVENTS);
 });
 
-describe('AttemptProctoringSummary — loading and error', () => {
+describe('AttemptProctoringSummary - loading and error', () => {
   it('shows a loading state before the data arrives', () => {
     api.getAttemptProctoring.mockReturnValue(new Promise(() => {})); // never resolves
     renderSummary();
@@ -92,12 +92,12 @@ describe('AttemptProctoringSummary — loading and error', () => {
   });
 });
 
-describe('AttemptProctoringSummary — gaze_away is its own informational line', () => {
+describe('AttemptProctoringSummary - gaze_away is its own informational line', () => {
   it('labels the gaze block as informational and keeps it out of the counted-signals group', async () => {
     renderSummary();
 
     const gazeBlock = await screen.findByTestId('proctoring-gaze-line');
-    expect(within(gazeBlock).getByText(/looked away from the screen — informational only/i)).toBeInTheDocument();
+    expect(within(gazeBlock).getByText(/looked away from the screen - informational only/i)).toBeInTheDocument();
     expect(within(gazeBlock).getByText(/never ends an exam/i)).toBeInTheDocument();
     expect(within(gazeBlock).getByText(/innocent explanations/i)).toBeInTheDocument();
 
@@ -135,7 +135,7 @@ describe('AttemptProctoringSummary — gaze_away is its own informational line',
   });
 });
 
-describe('AttemptProctoringSummary — camera not in use', () => {
+describe('AttemptProctoringSummary - camera not in use', () => {
   it('says plainly that the camera was not enabled, rather than rendering camera signals as zero', async () => {
     api.getAttemptProctoring.mockResolvedValue(NO_CAMERA);
     renderSummary();
@@ -168,7 +168,7 @@ describe('AttemptProctoringSummary — camera not in use', () => {
   });
 });
 
-describe('AttemptProctoringSummary — an incomplete timeline says so', () => {
+describe('AttemptProctoringSummary - an incomplete timeline says so', () => {
   it('warns when events were dropped, and attributes it to our collection', async () => {
     api.getAttemptProctoring.mockResolvedValue({ ...WITH_EVENTS, events_dropped: true });
     renderSummary();
@@ -190,7 +190,7 @@ describe('AttemptProctoringSummary — an incomplete timeline says so', () => {
   });
 });
 
-describe('AttemptProctoringSummary — no verdict language', () => {
+describe('AttemptProctoringSummary - no verdict language', () => {
   it('never states or implies a conclusion about the candidate', async () => {
     renderSummary();
     const panel = await screen.findByTestId('attempt-proctoring-summary');
@@ -201,7 +201,7 @@ describe('AttemptProctoringSummary — no verdict language', () => {
   });
 });
 
-describe('AttemptProctoringSummary — camera required but silent', () => {
+describe('AttemptProctoringSummary - camera required but silent', () => {
   // `camera_in_use` records only that the ROUND REQUIRED a camera: it is frozen
   // from the round's setting at /exam/start and immutable by trigger, so it
   // cannot know whether the candidate granted permission or whether the

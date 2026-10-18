@@ -43,7 +43,7 @@ async def _main() -> None:
     if len(sys.argv) < 3:
         sys.exit(
             "Usage: python scripts/seed_admin.py <email> <password>\n"
-            "Both are required — there is deliberately no default."
+            "Both are required - there is deliberately no default."
         )
     email = sys.argv[1]
     password = sys.argv[2]

@@ -150,7 +150,7 @@ beforeEach(() => {
   listDecisionReasons.mockResolvedValue(REASONS);
 });
 
-describe('HRPipeline — listing', () => {
+describe('HRPipeline - listing', () => {
   it('shows every candidate with their per-stage scores', async () => {
     renderPipeline();
 
@@ -166,7 +166,7 @@ describe('HRPipeline — listing', () => {
 
     await screen.findByText('Chetan Iyer');
     // No exam and no interview yet — must read as "not reached", not as zero.
-    expect(within(cardFor('Chetan Iyer')).getAllByText('—').length).toBeGreaterThan(0);
+    expect(within(cardFor('Chetan Iyer')).getAllByText('-').length).toBeGreaterThan(0);
     expect(within(cardFor('Chetan Iyer')).queryByLabelText('Exam passed')).not.toBeInTheDocument();
   });
 
@@ -202,7 +202,7 @@ describe('HRPipeline — listing', () => {
   });
 });
 
-describe('HRPipeline — hire / reject', () => {
+describe('HRPipeline - hire / reject', () => {
   // A hire/reject write now always needs a reason code (O4), which has no
   // affordance on the collapsed row — Expand details is the one way in.
   it('has no one-click decision on the collapsed row any more', async () => {
@@ -308,7 +308,7 @@ describe('HRPipeline — hire / reject', () => {
   });
 });
 
-describe('HRPipeline — list and board are the same data', () => {
+describe('HRPipeline - list and board are the same data', () => {
   it('offers both views', async () => {
     renderPipeline();
     await screen.findByText('Bhavya Nair');

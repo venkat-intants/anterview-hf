@@ -300,13 +300,13 @@ export default function WorkflowCanvas({
           <span>
             <span className="font-medium text-foreground">Shortlisted automatically</span>
             <span className="text-muted-foreground">
-              {` — at ATS ${autoShortlistBar * 10}/100 and above; everyone below waits for you`}
+              {` - at ATS ${autoShortlistBar * 10}/100 and above; everyone below waits for you`}
             </span>
           </span>
         ) : (
           <span>
             <span className="font-medium text-foreground">You shortlist</span>
-            <span className="text-muted-foreground"> — nothing below starts until a person does</span>
+            <span className="text-muted-foreground"> - nothing below starts until a person does</span>
           </span>
         )}
       </div>
@@ -325,7 +325,7 @@ export default function WorkflowCanvas({
               aria-hidden="true"
               className="inline-block h-0 w-4 border-t-2 border-[var(--ui-line-strong)]"
             />
-            pass — the order below
+            pass - the order below
           </li>
           <li className="flex items-center gap-1.5 text-[var(--ui-warn)]">
             <span
@@ -407,7 +407,7 @@ export default function WorkflowCanvas({
               aria-hidden="true"
             />
             So does anyone held below a round&rsquo;s threshold, from any round. Nobody is rejected
-            automatically — every candidate reaches a person.
+            automatically - every candidate reaches a person.
           </div>
         </>
       ) : null}

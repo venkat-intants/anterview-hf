@@ -167,8 +167,8 @@ beforeEach(() => {
   getDecisionTrace.mockResolvedValue(traceFixture());
 });
 
-describe('EvidenceTrail — wording', () => {
-  it('never says "based on" — states only what existed, and that it cannot show what was read', async () => {
+describe('EvidenceTrail - wording', () => {
+  it('never says "based on" - states only what existed, and that it cannot show what was read', async () => {
     renderPage();
     expect(
       await screen.findByText(
@@ -180,7 +180,7 @@ describe('EvidenceTrail — wording', () => {
   });
 });
 
-describe('EvidenceTrail — stage grouping and badges', () => {
+describe('EvidenceTrail - stage grouping and badges', () => {
   it('groups evidence by stage and shows Human/AI provenance badges', async () => {
     renderPage();
 
@@ -204,7 +204,7 @@ describe('EvidenceTrail — stage grouping and badges', () => {
   });
 });
 
-describe('EvidenceTrail — hidden content', () => {
+describe('EvidenceTrail - hidden content', () => {
   it('shows the hidden-content reason instead of an empty box', async () => {
     getDecisionTrace.mockResolvedValue(
       traceFixture({
@@ -232,7 +232,7 @@ describe('EvidenceTrail — hidden content', () => {
   });
 });
 
-describe('EvidenceTrail — decision picker', () => {
+describe('EvidenceTrail - decision picker', () => {
   it('shows a picker for more than one decision, and switches the trace on selection', async () => {
     getEvidenceGraph.mockResolvedValue(
       graphFixture({
@@ -285,7 +285,7 @@ describe('EvidenceTrail — decision picker', () => {
   });
 });
 
-describe('EvidenceTrail — recorded after the decision', () => {
+describe('EvidenceTrail - recorded after the decision', () => {
   it('shows a collapsed section naming what came later', async () => {
     getDecisionTrace.mockResolvedValue(
       traceFixture({
@@ -314,18 +314,18 @@ describe('EvidenceTrail — recorded after the decision', () => {
   });
 });
 
-describe('EvidenceTrail — omitted footnote', () => {
+describe('EvidenceTrail - omitted footnote', () => {
   it('names what is never shown, and why', async () => {
     renderPage();
     expect(
       await screen.findByText(
-        /interviewer notes — Private to the interviewer; never shown to HR\./,
+        /interviewer notes - Private to the interviewer; never shown to HR\./,
       ),
     ).toBeInTheDocument();
   });
 });
 
-describe('EvidenceTrail — ai_involvement line', () => {
+describe('EvidenceTrail - ai_involvement line', () => {
   it('states the count of AI-produced evidence and that a person decided', async () => {
     renderPage();
     expect(await screen.findByText(/1 piece of evidence was produced by AI\./)).toBeInTheDocument();
@@ -353,7 +353,7 @@ describe('EvidenceTrail — ai_involvement line', () => {
   });
 });
 
-describe('EvidenceTrail — not found', () => {
+describe('EvidenceTrail - not found', () => {
   it('says the application could not be found rather than throwing', async () => {
     getEvidenceGraph.mockRejectedValue(new ApiError('Not found', 404));
     renderPage();

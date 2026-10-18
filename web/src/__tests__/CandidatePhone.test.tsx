@@ -50,7 +50,7 @@ describe('candidate surfaces fit a 360px phone', () => {
 
     expect(
       offenders,
-      `${page} sets a width wider than a ${PHONE_WIDTH}px phone: ${offenders.join(', ')} — ` +
+      `${page} sets a width wider than a ${PHONE_WIDTH}px phone: ${offenders.join(', ')} - ` +
         `this scrolls horizontally on a handset, which is how a form stops being usable`,
     ).toEqual([]);
   });
@@ -65,7 +65,7 @@ describe('candidate surfaces fit a 360px phone', () => {
     );
     expect(
       unconditional,
-      `${page} forces ${unconditional.join(', ')} at every width — use sm:grid-cols-N ` +
+      `${page} forces ${unconditional.join(', ')} at every width - use sm:grid-cols-N ` +
         `so it is a single column on a phone`,
     ).toEqual([]);
   });

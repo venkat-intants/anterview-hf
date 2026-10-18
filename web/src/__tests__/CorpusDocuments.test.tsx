@@ -147,7 +147,7 @@ beforeEach(() => {
 // Loading / empty / error / 403
 // ---------------------------------------------------------------------------
 
-describe('CorpusDocuments — list states', () => {
+describe('CorpusDocuments - list states', () => {
   it('shows an empty state when there are no documents', async () => {
     renderPage();
     expect(await screen.findByText('No documents yet')).toBeInTheDocument();
@@ -165,13 +165,13 @@ describe('CorpusDocuments — list states', () => {
     expect(within(row).getByText('Bhavya Nair')).toBeInTheDocument();
   });
 
-  it('shows "—" for the uploader when that account no longer exists', async () => {
+  it('shows "-" for the uploader when that account no longer exists', async () => {
     api.listCorpusDocuments.mockResolvedValue([doc({ uploaded_by_name: null })]);
     renderPage();
     await screen.findByText('Employee handbook');
     const row = screen.getByRole('table');
     const cells = within(row).getAllByRole('cell');
-    expect(cells.some((c) => c.textContent === '—')).toBe(true);
+    expect(cells.some((c) => c.textContent === '-')).toBe(true);
   });
 
   it('shows a generic error for a non-403 failure', async () => {
@@ -195,7 +195,7 @@ describe('CorpusDocuments — list states', () => {
 // A failed row shows its sentence
 // ---------------------------------------------------------------------------
 
-describe('CorpusDocuments — failed row', () => {
+describe('CorpusDocuments - failed row', () => {
   it('shows the human sentence for the failure_code, not the code itself', async () => {
     api.listCorpusDocuments.mockResolvedValue([
       doc({ status: 'failed', failure_code: 'embedding_unavailable' }),
@@ -219,7 +219,7 @@ describe('CorpusDocuments — failed row', () => {
 // false for exactly that row.
 // ---------------------------------------------------------------------------
 
-describe('CorpusDocuments — retry indexing', () => {
+describe('CorpusDocuments - retry indexing', () => {
   const FAILED = doc({ status: 'failed', failure_code: 'embedding_unavailable' });
 
   it('offers Retry only on a failed row', async () => {
@@ -252,9 +252,9 @@ describe('CorpusDocuments — retry indexing', () => {
     const user = userEvent.setup();
     api.listCorpusDocuments.mockResolvedValue([FAILED]);
     api.reindexCorpusDocument.mockRejectedValue(
-      new ApiError('This document is not stuck — there is nothing to reindex.', 409, {
+      new ApiError('This document is not stuck - there is nothing to reindex.', 409, {
         failure_code: 'not_failed',
-        message: 'This document is not stuck — there is nothing to reindex.',
+        message: 'This document is not stuck - there is nothing to reindex.',
       }),
     );
 
@@ -263,7 +263,7 @@ describe('CorpusDocuments — retry indexing', () => {
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
-        'This document is not stuck — there is nothing to reindex.',
+        'This document is not stuck - there is nothing to reindex.',
       ),
     );
   });
@@ -273,7 +273,7 @@ describe('CorpusDocuments — retry indexing', () => {
 // A document citation lands on the row it names
 // ---------------------------------------------------------------------------
 
-describe('CorpusDocuments — document citation deep link', () => {
+describe('CorpusDocuments - document citation deep link', () => {
   const CITED = doc({ id: '22222222-2222-4222-8222-222222222222', title: 'Leave policy' });
   const OTHER = doc({ id: '33333333-3333-4333-8333-333333333333', title: 'Travel policy' });
 
@@ -309,7 +309,7 @@ describe('CorpusDocuments — document citation deep link', () => {
 // The injection warning
 // ---------------------------------------------------------------------------
 
-describe('CorpusDocuments — injection warning', () => {
+describe('CorpusDocuments - injection warning', () => {
   it('shows the per-row warning when the document contains steering text', async () => {
     api.listCorpusDocuments.mockResolvedValue([doc({ injection_markers: 2 })]);
     renderPage();
@@ -336,7 +336,7 @@ describe('CorpusDocuments — injection warning', () => {
 // Upload — the attestation gate and the audience default
 // ---------------------------------------------------------------------------
 
-describe('CorpusDocuments — upload attestation gate', () => {
+describe('CorpusDocuments - upload attestation gate', () => {
   it('keeps Upload disabled until the attestation is ticked, even with a file and title', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -369,7 +369,7 @@ describe('CorpusDocuments — upload attestation gate', () => {
   });
 });
 
-describe('CorpusDocuments — audience default', () => {
+describe('CorpusDocuments - audience default', () => {
   it('defaults to HR only for an hr_manager', async () => {
     renderPage(hrUser());
     await screen.findByText('No documents yet');
@@ -385,7 +385,7 @@ describe('CorpusDocuments — audience default', () => {
   });
 });
 
-describe('CorpusDocuments — super-admin restriction end to end', () => {
+describe('CorpusDocuments - super-admin restriction end to end', () => {
   it('uploads with audience all_staff for a super_admin, and surfaces the server message on refusal', async () => {
     const user = userEvent.setup();
     api.uploadCorpusDocument.mockRejectedValue(
@@ -421,7 +421,7 @@ describe('CorpusDocuments — super-admin restriction end to end', () => {
 // Delete confirmation wording
 // ---------------------------------------------------------------------------
 
-describe('CorpusDocuments — delete', () => {
+describe('CorpusDocuments - delete', () => {
   it('shows what actually happens before deleting, then deletes on confirm', async () => {
     const user = userEvent.setup();
     api.listCorpusDocuments.mockResolvedValue([doc()]);
@@ -465,9 +465,9 @@ describe('CorpusDocuments — delete', () => {
 // ---------------------------------------------------------------------------
 
 const SEMANTIC_BANNER_TEXT =
-  'Semantic search is unavailable — the assistant is matching keywords only.';
+  'Semantic search is unavailable - the assistant is matching keywords only.';
 
-describe('CorpusDocuments — semantic search banner', () => {
+describe('CorpusDocuments - semantic search banner', () => {
   it('shows the banner on page load from GET /agent/status, with no search performed', async () => {
     api.getCorpusSemanticStatus.mockResolvedValue({ corpus_semantic: false });
     renderPage();
@@ -482,7 +482,7 @@ describe('CorpusDocuments — semantic search banner', () => {
     expect(screen.queryByText(SEMANTIC_BANNER_TEXT)).not.toBeInTheDocument();
   });
 
-  it('still reacts to the search response — a mid-session outage surfaces even though status said up', async () => {
+  it('still reacts to the search response - a mid-session outage surfaces even though status said up', async () => {
     const user = userEvent.setup();
     api.getCorpusSemanticStatus.mockResolvedValue({ corpus_semantic: true });
     api.searchCorpusDocuments.mockResolvedValue(NO_SEMANTIC);
@@ -528,7 +528,7 @@ describe('CorpusDocuments — semantic search banner', () => {
 // Upload sends the right multipart request (page → api wiring)
 // ---------------------------------------------------------------------------
 
-describe('CorpusDocuments — upload wiring', () => {
+describe('CorpusDocuments - upload wiring', () => {
   it('calls uploadCorpusDocument with the file, title, audience and attestation', async () => {
     const user = userEvent.setup();
     api.uploadCorpusDocument.mockResolvedValue(doc());
@@ -600,7 +600,7 @@ describe('CorpusDocuments — upload wiring', () => {
 // Polling — a document stuck at "Indexing…" must update itself
 // ---------------------------------------------------------------------------
 
-describe('CorpusDocuments — polling while indexing', () => {
+describe('CorpusDocuments - polling while indexing', () => {
   it('polls while a document is indexing, and picks up Ready without a reload', async () => {
     api.listCorpusDocuments
       .mockResolvedValueOnce([doc({ status: 'indexing' })])

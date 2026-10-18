@@ -83,14 +83,14 @@ export function FinalCTA() {
       <Reveal>
         <div className="rounded-card bg-[image:var(--ui-grad-brand)] px-6 py-16 text-center sm:px-12 sm:py-20">
           <h2 id="cta-title" className="mx-auto max-w-[640px] text-[clamp(30px,5vw,48px)] font-extrabold leading-[1.08] tracking-[-0.03em] text-[var(--ui-brand-ink)]">
-            Say it out loud before it counts.
+            Give every applicant a fair first round.
           </h2>
           <p className="mx-auto mt-4 max-w-[480px] text-base leading-relaxed text-white/80">
-            Pick a role, start talking, and see your scorecard when you are done.
+            See AntHire run your hiring workflow end to end, from the first application to the final decision.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link to="/register" className={cn(buttonVariants({ size: 'lg' }), 'h-12 bg-[var(--ui-brand-ink)] px-8 text-base text-[#0b1f4d] hover:bg-white/90')}>
-              Start a mock interview
+              Candidate sign up
             </Link>
             <a
               href={mailto('AntHire demo request')}

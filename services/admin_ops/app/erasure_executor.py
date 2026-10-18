@@ -212,38 +212,38 @@ ERASURE_POLL_INTERVAL_SECONDS: int = 300  # 5 minutes
 
 #: Tables this executor deletes from or anonymises. The value names the step.
 ERASED_TABLES: dict[str, str] = {
-    "offer_codes": "PH4-A3 — one-time codes sent to the candidate to accept or decline; "
+    "offer_codes": "PH4-A3 - one-time codes sent to the candidate to accept or decline; "
                    "deleted in step 5f.",
-    "offer_sessions": "PH4-A4 — hashed, hour-long preboarding sessions a candidate opened "
+    "offer_sessions": "PH4-A4 - hashed, hour-long preboarding sessions a candidate opened "
                       "with a code; deleted in step 5f.",
-    "hrms_exports": "PH4-A4 — signed HRMS payloads carrying the candidate's name, email "
+    "hrms_exports": "PH4-A4 - signed HRMS payloads carrying the candidate's name, email "
                     "and compensation; deleted in step 5f (after their offer is redacted, "
                     "which is when the append-only trigger lets them go).",
-    "candidate_documents": "PH4-A4 — identity and other preboarding documents. The FILES "
+    "candidate_documents": "PH4-A4 - identity and other preboarding documents. The FILES "
                            "are collected in step 1 and deleted in step 8; the rows are "
                            "redacted in 5f (key, file name and review note cleared).",
-    "users": "step 7 — anonymised in place (email → sentinel, every other "
+    "users": "step 7 - anonymised in place (email → sentinel, every other "
              "personal column NULLed). Not deleted, because "
              "erasure_requests.user_id is ON DELETE RESTRICT and that row is "
              "the §12 proof the erasure happened.",
-    "sessions": "step 5 — hard-deleted.",
-    "turns": "step 2 — hard-deleted; text_content is candidate speech.",
-    "scorecards": "step 4 — hard-deleted; PDF + transcript objects go in step 8.",
-    "resumes": "step 3 — hard-deleted, every version, objects in step 8.",
-    "notifications": "step 5b — hard-deleted; title/body address the person by name.",
-    "applicants": "step 6 — anonymised (name/email/resume_text/embedding/user_id). "
+    "sessions": "step 5 - hard-deleted.",
+    "turns": "step 2 - hard-deleted; text_content is candidate speech.",
+    "scorecards": "step 4 - hard-deleted; PDF + transcript objects go in step 8.",
+    "resumes": "step 3 - hard-deleted, every version, objects in step 8.",
+    "notifications": "step 5b - hard-deleted; title/body address the person by name.",
+    "applicants": "step 6 - anonymised (name/email/resume_text/embedding/user_id). "
                   "The row survives as the company's structural ATS record with "
                   "nothing left that identifies a person.",
     "integrity_events": "purged at REQUEST time by routers/erasure.py, not here: "
                         "gaze/face-derived proctoring signals are too sensitive to "
                         "sit through the 30-day grace window. Step 5 then cascades "
                         "any row written between request and execution.",
-    "application_answers": "step 5c — hard-deleted. `answer` is prose the "
+    "application_answers": "step 5c - hard-deleted. `answer` is prose the "
                            "CANDIDATE wrote, so unlike exam_attempts it keeps "
                            "identifying them after applicants is anonymised. "
                            "Deleted, not redacted: here the content IS the "
                            "personal data, with no structural residue to keep.",
-    "application_drafts": "step 5e — hard-deleted, matched three genuinely "
+    "application_drafts": "step 5e - hard-deleted, matched three genuinely "
                           "independent ways: the draft's user_id, the erased "
                           "user's address, and the address of any applicant "
                           "linked to them. So a draft whose user_id was "
@@ -260,70 +260,70 @@ ERASED_TABLES: dict[str, str] = {
                           "directly rather than through applicants, because a "
                           "draft that was never submitted has no applicant row "
                           "to be reached through. The CV object goes in step 8.",
-    "upload_items": "step 5d — filename, s3_key and error redacted for the files that "
+    "upload_items": "step 5d - filename, s3_key and error redacted for the files that "
                     "became this person's applicant rows. HR names CVs after the "
                     "candidate, so the original filename is personal data; the "
                     "object itself is the applicant's resume_s3_key (step 1c).",
-    "interviewer_notes": "step 5f — hard-deleted. An interviewer's private working "
+    "interviewer_notes": "step 5f - hard-deleted. An interviewer's private working "
                          "notes about the candidate: prose, never shown to HR, never "
                          "part of the submitted evidence (PH4-A5), so there is no "
                          "structural residue worth keeping.",
-    "candidate_accommodations": "PH4-D2 — a recorded adjustment (extra time, a deadline "
+    "candidate_accommodations": "PH4-D2 - a recorded adjustment (extra time, a deadline "
                                 "extension, relaxed auto-submit, or a free-text 'other' "
                                 "adjustment) and two notes about the candidate "
                                 "(interviewer-facing and HR-only). Kept as the company's "
-                                "record that an adjustment applied — the numbers, on the "
-                                "scorecard precedent — but in step 5g every active row is "
+                                "record that an adjustment applied - the numbers, on the "
+                                "scorecard precedent - but in step 5g every active row is "
                                 "REVOKED and both notes are REDACTED to NULL or "
                                 "'[redacted]'.",
-    "exam_attempts": "PH4-D3 — moved here from EXCLUDED_TABLES. Selections, timestamps and "
+    "exam_attempts": "PH4-D3 - moved here from EXCLUDED_TABLES. Selections, timestamps and "
                      "the score are the company's structural assessment record against an "
                      "applicant row step 6 anonymises next (the reason it was excluded "
                      "before); a coding submission's SOURCE and its program's OUTPUT are "
                      "the candidate's own text, on the interviewer_notes precedent, and are "
                      "not. Step 5h redacts `answers.coding[*].source` and "
                      "`graded_snapshot.coding[*].tests[*].{actual_output,stderr}`, stamping "
-                     "`code_redacted_at` — the ONE shape `exam_attempts_submission_frozen` "
+                     "`code_redacted_at` - the ONE shape `exam_attempts_submission_frozen` "
                      "permits on an already-submitted/expired attempt. The row, and its "
                      "score, is otherwise kept.",
-    "code_quality_reports": "PH4-D3 — a static-analysis pass over one coding answer: "
+    "code_quality_reports": "PH4-D3 - a static-analysis pass over one coding answer: "
                             "metrics and smells computed FROM the candidate's source, "
                             "which step 5h has just redacted from the attempt it describes. "
-                            "Deleted outright in step 5h — there is no structural residue "
+                            "Deleted outright in step 5h - there is no structural residue "
                             "worth keeping once the source it analysed is gone.",
-    "code_fingerprints": "PH4-D3 — winnowed hashes of one submission's normalised token "
+    "code_fingerprints": "PH4-D3 - winnowed hashes of one submission's normalised token "
                         "stream. Deleted outright in step 5h alongside the reports.",
-    "code_similarity_signals": "PH4-D3 — SYSTEM evidence that a pair of submissions (or a "
+    "code_similarity_signals": "PH4-D3 - SYSTEM evidence that a pair of submissions (or a "
                                "submission and the question's reference solution) "
                                "overlapped. Deleted outright in step 5h: it names an "
                                "erased attempt on one or both sides, and the evidence it "
                                "summarises is gone with the source.",
-    "code_integrity_findings": "PH4-D3 — a NAMED HR manager's own judgement call, kept as "
+    "code_integrity_findings": "PH4-D3 - a NAMED HR manager's own judgement call, kept as "
                                "the company's record that a review happened and what it "
                                "concluded (outcome), on the interviewer_scorecards "
                                "precedent. Step 5h redacts only `rationale` to "
                                "'[redacted]', which can quote or name the candidate; "
                                "`outcome`, who recorded it and when are kept.",
-    "task_submissions": "PH4-D4 — a candidate's job-simulation/portfolio attempt: status, "
+    "task_submissions": "PH4-D4 - a candidate's job-simulation/portfolio attempt: status, "
                         "timing and the allowance snapshot are the company's structural "
                         "assessment record, on the exam_attempts precedent, and are kept. "
                         "Step 5i withdraws any row still open, then redacts every row of "
                         "theirs: token_hash cleared and redacted_at stamped, together, in "
-                        "one statement — the only shape task_submissions_lifecycle permits "
+                        "one statement - the only shape task_submissions_lifecycle permits "
                         "once a row is not open.",
-    "task_responses": "PH4-D4 — what the candidate actually wrote, linked or uploaded: this "
+    "task_responses": "PH4-D4 - what the candidate actually wrote, linked or uploaded: this "
                       "IS the personal data, with no structural residue worth keeping, on "
                       "the application_answers precedent. Step 5i clears text_value, "
                       "link_url, title, description, storage_key and original_name and "
                       "stamps redacted_at; the FILE a storage_key named is deleted in step 8.",
-    "hire_checkins": "PH5-D5-2 — a 90-day post-hire outcome: employment/left_reason/"
+    "hire_checkins": "PH5-D5-2 - a 90-day post-hire outcome: employment/left_reason/"
                      "performance, no free text and no applicant_id (reached only through "
                      "enrolment_id -> enrolments.applicant_id). DPDP review decided this one "
                      "differently from round_results/exam_attempts: rather than keep a "
                      "structural record against the anonymised applicant, step 5j DELETES "
                      "every row outright. Ordinary 24-month retention "
                      "(app.hire_checkins.purge) deletes what erasure does not reach sooner.",
-    "talent_pool_members": "PH5-E3 — one candidate's membership of a company's talent pool, "
+    "talent_pool_members": "PH5-E3 - one candidate's membership of a company's talent pool, "
                            "with HR's note, the frozen match reason and the "
                            "evidence-freshness band as at the time they were added. "
                            "Hard-deleted outright in step 5k, which MUST run before step 6 "
@@ -332,7 +332,7 @@ ERASED_TABLES: dict[str, str] = {
                            "enrolments/round_results: a pool is a forward-looking list of "
                            "people to contact about FUTURE openings, so a membership row "
                            "has no backward-looking value as the company's hiring record "
-                           "once the person behind it cannot be contacted again — and "
+                           "once the person behind it cannot be contacted again - and "
                            "`note` is prose HR wrote about the person, with no structural "
                            "residue worth keeping once it is gone.",
 }
@@ -352,7 +352,7 @@ EXCLUDED_TABLES: dict[str, str] = {
     # Written once per round (partial unique index
     # ix_audit_log_camera_notice_round), precisely because it is permanent.
     "audit_log": "immutable compliance trail: actor and resource UUIDs, action "
-                 "names and structured details — never email or phone. NOTE, "
+                 "names and structured details - never email or phone. NOTE, "
                  "because this used to claim 'action names only': details are "
                  "not always free of prose. Scorecard rows (PH4-A1) record only "
                  "whether a correction or withdrawal reason was given and its "
@@ -360,7 +360,7 @@ EXCLUDED_TABLES: dict[str, str] = {
                  "(enrolment.decision.*, applicant.decision.*) and the "
                  "reapply-cooldown override (enrolment.reapply_override) carry "
                  "HR's free-text reason/rationale, which can describe the "
-                 "candidate — kept as the D-05 record of why a person decided, "
+                 "candidate - kept as the D-05 record of why a person decided, "
                  "against an applicant step 6 anonymises. AR-5 (closed): step "
                  "5l now redacts exactly that key of `details` to '[redacted]' "
                  "and stamps `redacted_at`; every other key (reason_code, "
@@ -386,38 +386,38 @@ EXCLUDED_TABLES: dict[str, str] = {
                   "users row is retained, so its grants are retained with it; "
                   "login is impossible anyway (password_hash NULL, deleted_at set).",
     "feature_flags": "platform toggles. updated_by points at whichever operator "
-                     "last flipped the flag — never a candidate.",
+                     "last flipped the flag - never a candidate.",
     # --- Structural / catalogue data owned by the company or platform ------
     "companies": "tenant record. created_by_user_id is provenance and now "
                  "resolves to the anonymised users row.",
     "jobs": "job catalogue. created_by_user_id likewise; sessions reference jobs "
             "ON DELETE RESTRICT, so the catalogue outlives its sessions by design.",
-    "roles": "reference data — role names. No user column.",
+    "roles": "reference data - role names. No user column.",
     "nos_competencies": "NOS competency catalogue. Reference data, no user column.",
     "exams": "company-authored assessment content. No candidate column.",
     "exam_rounds": "company-authored assessment content. No candidate column.",
     "exam_sections": "company-authored assessment content. No candidate column.",
     "exam_questions": "company-authored assessment content. No candidate column.",
     "coding_questions": "company-authored assessment content. No candidate column.",
-    "question_banks": "PH4-D1 — a company's reusable question library. created_by_user_id "
+    "question_banks": "PH4-D1 - a company's reusable question library. created_by_user_id "
                       "is HR staff; no candidate column.",
-    "bank_questions": "PH4-D1 — one version of a reusable question: prompt, options or test "
+    "bank_questions": "PH4-D1 - one version of a reusable question: prompt, options or test "
                       "cases, difficulty, tags. Company-authored content, on the exam_questions "
                       "precedent. created_by_user_id / submitted_by_user_id / "
                       "reviewed_by_user_id / retired_by_user_id are HR staff, not candidates, and "
                       "review_note is a reviewer's comment on the question itself.",
-    "bank_question_events": "PH4-D1 — append-only history of a bank question (created, "
+    "bank_question_events": "PH4-D1 - append-only history of a bank question (created, "
                             "submitted, approved, copied into an exam, ...): action, actor "
                             "(HR staff) and facts (ids), never question text.",
-    "round_tasks": "PH4-D4 — a company's authored task-round configuration: brief, items, "
+    "round_tasks": "PH4-D4 - a company's authored task-round configuration: brief, items, "
                    "portfolio settings. Company-authored content, the exam_questions "
                    "precedent; no candidate column.",
-    "round_task_materials": "PH4-D4 — HR's own reference attachments for a task round. "
+    "round_task_materials": "PH4-D4 - HR's own reference attachments for a task round. "
                             "Company-authored content; no candidate column. The object stays "
-                            "in storage — it names no candidate, and a clone shares its key "
+                            "in storage - it names no candidate, and a clone shares its key "
                             "with the original (workflows.clone_for_edit), so deleting it "
                             "here could break another round's copy.",
-    "task_events": "PH4-D4 — append-only history of a task submission (issued, started, "
+    "task_events": "PH4-D4 - append-only history of a task submission (issued, started, "
                    "saved, submitted, ...) or a round's configuration edit: action, actor "
                    "and facts (ids, which fields), never response content. The submission "
                    "and round it references may be redacted or gone; the append-only "
@@ -438,7 +438,7 @@ EXCLUDED_TABLES: dict[str, str] = {
     "exam_assignments": "keys off applicants (anonymised in step 6); holds a "
                         "token hash and a schedule, no personal data.",
     "exam_integrity_events": "proctoring events for an exam_attempts row, which PH4-D3's "
-                             "step 5h redacts (coding source) but does not delete — the "
+                             "step 5h redacts (coding source) but does not delete - the "
                              "row this table's FK points at still exists. Event type + "
                              "timestamp only; raw camera/keystroke input never leaves the "
                              "browser. Verified true BY CONSTRUCTION, not merely as written, "
@@ -456,7 +456,7 @@ EXCLUDED_TABLES: dict[str, str] = {
                              "security review MEDIUM-3 noted the justification was "
                              "forward-dated while this EXCLUSION is not, so pre-fix rows could "
                              "hold arbitrary candidate-supplied JSON inside an erasure-exempt "
-                             "table. Migration b4d6f8a0c2e4 NULLs the column outright — there "
+                             "table. Migration b4d6f8a0c2e4 NULLs the column outright - there "
                              "was no legitimate writer to preserve.",
     "interview_invites": "keys off applicants/company. guest_user_id and "
                          "created_by_user_id resolve to anonymised users rows, "
@@ -479,13 +479,13 @@ EXCLUDED_TABLES: dict[str, str] = {
                   "redacts both to '[redacted]' (NULL stays NULL); "
                   "`held_at`/`reapply_override_at`/`reapply_override_by_user_id` "
                   "and every ats_*/target_* column are untouched.",
-    "round_results": "per-round scores for an enrolment — score, percent, "
+    "round_results": "per-round scores for an enrolment - score, percent, "
                      "criterion_scores, axes. Numbers and competency ids "
                      "against an anonymised applicant; same reasoning as "
                      "exam_attempts. grader_user_id is the HR grader, not the "
                      "candidate. AR-5 (closed): `evidence` is a free-text "
                      "column too, and on a human_review round it is not AI "
-                     "prose — it is the reviewer's own verdict note "
+                     "prose - it is the reviewer's own verdict note "
                      "(hr_workflows.py::post_round_review's `note`), found "
                      "during the AR-5 audit. Step 5l NULLs it on every row of "
                      "theirs, live or superseded; score, percent, passed, "
@@ -494,7 +494,7 @@ EXCLUDED_TABLES: dict[str, str] = {
                          "statuses and whether a human or the workflow did it. "
                          "Status enums, timestamps, the ACTOR's user id and, "
                          "for a final decision, a reason category (PH4-O4 "
-                         "reason_code / reason_label — company taxonomy, no "
+                         "reason_code / reason_label - company taxonomy, no "
                          "personal data). No candidate column beyond "
                          "enrolment_id. AR-5 (closed): `reason` is free text a "
                          "person wrote and can describe the candidate. Step 5l "
@@ -506,11 +506,11 @@ EXCLUDED_TABLES: dict[str, str] = {
                          "not the AI, decided; deleting it would destroy proof "
                          "the platform is required to be able to show.",
     "upload_batches": "one bulk upload: the opening, the HR uploader, a file count "
-                      "and a status. No candidate column — the per-file rows, "
+                      "and a status. No candidate column - the per-file rows, "
                       "which do carry filenames, are upload_items (erased).",
 
     # --- Company-authored structure and content ----------------------------
-    "job_requisitions": "the opening itself — title, JD, salary band, skills. "
+    "job_requisitions": "the opening itself - title, JD, salary band, skills. "
                         "owner_user_id / created_by_user_id are HR staff.",
     "jd_versions": "the history of one opening's advert (PH3-B3). Company-"
                    "authored content on the job_requisitions precedent, and "
@@ -521,7 +521,7 @@ EXCLUDED_TABLES: dict[str, str] = {
                    "evidence FOR the candidate rather than data about them.",
     "application_questions": "HR-authored screening prompts attached to a "
                              "requisition. The company's form, not anyone's "
-                             "answer — the answers are erased in step 5c.",
+                             "answer - the answers are erased in step 5c.",
     "workflows": "the company's hiring process for a requisition: thresholds, "
                  "automation toggles, round order. created_by_user_id is HR.",
     "workflow_rounds": "a stage within that process (title, kind, pass "
@@ -533,7 +533,7 @@ EXCLUDED_TABLES: dict[str, str] = {
     "reconciliation_state": "retry bookkeeping for the background reconciler "
                             "(kind, ref_id, attempt counts, last error). "
                             "ref_id can point at an applicant, but the row "
-                            "carries no personal data and is transient — the "
+                            "carries no personal data and is transient - the "
                             "reconciler drops it once the work succeeds or "
                             "gives up.",
     "scheduled_job_runs": "one row per named cron job with its last run time "
@@ -542,71 +542,71 @@ EXCLUDED_TABLES: dict[str, str] = {
                              "background passes (job id, trigger, status, "
                              "error text). Operational telemetry; no user "
                              "column, pruned after 90 days.",
-    "interviewer_scorecards": "PH4-A1 — the company's structured interview record: "
+    "interviewer_scorecards": "PH4-A1 - the company's structured interview record: "
                               "who assessed the candidate, when, and whether it was "
                               "submitted. Kept on the round_results precedent, but "
                               "step 5f first WITHDRAWS every open assignment (so no "
                               "new prose can be written), then REDACTS all free "
                               "text: summary=NULL, and correction_reason / "
                               "withdrawn_reason set to '[redacted]', with "
-                              "redacted_at stamped — prose a person writes about "
+                              "redacted_at stamped - prose a person writes about "
                               "the candidate can quote or name them and "
                               "re-identify an anonymised applicant.",
-    "interview_kits": "PH4-A5 — per-round interviewer guidance written by HR "
+    "interview_kits": "PH4-A5 - per-round interviewer guidance written by HR "
                       "(instructions, what to evaluate, probes). Company "
                       "configuration keyed by round; holds no candidate data.",
-    "decision_reasons": "PH4-O4 — a company's decision-reason taxonomy (code, "
+    "decision_reasons": "PH4-O4 - a company's decision-reason taxonomy (code, "
                         "label, applies_to). Configuration; the decision itself "
                         "lives in stage_transitions, which carries only the code "
                         "and a label snapshot, never candidate data.",
-    "interviewer_scorecard_scores": "PH4-A1 — per-criterion 1-5 scores against frozen "
+    "interviewer_scorecard_scores": "PH4-A1 - per-criterion 1-5 scores against frozen "
                                     "competency ids for an anonymised applicant, kept "
                                     "like round_results.criterion_scores. The "
                                     "free-text `evidence` column is REDACTED to NULL "
                                     "in step 5f for the same re-identification reason "
                                     "as the scorecard summary.",
     # --- PH4 Wave 2 ---------------------------------------------------------
-    "workflow_review_events": "PH4-O6 — who submitted, approved or sent back a "
+    "workflow_review_events": "PH4-O6 - who submitted, approved or sent back a "
                               "workflow VERSION, and their note. Company "
                               "configuration history; no candidate column.",
-    "workflow_simulations": "PH4-O2 — dry-run results for a workflow version. The "
+    "workflow_simulations": "PH4-O2 - dry-run results for a workflow version. The "
                             "candidates in them are synthetic (SIM-001, ...), "
                             "never people, so there is nothing personal to erase.",
-    "workflow_stage_settings": "PH4-O1 — a stage's owner (an HR manager) and SLA in "
+    "workflow_stage_settings": "PH4-O1 - a stage's owner (an HR manager) and SLA in "
                                "hours. Configuration; no candidate column.",
-    "stage_exceptions": "PH4-O1 — why an application could not proceed normally. "
+    "stage_exceptions": "PH4-O1 - why an application could not proceed normally. "
                         "Kept as the company's operational record, but its prose "
                         "(`reason`, `resolution_note`) is REDACTED to "
                         "'[redacted]' / NULL in step 5f: a person wrote it about "
                         "the candidate and it can name them.",
-    "interviewer_availability": "PH4-A2 — when an interviewer (company staff) is free. "
+    "interviewer_availability": "PH4-A2 - when an interviewer (company staff) is free. "
                                 "Staff scheduling configuration; no candidate column.",
-    "interviewer_capacity": "PH4-O5 — how many sessions an interviewer should carry. "
+    "interviewer_capacity": "PH4-O5 - how many sessions an interviewer should carry. "
                             "Staff configuration; no candidate column.",
-    "interview_loops": "PH4-A2 — a set of interviews for one application: title, "
+    "interview_loops": "PH4-A2 - a set of interviews for one application: title, "
                        "timezone, status. Kept as the company's scheduling record; in "
                        "step 5f an open loop is CANCELLED and any cancel reason is "
                        "REDACTED to '[redacted]' (a person wrote it, it can name them).",
-    "interview_sessions": "PH4-A2 — one interview's time, round and place. Kept as the "
+    "interview_sessions": "PH4-A2 - one interview's time, round and place. Kept as the "
                           "scheduling record; in step 5f every session not yet held is "
                           "CANCELLED (nobody should turn up to interview an erased "
                           "person) and any cancel reason REDACTED to '[redacted]'.",
-    "interview_session_interviewers": "PH4-A2 — which staff sat on a session and their "
+    "interview_session_interviewers": "PH4-A2 - which staff sat on a session and their "
                                       "scorecard link. Staff-side record; the scorecard "
                                       "itself is redacted in 5f.",
-    "offer_templates": "PH4-A3 — a company's offer boilerplate (terms, benefits). "
+    "offer_templates": "PH4-A3 - a company's offer boilerplate (terms, benefits). "
                        "Company configuration; no candidate column.",
-    "offers": "PH4-A3 — an offer to one application. Kept as the company's record of "
+    "offers": "PH4-A3 - an offer to one application. Kept as the company's record of "
               "what was offered; in step 5f an offer still in play is WITHDRAWN, the "
               "link is killed, and every piece of prose a person wrote (acceptance "
               "name, decline / withdrawal reason, approval note) is REDACTED.",
-    "offer_events": "PH4-A3 — append-only history of an offer: action, actor, time and "
+    "offer_events": "PH4-A3 - append-only history of an offer: action, actor, time and "
                     "facts (never prose). Company record; the offer it names is redacted.",
-    "document_requirements": "PH4-A4 — which documents an opening asks for. Company "
+    "document_requirements": "PH4-A4 - which documents an opening asks for. Company "
                              "configuration; no candidate column.",
-    "document_events": "PH4-A4 — append-only history of a candidate's documents: action, "
+    "document_events": "PH4-A4 - append-only history of a candidate's documents: action, "
                        "actor, time and facts. No file content, name or reason text.",
-    "accommodation_events": "PH4-D2 — append-only history of an accommodation: action, "
+    "accommodation_events": "PH4-D2 - append-only history of an accommodation: action, "
                             "actor and facts (scope, which fields are present, the "
                             "target). Never the notes or the parameter values, so there "
                             "is nothing here that identifies or describes the candidate "
@@ -641,43 +641,43 @@ EXCLUDED_TABLES: dict[str, str] = {
     # audience; and an immediate, complete purge of text, chunks and
     # embeddings the moment HR deletes a document (app/corpus.py::
     # delete_document), rather than a 30-day grace window.
-    "corpus_documents": "PH5-E2 — the identity of one company reference document (policy, "
+    "corpus_documents": "PH5-E2 - the identity of one company reference document (policy, "
                        "handbook, process note): title, audience tag and expiry. No "
                        "candidate column; see the AR-8 note above for the limit this "
                        "table shares with the other three below.",
-    "corpus_document_versions": "PH5-E2 — one uploaded version of a corpus document: file "
+    "corpus_document_versions": "PH5-E2 - one uploaded version of a corpus document: file "
                                 "identity, parse/index status and (if HR deletes it or "
                                 "retention redacts a superseded one) the storage key and "
                                 "original name, cleared. No candidate column; see the "
                                 "corpus_documents note.",
-    "corpus_chunks": "PH5-E2 — the retrievable passages of an indexed corpus document, plus "
+    "corpus_chunks": "PH5-E2 - the retrievable passages of an indexed corpus document, plus "
                      "their embeddings. No candidate column; see the corpus_documents note. "
                      "This is the table AR-8's limit is actually about: a chunk's `content` "
                      "is free text from an HR-uploaded document, and this executor still "
                      "cannot ERASE anything found here. Since 2026-09-28 step 5m DOES search "
                      "`content` for the erasure subject's own on-file name before this table's "
-                     "sibling `applicants` row is redacted — a narrower question than 'does it "
-                     "name anyone' — reporting a hit rather than acting on it; see the note "
+                     "sibling `applicants` row is redacted - a narrower question than 'does it "
+                     "name anyone' - reporting a hit rather than acting on it; see the note "
                      "above.",
-    "corpus_events": "PH5-E2 — append-only history of a corpus document (uploaded, parsed, "
+    "corpus_events": "PH5-E2 - append-only history of a corpus document (uploaded, parsed, "
                      "indexed, superseded, deleted, ...): action, actor (HR staff) and facts "
-                     "(version numbers, chunk counts) — never document content. See the "
+                     "(version numbers, chunk counts) - never document content. See the "
                      "corpus_documents note.",
     # --- PH5-E3: talent pools -----------------------------------------------
-    "talent_pools": "PH5-E3 — a company's own named list (name, description, who created "
+    "talent_pools": "PH5-E3 - a company's own named list (name, description, who created "
                     "it). Company-authored configuration on the question_banks/round_tasks "
                     "precedent; no candidate column.",
-    "talent_pool_events": "PH5-E3 — append-only history of a pool and its membership "
+    "talent_pool_events": "PH5-E3 - append-only history of a pool and its membership "
                           "(created, renamed, member_added, member_removed, "
                           "member_evidence_reviewed, member_invited, ...): action, actor "
                           "(HR staff), the applicant it concerned, and facts (freshness "
-                          "band, note length, ids) — never the note, the removal reason, "
+                          "band, note length, ids) - never the note, the removal reason, "
                           "or any candidate prose. Kept on the task_events/document_events "
                           "precedent. AR-5's neighbour, not a new gap: after step 6 the "
                           "applicant an event names is already anonymised "
                           "(full_name='[redacted]', email/user_id NULL), so this table "
                           "keeps saying an applicant was added to a pool without naming "
-                          "anybody — the same position enrolments/round_results are "
+                          "anybody - the same position enrolments/round_results are "
                           "already in, recorded rather than left for a reader to infer.",
 }
 
@@ -2203,7 +2203,7 @@ async def _execute_one_erasure(
             user_id=uid_str,
             request_id=str(request.request_id),
             total_keys=total_s3_keys,
-            reason="settings=None but object keys were collected — refusing to "
+            reason="settings=None but object keys were collected - refusing to "
                    "stamp 'completed'. The request stays pending for retry.",
         )
         raise StorageNotConfiguredError(

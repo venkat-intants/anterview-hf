@@ -60,7 +60,7 @@ if _APP_ENV not in _ALLOWED_APP_ENVS:
     sys.exit(
         f"REFUSING TO SEED: APP_ENV={os.getenv('APP_ENV')!r} is not one of "
         f"{sorted(_ALLOWED_APP_ENVS)}.\n"
-        "This script writes demo accounts — including a platform_owner — into "
+        "This script writes demo accounts - including a platform_owner - into "
         "whatever DATABASE_URL is in ../.env, and on this project that is the "
         "LIVE database. Set APP_ENV=development and point ../.env at a "
         "throwaway database first."
@@ -70,7 +70,7 @@ _SEED_PASSWORD = os.getenv("SEED_DEMO_PASSWORD") or ""
 if len(_SEED_PASSWORD) < 12:
     sys.exit(
         "REFUSING TO SEED: set SEED_DEMO_PASSWORD to at least 12 characters.\n"
-        "There is deliberately no default — a default is what put a working "
+        "There is deliberately no default - a default is what put a working "
         "platform_owner password into a public git repository."
     )
 
@@ -339,7 +339,7 @@ async def main() -> None:  # noqa: C901, PLR0915 — a flat seed script reads be
             strengths = ["Relevant project portfolio", "Strong communication", f"Solid {ttitle} fundamentals"]
             concerns = ["Limited large-scale experience"] if ats < 80 else ["Notice period may be long"]
             summary = (f"{name} scores {ats}/100 for {ttitle} ({level}). "
-                       f"{'Strong fit — fast-track.' if ats >= 80 else 'Reasonable fit — worth a screen.' if ats >= 65 else 'Below bar for this role.'}")
+                       f"{'Strong fit - fast-track.' if ats >= 80 else 'Reasonable fit - worth a screen.' if ats >= 65 else 'Below bar for this role.'}")
             await c.execute(
                 text("INSERT INTO applicants (id, company_id, created_by_user_id, full_name, email,"
                      " target_job_title, target_level, status, ats_overall, ats_breakdown,"
@@ -352,7 +352,7 @@ async def main() -> None:  # noqa: C901, PLR0915 — a flat seed script reads be
                  "title": ttitle, "level": level, "status": status, "ats": ats,
                  "bd": json.dumps(breakdown), "st": json.dumps(strengths), "cn": json.dumps(concerns),
                  "rec": rec, "sum": summary,
-                 "resume": f"{name} — {level} {ttitle}. Experienced practitioner with shipped projects.",
+                 "resume": f"{name} - {level} {ttitle}. Experienced practitioner with shipped projects.",
                  "ts": ago(days=14 - idx)},
             )
 
@@ -444,7 +444,7 @@ async def main() -> None:  # noqa: C901, PLR0915 — a flat seed script reads be
                 {"area": "Concision", "suggestion": "Lead with the answer, then explain."},
                 {"area": "Edge cases", "suggestion": "Call out trade-offs proactively."},
             ]
-            verdict = ("Strong performance — recommend advancing." if composite >= 7.5
+            verdict = ("Strong performance - recommend advancing." if composite >= 7.5
                        else "Solid, hireable with minor gaps." if composite >= 6.5
                        else "Promising but needs more preparation.")
             await c.execute(
@@ -478,7 +478,7 @@ async def main() -> None:  # noqa: C901, PLR0915 — a flat seed script reads be
                 convo = [
                     ("interviewer", "Welcome! To start, tell me about a project you're proud of."),
                     ("candidate", "I led a migration of our build to Vite, cutting CI time by 40%."),
-                    ("interviewer", "Nice — what was the hardest part of that migration?"),
+                    ("interviewer", "Nice - what was the hardest part of that migration?"),
                     ("candidate", "Reworking legacy module resolution without breaking SSR."),
                     ("interviewer", "How did you validate it was safe to ship?"),
                     ("candidate", "Canary deploy plus a visual-regression suite on key routes."),
@@ -556,10 +556,10 @@ async def main() -> None:  # noqa: C901, PLR0915 — a flat seed script reads be
         # ---- Notifications (bell) ----
         notifs = [
             (cand_id, "welcome", "Welcome to AntHire 👋", "Pick a role and start your first mock interview.", "/jobs", 39, True),
-            (cand_id, "interview_completed", "Your scorecard is ready", "Data Analyst mock — composite 8.3/10.", "/scorecards", 9, False),
-            (cand_id, "interview_completed", "Your scorecard is ready", "DevOps mock — composite 5.8/10.", "/scorecards", 2, False),
+            (cand_id, "interview_completed", "Your scorecard is ready", "Data Analyst mock - composite 8.3/10.", "/scorecards", 9, False),
+            (cand_id, "interview_completed", "Your scorecard is ready", "DevOps mock - composite 5.8/10.", "/scorecards", 2, False),
             (hr_id, "applicant_scored", "New applicant scored", "Vivek Iyer scored 91/100 for Backend Engineer.", "/hr/applicants", 6, False),
-            (hr_id, "interview_completed", "Interview completed", "Karthik Rao finished the avatar interview — 8.6/10.", "/hr/interviews", 11, False),
+            (hr_id, "interview_completed", "Interview completed", "Karthik Rao finished the avatar interview - 8.6/10.", "/hr/interviews", 11, False),
             (hr_id, "invite_sent", "Interview invite sent", "Invite sent to Aisha Khan (Frontend Engineer).", "/hr/interviews", 1, True),
         ]
         for i, (uid, kind, title, body, link, d, read) in enumerate(notifs):

@@ -91,7 +91,7 @@ def test_the_module_re_exports_what_a_caller_should_catch() -> None:
     from shared.auth.jwt import TokenError
 
     assert issubclass(InvalidKeyError, TokenError), (
-        "TokenError must be wide enough to catch a key-construction failure — that "
+        "TokenError must be wide enough to catch a key-construction failure - that "
         "is the only reason it exists"
     )
     assert issubclass(InvalidTokenError, TokenError)

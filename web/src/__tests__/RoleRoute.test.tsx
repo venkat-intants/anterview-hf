@@ -117,7 +117,7 @@ beforeEach(() => {
   mockUseAuth.mockReset();
 });
 
-describe('route guards — session probe still running', () => {
+describe('route guards - session probe still running', () => {
   it.each(ALL_GUARDS)('$name shows the spinner and does not redirect', ({ Guard }) => {
     setSession({ isAuthenticated: false, isInitializing: true, user: null });
     renderGuard(Guard);
@@ -128,7 +128,7 @@ describe('route guards — session probe still running', () => {
   });
 });
 
-describe('route guards — unauthenticated', () => {
+describe('route guards - unauthenticated', () => {
   it.each(ALL_GUARDS)('$name redirects to /login', ({ Guard }) => {
     setSession({ isAuthenticated: false, isInitializing: false, user: null });
     renderGuard(Guard);
@@ -138,7 +138,7 @@ describe('route guards — unauthenticated', () => {
   });
 });
 
-describe('ProtectedRoute — authentication only, no role requirement', () => {
+describe('ProtectedRoute - authentication only, no role requirement', () => {
   it('admits a candidate with no special roles', () => {
     setSession({ isAuthenticated: true, isInitializing: false, user: makeUser(['candidate']) });
     renderGuard(ProtectedRoute);
@@ -154,7 +154,7 @@ describe('ProtectedRoute — authentication only, no role requirement', () => {
   });
 });
 
-describe('role guards — permitted role set', () => {
+describe('role guards - permitted role set', () => {
   it.each(ROLE_GUARDS)('$name admits a user holding $allowed', ({ Guard, allowed }) => {
     setSession({ isAuthenticated: true, isInitializing: false, user: makeUser([allowed]) });
     renderGuard(Guard);
@@ -177,7 +177,7 @@ describe('role guards — permitted role set', () => {
   );
 });
 
-describe('role guards — denied role set', () => {
+describe('role guards - denied role set', () => {
   for (const { name, Guard, denied } of ROLE_GUARDS) {
     // Behaviour CHANGED here, deliberately. These used to assert /dashboard for
     // every denied role. That was the defect: scoping the nav by role meant an
@@ -209,7 +209,7 @@ describe('role guards — denied role set', () => {
 // InterviewerRoute admits TWO roles (interviewer OR hr_manager, D4-1), so it
 // does not fit the single-`allowed`-role shape of ROLE_GUARDS above and gets
 // its own block.
-describe('InterviewerRoute — admits interviewer OR hr_manager', () => {
+describe('InterviewerRoute - admits interviewer OR hr_manager', () => {
   it.each(['interviewer', 'hr_manager'])('admits a user holding %s alone', (role) => {
     setSession({ isAuthenticated: true, isInitializing: false, user: makeUser([role]) });
     renderGuard(InterviewerRoute);

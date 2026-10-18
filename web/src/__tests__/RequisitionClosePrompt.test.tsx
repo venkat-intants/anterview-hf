@@ -127,7 +127,7 @@ beforeEach(() => {
 });
 
 describe('closing an opening (AC-12)', () => {
-  it('offers a close action at all — it had none before', async () => {
+  it('offers a close action at all - it had none before', async () => {
     renderPage();
     expect(await screen.findByRole('button', { name: 'Close' })).toBeInTheDocument();
   });

@@ -130,15 +130,15 @@ def _is_transient(exc: LLMError) -> bool:
 # ---------------------------------------------------------------------------
 LLM_FALLBACK_TEMPLATES: dict[Language, str] = {
     "en": (
-        "Sorry, I lost my train of thought for a moment. Let's keep going — "
+        "Sorry, I lost my train of thought for a moment. Let's keep going - "
         "could you tell me a bit more about your recent work and experience?"
     ),
     "hi": (
-        "माफ़ कीजिए, मैं एक पल के लिए अटक गया। चलिए आगे बढ़ते हैं — अपने recent "
+        "माफ़ कीजिए, मैं एक पल के लिए अटक गया। चलिए आगे बढ़ते हैं - अपने recent "
         "work और experience के बारे में थोड़ा और बताइए।"
     ),
     "te": (
-        "క్షమించండి, ఒక్క క్షణం ఆలోచన ఆగిపోయింది. పదండి ముందుకు వెళదాం — మీ recent "
+        "క్షమించండి, ఒక్క క్షణం ఆలోచన ఆగిపోయింది. పదండి ముందుకు వెళదాం - మీ recent "
         "work, experience గురించి కొంచెం చెప్పండి."
     ),
 }

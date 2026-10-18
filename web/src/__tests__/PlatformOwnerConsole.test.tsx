@@ -214,7 +214,7 @@ beforeEach(() => {
 // Companies tab
 // ---------------------------------------------------------------------------
 
-describe('PlatformOwnerConsole — tenant list', () => {
+describe('PlatformOwnerConsole - tenant list', () => {
   it('lists every company with its super-admin state', async () => {
     renderConsole();
 
@@ -266,7 +266,7 @@ describe('PlatformOwnerConsole — tenant list', () => {
   });
 });
 
-describe('PlatformOwnerConsole — creating a tenant', () => {
+describe('PlatformOwnerConsole - creating a tenant', () => {
   it('creates the company with the trimmed name typed into the form', async () => {
     const user = userEvent.setup();
     renderConsole();
@@ -329,7 +329,7 @@ describe('PlatformOwnerConsole — creating a tenant', () => {
 // Company-admin panel — the role-scoped create action
 // ---------------------------------------------------------------------------
 
-describe('PlatformOwnerConsole — super-admin panel', () => {
+describe('PlatformOwnerConsole - super-admin panel', () => {
   it('does not open a panel until a tenant is selected', async () => {
     renderConsole();
 
@@ -361,7 +361,7 @@ describe('PlatformOwnerConsole — super-admin panel', () => {
     );
   });
 
-  it('never sends a password — the server emails a set-password link', async () => {
+  it('never sends a password - the server emails a set-password link', async () => {
     api.getCompanyAdmin.mockRejectedValue(new Error('404 no admin'));
     api.listCompanyHrManagers.mockResolvedValue([]);
     const user = userEvent.setup();
@@ -391,7 +391,7 @@ describe('PlatformOwnerConsole — super-admin panel', () => {
     expect(screen.queryByRole('button', { name: /add super admin/i })).not.toBeInTheDocument();
   });
 
-  it('shows the tenant HR managers read-only — the super admin owns that list', async () => {
+  it('shows the tenant HR managers read-only - the super admin owns that list', async () => {
     const user = userEvent.setup();
     renderConsole();
 
@@ -423,7 +423,7 @@ describe('PlatformOwnerConsole — super-admin panel', () => {
 // Feature flags + audit tabs
 // ---------------------------------------------------------------------------
 
-describe('PlatformOwnerConsole — feature flags tab', () => {
+describe('PlatformOwnerConsole - feature flags tab', () => {
   it('toggling a flag persists the new value', async () => {
     const user = userEvent.setup();
     renderConsole();
@@ -446,7 +446,7 @@ describe('PlatformOwnerConsole — feature flags tab', () => {
   });
 });
 
-describe('PlatformOwnerConsole — DPDP audit tab', () => {
+describe('PlatformOwnerConsole - DPDP audit tab', () => {
   it('renders each audit event with its actor and kind', async () => {
     const user = userEvent.setup();
     renderConsole();
@@ -472,7 +472,7 @@ describe('PlatformOwnerConsole — DPDP audit tab', () => {
 // Role scoping
 // ---------------------------------------------------------------------------
 
-describe('PlatformOwnerConsole — a wrong-role user sees nothing', () => {
+describe('PlatformOwnerConsole - a wrong-role user sees nothing', () => {
   // The server re-checks every one of these endpoints, so this is a UX guard,
   // not the security boundary. It still matters: routing a company super admin
   // into the platform console shows them a broken page and a create form for

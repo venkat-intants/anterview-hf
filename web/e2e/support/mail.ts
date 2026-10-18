@@ -24,7 +24,7 @@ export async function mailFor(address: string): Promise<Mail[]> {
   const search = await fetch(
     `${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${address}`)}`,
   );
-  expect(search.ok, `Mailpit search failed (${search.status}) — is it running on ${MAILPIT_URL}?`)
+  expect(search.ok, `Mailpit search failed (${search.status}) - is it running on ${MAILPIT_URL}?`)
     .toBeTruthy();
   const found = (await search.json()) as { messages?: MailpitSummary[] };
   const out: Mail[] = [];

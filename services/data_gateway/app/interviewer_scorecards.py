@@ -798,7 +798,7 @@ async def save_draft(
     if card["status"] not in EDITABLE:
         raise ScorecardError(
             409, "A submitted scorecard cannot be edited. Open a correction if something "
-                 "needs to change — the original stays on record."
+                 "needs to change - the original stays on record."
         )
     if card["enrolment_status"] in TERMINAL_STATUSES:
         raise ScorecardError(

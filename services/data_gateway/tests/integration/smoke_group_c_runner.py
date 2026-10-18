@@ -44,7 +44,7 @@ PROFILE = [
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def main() -> None:
@@ -214,7 +214,7 @@ async def main() -> None:
         await db.commit()
         check("the last round completes the workflow", out.action == "completed",
               str(out.as_dict()))
-        check("completing is NOT an outcome — it awaits a person",
+        check("completing is NOT an outcome - it awaits a person",
               "final human decision" in (out.reason or ""), str(out.as_dict()))
         st = await db.scalar(text("SELECT status FROM enrolments WHERE id=:i"),
                              {"i": enrols["Asha"]})

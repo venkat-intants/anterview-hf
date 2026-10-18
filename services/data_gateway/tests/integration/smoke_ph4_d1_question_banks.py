@@ -28,7 +28,7 @@ FAIL: list[str] = []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" — {detail}" if not cond and detail else ""))
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" - {detail}" if not cond and detail else ""))
 
 
 async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bottom
@@ -98,7 +98,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://smoke") as c:
-        print("\nPH4-D1 — a bank and a question, authored and reviewed")
+        print("\nPH4-D1 - a bank and a question, authored and reviewed")
         r = await c.post("/hr/question-banks", json={"name": "Aptitude", "description": "General"})
         bank = r.json()
         bank_id = bank["id"]
@@ -119,7 +119,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.post(f"/hr/bank-questions/{qid}/submit")
         check("HR A submits it for review", r.json().get("status") == "in_review", r.text[:160])
 
-        print("\nPH4-D1 — review: not the author or submitter")
+        print("\nPH4-D1 - review: not the author or submitter")
         r = await c.post(f"/hr/bank-questions/{qid}/approve", json={})
         check("HR A's own approval is refused, as an offer's is", r.status_code == 403,
               r.text[:200])
@@ -129,7 +129,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               and r.json()["status"] == "approved", r.text[:200])
         acting["hr"] = hr_a1
 
-        print("\nPH4-D1 — copying into an exam section")
+        print("\nPH4-D1 - copying into an exam section")
         r = await c.post("/hr/exams", json={"title": "Screening", "kind": "mcq"})
         exam = r.json()
         exam_id = exam["id"]
@@ -182,7 +182,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               copy2["id"] != eq_id and copy2.get("source_bank_root_id") == qid
               and copy2.get("source_bank_version") == 1, str(copy2)[:300])
 
-        print("\nPH4-D1 — publish, and a candidate takes it")
+        print("\nPH4-D1 - publish, and a candidate takes it")
         r = await c.patch(f"/hr/exams/{exam_id}/rounds/{round_id}", json={"status": "published"})
         check("HR A publishes the round", r.json().get("status") == "published", r.text[:160])
 
@@ -216,7 +216,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the candidate submits and passes", r.status_code == 200
               and result["passed"] is True and result["score_percent"] == 100, r.text[:200])
 
-        print("\nPH4-D1 — a published round's content is fixed")
+        print("\nPH4-D1 - a published round's content is fixed")
         r = await c.patch(f"/hr/exams/{exam_id}/questions/{eq_id}", json={"correct_index": 0})
         check("editing the copied question on a published (and now taken) round is refused",
               r.status_code == 409 and "content is fixed" in r.json()["detail"], r.text[:200])
@@ -225,7 +225,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("…and adding another bank question to it is refused the same way",
               r.status_code == 409, r.text[:200])
 
-        print("\nPH4-D1 — a new version, and the exam's copy is unaffected")
+        print("\nPH4-D1 - a new version, and the exam's copy is unaffected")
         r = await c.post(
             f"/hr/bank-questions/{qid}/new-version",
             json={"prompt": "What is 2 + 2? (v2)", "options": ["3", "4", "5"], "correct_index": 1},
@@ -250,7 +250,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the exam's existing copy is unchanged byte for byte",
               still["prompt"] == "What is 2 + 2?" and still["id"] == eq_id, r.text[:200])
 
-        print("\nPH4-D1 — retiring hides a question from the picker")
+        print("\nPH4-D1 - retiring hides a question from the picker")
         r = await c.get("/hr/bank-questions", params={"status": "approved", "bank_id": bank_id})
         check("v2 is in the approved picker list", any(x["id"] == v2_id for x in r.json()),
               r.text[:200])
@@ -260,7 +260,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("…and it is gone from the approved picker list",
               not any(x["id"] == v2_id for x in r.json()), r.text[:200])
 
-        print("\nPH4-D1 — tenant isolation")
+        print("\nPH4-D1 - tenant isolation")
         acting["company"] = other_cid
         acting["hr"] = hr_b
         r = await c.patch(f"/hr/question-banks/{bank_id}", json={"name": "Stolen"})
@@ -273,7 +273,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         acting["company"] = cid
         acting["hr"] = hr_a1
 
-        print("\nPH4-D1 — role gates")
+        print("\nPH4-D1 - role gates")
         del app.dependency_overrides[get_hr_company]
         interviewer, candidate = uuid.uuid4(), uuid.uuid4()
         app.dependency_overrides[get_current_user] = lambda: User(
@@ -287,7 +287,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         del app.dependency_overrides[get_current_user]
         app.dependency_overrides[get_hr_company] = lambda: (acting["hr"], acting["company"])
 
-        print("\nPH4-D1 — the optional super-admin review path")
+        print("\nPH4-D1 - the optional super-admin review path")
         r = await c.post(
             f"/hr/question-banks/{bank_id}/questions",
             json={"kind": "mcq", "prompt": "Third question?", "options": ["a", "b"],
@@ -302,7 +302,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               and r.json()["status"] == "approved", r.text[:200])
         acting["hr"] = hr_a1
 
-        print("\nPH4-D1 — events and audit")
+        print("\nPH4-D1 - events and audit")
         evs = await events_for(qid)
         check("v1's history has created, submitted, approved, copied and (once v2 approved) retired",
               {"created", "submitted", "approved", "copied_to_exam", "retired"} <= set(evs), str(evs))
@@ -317,7 +317,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # created_by/submitted_by only, so a reviewer could edit someone
         # else's draft (say, its correct answer), let them resubmit, and then
         # approve content they wrote themselves.
-        print("\nPH4-D1 — whoever edited a question cannot approve it")
+        print("\nPH4-D1 - whoever edited a question cannot approve it")
         r = await c.post(
             f"/hr/question-banks/{bank_id}/questions",
             json={"kind": "mcq", "prompt": "What is 3 + 3?", "options": ["5", "6", "7"],

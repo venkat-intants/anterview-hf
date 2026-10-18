@@ -331,7 +331,7 @@ async def test_watchdog_fails_open_on_db_error() -> None:
     )
 
     assert close_calls == [], (
-        "DB error must not close the session — watchdog must fail open"
+        "DB error must not close the session - watchdog must fail open"
     )
     assert not state.close_triggered
 
@@ -512,7 +512,7 @@ async def test_watchdog_none_user_id_does_not_fail_closed() -> None:
     )
 
     assert close_calls == [], (
-        "None user_id must be a no-op — it is NOT the DB-error sentinel"
+        "None user_id must be a no-op - it is NOT the DB-error sentinel"
     )
     assert not state.close_triggered
 

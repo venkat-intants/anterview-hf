@@ -688,7 +688,7 @@ def test_a_stalled_round_names_the_opening_and_the_round() -> None:
     from shared.agents.watchers import watch_round_stalls
 
     f = watch_round_stalls(WatcherInput(company_id="c", round_stalls=[_stall()]))[0]
-    assert f.title == "Python Developer — Technical Test pipeline has stalled"
+    assert f.title == "Python Developer - Technical Test pipeline has stalled"
     assert f.body.startswith("8 candidates have been waiting for more than 5 days on Technical Test.")
     assert "Asha" in f.body and "rejected" in f.body
     assert f.link == "/hr/requisitions/req-1"
@@ -735,8 +735,8 @@ def test_stalled_applicants_are_reported_per_opening() -> None:
     )
     findings = [f for f in run_watchers(data) if f.watcher == "stalled_applicants"]
     titles = sorted(f.title for f in findings)
-    assert titles == ["1 applicant(s) stalled over 10 days — Designer",
-                      "2 applicant(s) stalled over 10 days — Python Developer"]
+    assert titles == ["1 applicant(s) stalled over 10 days - Designer",
+                      "2 applicant(s) stalled over 10 days - Python Developer"]
     py = next(f for f in findings if "Python" in f.title)
     assert py.link == "/hr/requisitions/req-1"
     assert py.citations[0].kind == "job" and py.citations[0].id == "req-1"

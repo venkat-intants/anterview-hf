@@ -521,5 +521,5 @@ async def test_purge_deletes_the_scorecard_row_too(client: AsyncClient) -> None:
         )
         assert result.scalar_one_or_none() is None, (
             "The scorecard must be deleted with its session. It does not cascade "
-            "— session_id is not a FK — so retention.py deletes it explicitly."
+            "- session_id is not a FK - so retention.py deletes it explicitly."
         )

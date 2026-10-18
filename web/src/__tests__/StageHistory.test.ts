@@ -59,6 +59,6 @@ describe('describeMove', () => {
   it('reads the application itself', () => {
     expect(
       describeMove({ ...base, from_status: null, to_status: 'new', automated: true, actor: null }),
-    ).toBe('Applied — new · automatic');
+    ).toBe('Applied - new · automatic');
   });
 });

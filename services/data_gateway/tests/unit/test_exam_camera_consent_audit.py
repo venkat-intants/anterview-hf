@@ -155,7 +155,7 @@ def test_every_return_path_writes_one() -> None:
     source = inspect.getsource(exam_camera.record_camera_consent)
     assert source.count("await _audit_notice_accepted(") == 3, (
         "fresh grant, already-granted and raced paths must each record the "
-        "acceptance — the ledger only writes on one of them"
+        "acceptance - the ledger only writes on one of them"
     )
 
 

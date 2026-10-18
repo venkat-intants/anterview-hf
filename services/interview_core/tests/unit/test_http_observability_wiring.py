@@ -99,7 +99,7 @@ def test_unmatched_paths_collapse_to_one_series(client: TestClient) -> None:
             "path": "/aaa",
             "status_code": "404",
         },
-    ) is None, "the raw path became a label — cardinality is caller-controlled again"
+    ) is None, "the raw path became a label - cardinality is caller-controlled again"
 
 
 def test_metrics_endpoint_exposes_the_http_series(
@@ -153,7 +153,7 @@ def test_an_unhandled_exception_returns_a_generic_body_and_a_500_series(
         assert response.status_code == 500
         assert response.json() == {"detail": "Internal server error."}
         assert secret not in response.text, (
-            "the driver message reached the client — this is exactly the "
+            "the driver message reached the client - this is exactly the "
             "asyncpg SQL-and-parameters leak the handler exists to stop"
         )
         assert _counter("/__boom__", "500") == before + 1

@@ -33,7 +33,7 @@ interface EnrolmentScorecards {
 }
 
 test.describe('a human interview, scored by the interviewer HR assigned', () => {
-  test('is assigned, scored from the kit and submitted — and moves nobody', async ({
+  test('is assigned, scored from the kit and submitted - and moves nobody', async ({
     page,
     browser,
     request,
@@ -93,7 +93,7 @@ test.describe('a human interview, scored by the interviewer HR assigned', () => 
     await signIn(iv, tenant.accounts.interviewer);
     await expect(iv).toHaveURL(/\/interviewer$/);
     await iv
-      .getByRole('link', { name: `Open scorecard for ${candidate.name} — ${REVIEW_ROUND_TITLE}` })
+      .getByRole('link', { name: `Open scorecard for ${candidate.name} - ${REVIEW_ROUND_TITLE}` })
       .click();
 
     await expect(iv.getByText('Forty minutes. Start with a project they led.')).toBeVisible();
@@ -107,11 +107,11 @@ test.describe('a human interview, scored by the interviewer HR assigned', () => 
 
     await iv.getByRole('tab', { name: 'Scorecard' }).click();
     await iv
-      .getByRole('radiogroup', { name: 'Score — Communication' })
+      .getByRole('radiogroup', { name: 'Score - Communication' })
       .getByRole('radio', { name: 'Score 4' })
       .click();
     // The other criterion by keyboard: one Tab stop, arrows move and select.
-    const ownership = iv.getByRole('radiogroup', { name: 'Score — Ownership' });
+    const ownership = iv.getByRole('radiogroup', { name: 'Score - Ownership' });
     await ownership.getByRole('radio', { name: 'Score 1' }).focus();
     await iv.keyboard.press('ArrowRight');
     await iv.keyboard.press('ArrowRight');

@@ -106,7 +106,7 @@ async def test_final_answer_close_task_is_held_on_the_job() -> None:
             job._on_conversation_item_added(_item_event("assistant", f"question {i}"))
 
         assert job.close_task is not None, (
-            "the close task after the final answer was not retained on the job — "
+            "the close task after the final answer was not retained on the job - "
             "asyncio references tasks only weakly, so this is the IC-3 regression"
         )
         await job.close_task

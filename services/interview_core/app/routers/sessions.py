@@ -163,7 +163,7 @@ def _guest_bound_session_id(current_user: dict[str, object]) -> uuid.UUID | None
         "and optional ``status`` filter. "
         "Each item includes a ``scorecard_id`` field if a scorecard exists for "
         "that session (resolved via a LEFT JOIN on the scorecards table). "
-        "Only the caller's own sessions are returned — AUTHZ enforced. "
+        "Only the caller's own sessions are returned - AUTHZ enforced. "
         "A magic-link guest token sees exactly ONE session: the one named by "
         "its ``session_id`` claim."
     ),

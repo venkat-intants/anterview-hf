@@ -62,9 +62,9 @@ describe('StagesAtRiskWidget', () => {
     ]);
     const user = userEvent.setup();
     renderWidget();
-    const first = await screen.findByRole('button', { name: /Candidate 1 — Panel.*overdue/ });
+    const first = await screen.findByRole('button', { name: /Candidate 1 - Panel.*overdue/ });
     expect(first).toHaveTextContent('Rekha');
-    expect(screen.getByRole('button', { name: /Candidate 2 — Panel.*due soon/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Candidate 2 - Panel.*due soon/ })).toBeTruthy();
     await user.click(first);
     expect(screen.getByRole('dialog')).toHaveTextContent('drawer ap-1 en-1');
   });

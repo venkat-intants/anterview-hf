@@ -52,7 +52,7 @@ PROFILE = [
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def _fixture(db) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
@@ -336,7 +336,7 @@ async def main() -> None:
         # out with a regex rather than assumed to sit inside a plain "(...)".
         agreed = ("mcq", "coding", "ai_interview", "human_review", "job_simulation", "portfolio")
         found = set(re.findall(r"'([a-z_]+)'::text", rk))
-        check("exactly the six agreed round kinds are legal — no more, no fewer",
+        check("exactly the six agreed round kinds are legal - no more, no fewer",
               found == set(agreed), str(rk))
 
     await eng.dispose()

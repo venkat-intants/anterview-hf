@@ -117,7 +117,7 @@ class TestTheFactoryHonoursNone:
         )
         assert any(
             "unknown avatar_provider" in r.getMessage() for r in caplog.records
-        ), "the fallback must stay LOUD — a silent degrade to simli is AR-4's whole point"
+        ), "the fallback must stay LOUD - a silent degrade to simli is AR-4's whole point"
 
 
 def test_the_worker_actually_calls_it() -> None:
@@ -133,7 +133,7 @@ def test_the_worker_actually_calls_it() -> None:
     src = inspect.getsource(InterviewJob._start_avatar)
     assert "effective_avatar_provider(" in src, (
         "_start_avatar no longer routes the provider choice through "
-        "effective_avatar_provider — the per-interview mode is being ignored."
+        "effective_avatar_provider - the per-interview mode is being ignored."
     )
     # Comments stripped first: the body explains WHY it does not log
     # settings.avatar_provider, and that prose is not a use.
@@ -143,7 +143,7 @@ def test_the_worker_actually_calls_it() -> None:
     uses = code.count("settings.avatar_provider")
     assert uses == 1, (
         f"_start_avatar names settings.avatar_provider {uses} times; exactly one "
-        "is right — the argument handed to effective_avatar_provider. Any other "
+        "is right - the argument handed to effective_avatar_provider. Any other "
         "use means a line below is describing or starting a provider this "
         "session is not running, which is how a voice-only interview ends up "
         "logged as 'tavus'."

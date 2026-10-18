@@ -131,7 +131,7 @@ function StageScore({
 }) {
   return (
     <div className="w-12 shrink-0 text-center">
-      <div className={cn('text-[15px] font-semibold leading-none', tone)}>{value ?? '—'}</div>
+      <div className={cn('text-[15px] font-semibold leading-none', tone)}>{value ?? '-'}</div>
       <div className="text-[12px] text-muted-foreground">{unit}</div>
     </div>
   );
@@ -279,7 +279,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
               <p className="mb-1.5 text-[12px] font-semibold text-muted-foreground">ATS score</p>
               <div className="flex items-center gap-2">
                 <span className={cn('text-[18px] font-bold', scoreToneClass(a.ats_overall))}>
-                  {a.ats_overall ?? '—'}
+                  {a.ats_overall ?? '-'}
                   <span className="text-[12px] font-normal text-muted-foreground">/100</span>
                 </span>
                 <StatusTag tone={rec.tone}>{rec.label}</StatusTag>
@@ -291,7 +291,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
               <p className="mb-1.5 text-[12px] font-semibold text-muted-foreground">Exam</p>
               <div className="flex items-center gap-2">
                 <span className={cn('text-[18px] font-bold', scoreToneClass(a.best_exam_percent))}>
-                  {a.best_exam_percent !== null ? `${a.best_exam_percent}%` : '—'}
+                  {a.best_exam_percent !== null ? `${a.best_exam_percent}%` : '-'}
                 </span>
                 {a.total_exam_attempts > 0 && (
                   <span className="text-[13px] text-muted-foreground">
@@ -316,7 +316,7 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                       <span className="text-[12px] font-normal text-muted-foreground">/10</span>
                     </>
                   ) : (
-                    <span className="text-muted-foreground">—</span>
+                    <span className="text-muted-foreground">-</span>
                   )}
                 </span>
                 <StatusTag tone={iv.tone}>{iv.label}</StatusTag>
@@ -345,8 +345,8 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                 Hire decision{' '}
                 <span className="font-normal text-muted-foreground">
                   {chosenReason?.requires_explanation
-                    ? '— this reason needs at least 10 characters of explanation'
-                    : '— rationale is optional but logged for audit'}
+                    ? '- this reason needs at least 10 characters of explanation'
+                    : '- rationale is optional but logged for audit'}
                 </span>
               </label>
               <textarea
@@ -458,7 +458,7 @@ export default function HRPipeline() {
     <Page width="workspace">
       <PageHeader
         title="Hiring pipeline"
-        description="Every candidate, end to end — resume → exam → interview → decision."
+        description="Every candidate, end to end - resume → exam → interview → decision."
       />
 
       {/* ── Candidates: filters in one toolbar row, then the list ── */}
@@ -517,7 +517,7 @@ export default function HRPipeline() {
             icon={Users}
             title={
               stage === 'all'
-                ? 'No candidates yet — screen resumes to start the pipeline.'
+                ? 'No candidates yet - screen resumes to start the pipeline.'
                 : `No candidates at the "${STAGE_TABS.find((t) => t.value === stage)?.label ?? stage}" stage.`
             }
           />
@@ -546,7 +546,7 @@ export default function HRPipeline() {
                   Previous
                 </Button>
                 <span className="text-[13px] text-muted-foreground" aria-live="polite">
-                  {fromRow}–{toRow} of {count}
+                  {fromRow}-{toRow} of {count}
                 </span>
                 <Button
                   type="button"

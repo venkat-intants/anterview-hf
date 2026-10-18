@@ -59,8 +59,8 @@ def test_moved_symbol_is_still_reachable_from_the_worker_module(
     """Re-exported, and the SAME object — not a copy that would drift."""
     assert hasattr(wk, name), (
         f"{name} moved out of interview_worker and was not re-exported. "
-        "Callers pinned to the old path — tests and mock.patch targets among "
-        "them — break, or worse, patch a name nothing reads."
+        "Callers pinned to the old path - tests and mock.patch targets among "
+        "them - break, or worse, patch a name nothing reads."
     )
     assert getattr(wk, name) is getattr(module, name)
 
@@ -87,7 +87,7 @@ def test_the_split_actually_shrank_the_file() -> None:
         f"interview_worker.py is back to {line_count} lines. It was 2,972 when "
         "IC-4 was re-raised and 2,521 after the split. New worker code that is "
         "not about running a LiveKit job belongs in a sibling module under "
-        "app/worker/ — see the module map in its docstring. Raising this "
+        "app/worker/ - see the module map in its docstring. Raising this "
         "ceiling is a decision to record, not a way to make the test pass."
     )
 

@@ -204,7 +204,7 @@ export default function GovernancePanel({
               <p className="mt-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[12.5px] text-[var(--ui-soft)]">
                 {requisition.approval_note}
                 {requisition.approval_decided_by_name
-                  ? ` — ${requisition.approval_decided_by_name}`
+                  ? ` - ${requisition.approval_decided_by_name}`
                   : ''}
               </p>
             ) : null}

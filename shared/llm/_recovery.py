@@ -333,7 +333,7 @@ def finish_hint(finish_reason: str, budget_param: str = "the output budget") -> 
     """
     if finish_reason == TRUNCATED_FINISH_REASON:
         return (
-            f" (finishReason={TRUNCATED_FINISH_REASON} — the output was cut off by"
+            f" (finishReason={TRUNCATED_FINISH_REASON} - the output was cut off by"
             f" {budget_param}; raise the budget rather than blaming the model)"
         )
     if finish_reason and finish_reason not in ("STOP", "stop"):

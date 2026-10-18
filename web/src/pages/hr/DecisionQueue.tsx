@@ -87,9 +87,9 @@ function slaBadge(
     return { tone: 'ember', text: `Overdue since ${due}${owner}` };
   }
   if (sla.state === 'due_soon') {
-    return { tone: 'amber', text: `Due soon — ${due}${owner}` };
+    return { tone: 'amber', text: `Due soon - ${due}${owner}` };
   }
-  return { tone: 'forest', text: `On track — due ${due}${owner}` };
+  return { tone: 'forest', text: `On track - due ${due}${owner}` };
 }
 
 /** Where this candidate is, in words a reviewer reads at a glance. */
@@ -332,9 +332,9 @@ function DecisionPanel({
       // the round had been deleted under the candidate and nobody moved — and
       // the second one needs them to look.
       if (out.to_round) {
-        toast.success(`${row.full_name} continues — moved to ${out.to_round}`);
+        toast.success(`${row.full_name} continues - moved to ${out.to_round}`);
       } else if (out.action === 'completed') {
-        toast.success(`${row.full_name} continues — now awaiting your final decision`);
+        toast.success(`${row.full_name} continues - now awaiting your final decision`);
       } else if (out.reason?.includes('did not move')) {
         toast.warning(`Hold lifted, but ${row.full_name} did not move: ${out.reason}`);
       } else {
@@ -570,7 +570,7 @@ function DecisionPanel({
                       {r.percent === null
                         ? r.graded_by === 'human'
                           ? 'reviewed'
-                          : '—'
+                          : '-'
                         : `${Math.round(r.percent)}%`}
                     </span>
                     {r.passed !== null ? (
@@ -838,7 +838,7 @@ function resolutionNote(
   }
   if (unresolved === undefined) return null;
   if (unresolved === 0 && status === 'closed') {
-    return { tone: 'ok', text: 'Resolved — every candidate in this opening has a final decision.' };
+    return { tone: 'ok', text: 'Resolved - every candidate in this opening has a final decision.' };
   }
   const inProgress = unresolved - waiting;
   if (waiting === 0 && inProgress > 0) {
@@ -983,7 +983,7 @@ export default function DecisionQueue(): JSX.Element {
             <Link to={`/hr/requisitions/${requisitionId}/workflow`}>Workflow</Link>
           </Button>
         }
-        title={`Decisions — ${req.data?.title ?? 'this opening'}`}
+        title={`Decisions - ${req.data?.title ?? 'this opening'}`}
         description="Everyone the workflow has taken as far as it can. Scores rank and explain; nothing here was decided automatically, and nothing here moves until you move it."
       />
 

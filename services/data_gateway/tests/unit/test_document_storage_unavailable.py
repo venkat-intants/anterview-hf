@@ -88,7 +88,7 @@ def test_every_caller_maps_storage_failure_to_a_503(module: str) -> None:
     src = inspect.getsource(importlib.import_module(module))
     calls = src.count("await store.store(")
     handled = src.count("except store.StorageUnavailableError")
-    assert calls, f"{module} no longer stores documents — update this test"
+    assert calls, f"{module} no longer stores documents - update this test"
     assert handled == calls, f"{module}: {calls} store() calls, {handled} mapped to a 503"
     assert "503" in src
 

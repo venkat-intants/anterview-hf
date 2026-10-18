@@ -152,7 +152,7 @@ async def root() -> dict[str, str]:
     summary="Prometheus metrics",
     description=(
         "Exposes HTTP request metrics (http_requests_total, "
-        "http_request_duration_seconds — see shared/http_observability.py) "
+        "http_request_duration_seconds - see shared/http_observability.py) "
         "alongside default process metrics (CPU, memory, open FDs, GC) "
         "in Prometheus text format. Scraped by the deploy-cluster's "
         "Prometheus instance every 15 s. Requires "

@@ -266,7 +266,7 @@ export default function DocumentRequirementsSection({ requisitionId }: { requisi
       ) : rows.length === 0 ? (
         <EmptyState
           icon={FileText}
-          title="No documents required yet — candidates who accept an offer will see nothing to upload."
+          title="No documents required yet - candidates who accept an offer will see nothing to upload."
           description="Add the documents you need, such as an ID or a degree certificate."
         />
       ) : (

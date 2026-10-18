@@ -190,7 +190,7 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------------------
 
-describe('CompanyAdminConsole — the public careers link', () => {
+describe('CompanyAdminConsole - the public careers link', () => {
   it('shows the board address for its own company', async () => {
     // The slug is per-COMPANY, so this console is the link's other natural owner
     // beside /hr. It needs its own instance rather than a shared surface, because
@@ -204,7 +204,7 @@ describe('CompanyAdminConsole — the public careers link', () => {
   });
 });
 
-describe('CompanyAdminConsole — scoping', () => {
+describe('CompanyAdminConsole - scoping', () => {
   it("names the caller's own company from the session, not from a URL param", async () => {
     renderConsole();
 
@@ -241,8 +241,8 @@ describe('CompanyAdminConsole — scoping', () => {
   });
 });
 
-describe('CompanyAdminConsole — creating an HR manager', () => {
-  it('posts only email and full name — the company comes from the session', async () => {
+describe('CompanyAdminConsole - creating an HR manager', () => {
+  it('posts only email and full name - the company comes from the session', async () => {
     const user = userEvent.setup();
     renderConsole();
 
@@ -284,7 +284,7 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
     expect(api.createMyHrManager).not.toHaveBeenCalled();
   });
 
-  it('never ships a password — a set-password link is emailed instead', async () => {
+  it('never ships a password - a set-password link is emailed instead', async () => {
     renderConsole();
 
     await screen.findByRole('heading', { name: /super admin/i });
@@ -326,7 +326,7 @@ describe('CompanyAdminConsole — creating an HR manager', () => {
   });
 });
 
-describe('CompanyAdminConsole — removing an HR manager', () => {
+describe('CompanyAdminConsole - removing an HR manager', () => {
   it('needs a confirm click and removes the row that was clicked', async () => {
     const user = userEvent.setup();
     renderConsole();
@@ -344,7 +344,7 @@ describe('CompanyAdminConsole — removing an HR manager', () => {
   });
 });
 
-describe('CompanyAdminConsole — interviewers (D4-1)', () => {
+describe('CompanyAdminConsole - interviewers (D4-1)', () => {
   it('lists the interviewers the server scoped to this company, separately from HR managers', async () => {
     renderConsole();
 
@@ -406,7 +406,7 @@ describe('CompanyAdminConsole — interviewers (D4-1)', () => {
   });
 });
 
-describe('CompanyAdminConsole — a wrong-role user sees nothing', () => {
+describe('CompanyAdminConsole - a wrong-role user sees nothing', () => {
   // Server-side scoping is the real boundary; this stops the UI offering an
   // HR-creation form to someone whose every submit would 403.
   // The destination is written out per role rather than derived from
@@ -443,7 +443,7 @@ describe('CompanyAdminConsole — a wrong-role user sees nothing', () => {
 // UX round 3: the console leads with what is waiting on the super admin
 // ---------------------------------------------------------------------------
 
-describe('CompanyAdminConsole — waiting on you', () => {
+describe('CompanyAdminConsole - waiting on you', () => {
   it('shows the real length of each queue, each cell linking to its queue', async () => {
     renderConsole();
 
@@ -464,13 +464,13 @@ describe('CompanyAdminConsole — waiting on you', () => {
     expect(questions).toHaveAttribute('href', '/superadmin/question-reviews');
   });
 
-  it('shows "—" for a queue whose count could not be fetched, never 0', async () => {
+  it('shows "-" for a queue whose count could not be fetched, never 0', async () => {
     queues.listOfferApprovals.mockRejectedValue(new Error('503'));
     renderConsole();
 
     const group = await screen.findByTestId('waiting-on-you');
     const offers = await within(group).findByRole('link', { name: /^Offers/ });
-    await waitFor(() => expect(offers).toHaveTextContent('—'));
+    await waitFor(() => expect(offers).toHaveTextContent('-'));
     expect(offers).not.toHaveTextContent('0');
     // The queues that did load keep their numbers.
     expect(within(group).getByRole('link', { name: /^Openings/ })).toHaveTextContent('3');

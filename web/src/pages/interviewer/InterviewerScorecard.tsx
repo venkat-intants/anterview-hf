@@ -156,7 +156,7 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
       {!data.has_custom_kit ? (
         <p className="flex items-start gap-1.5 text-[12px] leading-relaxed text-muted-foreground">
           <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          HR has not customised this round&rsquo;s kit yet — here is what the rubric assesses.
+          HR has not customised this round&rsquo;s kit yet - here is what the rubric assesses.
         </p>
       ) : null}
 
@@ -227,7 +227,7 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
         <div className="flex items-center gap-1.5">
           <Lock className="h-3.5 w-3.5 text-[var(--ui-warn)]" aria-hidden="true" />
           <label htmlFor="private-notes" className="text-[12.5px] font-medium text-foreground">
-            Private notes — not shared with HR, not part of your scorecard
+            Private notes - not shared with HR, not part of your scorecard
           </label>
         </div>
         {notesQuery.isError ? (
@@ -242,7 +242,7 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
               maxLength={MAX_NOTES}
               onChange={(e) => setNotes(e.target.value)}
               rows={6}
-              placeholder="Jot anything down while you interview — only you can see this."
+              placeholder="Jot anything down while you interview - only you can see this."
               className="mt-2 w-full resize-y rounded-[10px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
             <div className="mt-2 flex items-center justify-between">
@@ -307,7 +307,7 @@ function ScoreControl({
       <div>
         <div
           role="radiogroup"
-          aria-label={`Score — ${competencyName}`}
+          aria-label={`Score - ${competencyName}`}
           aria-required={!value.not_assessed}
           className="flex items-center gap-2"
         >
@@ -577,7 +577,7 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
     onSuccess: (res) => {
       setConfirmSubmit(false);
       setFormError(null);
-      toast.success(res.late ? 'Submitted — after the due date' : 'Scorecard submitted');
+      toast.success(res.late ? 'Submitted - after the due date' : 'Scorecard submitted');
       invalidate();
     },
     onError: (e) => {
@@ -591,7 +591,7 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
   const correctionMut = useMutation({
     mutationFn: () => requestCorrection(scorecardId, correctionReason),
     onSuccess: (res) => {
-      toast.success('Correction started — the original is kept');
+      toast.success('Correction started - the original is kept');
       void navigate(`/interviewer/scorecards/${res.scorecard_id}`);
     },
     onError: (e) => toast.error(errText(e, 'Could not start a correction')),
@@ -780,7 +780,7 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
                     className="mb-3 flex flex-wrap items-center gap-3 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3"
                   >
                     <span className="min-w-0 flex-1 text-[13px] text-foreground">
-                      Submitted scorecards can&rsquo;t be edited — only corrected, with a reason,
+                      Submitted scorecards can&rsquo;t be edited - only corrected, with a reason,
                       and the original is kept.
                     </span>
                     <Button type="button" variant="ghost" onClick={() => setConfirmSubmit(false)}>

@@ -53,7 +53,7 @@ function StageSummary({ stage }: { stage: OpeningStage }): JSX.Element {
         <p className="mt-1 text-[13px] text-muted-foreground">{stage.reason}</p>
       ) : null}
       <p className="mt-3 text-[13px] text-muted-foreground">
-        Read-only — HR makes the changes for this stage.
+        Read-only - HR makes the changes for this stage.
       </p>
     </SectionCard>
   );

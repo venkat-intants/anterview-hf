@@ -170,33 +170,33 @@ def _t_welcome(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     loc = _loc(lang, {
         "en": {
             "subject": f"Welcome to {_brand()}",
-            "pre": "Your account is ready — confirm your email to get started.",
+            "pre": "Your account is ready - confirm your email to get started.",
             "lead": f"Welcome aboard! Your {_esc(_brand())} account has been created.",
             "body": "You can now sign in, take AI interviews and exams, and track your results.",
             "verify_lead": "To confirm this is your email address, tap the button below:",
             "cta": "Confirm my email",
             "fallback": "Or paste this link into your browser:",
-            "outro": "Good luck — we're glad to have you.",
+            "outro": "Good luck - we're glad to have you.",
         },
         "hi": {
             "subject": f"{_brand()} में आपका स्वागत है",
-            "pre": "आपका खाता तैयार है — शुरू करने के लिए अपना ईमेल पुष्टि करें।",
+            "pre": "आपका खाता तैयार है - शुरू करने के लिए अपना ईमेल पुष्टि करें।",
             "lead": f"स्वागत है! आपका {_esc(_brand())} खाता बना दिया गया है।",
             "body": "अब आप साइन इन कर सकते हैं, एआई इंटरव्यू और परीक्षाएँ दे सकते हैं, और अपने परिणाम देख सकते हैं।",
             "verify_lead": "यह पुष्टि करने के लिए कि यह आपका ईमेल पता है, नीचे दिए गए बटन पर टैप करें:",
             "cta": "मेरा ईमेल पुष्टि करें",
             "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
-            "outro": "शुभकामनाएँ — आपका साथ पाकर हमें खुशी है।",
+            "outro": "शुभकामनाएँ - आपका साथ पाकर हमें खुशी है।",
         },
         "te": {
             "subject": f"{_brand()}కి స్వాగతం",
-            "pre": "మీ ఖాతా సిద్ధంగా ఉంది — ప్రారంభించడానికి మీ ఇమెయిల్‌ను నిర్ధారించండి.",
+            "pre": "మీ ఖాతా సిద్ధంగా ఉంది - ప్రారంభించడానికి మీ ఇమెయిల్‌ను నిర్ధారించండి.",
             "lead": f"స్వాగతం! మీ {_esc(_brand())} ఖాతా సృష్టించబడింది.",
             "body": "ఇప్పుడు మీరు సైన్ ఇన్ చేయవచ్చు, AI ఇంటర్వ్యూలు, పరీక్షలు ఇవ్వవచ్చు మరియు మీ ఫలితాలను చూడవచ్చు.",
             "verify_lead": "ఇది మీ ఇమెయిల్ చిరునామా అని నిర్ధారించడానికి, దిగువ బటన్‌ను నొక్కండి:",
             "cta": "నా ఇమెయిల్‌ను నిర్ధారించండి",
             "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
-            "outro": "శుభాకాంక్షలు — మీరు మాతో ఉన్నందుకు సంతోషం.",
+            "outro": "శుభాకాంక్షలు - మీరు మాతో ఉన్నందుకు సంతోషం.",
         },
     })
     inner = _p(_greeting(lang, name)) + _p(loc["lead"]) + _p(loc["body"])
@@ -261,7 +261,7 @@ def _t_password_reset(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "cta": "Reset my password",
             "fallback": "Or paste this link into your browser:",
             "expiry": f"This link expires in {ttl_hours} hour(s) and can be used once.",
-            "ignore": "If you didn't request this, ignore this email — your password stays unchanged.",
+            "ignore": "If you didn't request this, ignore this email - your password stays unchanged.",
         },
         "hi": {
             "subject": f"अपना पासवर्ड रीसेट करें · {_brand()}",
@@ -270,7 +270,7 @@ def _t_password_reset(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "cta": "पासवर्ड रीसेट करें",
             "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
             "expiry": f"यह लिंक {ttl_hours} घंटे में समाप्त हो जाएगा और एक बार ही उपयोग किया जा सकता है।",
-            "ignore": "यदि आपने यह अनुरोध नहीं किया, तो इस ईमेल को अनदेखा करें — आपका पासवर्ड अपरिवर्तित रहेगा।",
+            "ignore": "यदि आपने यह अनुरोध नहीं किया, तो इस ईमेल को अनदेखा करें - आपका पासवर्ड अपरिवर्तित रहेगा।",
         },
         "te": {
             "subject": f"మీ పాస్‌వర్డ్‌ను రీసెట్ చేయండి · {_brand()}",
@@ -279,7 +279,7 @@ def _t_password_reset(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "cta": "నా పాస్‌వర్డ్‌ను రీసెట్ చేయండి",
             "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
             "expiry": f"ఈ లింక్ {ttl_hours} గంట(ల)లో గడువు ముగుస్తుంది మరియు ఒకసారి మాత్రమే ఉపయోగించవచ్చు.",
-            "ignore": "మీరు దీన్ని అభ్యర్థించకపోతే, ఈ ఇమెయిల్‌ను విస్మరించండి — మీ పాస్‌వర్డ్ మారదు.",
+            "ignore": "మీరు దీన్ని అభ్యర్థించకపోతే, ఈ ఇమెయిల్‌ను విస్మరించండి - మీ పాస్‌వర్డ్ మారదు.",
         },
     })
     inner = (
@@ -580,38 +580,38 @@ def _t_decision(lang: str, ctx: dict) -> tuple[str, str, str, str]:
         "shortlisted": {
             "en": {
                 "subject": f"You've been shortlisted for {job}",
-                "lead": f"Good news — you've been <strong>shortlisted</strong> for {jobe}.",
+                "lead": f"Good news - you've been <strong>shortlisted</strong> for {jobe}.",
                 "body": "Our team will be in touch with the next steps (such as an assessment or interview) shortly.",
                 "outro": "Congratulations, and well done!",
             },
             "hi": {
                 "subject": f"{job} के लिए आपको शॉर्टलिस्ट किया गया है",
-                "lead": f"खुशखबरी — {jobe} के लिए आपको <strong>शॉर्टलिस्ट</strong> किया गया है।",
+                "lead": f"खुशखबरी - {jobe} के लिए आपको <strong>शॉर्टलिस्ट</strong> किया गया है।",
                 "body": "हमारी टीम जल्द ही अगले चरणों (जैसे मूल्यांकन या इंटरव्यू) के लिए आपसे संपर्क करेगी।",
                 "outro": "बधाई हो!",
             },
             "te": {
                 "subject": f"{job} కోసం మీరు షార్ట్‌లిస్ట్ అయ్యారు",
-                "lead": f"శుభవార్త — {jobe} కోసం మీరు <strong>షార్ట్‌లిస్ట్</strong> అయ్యారు.",
+                "lead": f"శుభవార్త - {jobe} కోసం మీరు <strong>షార్ట్‌లిస్ట్</strong> అయ్యారు.",
                 "body": "తదుపరి దశల (మూల్యాంకనం లేదా ఇంటర్వ్యూ వంటివి) కోసం మా బృందం త్వరలో మిమ్మల్ని సంప్రదిస్తుంది.",
                 "outro": "అభినందనలు!",
             },
         },
         "hired": {
             "en": {
-                "subject": f"Congratulations — you've been selected for {job}",
+                "subject": f"Congratulations - you've been selected for {job}",
                 "lead": f"We're delighted to let you know you've been <strong>selected</strong> for {jobe}.",
                 "body": "Our team will reach out shortly with the offer details and next steps.",
                 "outro": "Welcome aboard!",
             },
             "hi": {
-                "subject": f"बधाई हो — {job} के लिए आपका चयन हुआ है",
+                "subject": f"बधाई हो - {job} के लिए आपका चयन हुआ है",
                 "lead": f"हमें यह बताते हुए खुशी है कि {jobe} के लिए आपका <strong>चयन</strong> हुआ है।",
                 "body": "हमारी टीम जल्द ही ऑफर विवरण और अगले चरणों के साथ आपसे संपर्क करेगी।",
                 "outro": "आपका स्वागत है!",
             },
             "te": {
-                "subject": f"అభినందనలు — {job} కోసం మీరు ఎంపికయ్యారు",
+                "subject": f"అభినందనలు - {job} కోసం మీరు ఎంపికయ్యారు",
                 "lead": f"{jobe} కోసం మీరు <strong>ఎంపికయ్యారు</strong> అని తెలియజేయడానికి సంతోషిస్తున్నాము.",
                 "body": "ఆఫర్ వివరాలు, తదుపరి దశలతో మా బృందం త్వరలో మిమ్మల్ని సంప్రదిస్తుంది.",
                 "outro": "స్వాగతం!",
@@ -1267,12 +1267,12 @@ def _t_application_received(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     def lead(lang_key: str, job_part: str, company_part: str) -> str:
         if lang_key == "hi":
             where = f"{company_part} में " if company_part else ""
-            return f"धन्यवाद — {where}{job_part} के लिए आपका आवेदन मिल गया है।"
+            return f"धन्यवाद - {where}{job_part} के लिए आपका आवेदन मिल गया है।"
         if lang_key == "te":
             where = f"{company_part}లో " if company_part else ""
-            return f"ధన్యవాదాలు — {where}{job_part} కోసం మీ దరఖాస్తు అందింది."
+            return f"ధన్యవాదాలు - {where}{job_part} కోసం మీ దరఖాస్తు అందింది."
         at = f" at {company_part}" if company_part else ""
-        return f"Thanks — your application for {job_part}{at} is in."
+        return f"Thanks - your application for {job_part}{at} is in."
 
     copy = {
         "en": {
@@ -1388,7 +1388,7 @@ def _session_lines(sessions: list[dict], lang: str) -> tuple[str, list[str]]:
         extra = f"<br><span style=\"color:#555\">{_esc(place)}</span>" if place else ""
         html_items.append(f"<li style=\"margin:0 0 10px\"><strong>{title}</strong><br>{detail}{extra}</li>")
         text.append(f"- {s.get('title', '')}: {s.get('when', '')}"
-                    + (f" ({dur} {minutes})" if dur else "") + (f" — {place}" if place else ""))
+                    + (f" ({dur} {minutes})" if dur else "") + (f" - {place}" if place else ""))
     return "<ul style=\"padding-left:18px;margin:8px 0 16px\">" + "".join(html_items) + "</ul>", text
 
 
@@ -1410,7 +1410,7 @@ def _t_interview_itinerary(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "tz": f"Times are shown in {tz}.",
             "updated": "Your schedule has changed. This replaces the one we sent before.",
             "cal": "You can add these to your calendar from your applications page.",
-            "resched": "If a time does not work for you, reply to the recruiter who contacted you — "
+            "resched": "If a time does not work for you, reply to the recruiter who contacted you - "
                        "the schedule can only be changed by the hiring team.",
             "cta": "See my applications",
             "outro": "Good luck!",
@@ -1423,7 +1423,7 @@ def _t_interview_itinerary(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "tz": f"समय {tz} में दिखाया गया है।",
             "updated": "आपका शेड्यूल बदल गया है। यह पहले भेजे गए शेड्यूल की जगह लेता है।",
             "cal": "आप इन्हें अपने आवेदन पेज से अपने कैलेंडर में जोड़ सकते हैं।",
-            "resched": "यदि कोई समय आपके लिए उपयुक्त नहीं है, तो उस रिक्रूटर को उत्तर दें जिसने आपसे संपर्क किया — "
+            "resched": "यदि कोई समय आपके लिए उपयुक्त नहीं है, तो उस रिक्रूटर को उत्तर दें जिसने आपसे संपर्क किया - "
                        "शेड्यूल केवल हायरिंग टीम बदल सकती है।",
             "cta": "मेरे आवेदन देखें",
             "outro": "शुभकामनाएँ!",
@@ -1436,7 +1436,7 @@ def _t_interview_itinerary(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "tz": f"సమయాలు {tz}లో చూపబడ్డాయి.",
             "updated": "మీ షెడ్యూల్ మారింది. ఇది ముందు పంపిన దాని స్థానంలో ఉంటుంది.",
             "cal": "మీ దరఖాస్తుల పేజీ నుండి వీటిని మీ క్యాలెండర్‌కు జోడించవచ్చు.",
-            "resched": "ఏదైనా సమయం మీకు అనుకూలం కాకపోతే, మిమ్మల్ని సంప్రదించిన రిక్రూటర్‌కు జవాబు ఇవ్వండి — "
+            "resched": "ఏదైనా సమయం మీకు అనుకూలం కాకపోతే, మిమ్మల్ని సంప్రదించిన రిక్రూటర్‌కు జవాబు ఇవ్వండి - "
                        "షెడ్యూల్‌ను నియామక బృందం మాత్రమే మార్చగలదు.",
             "cta": "నా దరఖాస్తులు చూడండి",
             "outro": "శుభాకాంక్షలు!",
@@ -1483,7 +1483,7 @@ def _t_interview_slot_request(lang: str, ctx: dict) -> tuple[str, str, str, str]
                      if org else f"You're invited to interview for <strong>{jt}</strong>."),
             "ask": (f"Please choose a time for each of your {count} interviews." if count > 1
                     else "Please choose a time for your interview."),
-            "final": "Once you have chosen, the times are confirmed — to change one later, "
+            "final": "Once you have chosen, the times are confirmed - to change one later, "
                      "contact the hiring team.",
             "cta": "Choose my times",
             "fallback": "Or paste this link into your browser:",
@@ -1496,7 +1496,7 @@ def _t_interview_slot_request(lang: str, ctx: dict) -> tuple[str, str, str, str]
                      if org else f"आपको <strong>{jt}</strong> के इंटरव्यू के लिए आमंत्रित किया गया है।"),
             "ask": (f"कृपया अपने {count} इंटरव्यू में से हर एक के लिए समय चुनें।" if count > 1
                     else "कृपया अपने इंटरव्यू के लिए समय चुनें।"),
-            "final": "चुनने के बाद समय पक्का हो जाता है — बाद में बदलने के लिए हायरिंग टीम से संपर्क करें।",
+            "final": "चुनने के बाद समय पक्का हो जाता है - बाद में बदलने के लिए हायरिंग टीम से संपर्क करें।",
             "cta": "मेरा समय चुनें",
             "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
             "outro": "शुभकामनाएँ!",
@@ -1508,7 +1508,7 @@ def _t_interview_slot_request(lang: str, ctx: dict) -> tuple[str, str, str, str]
                      if org else f"మీరు <strong>{jt}</strong> ఇంటర్వ్యూకి ఆహ్వానించబడ్డారు."),
             "ask": (f"దయచేసి మీ {count} ఇంటర్వ్యూలలో ప్రతిదానికి ఒక సమయాన్ని ఎంచుకోండి." if count > 1
                     else "దయచేసి మీ ఇంటర్వ్యూకి ఒక సమయాన్ని ఎంచుకోండి."),
-            "final": "ఎంచుకున్న తర్వాత సమయాలు నిర్ధారించబడతాయి — తర్వాత మార్చడానికి నియామక బృందాన్ని సంప్రదించండి.",
+            "final": "ఎంచుకున్న తర్వాత సమయాలు నిర్ధారించబడతాయి - తర్వాత మార్చడానికి నియామక బృందాన్ని సంప్రదించండి.",
             "cta": "నా సమయాలను ఎంచుకోండి",
             "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
             "outro": "శుభాకాంక్షలు!",
@@ -1537,8 +1537,8 @@ def _t_interview_session_update(lang: str, ctx: dict) -> tuple[str, str, str, st
     st = _esc(session.get("title", ""))
     loc = _loc(lang, {
         "en": {
-            "subject": (f"Interview cancelled — {job_title}" if cancelled
-                        else f"Interview time changed — {job_title}"),
+            "subject": (f"Interview cancelled - {job_title}" if cancelled
+                        else f"Interview time changed - {job_title}"),
             "pre": "An update to your interview schedule.",
             "lead": (f"Your <strong>{st}</strong> interview for <strong>{jt}</strong> has been cancelled."
                      if cancelled
@@ -1547,8 +1547,8 @@ def _t_interview_session_update(lang: str, ctx: dict) -> tuple[str, str, str, st
             "cta": "See my applications",
         },
         "hi": {
-            "subject": (f"इंटरव्यू रद्द — {job_title}" if cancelled
-                        else f"इंटरव्यू का समय बदला — {job_title}"),
+            "subject": (f"इंटरव्यू रद्द - {job_title}" if cancelled
+                        else f"इंटरव्यू का समय बदला - {job_title}"),
             "pre": "आपके इंटरव्यू शेड्यूल में बदलाव।",
             "lead": (f"<strong>{jt}</strong> के लिए आपका <strong>{st}</strong> इंटरव्यू रद्द कर दिया गया है।"
                      if cancelled
@@ -1557,8 +1557,8 @@ def _t_interview_session_update(lang: str, ctx: dict) -> tuple[str, str, str, st
             "cta": "मेरे आवेदन देखें",
         },
         "te": {
-            "subject": (f"ఇంటర్వ్యూ రద్దు — {job_title}" if cancelled
-                        else f"ఇంటర్వ్యూ సమయం మారింది — {job_title}"),
+            "subject": (f"ఇంటర్వ్యూ రద్దు - {job_title}" if cancelled
+                        else f"ఇంటర్వ్యూ సమయం మారింది - {job_title}"),
             "pre": "మీ ఇంటర్వ్యూ షెడ్యూల్‌లో మార్పు.",
             "lead": (f"<strong>{jt}</strong> కోసం మీ <strong>{st}</strong> ఇంటర్వ్యూ రద్దు చేయబడింది."
                      if cancelled
@@ -1648,7 +1648,7 @@ def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                      if org else f"You have an offer for the role of <strong>{jt}</strong>."),
             "resent": "Here is a fresh link to your offer. The earlier link no longer works.",
             "read": "Read the offer, then accept or decline it. To confirm your answer we will email you a one-time code.",
-            "accepted_read": "You have accepted this offer. Use this link to send the documents the hiring team asked for — we will email you a one-time code to open them.",
+            "accepted_read": "You have accepted this offer. Use this link to send the documents the hiring team asked for - we will email you a one-time code to open them.",
             "expires": f"The offer is open until <strong>{exp}</strong>.",
             "cta": "Read my offer",
             "fallback": "Or paste this link into your browser:",
@@ -1661,7 +1661,7 @@ def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                      if org else f"आपके पास <strong>{jt}</strong> की भूमिका का ऑफ़र है।"),
             "resent": "यह आपके ऑफ़र का नया लिंक है। पुराना लिंक अब काम नहीं करता।",
             "read": "ऑफ़र पढ़ें, फिर उसे स्वीकार या अस्वीकार करें। आपके उत्तर की पुष्टि के लिए हम आपको एक बार उपयोग होने वाला कोड ईमेल करेंगे।",
-            "accepted_read": "आपने यह ऑफ़र स्वीकार कर लिया है। हायरिंग टीम द्वारा माँगे गए दस्तावेज़ भेजने के लिए इस लिंक का उपयोग करें — उन्हें खोलने के लिए हम आपको एक बार उपयोग होने वाला कोड ईमेल करेंगे।",
+            "accepted_read": "आपने यह ऑफ़र स्वीकार कर लिया है। हायरिंग टीम द्वारा माँगे गए दस्तावेज़ भेजने के लिए इस लिंक का उपयोग करें - उन्हें खोलने के लिए हम आपको एक बार उपयोग होने वाला कोड ईमेल करेंगे।",
             "expires": f"यह ऑफ़र <strong>{exp}</strong> तक खुला है।",
             "cta": "मेरा ऑफ़र पढ़ें",
             "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:",
@@ -1674,7 +1674,7 @@ def _t_offer_ready(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                      if org else f"మీకు <strong>{jt}</strong> పాత్ర కోసం ఆఫర్ ఉంది."),
             "resent": "ఇది మీ ఆఫర్‌కు కొత్త లింక్. పాత లింక్ ఇకపై పనిచేయదు.",
             "read": "ఆఫర్‌ను చదివి, దాన్ని అంగీకరించండి లేదా తిరస్కరించండి. మీ సమాధానాన్ని నిర్ధారించడానికి మేము మీకు ఒకసారి ఉపయోగించే కోడ్‌ను ఇమెయిల్ చేస్తాము.",
-            "accepted_read": "మీరు ఈ ఆఫర్‌ను అంగీకరించారు. నియామక బృందం అడిగిన పత్రాలను పంపడానికి ఈ లింక్‌ను ఉపయోగించండి — వాటిని తెరవడానికి మేము మీకు ఒకసారి ఉపయోగించే కోడ్‌ను ఇమెయిల్ చేస్తాము.",
+            "accepted_read": "మీరు ఈ ఆఫర్‌ను అంగీకరించారు. నియామక బృందం అడిగిన పత్రాలను పంపడానికి ఈ లింక్‌ను ఉపయోగించండి - వాటిని తెరవడానికి మేము మీకు ఒకసారి ఉపయోగించే కోడ్‌ను ఇమెయిల్ చేస్తాము.",
             "expires": f"ఈ ఆఫర్ <strong>{exp}</strong> వరకు తెరిచి ఉంటుంది.",
             "cta": "నా ఆఫర్ చదవండి",
             "fallback": "లేదా ఈ లింక్‌ను మీ బ్రౌజర్‌లో పేస్ట్ చేయండి:",
@@ -1731,19 +1731,19 @@ def _t_offer_code(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "subject": words["en"][purpose][0], "pre": "Your one-time code.",
             "lead": words["en"][purpose][1],
             "exp": f"It works once, for {minutes} minutes.",
-            "not_you": "If you did not ask for this code, you can ignore this email — nothing happens without it.",
+            "not_you": "If you did not ask for this code, you can ignore this email - nothing happens without it.",
         },
         "hi": {
             "subject": words["hi"][purpose][0], "pre": "आपका एक बार उपयोग होने वाला कोड।",
             "lead": words["hi"][purpose][1],
             "exp": f"यह केवल एक बार, {minutes} मिनट के लिए काम करता है।",
-            "not_you": "यदि आपने यह कोड नहीं मांगा, तो इस ईमेल को अनदेखा करें — इसके बिना कुछ नहीं होता।",
+            "not_you": "यदि आपने यह कोड नहीं मांगा, तो इस ईमेल को अनदेखा करें - इसके बिना कुछ नहीं होता।",
         },
         "te": {
             "subject": words["te"][purpose][0], "pre": "మీ ఒకసారి ఉపయోగించే కోడ్.",
             "lead": words["te"][purpose][1],
             "exp": f"ఇది ఒక్కసారి మాత్రమే, {minutes} నిమిషాల పాటు పనిచేస్తుంది.",
-            "not_you": "మీరు ఈ కోడ్ అడగకపోతే, ఈ ఇమెయిల్‌ను విస్మరించండి — ఇది లేకుండా ఏమీ జరగదు.",
+            "not_you": "మీరు ఈ కోడ్ అడగకపోతే, ఈ ఇమెయిల్‌ను విస్మరించండి - ఇది లేకుండా ఏమీ జరగదు.",
         },
     })
     big = (f'<p style="font-size:28px;letter-spacing:6px;font-weight:700;margin:12px 0 18px;">'
@@ -1855,7 +1855,7 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
     apps_url = ctx.get("applications_url") or settings.app_base_url
     jobe, orge = _esc(job), _esc(company)
     loc = _loc(lang, {
-        "en": {"subject": f"Welcome aboard — set up your account for {job}",
+        "en": {"subject": f"Welcome aboard - set up your account for {job}",
                "lead": (f"Thank you for accepting the role of <strong>{jobe}</strong>"
                         + (f" at <strong>{orge}</strong>." if company else ".")),
                "activate": "Set a password to follow your onboarding and see your offer in one place.",
@@ -1864,7 +1864,7 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                "cta_view": "View my applications",
                "expiry": "This link can be used once and expires in 7 days.",
                "fallback": "Or paste this link into your browser:"},
-        "hi": {"subject": f"स्वागत है — {job} के लिए अपना खाता सेट करें",
+        "hi": {"subject": f"स्वागत है - {job} के लिए अपना खाता सेट करें",
                "lead": ((f"<strong>{orge}</strong> में " if company else "")
                         + f"<strong>{jobe}</strong> की भूमिका स्वीकार करने के लिए धन्यवाद।"),
                "activate": "अपनी ऑनबोर्डिंग देखने और अपना ऑफ़र एक ही जगह देखने के लिए पासवर्ड सेट करें।",
@@ -1873,7 +1873,7 @@ def _t_offer_account(lang: str, ctx: dict) -> tuple[str, str, str, str]:
                "cta_view": "मेरे आवेदन देखें",
                "expiry": "यह लिंक एक बार उपयोग हो सकता है और 7 दिनों में समाप्त हो जाएगा।",
                "fallback": "या यह लिंक अपने ब्राउज़र में पेस्ट करें:"},
-        "te": {"subject": f"స్వాగతం — {job} కోసం మీ ఖాతాను సెటప్ చేయండి",
+        "te": {"subject": f"స్వాగతం - {job} కోసం మీ ఖాతాను సెటప్ చేయండి",
                "lead": ((f"<strong>{orge}</strong>లో " if company else "")
                         + f"<strong>{jobe}</strong> పాత్రను అంగీకరించినందుకు ధన్యవాదాలు."),
                "activate": "మీ ఆన్‌బోర్డింగ్‌ను, మీ ఆఫర్‌ను ఒకే చోట చూడటానికి పాస్‌వర్డ్ సెట్ చేయండి.",
@@ -1980,7 +1980,7 @@ def _t_task_assigned(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "lead": (
                 (f"You've been asked to complete <strong>{ttle}</strong>." if round_title
                  else "You've been asked to complete a task.")
-                + (" Share a portfolio of your work — files or approved links."
+                + (" Share a portfolio of your work - files or approved links."
                    if is_portfolio else " Work through it in your own time, within the window.")
             ),
             "cta": "Open the task",
@@ -1997,7 +1997,7 @@ def _t_task_assigned(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "lead": (
                 (f"आपसे <strong>{ttle}</strong> पूरा करने के लिए कहा गया है।" if round_title
                  else "आपसे एक टास्क पूरा करने के लिए कहा गया है।")
-                + (" अपने काम का पोर्टफोलियो साझा करें — फ़ाइलें या स्वीकृत लिंक।"
+                + (" अपने काम का पोर्टफोलियो साझा करें - फ़ाइलें या स्वीकृत लिंक।"
                    if is_portfolio else " अपने समय पर, दी गई अवधि के भीतर इसे पूरा करें।")
             ),
             "cta": "टास्क खोलें",
@@ -2014,7 +2014,7 @@ def _t_task_assigned(lang: str, ctx: dict) -> tuple[str, str, str, str]:
             "lead": (
                 (f"మీరు <strong>{ttle}</strong> పూర్తి చేయమని అడగబడ్డారు." if round_title
                  else "మీరు ఒక టాస్క్ పూర్తి చేయమని అడగబడ్డారు.")
-                + (" మీ పని పోర్ట్‌ఫోలియోను పంచుకోండి — ఫైళ్లు లేదా ఆమోదించిన లింక్‌లు."
+                + (" మీ పని పోర్ట్‌ఫోలియోను పంచుకోండి - ఫైళ్లు లేదా ఆమోదించిన లింక్‌లు."
                    if is_portfolio else " మీ సమయంలో, ఇచ్చిన వ్యవధిలో దీన్ని పూర్తి చేయండి.")
             ),
             "cta": "టాస్క్ తెరవండి",

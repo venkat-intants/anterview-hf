@@ -28,7 +28,7 @@ const OTHERS = [
   { id: 'r-c', title: 'Final review' },
 ];
 
-describe('RoundRouting — the pass branch', () => {
+describe('RoundRouting - the pass branch', () => {
   it('reads the chain, never lets it be edited here', () => {
     render(
       <RoundRouting round={round()} otherRounds={OTHERS} editable errors={[]} onPatch={vi.fn()} />,
@@ -51,7 +51,7 @@ describe('RoundRouting — the pass branch', () => {
   });
 });
 
-describe('RoundRouting — below the threshold', () => {
+describe('RoundRouting - below the threshold', () => {
   it('offers every other round, plus holding for a person', async () => {
     const user = userEvent.setup();
     const onPatch = vi.fn();
@@ -79,7 +79,7 @@ describe('RoundRouting — below the threshold', () => {
   });
 });
 
-describe('RoundRouting — fast-track is a pair', () => {
+describe('RoundRouting - fast-track is a pair', () => {
   it('is hidden for a human review round, which cannot fast-track anyone', () => {
     render(
       <RoundRouting
@@ -146,7 +146,7 @@ describe('RoundRouting — fast-track is a pair', () => {
   });
 });
 
-describe('RoundRouting — locked and validation', () => {
+describe('RoundRouting - locked and validation', () => {
   it('disables every control when the workflow is not editable', () => {
     render(
       <RoundRouting

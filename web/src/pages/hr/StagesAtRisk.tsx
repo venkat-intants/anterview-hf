@@ -50,7 +50,7 @@ export default function StagesAtRisk(): JSX.Element {
     <Page width="default">
       <PageHeader
         title="Stages at risk"
-        description="Applications against the SLA their stage owner answers for, worst first. Only stages with an SLA timer appear here — applicants waiting before round one are flagged under Attention required on the HR home. Open one to act on it — nothing on this page moves a candidate."
+        description="Applications against the SLA their stage owner answers for, worst first. Only stages with an SLA timer appear here - applicants waiting before round one are flagged under Attention required on the HR home. Open one to act on it - nothing on this page moves a candidate."
       />
 
       <Toolbar

@@ -262,7 +262,7 @@ class GeminiAdapter(LLMAdapter):
             # Distinguished from "MAX_TOKENS but text was produced" — that
             # one is degraded-but-usable; this one is fatal.
             raise LLMError(
-                "MAX_TOKENS — increase max_tokens budget "
+                "MAX_TOKENS - increase max_tokens budget "
                 f"(prompt={prompt_tokens}, thoughts={thoughts_tokens})"
             )
 

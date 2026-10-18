@@ -49,7 +49,7 @@ function AssignmentRow({ a }: { a: InterviewerAssignment }) {
     <Link
       to={`/interviewer/scorecards/${a.scorecard_id}`}
       className="block rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-      aria-label={`Open scorecard for ${a.candidate_name} — ${a.round_title}`}
+      aria-label={`Open scorecard for ${a.candidate_name} - ${a.round_title}`}
     >
       <GlassCard hover className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -100,7 +100,7 @@ export default function InterviewerConsole(): JSX.Element {
         <PageHeader
           className="mb-0"
           title={<span data-testid="page-title">My interviews</span>}
-          description="Interviews assigned to you. Your scorecard is yours alone — nobody else’s assessment is visible here, and nothing here decides an outcome."
+          description="Interviews assigned to you. Your scorecard is yours alone - nobody else’s assessment is visible here, and nothing here decides an outcome."
         />
       </Reveal>
 

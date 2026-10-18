@@ -240,7 +240,7 @@ def _observe_hop_count(observed_hops: int, trusted_proxy_count: int) -> None:
             "TRUSTED_PROXY_COUNT, so those requests underflow and fall back to "
             "the socket peer: per-IP rate limiting and the DPDP consent-ledger IP "
             "hash are keyed on the edge address, not the client. Do NOT simply "
-            "lower TRUSTED_PROXY_COUNT to min_observed_hops — clients can only "
+            "lower TRUSTED_PROXY_COUNT to min_observed_hops - clients can only "
             "ADD entries, so that number is an upper bound on the real chain and "
             "not a measurement of it. Check the deployment's actual proxy chain: "
             "while TRUSTED_PROXY_COUNT exceeds it, any header long enough to "

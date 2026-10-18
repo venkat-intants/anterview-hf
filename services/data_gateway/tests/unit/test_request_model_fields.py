@@ -134,7 +134,7 @@ def test_coding_generate_model_carries_role_context() -> None:
 
     for field in ("job_title", "experience_level"):
         assert field in GenerateCodingQuestionsIn.model_fields, (
-            f"GenerateCodingQuestionsIn lost {field} — the endpoint 500s without it"
+            f"GenerateCodingQuestionsIn lost {field} - the endpoint 500s without it"
         )
         assert (
             GenerateCodingQuestionsIn.model_fields[field].default

@@ -264,7 +264,7 @@ class TestDocxExtractionIsLinear:
 
         # 8x the depth: ~8x linear, ~64x quadratic. 25x separates them with room
         # to spare in both directions.
-        assert ratio < 25, f"8x the depth cost {ratio:.0f}x the time — looks quadratic"
+        assert ratio < 25, f"8x the depth cost {ratio:.0f}x the time - looks quadratic"
 
     def test_a_pathological_docx_parses_fast_through_the_real_entry_point(self) -> None:
         """End to end through the ZIP reader, not just the tree walk, so the test

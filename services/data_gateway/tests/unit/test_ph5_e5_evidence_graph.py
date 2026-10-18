@@ -120,7 +120,7 @@ def test_stage_of_round_kind_covers_the_ck_workflow_rounds_kind_vocabulary() -> 
         if getattr(c, "name", None) == "ck_workflow_rounds_kind"
     )
     vocabulary = set(re.findall(r"'([a-z_]+)'", str(check.sqltext)))
-    assert vocabulary, "could not parse ck_workflow_rounds_kind — did the constraint change shape?"
+    assert vocabulary, "could not parse ck_workflow_rounds_kind - did the constraint change shape?"
     assert set(eg.STAGE_OF_ROUND_KIND) == vocabulary
 
 

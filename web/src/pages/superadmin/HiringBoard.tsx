@@ -51,7 +51,7 @@ export default function HiringBoard(): JSX.Element {
     <div className="mx-auto w-full max-w-[1200px] px-4 py-8">
       <PageHeader
         title="Hiring board"
-        description="Every open opening in the company. Health is worked out from how candidates have actually moved through each workflow — nobody types it in. Read-only: the hiring decisions stay with your HR managers."
+        description="Every open opening in the company. Health is worked out from how candidates have actually moved through each workflow - nobody types it in. Read-only: the hiring decisions stay with your HR managers."
       />
 
       {board.data ? (

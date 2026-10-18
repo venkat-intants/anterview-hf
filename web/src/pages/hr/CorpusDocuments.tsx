@@ -104,11 +104,11 @@ const CONTENT_TYPE_LABEL: Record<string, string> = {
 };
 
 function fileTypeLabel(contentType: string | null): string {
-  return contentType ? (CONTENT_TYPE_LABEL[contentType] ?? contentType) : '—';
+  return contentType ? (CONTENT_TYPE_LABEL[contentType] ?? contentType) : '-';
 }
 
 function fmtDate(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleDateString() : '—';
+  return iso ? new Date(iso).toLocaleDateString() : '-';
 }
 
 const DELETE_CONFIRM_TEXT =
@@ -116,12 +116,12 @@ const DELETE_CONFIRM_TEXT =
 const INJECTION_WARNING_TEXT =
   'This document contains text that tries to instruct an automated reader. It is ignored.';
 const SEMANTIC_UNAVAILABLE_TEXT =
-  'Semantic search is unavailable — the assistant is matching keywords only.';
+  'Semantic search is unavailable - the assistant is matching keywords only.';
 // A document citation whose row is no longer in the library: deleted, or (for a
 // super admin following an `hr_only` link) not theirs to read. Both are "not in
 // your library" from here, and neither should look like an empty screen.
 const CITED_DOC_MISSING_TEXT =
-  'That document is no longer in your library — it may have been deleted since it was cited.';
+  'That document is no longer in your library - it may have been deleted since it was cited.';
 const ATTESTATION_LABEL = 'This is a company document, not a record about a candidate.';
 
 /** DOM id for one library row, so a citation can land on it. */
@@ -340,7 +340,7 @@ export default function CorpusDocuments(): JSX.Element {
     <Page width="default">
       <PageHeader
         title="Documents"
-        description="Company policies, handbooks and process notes the staff assistant can search and cite — never a candidate record."
+        description="Company policies, handbooks and process notes the staff assistant can search and cite - never a candidate record."
       />
 
       {semanticUnavailable ? (
@@ -505,7 +505,7 @@ export default function CorpusDocuments(): JSX.Element {
                             {fileTypeLabel(d.content_type)}
                           </td>
                           <td className="py-2.5 pr-3 text-foreground">
-                            {d.version ? `v${d.version}` : '—'}
+                            {d.version ? `v${d.version}` : '-'}
                           </td>
                           <td className="py-2.5 pr-3">
                             <StatusTag tone={STATUS_TONE[status]} dot>
@@ -561,7 +561,7 @@ export default function CorpusDocuments(): JSX.Element {
                             {fmtDate(d.updated_at)}
                           </td>
                           <td className="py-2.5 pr-3 text-muted-foreground">
-                            {d.uploaded_by_name ?? '—'}
+                            {d.uploaded_by_name ?? '-'}
                           </td>
                           <td className="py-2.5 pr-3">
                             <div className="flex flex-wrap items-center gap-1.5">
@@ -794,7 +794,7 @@ export default function CorpusDocuments(): JSX.Element {
                 <p className="text-[13px] text-foreground">
                   All staff
                   <span className="ml-1.5 text-[12px] text-muted-foreground">
-                    — HR-only documents are created by HR managers.
+                    - HR-only documents are created by HR managers.
                   </span>
                 </p>
               )}

@@ -62,7 +62,7 @@ import {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function fmtScore(v: number | null): string {
-  if (v === null) return '—';
+  if (v === null) return '-';
   return v.toFixed(2);
 }
 
@@ -357,7 +357,7 @@ function IntegrityPanel({
     <SectionCard
       title="Proctoring"
       icon={ShieldCheck}
-      description="AI-assisted flagging for human review — not an automated decision."
+      description="AI-assisted flagging for human review - not an automated decision."
       className="h-full"
     >
       {score === null || score === undefined ? (
@@ -588,16 +588,16 @@ export default function AdminInterviewDetail() {
         <DataList
           columns={3}
           items={[
-            { label: 'Role', value: data.job_title ?? '—' },
+            { label: 'Role', value: data.job_title ?? '-' },
             { label: 'Language', value: languageLabel(data.language) },
             { label: 'Duration', value: formatDuration(data.duration_seconds) },
-            { label: 'Started', value: data.started_at ? formatDate(data.started_at) : '—' },
-            { label: 'Completed', value: data.completed_at ? formatDate(data.completed_at) : '—' },
+            { label: 'Started', value: data.started_at ? formatDate(data.started_at) : '-' },
+            { label: 'Completed', value: data.completed_at ? formatDate(data.completed_at) : '-' },
             {
               label: 'Preferred Language',
               value: data.candidate_preferred_language
                 ? languageLabel(data.candidate_preferred_language)
-                : '—',
+                : '-',
             },
           ]}
         />
@@ -651,7 +651,7 @@ export default function AdminInterviewDetail() {
           {/* Radar chart */}
           <SectionCard
             title="Score Radar"
-            description="Performance across all four competency axes (0–10)."
+            description="Performance across all four competency axes (0-10)."
           >
             <ScorecardRadar scorecard={sc} />
           </SectionCard>

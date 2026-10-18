@@ -46,7 +46,7 @@ CV_BYTES = b"%PDF-1.4\n%smoke cv\n%%EOF\n"
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" — {detail}" if not cond and detail else ""))
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" - {detail}" if not cond and detail else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # -------------------------------------------------------------
         # The runner issues the job-simulation round
         # -------------------------------------------------------------
-        print("\nPH4-D4 — the runner issues the job-simulation round")
+        print("\nPH4-D4 - the runner issues the job-simulation round")
         async with factory() as db:
             from app import job_tasks as svc
 
@@ -327,14 +327,14 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.get(f"/hr/enrolments/{enrolment}/tasks")
         sim_entry = next((x for x in r.json() if x.get("round_id") == str(round_sim)), None) \
             if r.status_code == 200 else None
-        check("gap 4 — HR's task list shows the submitted content",
+        check("gap 4 - HR's task list shows the submitted content",
               sim_entry is not None and sim_entry.get("responses")
               and sim_entry.get("is_current") is True, r.text[:300])
 
         # -------------------------------------------------------------
         # A reviewer reads the submission through the scorecard machinery
         # -------------------------------------------------------------
-        print("\nPH4-D4 — a named interviewer scores the simulation")
+        print("\nPH4-D4 - a named interviewer scores the simulation")
         r = await c.post(
             f"/hr/enrolments/{enrolment}/scorecards",
             json={"round_id": str(round_sim), "interviewer_user_ids": [str(interviewer)]},
@@ -347,13 +347,13 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               and r.json()["status"] == "submitted", r.text[:200])
         check("the response text is visible to the reviewer",
               any(resp.get("text_value") for resp in r.json().get("responses", [])), r.text[:300])
-        check("gap 2 — the round's brief and item prompts are included",
+        check("gap 2 - the round's brief and item prompts are included",
               r.json().get("brief") and r.json().get("items"), r.text[:300])
 
         r = await c.get(
             f"/interviewer/scorecards/{scorecard_id}/submission/materials/{material_id}/download"
         )
-        check("gap 3 — the reviewer can download a round's reference material",
+        check("gap 3 - the reviewer can download a round's reference material",
               r.status_code == 200 and "url" in r.json(), r.text[:300])
 
         r = await c.post(
@@ -366,7 +366,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # -------------------------------------------------------------
         # HR passes the simulation round — the runner advances to portfolio
         # -------------------------------------------------------------
-        print("\nPH4-D4 — HR passes the simulation; the runner issues the portfolio round")
+        print("\nPH4-D4 - HR passes the simulation; the runner issues the portfolio round")
         r = await c.post(f"/hr/enrolments/{enrolment}/round-review", json={"passed": True})
         check("passing the simulation round succeeds (a submission exists)", r.status_code == 200,
               r.text[:300])
@@ -474,7 +474,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # -------------------------------------------------------------
         # HR holds instead of passing — a hold is always legal
         # -------------------------------------------------------------
-        print("\nPH4-D4 — HR holds the portfolio round; nothing is rejected")
+        print("\nPH4-D4 - HR holds the portfolio round; nothing is rejected")
         r = await c.post(f"/hr/enrolments/{enrolment}/round-review", json={"passed": False})
         check("holding is always allowed", r.status_code == 200, r.text[:300])
         async with factory() as db:
@@ -485,7 +485,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # -------------------------------------------------------------
         # Decision queue shows the evidence
         # -------------------------------------------------------------
-        print("\nPH4-D4 — the decision queue shows the submission state")
+        print("\nPH4-D4 - the decision queue shows the submission state")
         r = await c.get(f"/hr/requisitions/{req}/decision-queue")
         rows = r.json() if r.status_code == 200 else []
         entry = next((x for x in rows if x.get("enrolment_id") == str(enrolment)), None)
@@ -494,7 +494,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # -------------------------------------------------------------
         # Tenant isolation
         # -------------------------------------------------------------
-        print("\nPH4-D4 — tenant isolation")
+        print("\nPH4-D4 - tenant isolation")
         acting_hr["uid"], acting_hr["company"] = other_hr, other_cid
         r = await c.get(f"/hr/rounds/{round_sim}/task")
         check("another company's HR gets 404 on the round's task config", r.status_code == 404,
@@ -510,7 +510,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # -------------------------------------------------------------
         # Reissue and withdraw
         # -------------------------------------------------------------
-        print("\nPH4-D4 — reissue and withdraw")
+        print("\nPH4-D4 - reissue and withdraw")
         async with factory() as db:
             sim_submission_id = await db.scalar(
                 text("SELECT id FROM task_submissions WHERE round_id = :r AND enrolment_id = :e"
@@ -528,7 +528,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # -------------------------------------------------------------
         # Retention
         # -------------------------------------------------------------
-        print("\nPH4-D4 — retention")
+        print("\nPH4-D4 - retention")
         async with factory() as db:
             from app.job_tasks import purge
 
@@ -556,7 +556,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # HR authors a task round through the API. Everything above seeded
         # round_tasks with SQL; these are the routes the builder calls.
         # -------------------------------------------------------------
-        print("\nPH4-D4 — HR authors a task round: config, materials, a kind change")
+        print("\nPH4-D4 - HR authors a task round: config, materials, a kind change")
         new_cfg = {"brief": "Review this pull request.", "items": [
             {"key": "review", "prompt": "What would you change?", "response_type": "text",
              "required": True},

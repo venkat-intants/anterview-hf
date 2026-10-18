@@ -415,11 +415,11 @@ async def test_callback_valid_code_returns_jwt(client: AsyncClient) -> None:
     stored_rt_value = fake_redis._store[refresh_keys[0]]
     user_id_from_body = body["user_id"]
     assert stored_rt_value.startswith(f"{user_id_from_body}:"), (
-        f"AUTH-01 REGRESSION: stored value must be '<user_id>:<ts>' — "
+        f"AUTH-01 REGRESSION: stored value must be '<user_id>:<ts>' - "
         f"got {stored_rt_value!r}"
     )
     ts_part = stored_rt_value[len(user_id_from_body) + 1:]
-    assert ts_part.isdigit(), f"created_at must be a digit string — got {ts_part!r}"
+    assert ts_part.isdigit(), f"created_at must be a digit string - got {ts_part!r}"
 
     # Cookie ATTRIBUTES must match local login (httpx hides these on resp.cookies,
     # so parse the raw Set-Cookie headers — same approach as the auth-endpoint tests).

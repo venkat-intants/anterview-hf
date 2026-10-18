@@ -193,7 +193,7 @@ export function nextAction(r: Requisition): NextAction | null {
     const waiting = r.unresolved ?? 0;
     return waiting > 0
       ? {
-          text: `Closing date passed: ${waiting} still in progress — close it once they finish`,
+          text: `Closing date passed: ${waiting} still in progress - close it once they finish`,
           to: `${base}?tab=pipeline`,
         }
       : { text: 'Closing date passed: closing automatically', to: base, passive: true };

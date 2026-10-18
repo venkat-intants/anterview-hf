@@ -88,7 +88,7 @@ async def test_a_hold_tells_the_workflows_owner(
     monkeypatch.setattr(wr, "record_transition", AsyncMock(return_value="shortlisted"))
     enrolment, round_, workflow = _enrolment(), _round(), _workflow()
 
-    out = await wr._hold(_db(), enrolment, "Trade test: passed — held for review",
+    out = await wr._hold(_db(), enrolment, "Trade test: passed - held for review",
                          round_=round_, workflow=workflow)
 
     assert out.action == "held"
@@ -161,7 +161,7 @@ async def test_every_hold_in_the_runner_names_its_round_and_workflow() -> None:
         line for line in source.splitlines()
         if "_hold(" in line and "async def _hold" not in line and "def _hold" not in line
     ]
-    assert calls, "no _hold call sites found — has the function been renamed?"
+    assert calls, "no _hold call sites found - has the function been renamed?"
     # Each call spans more than one line, so check the call's whole text.
     for marker in ("round_=round_", "workflow=workflow"):
         assert source.count(marker) >= 4, f"a _hold call site is missing {marker}"
@@ -370,7 +370,7 @@ def test_every_query_that_loads_a_round_selects_the_same_columns() -> None:
 
     def columns(source: str) -> set[str]:
         body = re.search(r'"SELECT (.*?)"\s*\n\s*"\s+FROM workflow_rounds', source, re.S)
-        assert body, "could not find the round SELECT — has the query been rewritten?"
+        assert body, "could not find the round SELECT - has the query been rewritten?"
         # The SQL is built from adjacent string literals; drop the quoting and
         # the leading padding, then split on commas.
         flat = re.sub(r'"\s*\n\s*"', " ", body.group(1))

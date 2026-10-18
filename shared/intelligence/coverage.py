@@ -165,7 +165,7 @@ def plan_interview(profile: RoleProfile, max_turns: int) -> list[TurnPlan]:
             TurnPlan(
                 turn_index=index,
                 kind="intro",
-                rationale="Opening — let the candidate introduce themselves and set context.",
+                rationale="Opening - let the candidate introduce themselves and set context.",
             )
         )
         index += 1
@@ -199,7 +199,7 @@ def plan_interview(profile: RoleProfile, max_turns: int) -> list[TurnPlan]:
             TurnPlan(
                 turn_index=index,
                 kind="wrap",
-                rationale="Close — warm wrap-up and the candidate's own questions.",
+                rationale="Close - warm wrap-up and the candidate's own questions.",
             )
         )
         index += 1
@@ -218,7 +218,7 @@ def plan_interview(profile: RoleProfile, max_turns: int) -> list[TurnPlan]:
                 competency_id=heaviest.id,
                 competency_name=heaviest.name,
                 probe_hint=heaviest.probes[0],
-                rationale=f"Extra turn — deepen '{heaviest.name}' (highest-weight competency).",
+                rationale=f"Extra turn - deepen '{heaviest.name}' (highest-weight competency).",
             ),
         )
 

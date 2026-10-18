@@ -87,7 +87,7 @@ def fake_resume_score(
         "strengths": [f"[fake AI] Relevant to {job_title} ({level})"] if overall >= 50 else [],
         "concerns": [] if overall >= 50 else [f"[fake AI] Little overlap with {job_title}"],
         "recommendation": recommendation,
-        "summary": f"[fake AI] Scored {overall}/100 against {job_title} — {recommendation}.",
+        "summary": f"[fake AI] Scored {overall}/100 against {job_title} - {recommendation}.",
         # Same shape and scope as resume_scorer: the shared detector over the
         # excerpt the real scorer reads, labelled by field. Without it every
         # fake-mode score would be "not on record", and auto-shortlist would
@@ -110,7 +110,7 @@ def fake_mcq_questions(*, topic: str, num_questions: int) -> list[dict[str, Any]
         idx = i % 4
         options = [*wrong[:idx], "Correct answer", *wrong[idx:]]
         out.append({
-            "prompt": f"[fake AI] {topic} — question {i + 1}: which option is correct?",
+            "prompt": f"[fake AI] {topic} - question {i + 1}: which option is correct?",
             "options": options,
             "correct_index": idx,
             "points": 1,
@@ -129,7 +129,7 @@ def fake_coding_questions(
     return [
         {
             "prompt": (
-                f"[fake AI] {topic} — problem {i + 1}: read two integers a and b from one "
+                f"[fake AI] {topic} - problem {i + 1}: read two integers a and b from one "
                 "line of standard input, separated by a space, and print a + b."
             ),
             "allowed_languages": languages,

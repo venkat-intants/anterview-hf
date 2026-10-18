@@ -191,7 +191,7 @@ afterEach(() => {
   delete window.matchMedia;
 });
 
-describe('DecisionQueue — the list', () => {
+describe('DecisionQueue - the list', () => {
   it('shows held and finished candidates together, with the first selected', async () => {
     renderQueue();
     await ready('Asha Rao');
@@ -256,7 +256,7 @@ describe('DecisionQueue — the list', () => {
   });
 });
 
-describe('DecisionQueue — step 1, evidence', () => {
+describe('DecisionQueue - step 1, evidence', () => {
   it('says the hold was not a rejection, because the badge reads like one', async () => {
     renderQueue();
     await ready('Asha Rao');
@@ -324,7 +324,7 @@ describe('DecisionQueue — step 1, evidence', () => {
   });
 });
 
-describe('DecisionQueue — SLA (PH4-O1, informational only)', () => {
+describe('DecisionQueue - SLA (PH4-O1, informational only)', () => {
   const OVERDUE: DecisionQueueRow = {
     ...HELD,
     enrolment_id: 'en-overdue',
@@ -373,13 +373,13 @@ describe('DecisionQueue — SLA (PH4-O1, informational only)', () => {
   });
 });
 
-describe('DecisionQueue — step 2, the legal actions for this state', () => {
+describe('DecisionQueue - step 2, the legal actions for this state', () => {
   const names = () =>
     within(panel())
       .getAllByRole('button')
       .map((b) => b.textContent ?? '');
 
-  it('a held candidate: let them continue, hire, reject — and no review verdict', async () => {
+  it('a held candidate: let them continue, hire, reject - and no review verdict', async () => {
     renderQueue();
     await ready('Asha Rao');
     await toDecision();
@@ -391,7 +391,7 @@ describe('DecisionQueue — step 2, the legal actions for this state', () => {
     expect(text).not.toMatch(/Passes this round|Hold for a decision/);
   });
 
-  it('a candidate waiting on a review: pass or hold, plus hire and reject — and no release', async () => {
+  it('a candidate waiting on a review: pass or hold, plus hire and reject - and no release', async () => {
     getDecisionQueue.mockResolvedValue([REVIEW]);
     renderQueue();
     await ready('Chetan Iyer');
@@ -457,7 +457,7 @@ describe('DecisionQueue — step 2, the legal actions for this state', () => {
   });
 });
 
-describe('DecisionQueue — step 3, reason and confirm', () => {
+describe('DecisionQueue - step 3, reason and confirm', () => {
   async function reachConfirm(name: string, action: string | RegExp) {
     renderQueue();
     await ready(name);
@@ -576,7 +576,7 @@ describe('DecisionQueue — step 3, reason and confirm', () => {
   });
 });
 
-describe('DecisionQueue — after a decision', () => {
+describe('DecisionQueue - after a decision', () => {
   const THREE = [HELD, FINISHED, REVIEW];
 
   async function hireBhavya() {
@@ -677,7 +677,7 @@ describe('DecisionQueue — after a decision', () => {
   });
 });
 
-describe('DecisionQueue — typed input is never carried to, or lost for, the wrong outcome', () => {
+describe('DecisionQueue - typed input is never carried to, or lost for, the wrong outcome', () => {
   it('clears a typed why when the chosen action changes (hire -> back -> reject)', async () => {
     renderQueue();
     await ready('Bhavya Nair');
@@ -773,7 +773,7 @@ describe('DecisionQueue — typed input is never carried to, or lost for, the wr
 
 // PH4-D4 — a job_simulation/portfolio round's own submission state, so "not
 // started" reads apart from "submitted, awaiting review".
-describe('DecisionQueue — job-simulation/portfolio submission state (PH4-D4)', () => {
+describe('DecisionQueue - job-simulation/portfolio submission state (PH4-D4)', () => {
   const AWAITING_SUBMITTED: DecisionQueueRow = {
     ...FINISHED,
     enrolment_id: 'en-task-1',
@@ -824,7 +824,7 @@ describe('DecisionQueue — job-simulation/portfolio submission state (PH4-D4)',
   });
 });
 
-describe('DecisionQueue — resolved or not', () => {
+describe('DecisionQueue - resolved or not', () => {
   it('says a closed opening still has people waiting, and that closing rejected nobody', async () => {
     getRequisition.mockResolvedValue({ id: 'req-1', title: 'Backend Engineer', status: 'closed',
       unresolved: 2 });
@@ -842,7 +842,7 @@ describe('DecisionQueue — resolved or not', () => {
     renderQueue();
 
     expect((await screen.findByTestId('resolution-note')).textContent).toMatch(
-      /Resolved — every candidate/,
+      /Resolved - every candidate/,
     );
   });
 
@@ -866,7 +866,7 @@ describe('DecisionQueue — resolved or not', () => {
   });
 });
 
-describe('DecisionQueue — loading and failing, quietly', () => {
+describe('DecisionQueue - loading and failing, quietly', () => {
   it('shows a status while loading, not a wall of skeletons', async () => {
     getDecisionQueue.mockReturnValue(new Promise(() => undefined));
     renderQueue();
@@ -882,7 +882,7 @@ describe('DecisionQueue — loading and failing, quietly', () => {
   });
 });
 
-describe('DecisionQueue — releasing a hold reports where they went', () => {
+describe('DecisionQueue - releasing a hold reports where they went', () => {
   // Releasing a hold used to clear a flag. It now takes the round's pass branch
   // through the runner, which mints the next round's exam link or interview
   // invite and emails the candidate — so "continues" on its own no longer tells
@@ -920,7 +920,7 @@ describe('DecisionQueue — releasing a hold reports where they went', () => {
     // advance would stop HR looking for someone who still needs moving.
     releaseHold.mockResolvedValue({
       action: 'advanced', enrolment_id: 'en-held', to_round: null,
-      reason: 'hold released — the round no longer exists, so the candidate did not move',
+      reason: 'hold released - the round no longer exists, so the candidate did not move',
     });
     await release();
     await waitFor(() => expect(toastWarning).toHaveBeenCalled());
@@ -929,7 +929,7 @@ describe('DecisionQueue — releasing a hold reports where they went', () => {
   });
 });
 
-describe('DecisionQueue — below lg the panel is a sheet', () => {
+describe('DecisionQueue - below lg the panel is a sheet', () => {
   function narrow() {
     window.matchMedia = vi.fn().mockImplementation((q: string) => ({
       matches: false,

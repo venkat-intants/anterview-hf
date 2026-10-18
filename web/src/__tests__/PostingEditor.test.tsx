@@ -84,7 +84,7 @@ beforeEach(() => {
   updateRequisition.mockResolvedValue(requisition());
 });
 
-describe('PostingEditor — the salary switch', () => {
+describe('PostingEditor - the salary switch', () => {
   it('says the range is private while the switch is off', () => {
     renderEditor(requisition({ salary_min: 1_800_000, salary_max: 3_000_000 }));
     expect(screen.getByText(/never sent to the job board/)).toBeInTheDocument();
@@ -116,7 +116,7 @@ describe('PostingEditor — the salary switch', () => {
   });
 });
 
-describe('PostingEditor — ranges', () => {
+describe('PostingEditor - ranges', () => {
   it('refuses a backwards salary range before it is sent', async () => {
     const user = userEvent.setup();
     renderEditor();
@@ -151,7 +151,7 @@ describe('PostingEditor — ranges', () => {
   });
 });
 
-describe('PostingEditor — the lists', () => {
+describe('PostingEditor - the lists', () => {
   it('adds an entry and sends it', async () => {
     const user = userEvent.setup();
     renderEditor();
@@ -188,7 +188,7 @@ describe('PostingEditor — the lists', () => {
   });
 });
 
-describe('PostingEditor — everything is optional', () => {
+describe('PostingEditor - everything is optional', () => {
   it('saves an opening that fills in nothing', async () => {
     // Thousands of openings predate these fields, including backfilled ones
     // created from nothing but a title. A required field would make every one

@@ -250,7 +250,7 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
     } else {
       // Refresh failed — clear auth, toast, redirect
       clearToken();
-      toast.error('Session expired — please sign in');
+      toast.error('Session expired - please sign in');
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
       }
@@ -309,7 +309,7 @@ export async function fetchBlobWithAuth(
   if (!refreshed) {
     // Same terminal path as clientFetch — clear, toast, bounce to /login.
     clearToken();
-    toast.error('Session expired — please sign in');
+    toast.error('Session expired - please sign in');
     if (typeof window !== 'undefined') {
       window.location.href = '/login';
     }
@@ -512,7 +512,7 @@ function sendMultipartXhr(
     };
 
     xhr.onerror = () => {
-      reject(new Error('Network error — could not reach server'));
+      reject(new Error('Network error - could not reach server'));
     };
 
     xhr.ontimeout = () => {
@@ -520,7 +520,7 @@ function sendMultipartXhr(
       // smaller batch — the file was already accepted by the client-side size
       // check, so "file too large" would be a lie.
       reject(
-        new Error('Upload timed out — check your connection and try again with fewer files.'),
+        new Error('Upload timed out - check your connection and try again with fewer files.'),
       );
     };
 
@@ -568,7 +568,7 @@ export async function uploadWithProgress<T>(
     if (!refreshed) {
       // Same terminal path as clientFetch / fetchBlobWithAuth.
       clearToken();
-      toast.error('Session expired — please sign in');
+      toast.error('Session expired - please sign in');
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
       }

@@ -200,7 +200,7 @@ describe('ExamResults', () => {
     await screen.findByText('Deepa Menon');
     expect(screen.getByText('In progress')).toBeInTheDocument();
     // Its score cell is a dash, not a 0%.
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('-').length).toBeGreaterThan(0);
   });
 
   it('averages only the attempts that actually have a score', async () => {
@@ -287,7 +287,7 @@ describe('ExamAttemptDetail', () => {
 // PH4-D3 — "Similarity signals" column. Counts only.
 // ---------------------------------------------------------------------------
 
-describe('ExamResults — similarity signals column', () => {
+describe('ExamResults - similarity signals column', () => {
   const CODING_EXAM: ExamDetail = { ...EXAM, id: 'e-2', kind: 'coding', questions: [] };
   const CODED_A: AttemptResult = { ...PASSED, attempt_id: 'a-coded-1' };
   const CODED_B: AttemptResult = { ...FAILED, attempt_id: 'a-coded-2' };
@@ -356,6 +356,6 @@ describe('ExamResults — similarity signals column', () => {
 
     await screen.findByText('Bhavya Nair');
     const row = screen.getByText('Bhavya Nair').parentElement!.parentElement!;
-    expect(within(row).getByText('—')).toBeInTheDocument();
+    expect(within(row).getByText('-')).toBeInTheDocument();
   });
 });

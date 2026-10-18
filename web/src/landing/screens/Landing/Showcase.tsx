@@ -16,10 +16,10 @@ export function ForCandidates() {
         <Reveal>
           <p className="mb-3 text-sm font-semibold text-[var(--ui-info)]">For candidates</p>
           <h2 id="cand-title" className="text-[clamp(28px,4vw,40px)] font-bold leading-[1.12] tracking-[-0.02em] text-[var(--lp-text)]">
-            Know where you stand, then get better.
+            A fair interview, on your schedule.
           </h2>
           <p className="mt-4 max-w-[480px] text-base leading-relaxed text-[var(--lp-text-muted)]">
-            Reading answers in your head is not the same as saying them. Practise with someone who never gets tired of asking again, and see exactly what to work on.
+            Every applicant gets the same structured interview and is scored on the same rubric. Answer out loud, in the language you are most at ease in, whenever suits you.
           </p>
           <ul className="mt-6 flex flex-col gap-3">
             {CANDIDATE_POINTS.map((pt) => (
@@ -31,12 +31,12 @@ export function ForCandidates() {
               </li>
             ))}
           </ul>
-          <Link to="/register" className={cn(buttonVariants({ size: 'lg' }), 'mt-8')}>Start a mock interview</Link>
+          <Link to="/register" className={cn(buttonVariants({ size: 'lg' }), 'mt-8')}>Create your account</Link>
         </Reveal>
         <Reveal>
           <figure className="m-0">
             <ShotFrame shot={SHOTS.history} />
-            <figcaption className="mt-3 text-center text-sm text-[var(--lp-text-muted)]">Every session is kept, so you can open an earlier scorecard and compare.</figcaption>
+            <figcaption className="mt-3 text-center text-sm text-[var(--lp-text-muted)]">Candidates can see their interviews and where each application stands.</figcaption>
           </figure>
         </Reveal>
       </div>
@@ -44,16 +44,16 @@ export function ForCandidates() {
   )
 }
 
-const AUDIENCE_ORDER: AudienceKey[] = ['colleges', 'hr', 'gov']
+const AUDIENCE_ORDER: AudienceKey[] = ['growing', 'talent', 'managers']
 
 export function Audiences() {
   return (
     <section id="audience" aria-labelledby="aud-title" className="mx-auto max-w-[1200px] scroll-mt-20 px-4 py-20 sm:px-6 sm:py-24">
       <SectionHeading
         id="aud-title"
-        eyebrow="For institutions"
-        title="Built for the people who run interviews at scale."
-        lede="Whether you place students, hire for a company or run a skilling programme, AntHire gives every candidate the same structured first round."
+        eyebrow="For hiring teams"
+        title="Built for teams that hire at scale."
+        lede="From the first application to the final decision, AntHire runs the same structured process for every candidate, so your team can focus on the shortlist."
       />
       <Reveal className="mx-auto mb-10 max-w-[960px]">
         <HiringPreview />
@@ -97,7 +97,7 @@ export function Avatars() {
         id="av-title"
         eyebrow="Meet your interviewers"
         title="Six interviewers. One rubric."
-        lede="Pick the face and voice you are most comfortable with. The scoring does not change with the interviewer."
+        lede="Candidates pick the face and voice they are most comfortable with. The scoring does not change with the interviewer."
       />
       <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
         {AVATARS.map((av) => (
@@ -143,7 +143,7 @@ export function Languages() {
           id="lang-title"
           eyebrow="Languages"
           title="Interview in the language you think in."
-          lede="Practise in English, Hindi or Telugu, out loud. More Indian languages are planned."
+          lede="Candidates interview out loud in English, Hindi or Telugu. More languages are planned."
         />
         <ul className="mx-auto grid max-w-[640px] grid-cols-1 gap-3 sm:grid-cols-3">
           {LANGUAGES_LIVE.map((l) => (

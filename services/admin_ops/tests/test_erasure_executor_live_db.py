@@ -555,7 +555,7 @@ async def test_execute_one_erasure_against_real_postgres_erases_and_excludes_cor
                 {"r": s.request_id},
             )
         ).mappings().first()
-        assert req_row is not None, "erasure_requests is the §12 proof — never deleted"
+        assert req_row is not None, "erasure_requests is the §12 proof - never deleted"
         assert req_row["status"] == "completed"
         assert req_row["completed_at"] is not None
         assert req_row["artifacts"]["talent_pool_members_deleted"] == 1

@@ -96,7 +96,7 @@ export function Stat({ label, value, unit, to, missingLabel, 'data-testid': test
       <span className="mt-1 block font-display text-[26px] font-bold leading-tight tracking-[-0.6px] text-foreground tabular-nums">
         {missing ? (
           <span role="img" aria-label={missingLabel ?? groupMissing}>
-            —
+            -
           </span>
         ) : (
           shown

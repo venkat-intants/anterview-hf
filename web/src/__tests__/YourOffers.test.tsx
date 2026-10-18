@@ -66,7 +66,7 @@ beforeEach(() => {
   listMyOffers.mockResolvedValue([OFFER]);
 });
 
-describe('YourOffers — states', () => {
+describe('YourOffers - states', () => {
   it('renders nothing when there are no offers and nothing has failed', async () => {
     listMyOffers.mockResolvedValue([]);
     const { container } = renderSection();
@@ -92,7 +92,7 @@ describe('YourOffers — states', () => {
   });
 });
 
-describe('YourOffers — opening a link', () => {
+describe('YourOffers - opening a link', () => {
   it('navigates to a same-origin /offer link', async () => {
     getMyOfferLink.mockResolvedValue({ url: `${window.location.origin}/offer#freshtoken` });
     const user = userEvent.setup();

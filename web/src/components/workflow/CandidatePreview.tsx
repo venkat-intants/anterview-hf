@@ -35,7 +35,7 @@ function whatHappens(round: Round): { receive: string; asked: string } {
     case 'ai_interview':
       return {
         receive: 'An email inviting them to a voice interview with an AI interviewer.',
-        asked: `Start it any time before the link expires — within ${round.deadline_days} day${
+        asked: `Start it any time before the link expires - within ${round.deadline_days} day${
           round.deadline_days === 1 ? '' : 's'
         }.`,
       };
@@ -57,7 +57,7 @@ function whatHappens(round: Round): { receive: string; asked: string } {
       };
     default:
       return {
-        receive: 'Nothing — this round is a person on your team reviewing them.',
+        receive: 'Nothing - this round is a person on your team reviewing them.',
         asked: 'Nothing to do. They wait while you review.',
       };
   }
@@ -127,7 +127,7 @@ export default function CandidatePreview({
           <p className="text-[13px] font-medium text-foreground">If they fall short</p>
           <p className="mt-1 text-[12px] text-muted-foreground">
             Their page reads “Under review”. They are not told they failed, and nobody is rejected
-            automatically — a person decides.
+            automatically - a person decides.
           </p>
         </li>
 

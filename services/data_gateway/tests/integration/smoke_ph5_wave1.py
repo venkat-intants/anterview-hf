@@ -39,7 +39,7 @@ FAIL: list[str] = []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" — {detail}" if not cond and detail else ""))
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" - {detail}" if not cond and detail else ""))
 
 
 # ---------------------------------------------------------------------------
@@ -531,7 +531,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # ===================================================================
         # 2. Definitions
         # ===================================================================
-        print("\nPH5-W1 — GET /hr/metrics/definitions")
+        print("\nPH5-W1 - GET /hr/metrics/definitions")
         app.dependency_overrides[get_definitions_ctx] = lambda: (hr_a, company_a)
         r = await c.get("/hr/metrics/definitions")
         check("hr_manager gets 200 on definitions", r.status_code == 200, r.text[:200])
@@ -562,7 +562,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # ===================================================================
         # 3. The funnel
         # ===================================================================
-        print("\nPH5-W1 — GET /hr/analytics/funnel — the application cohort")
+        print("\nPH5-W1 - GET /hr/analytics/funnel - the application cohort")
         r = await c.get("/hr/analytics/funnel")
         check("hr_manager gets 200 on the funnel", r.status_code == 200, r.text[:200])
         fm = r.json()["groups"][0]["metrics"]
@@ -581,7 +581,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("rejections matches the seed plan", fm["rejections"]["value"] == EXPECTED["rejections"],
               str(fm["rejections"]))
 
-        print("\nPH5-W1 — group_by=source, including Unknown / untracked")
+        print("\nPH5-W1 - group_by=source, including Unknown / untracked")
         r = await c.get("/hr/analytics/funnel", params={"group_by": "source"})
         by_source = {g["key"]: g for g in r.json()["groups"]}
         check(
@@ -599,7 +599,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             str({k: v["metrics"]["applications"]["value"] for k, v in by_source.items() if k}),
         )
 
-        print("\nPH5-W1 — the decision cohort, windowed")
+        print("\nPH5-W1 - the decision cohort, windowed")
         r = await c.get(
             "/hr/analytics/funnel",
             params={"cohort": "decision", "from": (now - timedelta(days=60)).date().isoformat()},
@@ -612,7 +612,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             dm["hires"]["value"] == 1 and dm["rejections"]["value"] == 2, str(dm),
         )
 
-        print("\nPH5-W1 — the hire cohort, windowed")
+        print("\nPH5-W1 - the hire cohort, windowed")
         r = await c.get(
             "/hr/analytics/funnel",
             params={"cohort": "hire", "from": (now - timedelta(days=60)).date().isoformat()},
@@ -623,7 +623,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             hm["hires"]["value"] == 1, str(hm["hires"]),
         )
 
-        print("\nPH5-W1 — a foreign requisition_id yields zero, not an error")
+        print("\nPH5-W1 - a foreign requisition_id yields zero, not an error")
         r = await c.get("/hr/analytics/funnel", params={"requisition_id": str(req_b)})
         check(
             "company B's requisition id, read by company A, gives zero applications",
@@ -631,7 +631,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             r.text[:200],
         )
 
-        print("\nPH5-W1 — role gates on the funnel")
+        print("\nPH5-W1 - role gates on the funnel")
         del app.dependency_overrides[get_hr_company]
         app.dependency_overrides[get_current_user] = lambda: User(
             user_id=str(admin_a), full_name="Sam", email="sam@x.test", roles=["super_admin"])
@@ -651,7 +651,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # ===================================================================
         # 4. The members drill-down
         # ===================================================================
-        print("\nPH5-W1 — GET /hr/analytics/members")
+        print("\nPH5-W1 - GET /hr/analytics/members")
         r = await c.get(
             "/hr/analytics/members", params={"metric": "application_to_hire", "part": "numerator"},
         )
@@ -680,7 +680,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             details_text[:300],
         )
         check(
-            "the audit row records the metric, part and total — not a candidate",
+            "the audit row records the metric, part and total - not a candidate",
             row is not None and row["details"].get("metric") == "application_to_hire"
             and row["details"].get("part") == "numerator" and row["details"].get("total") == EXPECTED["hires"],
             str(row["details"]) if row else "",
@@ -700,7 +700,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # ===================================================================
         # 5. Check-ins
         # ===================================================================
-        print("\nPH5-W1 — GET /hr/checkins/due")
+        print("\nPH5-W1 - GET /hr/checkins/due")
         r = await c.get("/hr/checkins/due")
         due_ids = {i["enrolment_id"] for i in r.json()}
         check(
@@ -712,7 +712,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             str(due_ids),
         )
 
-        print("\nPH5-W1 — record, correct, and the audit trail")
+        print("\nPH5-W1 - record, correct, and the audit trail")
         r = await c.post(
             f"/hr/enrolments/{enrolments['hire95']}/checkins",
             json={"employment": "employed", "performance": "meets"},
@@ -769,7 +769,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             blob[:300],
         )
 
-        print("\nPH5-W1 — the window: too early, closed, and a reversed hire")
+        print("\nPH5-W1 - the window: too early, closed, and a reversed hire")
         r = await c.post(
             f"/hr/enrolments/{enrolments['hire40']}/checkins",
             json={"employment": "employed", "performance": "meets"},
@@ -793,7 +793,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         )
         check("the reversed hire is refused a check-in", r.status_code == 409, r.text[:200])
 
-        print("\nPH5-W1 — tenant isolation on check-ins")
+        print("\nPH5-W1 - tenant isolation on check-ins")
         acting["hr"], acting["company"] = hr_b, company_b
         r = await c.post(
             f"/hr/enrolments/{enrolments['hire95']}/checkins",
@@ -805,7 +805,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # ===================================================================
         # 6. After the check-ins: coverage and suppression on the hire cohort
         # ===================================================================
-        print("\nPH5-W1 — the hire-cohort funnel after the check-ins")
+        print("\nPH5-W1 - the hire-cohort funnel after the check-ins")
         r = await c.get("/hr/analytics/funnel", params={"cohort": "hire"})
         after = r.json()["groups"][0]["metrics"]
         check("checkin_coverage appears on the hire cohort", "checkin_coverage" in after, str(list(after)))
@@ -818,7 +818,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # ===================================================================
         # 7. Cross-consumer consistency
         # ===================================================================
-        print("\nPH5-W1 — consistency across /hr/analytics, the funnel, the dashboards and the board")
+        print("\nPH5-W1 - consistency across /hr/analytics, the funnel, the dashboards and the board")
         analytics = (await c.get("/hr/analytics")).json()
         funnel = (await c.get("/hr/analytics/funnel")).json()
         fm2 = funnel["groups"][0]["metrics"]
@@ -846,7 +846,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         # ===================================================================
         # 8. HR source on the bulk upload
         # ===================================================================
-        print("\nPH5-W1 — HR source on POST /hr/applicants/bulk")
+        print("\nPH5-W1 - HR source on POST /hr/applicants/bulk")
         r = await c.post(
             "/hr/applicants/bulk",
             data={"requisition_id": str(req1), "source": "bogus"},

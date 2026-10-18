@@ -33,7 +33,7 @@ export default function AtRiskRow({
     <button
       type="button"
       onClick={() => onOpen(row)}
-      aria-label={`${row.full_name} — ${row.stage}, ${row.opening_title}: ${STATE_WORD[row.state]}. Open details`}
+      aria-label={`${row.full_name} - ${row.stage}, ${row.opening_title}: ${STATE_WORD[row.state]}. Open details`}
       className="flex w-full items-start gap-2.5 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3 text-left transition-colors hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
     >
       <Icon

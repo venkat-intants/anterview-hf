@@ -474,7 +474,7 @@ class SarvamStreamingSTT:
         """
         if self._reconnect_count >= _MAX_RECONNECT_ATTEMPTS:
             raise STTStreamError(
-                "SarvamStreamingSTT: reconnect budget exhausted — "
+                "SarvamStreamingSTT: reconnect budget exhausted - "
                 "falling back to batch STT"
             )
         self._reconnect_count += 1

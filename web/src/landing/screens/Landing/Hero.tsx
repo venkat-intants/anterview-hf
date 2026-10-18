@@ -10,22 +10,22 @@ export function Hero() {
     <section id="top" aria-labelledby="hero-title" className="mx-auto max-w-[1200px] px-4 pb-16 pt-10 sm:px-6 sm:pb-24 sm:pt-16">
       <div className="grid grid-cols-1 items-center gap-14 lg:grid-cols-[1.05fr_0.95fr] lg:gap-10">
         <div>
-          <Chip className="mb-6">Voice interviews in English, Hindi and Telugu</Chip>
+          <Chip className="mb-6">AI-assisted hiring, from application to decision</Chip>
           <h1 id="hero-title" className="text-[clamp(36px,6.4vw,64px)] font-extrabold leading-[1.04] tracking-[-0.03em] text-[var(--lp-text)]">
-            Practise the interview before it counts.
+            Hire faster, with a fair first round for every applicant.
           </h1>
           <p className="mt-5 max-w-[520px] text-lg leading-relaxed text-[var(--lp-text-muted)]">
-            Talk to a lifelike AI interviewer. It listens, asks follow-up questions and gives you a scorecard showing where you were strong and where to work.
+            AntHire scores CVs against the role, runs assessments and lifelike AI voice interviews, and gives your team a scorecard for each candidate. Your people make the decision.
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
-            <Link to="/register" className={cn(buttonVariants({ size: 'lg' }), 'h-12 px-8 text-base')}>
-              Start a mock interview
-            </Link>
-            <a href={mailto('AntHire demo request')} className={cn(buttonVariants({ variant: 'outline', size: 'lg' }), 'h-12 px-8 text-base')}>
+            <a href={mailto('AntHire demo request')} className={cn(buttonVariants({ size: 'lg' }), 'h-12 px-8 text-base')}>
               Book a demo
             </a>
+            <Link to="/register" className={cn(buttonVariants({ variant: 'outline', size: 'lg' }), 'h-12 px-8 text-base')}>
+              Candidate sign up
+            </Link>
           </div>
-          <p className="mt-5 text-sm text-[var(--lp-text-muted)]">Runs in your browser. Nothing to install.</p>
+          <p className="mt-5 text-sm text-[var(--lp-text-muted)]">Companies are set up with our team. Candidates need nothing but a browser.</p>
         </div>
         <ProductDemo className="mx-auto w-full max-w-[560px] lg:mx-0 lg:ml-auto" />
       </div>

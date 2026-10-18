@@ -1057,7 +1057,7 @@ async def save_response(
         clean = validate_link(link_url, sub.get("allowed_link_domains"))
         params = {"tv": None, "lu": clean, "lk": "other"}
     else:
-        raise TaskError(422, "This item takes a file — upload it as an artifact instead.")
+        raise TaskError(422, "This item takes a file - upload it as an artifact instead.")
 
     existing = await db.scalar(
         text("SELECT id FROM task_responses WHERE submission_id = :s AND item_key = :k"),

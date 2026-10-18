@@ -77,7 +77,7 @@ beforeEach(() => {
   assessCandidate.mockResolvedValue(VERDICT);
 });
 
-describe('CandidatePanel — citations', () => {
+describe('CandidatePanel - citations', () => {
   it('renders a source chip under a signal that has one, linking to the record', async () => {
     const user = userEvent.setup();
     renderPanel();

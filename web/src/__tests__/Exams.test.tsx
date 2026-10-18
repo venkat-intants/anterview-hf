@@ -85,7 +85,7 @@ beforeEach(() => {
   createExam.mockResolvedValue({ ...DRAFT, id: 'e-new' });
 });
 
-describe('Exams — list', () => {
+describe('Exams - list', () => {
   it('distinguishes a live exam from a draft', async () => {
     renderExams();
 
@@ -137,7 +137,7 @@ describe('Exams — list', () => {
   });
 });
 
-describe('Exams — create form', () => {
+describe('Exams - create form', () => {
   it('stays hidden until the create tile is pressed', async () => {
     const user = userEvent.setup();
     renderExams();

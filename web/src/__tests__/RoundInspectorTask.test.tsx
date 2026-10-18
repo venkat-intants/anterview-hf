@@ -100,7 +100,7 @@ beforeEach(() => {
   jobTasksApi.listRoundTaskMaterials.mockResolvedValue([]);
 });
 
-describe('RoundInspector — round kind picker', () => {
+describe('RoundInspector - round kind picker', () => {
   it('offers job simulation and portfolio as round kinds', () => {
     renderInspector(baseRound());
     const select = screen.getByLabelText('Round type');
@@ -109,7 +109,7 @@ describe('RoundInspector — round kind picker', () => {
   });
 });
 
-describe('RoundInspector — TaskEditor for job_simulation', () => {
+describe('RoundInspector - TaskEditor for job_simulation', () => {
   it('shows the task editor instead of an exam picker or an interview kit', async () => {
     renderInspector(baseRound({ kind: 'job_simulation' }));
 
@@ -177,7 +177,7 @@ describe('RoundInspector — TaskEditor for job_simulation', () => {
   });
 });
 
-describe('RoundInspector — TaskEditor for portfolio', () => {
+describe('RoundInspector - TaskEditor for portfolio', () => {
   it('shows artifact settings a job simulation does not', async () => {
     renderInspector(baseRound({ kind: 'portfolio', title: 'Design portfolio' }));
 
@@ -215,7 +215,7 @@ describe('RoundInspector — TaskEditor for portfolio', () => {
   });
 });
 
-describe('RoundInspector — a published (non-editable) task round', () => {
+describe('RoundInspector - a published (non-editable) task round', () => {
   it('is read-only and offers no save', async () => {
     jobTasksApi.getRoundTask.mockResolvedValue({
       round_id: 'round-1',
@@ -235,7 +235,7 @@ describe('RoundInspector — a published (non-editable) task round', () => {
     expect(brief).toBeDisabled();
     expect(screen.queryByRole('button', { name: /save task/i })).not.toBeInTheDocument();
     expect(
-      screen.getByText(/is fixed — its task configuration cannot change here/i),
+      screen.getByText(/is fixed - its task configuration cannot change here/i),
     ).toBeInTheDocument();
   });
 });

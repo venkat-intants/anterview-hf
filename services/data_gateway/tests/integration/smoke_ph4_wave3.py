@@ -30,7 +30,7 @@ FAIL: list[str] = []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" — {detail}" if not cond and detail else ""))
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}" + (f" - {detail}" if not cond and detail else ""))
 
 
 async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bottom
@@ -146,7 +146,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                         {"e": [e1, e2]}) or 0)
         ledger_before = await ledger()
 
-        print("\nPH4-A2 — availability")
+        print("\nPH4-A2 - availability")
         for iv in (iv1, iv2):
             r = await c.post(f"/hr/interviewers/{iv}/availability",
                              json={"starts_at": at(-30), "ends_at": at(450)})
@@ -159,7 +159,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                          json={"starts_at": "2026-12-01T10:00:00", "ends_at": at(600)})
         check("a time without a timezone is refused, not guessed", r.status_code == 422, r.text[:160])
 
-        print("\nPH4-A2 — a loop of several sessions")
+        print("\nPH4-A2 - a loop of several sessions")
         r = await c.post(f"/hr/enrolments/{e1}/loops",
                          json={"title": "Onsite", "candidate_timezone": "Asia/Kolkata",
                                "buffer_minutes": 15})
@@ -215,7 +215,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("an interviewer cannot be double-booked across candidates",
               r.status_code == 409 and "interviewer" in r.json()["detail"].lower(), r.text[:200])
 
-        print("\nPH4-A2 — the itinerary")
+        print("\nPH4-A2 - the itinerary")
         r = await c.post(f"/hr/loops/{loop1}/send")
         check("HR sends the loop", r.status_code == 200 and r.json()["sent"] == "itinerary",
               r.text[:200])
@@ -257,7 +257,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.get(f"/users/me/interview-loops/{loop1}/calendar.ics")
         check("another candidate cannot read this schedule", r.status_code == 404, str(r.status_code))
 
-        print("\nPH4-A2 — HR changes and cancels")
+        print("\nPH4-A2 - HR changes and cancels")
         r = await c.patch(f"/hr/sessions/{s_b['id']}", json={"starts_at": at(90)})
         check("HR moves a session", r.status_code == 200, r.text[:200])
         async with factory() as db:
@@ -295,7 +295,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                "session.cancelled", "availability.added"} <= set(audits), str(audits))
         check("…without the words of a reason", reason_leak == 0, str(reason_leak))
 
-        print("\nPH4-A2 — the candidate picks their own time")
+        print("\nPH4-A2 - the candidate picks their own time")
         r = await c.post(f"/hr/enrolments/{e2}/loops", json={"title": "Pick", "self_schedule": True})
         loop2 = r.json()["id"]
         r = await c.post(f"/hr/loops/{loop2}/sessions",
@@ -424,7 +424,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               and invite_audit.get("interview_invite.rescheduled", {}).get("to", "")[:16]
               == at(2100)[:16], str(invite_audit.get("interview_invite.rescheduled")))
 
-        print("\nPH4-A2 — interviewers see their own")
+        print("\nPH4-A2 - interviewers see their own")
         acting["iv"] = iv2
         r = await c.get("/interviewer/sessions",
                         params={"start": at(-120), "end": at(2000)})
@@ -440,7 +440,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.delete(f"/interviewer/availability/{other_window}")
         check("…but cannot remove anyone else's", r.status_code == 404, str(r.status_code))
 
-        print("\nPH4-O5 — workload")
+        print("\nPH4-O5 - workload")
         r = await c.put(f"/hr/interviewers/{iv1}/capacity", json={"max_sessions_per_day": 1})
         check("HR sets an interviewer's daily limit", r.status_code == 200, r.text[:160])
         r = await c.get("/hr/panel/workload", params={"start": at(-120), "end": at(2880)})
@@ -454,7 +454,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("a cancelled session no longer counts against availability",
               one["outside_availability"] == 0, str(one))
 
-        print("\nPH4-O5 — calibration")
+        print("\nPH4-O5 - calibration")
         async with factory() as db:
             cards = dict((await db.execute(text(
                 "SELECT interviewer_user_id, id FROM interviewer_scorecards"
@@ -486,7 +486,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await c.get("/hr/panel/calibration", params={"requisition_id": str(req)})
         report = {x["user_id"]: x for x in r.json()["interviewers"]}
         one = report.get(str(iv1), {})
-        check("with one candidate, every figure is withheld — it would BE their score",
+        check("with one candidate, every figure is withheld - it would BE their score",
               one.get("suppressed") is True and one.get("mean") is None
               and one.get("mean_delta") is None and one.get("by_competency") == {}
               and one.get("distribution") is None and one.get("candidates") == 1, str(one))
@@ -518,7 +518,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               await ledger() == ledger_before and set(status.values()) == {"shortlisted"},
               str(status))
 
-        print("\nPH4-A2 — a final decision closes the schedule")
+        print("\nPH4-A2 - a final decision closes the schedule")
         r = await c.post(f"/hr/loops/{loop2}/sessions",
                          json={"round_id": rnd, "title": "Follow-up", "duration_minutes": 30,
                                "interviewer_user_ids": [str(iv1)]})

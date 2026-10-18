@@ -147,7 +147,7 @@ beforeEach(() => {
     enrolment_id: 'en-1',
     full_name: 'Priya Sharma',
     already_applied: false,
-    message: 'Thanks — your application is in. We will be in touch by email.',
+    message: 'Thanks - your application is in. We will be in touch by email.',
   });
   startDraft.mockResolvedValue({
     resume_token: 'tok-1',
@@ -155,7 +155,7 @@ beforeEach(() => {
   });
 });
 
-describe('PublicApply — the posting', () => {
+describe('PublicApply - the posting', () => {
   it('shows the role and the company that is hiring', async () => {
     renderPage();
     expect(await screen.findByText('Backend Engineer')).toBeTruthy();
@@ -183,7 +183,7 @@ describe('PublicApply — the posting', () => {
   });
 });
 
-describe('PublicApply — consent gates everything', () => {
+describe('PublicApply - consent gates everything', () => {
   it('starts unticked', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -277,7 +277,7 @@ describe('PublicApply — consent gates everything', () => {
 // would make it non-optional, which DPDP §6(1) forbids. This is the single
 // worst outcome the task brief for this feature names, so it gets its own
 // describe block rather than one assertion buried in the block above.
-describe('PublicApply — the rediscovery opt-in is independent of submission', () => {
+describe('PublicApply - the rediscovery opt-in is independent of submission', () => {
   it('renders unticked by default, below the application consent', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -323,7 +323,7 @@ describe('PublicApply — the rediscovery opt-in is independent of submission', 
     expect(payload.rediscoveryOptIn).toBe(false);
   });
 
-  it('does NOT gate the submit button — application consent alone is enough', async () => {
+  it('does NOT gate the submit button - application consent alone is enough', async () => {
     // The property that matters: ticking ONLY the application consent (never
     // touching the rediscovery box) must fully enable submission.
     const user = userEvent.setup();
@@ -369,7 +369,7 @@ describe('PublicApply — the rediscovery opt-in is independent of submission', 
     );
   });
 
-  it('ticking the rediscovery box alone never enables submit — it is not an alternative consent', async () => {
+  it('ticking the rediscovery box alone never enables submit - it is not an alternative consent', async () => {
     const user = userEvent.setup();
     renderPage();
     await screen.findByText('Backend Engineer');
@@ -380,7 +380,7 @@ describe('PublicApply — the rediscovery opt-in is independent of submission', 
   });
 });
 
-describe('PublicApply — the file', () => {
+describe('PublicApply - the file', () => {
   it('rejects a file over 5 MB before it is uploaded', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -409,7 +409,7 @@ describe('PublicApply — the file', () => {
   });
 });
 
-describe('PublicApply — afterwards', () => {
+describe('PublicApply - afterwards', () => {
   it('confirms receipt without claiming any decision was made', async () => {
     const user = userEvent.setup();
     renderPage();

@@ -244,7 +244,7 @@ export function offerNeeds(o: {
     case 'draft':
       return { text: 'Yours to submit', mine: true };
     case 'rejected':
-      return { text: 'Sent back — yours to revise', mine: true };
+      return { text: 'Sent back - yours to revise', mine: true };
     case 'approved':
       return { text: 'Yours to send', mine: true };
     case 'pending_approval':

@@ -50,7 +50,7 @@ function SignalRow({ signal }: { signal: SignalAssessment }): JSX.Element {
         <span className="text-sm font-medium">{SIGNAL_LABEL[signal.signal]}</span>
         <div className="flex items-center gap-2">
           <span className="text-sm tabular-nums">
-            {signal.score_0_100 === null ? '—' : `${Math.round(signal.score_0_100)}/100`}
+            {signal.score_0_100 === null ? '-' : `${Math.round(signal.score_0_100)}/100`}
           </span>
           {/* Confidence is shown per signal because a 3-question exam and a
               10-question interview do not deserve equal weight, and the

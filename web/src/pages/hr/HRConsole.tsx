@@ -296,7 +296,7 @@ export default function HRConsole() {
                       title={r.title}
                       meta={
                         <>
-                          <span className="font-medium text-foreground">Next: {next.stage}</span> —{' '}
+                          <span className="font-medium text-foreground">Next: {next.stage}</span> -{' '}
                           {next.detail}
                         </>
                       }
@@ -456,7 +456,7 @@ function ActivityFeed({ items }: { items: NotificationItem[] }) {
             <div className="min-w-0 flex-1">
               <div className="text-[13.5px]">
                 <span className="font-semibold">{n.title}</span>
-                {n.body ? <span className="text-muted-foreground"> — {n.body}</span> : null}
+                {n.body ? <span className="text-muted-foreground"> - {n.body}</span> : null}
               </div>
               <div className="text-[12px] text-muted-foreground">{timeAgo(n.created_at)}</div>
             </div>

@@ -336,7 +336,7 @@ beforeEach(() => {
   listStageOwners.mockResolvedValue([]);
 });
 
-describe('WorkflowBuilder — the canvas', () => {
+describe('WorkflowBuilder - the canvas', () => {
   it('renders the rounds in order with what each still needs', async () => {
     renderBuilder();
     await screen.findByText('Fundamentals');
@@ -368,7 +368,7 @@ describe('WorkflowBuilder — the canvas', () => {
   });
 });
 
-describe('WorkflowBuilder — a published version is immutable', () => {
+describe('WorkflowBuilder - a published version is immutable', () => {
   beforeEach(() => {
     listWorkflows.mockResolvedValue(VERSIONS_LIVE);
     getWorkflow.mockResolvedValue(PUBLISHED);
@@ -400,11 +400,11 @@ describe('WorkflowBuilder — a published version is immutable', () => {
     await user.click(screen.getByText('Edit as new version'));
 
     await waitFor(() => expect(cloneWorkflow).toHaveBeenCalledWith('wf-live'));
-    expect(toastSuccess).toHaveBeenCalledWith('Editing as version 2 — version 1 stays live');
+    expect(toastSuccess).toHaveBeenCalledWith('Editing as version 2 - version 1 stays live');
   });
 });
 
-describe('WorkflowBuilder — freezing what a round assesses', () => {
+describe('WorkflowBuilder - freezing what a round assesses', () => {
   it('copies the anchors and probes onto the round, not just the name', async () => {
     const user = userEvent.setup();
     renderBuilder();
@@ -442,7 +442,7 @@ describe('WorkflowBuilder — freezing what a round assesses', () => {
   });
 });
 
-describe('WorkflowBuilder — coverage', () => {
+describe('WorkflowBuilder - coverage', () => {
   it('names the competency nothing measures', async () => {
     renderBuilder();
     await screen.findByText('Fundamentals');
@@ -456,7 +456,7 @@ describe('WorkflowBuilder — coverage', () => {
   });
 });
 
-describe('WorkflowBuilder — publishing', () => {
+describe('WorkflowBuilder - publishing', () => {
   const REPORT_READY: ValidationReport = { ...REPORT_BLOCKED, publishable: true, errors: [] };
   const APPROVED_DRAFT: Workflow = { ...DRAFT, review_status: 'approved' };
 
@@ -556,7 +556,7 @@ describe('WorkflowBuilder — publishing', () => {
   });
 });
 
-describe('WorkflowBuilder — attaching exam questions', () => {
+describe('WorkflowBuilder - attaching exam questions', () => {
   it('offers only published exams, and only rounds that are published and have questions', async () => {
     const user = userEvent.setup();
     listExams.mockResolvedValue([
@@ -625,7 +625,7 @@ describe('WorkflowBuilder — attaching exam questions', () => {
   });
 });
 
-describe('WorkflowBuilder — starting from nothing', () => {
+describe('WorkflowBuilder - starting from nothing', () => {
   const TEMPLATES = [
     {
       key: 'technical',
@@ -739,7 +739,7 @@ function primaries(): HTMLElement[] {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-primary="true"]'));
 }
 
-describe('WorkflowBuilder — one primary action, always the next step', () => {
+describe('WorkflowBuilder - one primary action, always the next step', () => {
   it('draft with no dry run: Run dry run', async () => {
     validateWorkflow.mockResolvedValue(REPORT_READY_FOR_STATES);
     renderBuilder();
@@ -876,7 +876,7 @@ describe('WorkflowBuilder — one primary action, always the next step', () => {
   });
 });
 
-describe('WorkflowBuilder — blockers beside the action', () => {
+describe('WorkflowBuilder - blockers beside the action', () => {
   it('lists the server errors, each linking to its round', async () => {
     const user = userEvent.setup();
     getSimulation.mockResolvedValue(SIM_FRESH);
@@ -918,7 +918,7 @@ describe('WorkflowBuilder — blockers beside the action', () => {
   });
 });
 
-describe('WorkflowBuilder — the opening setup panels have moved', () => {
+describe('WorkflowBuilder - the opening setup panels have moved', () => {
   it('renders none of the four panels, and points at the opening Setup tab', async () => {
     renderBuilder();
     await screen.findByText('Fundamentals');
@@ -946,7 +946,7 @@ async function openAutomation(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole('tab', { name: 'Automation' }));
 }
 
-describe('WorkflowBuilder — auto-shortlist', () => {
+describe('WorkflowBuilder - auto-shortlist', () => {
   it('is off by default, and says a person confirms every shortlist', async () => {
     const user = userEvent.setup();
     await openAutomation(user);
@@ -968,7 +968,7 @@ describe('WorkflowBuilder — auto-shortlist', () => {
     );
   });
 
-  it('is GENUINELY disabled without a bar — keyboard included', async () => {
+  it('is GENUINELY disabled without a bar - keyboard included', async () => {
     // The old pattern wrapped switches in pointer-events-none, which stops the
     // mouse and nothing else: Tab + Space still flipped them. Asserted on the
     // disabled attribute AND on a keyboard activation, since either alone would
@@ -1047,7 +1047,7 @@ describe('WorkflowBuilder — auto-shortlist', () => {
 // would just produce a failed save — so the UI states the rule and disables
 // the switch instead.
 
-describe('WorkflowBuilder — auto-shortlist follows the server rules', () => {
+describe('WorkflowBuilder - auto-shortlist follows the server rules', () => {
   it('is disabled while first-round auto-assign is off, and says why', async () => {
     // Shortlisting automatically and then starting nothing would strand the
     // applicant: the shortlist was the step a person used to see.

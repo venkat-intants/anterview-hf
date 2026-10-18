@@ -68,7 +68,7 @@ test.describe('what a candidate sees about themselves', () => {
     await expect(applications.getByText(opening.title)).toBeVisible();
     await expect(
       applications.getByText('Under review'),
-      'below the bar and awaiting a person reads as under review — they have not been rejected',
+      'below the bar and awaiting a person reads as under review - they have not been rejected',
     ).toBeVisible();
     await expect(applications.getByText('Not progressing')).toHaveCount(0);
 

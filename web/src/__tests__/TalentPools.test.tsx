@@ -142,7 +142,7 @@ beforeEach(() => {
 // List: empty state, create, rename, archive, delete
 // ---------------------------------------------------------------------------
 
-describe('TalentPools — list', () => {
+describe('TalentPools - list', () => {
   it('shows an empty state when there are no pools', async () => {
     renderPage();
     expect(await screen.findByText('No pools yet')).toBeInTheDocument();
@@ -244,7 +244,7 @@ describe('TalentPools — list', () => {
 // Detail — members
 // ---------------------------------------------------------------------------
 
-describe('TalentPools — pool detail', () => {
+describe('TalentPools - pool detail', () => {
   it('shows an empty state when the pool has no members', async () => {
     api.getPool.mockResolvedValue({ pool: pool(), members: [] });
     renderPage('/hr/pools/pool-1');
@@ -318,7 +318,7 @@ describe('TalentPools — pool detail', () => {
   // Invite). This test went red (found the extra buttons). Reverted; green
   // again. Recorded here rather than left to be taken on faith.
   // -------------------------------------------------------------------------
-  it('offers an ineligible member ONLY Remove — no evidence, no invite, no applicant link', async () => {
+  it('offers an ineligible member ONLY Remove - no evidence, no invite, no applicant link', async () => {
     api.getPool.mockResolvedValue({
       pool: pool(),
       members: [
@@ -476,7 +476,7 @@ describe('TalentPools — pool detail', () => {
 // Invite — the criterion-14 gate reacts to the server's 422, never guesses it
 // ---------------------------------------------------------------------------
 
-describe('TalentPools — invite to an opening', () => {
+describe('TalentPools - invite to an opening', () => {
   it('invites directly when the server does not ask for an acknowledgement', async () => {
     const user = userEvent.setup();
     api.getPool.mockResolvedValue({ pool: pool(), members: [member()] });
@@ -500,7 +500,7 @@ describe('TalentPools — invite to an opening', () => {
     );
   });
 
-  it('asks for an acknowledgement on a 422, then retries with it — never pre-guessed client-side', async () => {
+  it('asks for an acknowledgement on a 422, then retries with it - never pre-guessed client-side', async () => {
     const user = userEvent.setup();
     api.getPool.mockResolvedValue({ pool: pool(), members: [member()] });
     api.inviteMember
@@ -542,7 +542,7 @@ describe('TalentPools — invite to an opening', () => {
 // 'rediscovery'` — so this is the only place source: 'manual' is ever sent.
 // ---------------------------------------------------------------------------
 
-describe('TalentPools — add candidates manually', () => {
+describe('TalentPools - add candidates manually', () => {
   it('searches this company\'s applicants, selects one, and adds with source manual and NO match_reason', async () => {
     const user = userEvent.setup();
     api.getPool.mockResolvedValue({ pool: pool(), members: [] });

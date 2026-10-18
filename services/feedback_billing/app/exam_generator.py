@@ -64,7 +64,7 @@ _LANGUAGE_NAMES: dict[str, str] = {
 _PROMPT_TEMPLATE: str = """\
 You are an expert exam author creating MULTIPLE-CHOICE questions (MCQs) for a
 hiring / skills assessment. Write clear, unambiguous questions that test real
-understanding — not trivia or trick questions.
+understanding - not trivia or trick questions.
 
 ## Assessment
 Topic / role : {{TOPIC}}
@@ -355,11 +355,11 @@ Candidates may solve in ANY of: {{ALLOWED_LANGUAGES}}
   standard library, reading from stdin and writing to stdout.
 - The statement MUST fully specify: the task, the input format, the output
   format, and explicit constraints (input sizes / value ranges).
-- Expected outputs MUST be deterministic — exactly one correct output per
+- Expected outputs MUST be deterministic - exactly one correct output per
   input. No floating-point tolerance tricks, no multiple valid answers.
 - Give each problem 5 to 8 test cases:
-  * EXACTLY 2 with "is_sample": true — simple, explained in the statement.
-  * The rest with "is_sample": false — hidden; cover edge cases (minimum /
+  * EXACTLY 2 with "is_sample": true - simple, explained in the statement.
+  * The rest with "is_sample": false - hidden; cover edge cases (minimum /
     maximum constraints, empty-ish inputs, tricky values). Give harder hidden
     cases "weight" 2, simple ones 1.
 - "stdin" and "expected_output" are the LITERAL text piped to / expected from

@@ -67,7 +67,7 @@ export function applicationsWarning(i: ApplicationsInput): string | null {
     i.draftVersion !== null
       ? ` Publish version ${i.draftVersion} to start them.`
       : ' Build and publish a workflow to start them.';
-  return `${i.title} is accepting applications, but no workflow is live — nothing happens for applicants until one is.${who}${next}`;
+  return `${i.title} is accepting applications, but no workflow is live - nothing happens for applicants until one is.${who}${next}`;
 }
 
 /** What publishing will do to the candidates waiting, said before it happens. */
@@ -98,7 +98,7 @@ export function coverageVerdict(share: number | null | undefined): string | null
   const pct = Math.round(share * 100);
   if (pct >= 90) return `Strong coverage: the rounds assess ${pct}% of what this role weighs.`;
   if (pct >= 75) return `Reasonable coverage: the rounds assess ${pct}% of what this role weighs.`;
-  return `Thin coverage: the rounds assess only ${pct}% of what this role weighs — check the gaps below.`;
+  return `Thin coverage: the rounds assess only ${pct}% of what this role weighs - check the gaps below.`;
 }
 
 /* ── The approval track and the one next action (UX round 3, stream B) ───────

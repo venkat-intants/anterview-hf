@@ -157,7 +157,7 @@ export default function DecisionReasons(): JSX.Element {
           <p className="text-[13px] text-[var(--ui-danger)]">Could not load decision reasons.</p>
         ) : rows.length === 0 ? (
           <p className="py-6 text-center text-[13px] text-muted-foreground">
-            No reasons yet — add your first one above.
+            No reasons yet - add your first one above.
           </p>
         ) : (
           <div role="list" aria-label="Decision reasons">
@@ -249,7 +249,7 @@ export default function DecisionReasons(): JSX.Element {
           </div>
         )}
         <p className="mt-3 text-[12px] text-muted-foreground">
-          Retiring a reason only stops it appearing in the dropdown — past decisions keep whatever
+          Retiring a reason only stops it appearing in the dropdown - past decisions keep whatever
           reason they were recorded with. Once a reason has been used, a rename can only fix its
           case or spacing; to mean something different, retire it and add a new one.
         </p>

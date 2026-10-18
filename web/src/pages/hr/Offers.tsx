@@ -51,7 +51,7 @@ function errText(e: unknown, fallback: string): string {
 }
 
 function fmtDate(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleDateString() : '—';
+  return iso ? new Date(iso).toLocaleDateString() : '-';
 }
 
 export default function Offers() {
@@ -206,7 +206,7 @@ export default function Offers() {
             Previous
           </button>
           <span>
-            {offset + 1}–{Math.min(offset + PAGE_SIZE, total)} of {total}
+            {offset + 1}-{Math.min(offset + PAGE_SIZE, total)} of {total}
           </span>
           <button
             type="button"

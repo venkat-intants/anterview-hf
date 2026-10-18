@@ -873,7 +873,7 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
     # future mistake in either one still fails closed.
     if not row["self_created"]:
         return RunnerOutcome(action="noop", enrolment_id=eid,
-                             reason="HR-created applicant — a person decides to contact them")
+                             reason="HR-created applicant - a person decides to contact them")
     if not row["self_consented"]:
         return RunnerOutcome(action="noop", enrolment_id=eid,
                              reason="no application consent from the applicant on record")
@@ -934,7 +934,7 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
     )
     if stored is None and not scored_is_current:
         return RunnerOutcome(action="noop", enrolment_id=eid,
-                             reason="no injection check on record for the scored CV — left for a person")
+                             reason="no injection check on record for the scored CV - left for a person")
     markers = list(stored or [])
     if scored_is_current:
         # Belt and braces: the shared detector HR's tools show, over the same
@@ -944,7 +944,7 @@ async def _auto_shortlist(db: AsyncSession, enrolment_id: uuid.UUID) -> RunnerOu
         log.warning("runner.auto_shortlist_declined_injection",
                     enrolment_id=eid, marker_count=len(markers))
         return RunnerOutcome(action="noop", enrolment_id=eid,
-                             reason="CV flagged for prompt injection — left for a person")
+                             reason="CV flagged for prompt injection - left for a person")
 
     previous = await record_transition(
         db,
@@ -1110,7 +1110,7 @@ async def record_result(
             else f"{round_['title']}: needs a human decision"
         )
         if near:
-            reason += f" — within {band} points"
+            reason += f" - within {band} points"
         # A fail branch routes rather than holds — to another round, never to an
         # outcome. With auto-advance off, a person moves people, so it holds.
         if route.kind == "advance" and auto_advance_for(round_, workflow):
@@ -1130,7 +1130,7 @@ async def record_result(
             else "auto-advance disabled for this workflow"
         )
         return await _hold(
-            db, enrolment, f"{round_['title']}: passed — {why}",
+            db, enrolment, f"{round_['title']}: passed - {why}",
             round_=round_, workflow=workflow,
         )
 
@@ -1305,7 +1305,7 @@ async def _advance(
             to_round_id=None,
             actor_user_id=None,
             automated=True,
-            reason=f"completed {round_['title']} — the last round",
+            reason=f"completed {round_['title']} - the last round",
         )
         await record_transition(
             db,
@@ -1314,7 +1314,7 @@ async def _advance(
             to_status="interviewed",
             actor_user_id=None,
             automated=True,
-            reason=f"completed {round_['title']} — awaiting final decision",
+            reason=f"completed {round_['title']} - awaiting final decision",
         )
         log.info("runner.completed", enrolment_id=str(enrolment["id"]))
         return RunnerOutcome(action="completed", enrolment_id=str(enrolment["id"]),
@@ -1430,7 +1430,7 @@ async def release_hold(
         # of the workflow, so there is nowhere to advance to and the release
         # simply returns them to the final decision queue.
         return RunnerOutcome(action="advanced", enrolment_id=str(enrolment_id),
-                             reason="hold released — awaiting the final decision")
+                             reason="hold released - awaiting the final decision")
     round_ = await _load_round(db, round_id)
     workflow = (
         await _load_workflow(db, enrolment["workflow_id"]) if enrolment["workflow_id"] else None
@@ -1442,7 +1442,7 @@ async def release_hold(
         log.warning("runner.hold_released.no_route", enrolment_id=str(enrolment_id),
                     round_id=str(round_id))
         return RunnerOutcome(action="advanced", enrolment_id=str(enrolment_id),
-                             reason="hold released — the round no longer exists, "
+                             reason="hold released - the round no longer exists, "
                                     "so the candidate did not move")
     route = route_after_result(round_, passed=True, percent=None)
     return await _advance(

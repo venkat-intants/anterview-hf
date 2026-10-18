@@ -1001,7 +1001,7 @@ class Settings(BaseSettings):
             if self.jwt_active_kid not in public_keys:
                 raise ValueError(
                     f"JWT_ACTIVE_KID={self.jwt_active_kid!r} has no matching entry in "
-                    "JWT_PUBLIC_KEYS — this service would sign tokens nobody, "
+                    "JWT_PUBLIC_KEYS - this service would sign tokens nobody, "
                     "including itself, can verify. Add the public half of the "
                     "active keypair to JWT_PUBLIC_KEYS under the same kid."
                 )

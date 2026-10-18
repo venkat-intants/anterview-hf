@@ -36,7 +36,7 @@ const PER_PAGE = 20;
 const COLUMNS = ['Candidate', 'Email', 'Role', 'Status', 'Language', 'Score', 'Date', 'Duration'];
 
 function fmtScore(v: number | null): string {
-  if (v === null) return '—';
+  if (v === null) return '-';
   return v.toFixed(2);
 }
 
@@ -285,7 +285,7 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
           />
           <div className="min-w-0">
             <div className="truncate text-[14px] font-medium text-foreground">
-              {item.candidate_name ?? <span className="text-muted-foreground">—</span>}
+              {item.candidate_name ?? <span className="text-muted-foreground">-</span>}
             </div>
             <div className="truncate font-mono text-[12px] text-muted-foreground">
               {item.session_id.slice(0, 8)}…
@@ -299,7 +299,7 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
       </td>
 
       <td className="max-w-[200px] truncate px-4 py-3 text-[13.5px] text-[var(--ui-soft)]">
-        {item.job_title ?? <span className="text-muted-foreground">—</span>}
+        {item.job_title ?? <span className="text-muted-foreground">-</span>}
       </td>
 
       <td className="px-4 py-3">
@@ -357,7 +357,7 @@ function PaginationBar({ page, totalPages, total, perPage, onPrev, onNext }: Pag
   return (
     <div className="flex flex-wrap items-center justify-between gap-2" aria-label="Pagination">
       <span className="text-[13px] text-muted-foreground tabular-nums">
-        {total > 0 ? `${start}–${end} of ${total.toLocaleString()}` : '0 results'}
+        {total > 0 ? `${start}-${end} of ${total.toLocaleString()}` : '0 results'}
       </span>
       <div className="flex items-center gap-2">
         <Button

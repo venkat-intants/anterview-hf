@@ -62,7 +62,7 @@ CODE_WINDOW = timedelta(minutes=15)
 # access lock until HR re-sends the offer, which rotates the link.
 MAX_CODE_FAILURES = 20
 SESSION_MINUTES = 60
-LOCKED = ("Too many wrong codes. For your security this offer is locked — please ask "
+LOCKED = ("Too many wrong codes. For your security this offer is locked - please ask "
           "the hiring team to send it to you again.")
 TEXT_LIMITS = {"job_title": 200, "location": 200, "bonus": 1000, "equity": 1000,
                "benefits": 4000, "terms": 20000}
@@ -620,7 +620,7 @@ async def decide(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID
                               "or submitted it.")
     clean = (note or "").strip() or None
     if not approve and (clean is None or len(clean) < 10):
-        raise OfferError(422, "Say what needs to change — at least 10 characters.")
+        raise OfferError(422, "Say what needs to change - at least 10 characters.")
     if clean and len(clean) > 1000:
         raise OfferError(422, "A note is at most 1000 characters.")
     await db.execute(

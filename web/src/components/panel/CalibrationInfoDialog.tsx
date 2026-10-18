@@ -89,7 +89,7 @@ export default function CalibrationInfoDialog({
         <p className="mt-3 text-[13px] leading-relaxed text-[var(--ui-soft)]">
           Paired panel mean: for every candidate a criterion had at least two interviewers score,
           each interviewer&apos;s score minus that judgement&apos;s panel mean. Averaged, that is
-          how far above or below the panel someone lands on the SAME evidence — never a raw average,
+          how far above or below the panel someone lands on the SAME evidence - never a raw average,
           which would just reflect who happened to see the strongest candidates.
         </p>
 

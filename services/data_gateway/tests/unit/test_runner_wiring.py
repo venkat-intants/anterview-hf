@@ -56,7 +56,7 @@ def test_shortlisting_an_enrolment_calls_the_runner() -> None:
 
     src = inspect.getsource(set_enrolment_status)
     assert "on_shortlisted" in src, (
-        "recording the status is half the gate — this is where round one starts"
+        "recording the status is half the gate - this is where round one starts"
     )
 
 

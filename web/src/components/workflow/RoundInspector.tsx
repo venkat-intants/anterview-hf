@@ -355,13 +355,13 @@ function CriteriaPicker({
       <p className="flex items-start gap-1.5 text-[13px] leading-relaxed text-muted-foreground">
         <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
         {round.kind === 'ai_interview'
-          ? 'The interview probes these and nothing else. Picking one copies its rating scale onto this round, so the same standard applies to everyone who sits it — even if the role model changes later.'
+          ? 'The interview probes these and nothing else. Picking one copies its rating scale onto this round, so the same standard applies to everyone who sits it - even if the role model changes later.'
           : 'What this round contributes to the candidate profile. Used for coverage, so you can see what nothing in your process measures.'}
       </p>
 
       {atCap ? (
         <span className="text-[13px] text-[var(--ui-warn)]">
-          A round assesses at most {MAX_CRITERIA_PER_ROUND} competencies — deselect one to swap.
+          A round assesses at most {MAX_CRITERIA_PER_ROUND} competencies - deselect one to swap.
         </span>
       ) : null}
 
@@ -723,7 +723,7 @@ export default function RoundInspector({
           <p className="mt-1 text-[13px] leading-snug text-muted-foreground">{meta.blurb}</p>
           {editable ? (
             <p className="mt-1 text-[12.5px] leading-snug text-muted-foreground">
-              Changing the type clears what no longer applies — questions, threshold or time limit —
+              Changing the type clears what no longer applies - questions, threshold or time limit -
               and keeps the rest.
             </p>
           ) : null}
@@ -820,7 +820,7 @@ export default function RoundInspector({
             On <span className="font-medium">hold</span> the candidate stops here, you are notified,
             and they wait in your review queue with the reason recorded. Releasing them moves them
             on to {round.on_pass_next_round_id ? 'the next round' : 'the final decision'} exactly as
-            an automatic pass would. Nobody is rejected by this setting — ending a candidacy still
+            an automatic pass would. Nobody is rejected by this setting - ending a candidacy still
             goes through the decision that asks you for a reason.
           </p>
         </div>
@@ -836,7 +836,7 @@ export default function RoundInspector({
               <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
                 Pick a published exam round below. If there is none yet, create or publish one in
                 Exams
-                {returnTo ? ' — you can come straight back to this workflow from there' : ''}.
+                {returnTo ? ' - you can come straight back to this workflow from there' : ''}.
               </p>
               <Link
                 to={returnTo ? `/hr/exams?returnTo=${encodeURIComponent(returnTo)}` : '/hr/exams'}
@@ -894,7 +894,7 @@ export default function RoundInspector({
           <h3 className={SECTION_TITLE}>Interview kit</h3>
           <p className="text-[13px] leading-relaxed text-muted-foreground">
             What the interviewer sees alongside the checklist above: instructions, your notes, and
-            per-criterion guidance. Criteria themselves are frozen — set them above.
+            per-criterion guidance. Criteria themselves are frozen - set them above.
           </p>
           {/* Editable on a PUBLISHED workflow too, deliberately. The kit is
               guidance, not the rubric — the criteria above stay frozen — and the
@@ -941,7 +941,7 @@ export default function RoundInspector({
       ) : (
         <section className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3.5 text-[13px] leading-relaxed text-muted-foreground">
           {meta.decidedBy === 'person'
-            ? 'Nothing here is scored automatically — a threshold has nothing to compare against. Candidates who reach it appear in your decision queue with the checklist above; someone passes them on or holds them for a decision. Nobody is rejected automatically.'
+            ? 'Nothing here is scored automatically - a threshold has nothing to compare against. Candidates who reach it appear in your decision queue with the checklist above; someone passes them on or holds them for a decision. Nobody is rejected automatically.'
             : 'This round kind has no threshold.'}
         </section>
       )}

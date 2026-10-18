@@ -125,7 +125,7 @@ def hiring_health(h: HealthInput) -> dict[str, Any]:
 
     days_open = (h.now - h.created_at).total_seconds() / 86_400
     if days_open < MIN_DAYS_OPEN:
-        return out("watch", f"Open for under {MIN_DAYS_OPEN} days — too early to project a pace.")
+        return out("watch", f"Open for under {MIN_DAYS_OPEN} days - too early to project a pace.")
 
     window = max(1.0, min(float(WINDOW_DAYS), days_open))
     decided = h.hired + h.rejected

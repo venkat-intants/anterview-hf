@@ -150,7 +150,7 @@ describe('tokenStore', () => {
 // AuthProvider — mock mode (VITE_USE_MOCK default = true in tests)
 // ---------------------------------------------------------------------------
 
-describe('AuthProvider (mock mode — no refresh)', () => {
+describe('AuthProvider (mock mode - no refresh)', () => {
   it('sets isInitializing to false synchronously in mock mode', async () => {
     render(
       <MemoryRouter>
@@ -213,7 +213,7 @@ describe('AuthProvider silent refresh on load', () => {
     vi.stubEnv('VITE_USE_MOCK', 'false');
   });
 
-  it('(a) success: restores session — isAuthenticated becomes true', async () => {
+  it('(a) success: restores session - isAuthenticated becomes true', async () => {
     mockAttemptRefresh.mockResolvedValue(true);
     setToken('refreshed-token'); // simulate tokenStore being set by attemptRefresh
     mockGetMe.mockResolvedValue({

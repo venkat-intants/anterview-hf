@@ -25,8 +25,8 @@ export function LandingPage() {
         <Hero />
         <ProofBand />
         <Walkthrough />
-        <ForCandidates />
         <Audiences />
+        <ForCandidates />
         <Avatars />
         <Languages />
         <Privacy />

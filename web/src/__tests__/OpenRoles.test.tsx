@@ -58,7 +58,7 @@ beforeEach(() => {
   listOpenRoles.mockResolvedValue([role()]);
 });
 
-describe('OpenRoles — real, not practice', () => {
+describe('OpenRoles - real, not practice', () => {
   it('says these reach a hiring team', async () => {
     // The load-bearing sentence: below this section are mock interviews.
     renderRoles();
@@ -91,7 +91,7 @@ describe('OpenRoles — real, not practice', () => {
   });
 });
 
-describe('OpenRoles — one you already applied to', () => {
+describe('OpenRoles - one you already applied to', () => {
   it('says so instead of inviting a second application', async () => {
     listOpenRoles.mockResolvedValue([role({ already_applied: true })]);
     renderRoles();
@@ -107,7 +107,7 @@ describe('OpenRoles — one you already applied to', () => {
   });
 });
 
-describe('OpenRoles — what a card shows', () => {
+describe('OpenRoles - what a card shows', () => {
   it('shows where and what kind', async () => {
     renderRoles();
     expect(await screen.findByText(/Bengaluru · Full-time · Engineering/)).toBeInTheDocument();
@@ -118,7 +118,7 @@ describe('OpenRoles — what a card shows', () => {
       role({ salary_min: 2_400_000, salary_max: 3_600_000, salary_currency: 'INR' }),
     ]);
     renderRoles();
-    const expected = `INR ${(2_400_000).toLocaleString()} – INR ${(3_600_000).toLocaleString()}`;
+    const expected = `INR ${(2_400_000).toLocaleString()} - INR ${(3_600_000).toLocaleString()}`;
     expect(await screen.findByText(expected)).toBeInTheDocument();
   });
 
@@ -146,7 +146,7 @@ describe('OpenRoles — what a card shows', () => {
   });
 });
 
-describe('OpenRoles — nothing to show', () => {
+describe('OpenRoles - nothing to show', () => {
   it('disappears entirely when nobody is hiring', async () => {
     // An empty box on a page that also lists practice roles adds confusion
     // rather than information.

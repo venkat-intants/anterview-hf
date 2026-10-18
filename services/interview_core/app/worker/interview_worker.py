@@ -799,7 +799,7 @@ async def _post_score(
                 # Not retried: the scorer may still be working, and a second
                 # request would pay for a second LLM run.
                 logger.error(
-                    "interview-worker.score.timeout session_id=%s err=%s — not retrying",
+                    "interview-worker.score.timeout session_id=%s err=%s - not retrying",
                     session_id, type(exc).__name__,
                 )
                 return
@@ -843,14 +843,14 @@ _CLOSING_MSG: dict[str, str] = {
 _TIMEOUT_MSG: dict[str, str] = {
     "en": (
         "We have reached the end of our time together. Thank you for the wonderful "
-        "conversation — we will be in touch soon!"
+        "conversation - we will be in touch soon!"
     ),
     "hi": (
-        "हमारा समय समाप्त हो गया है। इस शानदार conversation के लिए बहुत धन्यवाद — "
+        "हमारा समय समाप्त हो गया है। इस शानदार conversation के लिए बहुत धन्यवाद - "
         "हम जल्द ही आपसे संपर्क करेंगे!"
     ),
     "te": (
-        "మన సమయం అయిపోయింది. ఈ అద్భుతమైన conversation కు చాలా ధన్యవాదాలు — "
+        "మన సమయం అయిపోయింది. ఈ అద్భుతమైన conversation కు చాలా ధన్యవాదాలు - "
         "మేము త్వరలో మీకు తెలియజేస్తాము!"
     ),
 }
@@ -1146,7 +1146,7 @@ async def claim_close(session_id: str, *, client: Any | None = None) -> bool:
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "interview-worker.close_claim_unavailable room=%s err=%s — proceeding",
+            "interview-worker.close_claim_unavailable room=%s err=%s - proceeding",
             session_id, type(exc).__name__,
         )
         return True
@@ -1280,7 +1280,7 @@ async def reap_stale_sessions(*, now: datetime | None = None) -> list[str]:
             len(reaped), ",".join(reaped),
         )
     else:
-        logger.info("interview-worker.reaper_clean — no stale sessions found")
+        logger.info("interview-worker.reaper_clean - no stale sessions found")
     return reaped
 
 
@@ -1320,7 +1320,7 @@ async def _reap_one(
     state.restore_checkpoint(checkpoint)
     if not await _persist_turns(session_id, state.transcript):
         # The checkpoint is the only copy: keep it and hand the claim back.
-        logger.warning("interview-worker.reaper_turns_failed room=%s — will retry", session_id)
+        logger.warning("interview-worker.reaper_turns_failed room=%s - will retry", session_id)
         await release_close_guard(session_id, client=client)
         return
 
@@ -1345,7 +1345,7 @@ async def _reap_one(
     if not await _update_session_status(
         session_id, "abandoned", completed_at=last_seen, duration_seconds=duration
     ):
-        logger.warning("interview-worker.reaper_status_failed room=%s — will retry", session_id)
+        logger.warning("interview-worker.reaper_status_failed room=%s - will retry", session_id)
         await release_close_guard(session_id, client=client)
         return
     await client.delete(key_str)
@@ -1454,7 +1454,7 @@ async def _start_avatar_or_fallback(
         return avatar
     except Exception as exc:  # noqa: BLE001 — any provider error degrades, never aborts
         logger.error(
-            "interview-worker: avatar start failed provider=%r err_type=%s err=%s — "
+            "interview-worker: avatar start failed provider=%r err_type=%s err=%s - "
             "falling back to voice-only",
             provider, type(exc).__name__, exc,
         )
@@ -1494,7 +1494,7 @@ async def _degrade_to_voice_only_midsession(
         # bare TypeError inside the generic handler, which reads like a room
         # problem rather than a dependency problem.
         logger.error(
-            "interview-worker: voice-only degrade unavailable room=%s — "
+            "interview-worker: voice-only degrade unavailable room=%s - "
             "livekit.agents.voice.room_io._output._ParticipantAudioOutput is "
             "absent (livekit-agents upgrade?); the avatar died and audio cannot "
             "be re-routed",
@@ -1530,7 +1530,7 @@ async def _degrade_to_voice_only_midsession(
 
     session.output.audio = output
     logger.warning(
-        "interview-worker: avatar died mid-session — continuing voice-only room=%s",
+        "interview-worker: avatar died mid-session - continuing voice-only room=%s",
         session_id,
     )
     return True
@@ -1591,7 +1591,7 @@ def _install_avatar_death_watch(
         handled = True
         logger.warning(
             "interview-worker: avatar participant %r disconnected mid-session "
-            "room=%s — degrading to voice-only",
+            "room=%s - degrading to voice-only",
             avatar_identity, session_id,
         )
         recover_task_holder["task"] = asyncio.create_task(_recover())
@@ -1899,7 +1899,7 @@ class InterviewJob:
             # Misconfiguration (missing plugin / persona / replica). Loud, but the
             # interview must still happen — degrade to voice-only.
             logger.error(
-                "interview-worker: avatar setup failed provider=%r err=%s — "
+                "interview-worker: avatar setup failed provider=%r err=%s - "
                 "falling back to voice-only",
                 provider, exc,
             )
@@ -2054,7 +2054,7 @@ class InterviewJob:
 
         if not finalise:
             logger.warning(
-                "interview-worker.close_already_finalised room=%s — skipping "
+                "interview-worker.close_already_finalised room=%s - skipping "
                 "status write, transcript flush and scoring",
                 session_id,
             )
@@ -2079,7 +2079,7 @@ class InterviewJob:
             # would cancel a background task.
             if consent_withdrawn:
                 logger.warning(
-                    "interview-worker.consent_withdrawn.closed room=%s answers=%d — scoring skipped",
+                    "interview-worker.consent_withdrawn.closed room=%s answers=%d - scoring skipped",
                     session_id, state.candidate_answer_count,
                 )
             elif state.should_score():
@@ -2219,7 +2219,7 @@ class InterviewJob:
         )
         if should_close:
             logger.info(
-                "interview-worker.answer room=%s count=%d/%d — scheduling close",
+                "interview-worker.answer room=%s count=%d/%d - scheduling close",
                 self.session_id, self.state.candidate_answer_count, MAX_CANDIDATE_ANSWERS,
             )
             # Held on the instance, not dropped on the floor: this is the NORMAL
@@ -2312,7 +2312,7 @@ class InterviewJob:
                 # timeout so we don't block the process shutdown indefinitely.
                 logger.info(
                     "interview-worker.shutdown_hook_shield_cancelled room=%s "
-                    "— awaiting real task directly with timeout",
+                    "- awaiting real task directly with timeout",
                     self.session_id,
                 )
                 try:
@@ -2369,7 +2369,7 @@ def _prewarm(proc: JobProcess) -> None:
     except Exception as exc:  # noqa: BLE001
         # Prewarm failure is non-fatal — entrypoint() falls back to loading in-place.
         logger.warning(
-            "interview-worker.prewarm: silero VAD load failed err=%s — "
+            "interview-worker.prewarm: silero VAD load failed err=%s - "
             "will cold-load per job",
             type(exc).__name__,
         )
@@ -2520,7 +2520,7 @@ async def _request_fnc(job_request: Any) -> None:
 
     if reason is not None:
         logger.warning(
-            "interview-worker.admission_rejected active=%d — %s",
+            "interview-worker.admission_rejected active=%d - %s",
             _active_jobs, reason,
         )
         # reject() signals 'worker_unavailable' to LiveKit.  The HTTP token

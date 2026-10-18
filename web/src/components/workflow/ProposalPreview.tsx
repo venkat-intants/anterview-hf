@@ -189,7 +189,7 @@ export default function ProposalPreview({
 
       {/* The single most important sentence on this screen. */}
       <p className="mt-3 text-[12px] leading-relaxed text-muted-foreground">
-        Accepting puts this on your canvas as a draft. No candidate sees a draft — you still review
+        Accepting puts this on your canvas as a draft. No candidate sees a draft - you still review
         it and press publish yourself.
       </p>
 

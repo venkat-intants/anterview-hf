@@ -76,7 +76,7 @@ beforeEach(() => {
   getHrAnalytics.mockResolvedValue(FULL);
 });
 
-describe('HRAnalytics — funnel', () => {
+describe('HRAnalytics - funnel', () => {
   it('draws one bar per stage with the live counts', async () => {
     renderWith(<HRAnalytics />);
 
@@ -133,7 +133,7 @@ describe('HRAnalytics — funnel', () => {
     renderWith(<HRAnalytics />);
 
     await screen.findByText('40');
-    expect(screen.getAllByText('—')).toHaveLength(4);
+    expect(screen.getAllByText('-')).toHaveLength(4);
     expect(screen.getAllByText('(not enough data yet)')).toHaveLength(4);
   });
 
@@ -159,7 +159,7 @@ describe('HRAnalytics — funnel', () => {
   });
 });
 
-describe('HRAnalytics — averages summary', () => {
+describe('HRAnalytics - averages summary', () => {
   it('rounds the percentage averages and keeps the interview score to 1dp', async () => {
     renderWith(<HRAnalytics />);
 

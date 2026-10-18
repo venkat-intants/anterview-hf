@@ -559,9 +559,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # Loud on purpose: either switch makes this process unfit for real users.
     if settings.ai_fake_mode:
         log.warning("ai_fake_mode.enabled",
-                    detail="model calls return deterministic stand-ins — local testing only")
+                    detail="model calls return deterministic stand-ins - local testing only")
     if settings.test_hooks_enabled:
-        log.warning("test_hooks.enabled", detail="/test-hooks is mounted — local testing only")
+        log.warning("test_hooks.enabled", detail="/test-hooks is mounted - local testing only")
     log.info(
         "retention.scheduler.started",
         retention_days=settings.retention_days,

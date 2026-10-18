@@ -117,7 +117,7 @@ async def resolve_consent_user_id(room_name: str) -> str | None:
             if uid is None:
                 logger.warning(
                     "interview-worker.consent_user_lookup_no_user_id room=%s "
-                    "— session row missing or user_id NULL; consent watchdog "
+                    "- session row missing or user_id NULL; consent watchdog "
                     "will be a no-op for this session",
                     room_name,
                 )
@@ -135,7 +135,7 @@ async def resolve_consent_user_id(room_name: str) -> str | None:
     # All attempts failed — transient DB error. Caller (watchdog) must treat
     # this as fail-closed to preserve DPDP §11 right-to-withdraw protection.
     logger.error(
-        "interview-worker.consent_user_lookup_exhausted room=%s — "
+        "interview-worker.consent_user_lookup_exhausted room=%s - "
         "all %d attempts failed (last: %s); watchdog will fail-closed",
         room_name, _RESOLVE_CONSENT_MAX_ATTEMPTS,
         type(last_exc).__name__ if last_exc else "unknown",
@@ -189,7 +189,7 @@ async def _run_consent_watchdog(
         # Resolver exhausted retries at session start — we cannot confirm
         # active consent.  Fail-closed: end the session immediately.
         logger.error(
-            "interview-worker.consent_watchdog_fail_closed room=%s — "
+            "interview-worker.consent_watchdog_fail_closed room=%s - "
             "resolver DB error exhausted; ending session to protect DPDP §11",
             session_id,
         )
@@ -225,7 +225,7 @@ async def _run_consent_watchdog(
             continue
         if not active:
             logger.warning(
-                "interview-worker.consent_withdrawn room=%s — ending session",
+                "interview-worker.consent_withdrawn room=%s - ending session",
                 session_id,
             )
             await on_close(timed_out=False, consent_withdrawn=True)

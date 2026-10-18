@@ -104,11 +104,11 @@ beforeEach(() => {
     enrolment_id: 'en-1',
     full_name: 'Priya Sharma',
     already_applied: false,
-    message: 'Thanks — your application is in.',
+    message: 'Thanks - your application is in.',
   });
 });
 
-describe('PublicApply — stepping', () => {
+describe('PublicApply - stepping', () => {
   it('starts on the identity step', async () => {
     renderPage();
     await screen.findByText('Backend Engineer');
@@ -179,7 +179,7 @@ describe('PublicApply — stepping', () => {
   });
 });
 
-describe('PublicApply — consent stays last', () => {
+describe('PublicApply - consent stays last', () => {
   async function toReview(user: User): Promise<void> {
     await identity(user);
     await cont(user);
@@ -232,7 +232,7 @@ describe('PublicApply — consent stays last', () => {
   });
 });
 
-describe('PublicApply — the review step', () => {
+describe('PublicApply - the review step', () => {
   async function walkWithDetails(user: User): Promise<void> {
     await identity(user);
     await cont(user);

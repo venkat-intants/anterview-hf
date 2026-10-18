@@ -291,7 +291,7 @@ describe('Applications', () => {
 // be started — while looking healthy from the hiring side, because the invite
 // really had been minted and queued. This is the route that needs no mail.
 
-describe('Applications — a waiting interview', () => {
+describe('Applications - a waiting interview', () => {
   it('offers to start it', async () => {
     listMyApplications.mockResolvedValue([app({ interview_invite_id: 'inv-1' })]);
     renderPage();
@@ -361,7 +361,7 @@ describe('Applications — a waiting interview', () => {
 // a fresh bearer token in its fragment, so it must be checked same-origin
 // before this ever navigates to it, never handed to `window.location.assign`
 // unchecked (safeUrl.ts's own header names this exact mistake).
-describe('Applications — a waiting task', () => {
+describe('Applications - a waiting task', () => {
   it('offers to open it', async () => {
     listMyApplications.mockResolvedValue([app({ task_submission_id: 'sub-1' })]);
     renderPage();
@@ -412,7 +412,7 @@ describe('Applications — a waiting task', () => {
 // The same gap as the interview, one round earlier: the card named the round —
 // "Round 1 of 1 · Aptitude" — and the only way into it was the emailed link.
 
-describe('Applications — a waiting assessment', () => {
+describe('Applications - a waiting assessment', () => {
   const waiting = { exam_assignment_id: 'asn-1', exam_expires_at: '2026-09-25T00:00:00Z' };
 
   it('offers to start it, with the date it closes', async () => {
@@ -529,7 +529,7 @@ function rediscoveryCompany(over: Partial<MyRediscoveryCompany> = {}): MyRedisco
   };
 }
 
-describe('Applications — rediscovery', () => {
+describe('Applications - rediscovery', () => {
   it('shows nothing when the candidate has no company to opt into', async () => {
     listMyRediscovery.mockResolvedValue({ companies: [], consent_months: 12 });
     renderPage();
@@ -547,7 +547,7 @@ describe('Applications — rediscovery', () => {
     expect(screen.getByRole('button', { name: 'Turn on' })).toBeInTheDocument();
   });
 
-  it('turns on with a single press — no confirm needed to opt in', async () => {
+  it('turns on with a single press - no confirm needed to opt in', async () => {
     const user = userEvent.setup();
     listMyRediscovery.mockResolvedValue({ companies: [rediscoveryCompany()], consent_months: 12 });
     setMyRediscovery.mockResolvedValue(
@@ -561,7 +561,7 @@ describe('Applications — rediscovery', () => {
     expect(await screen.findByRole('button', { name: 'Turn off' })).toBeInTheDocument();
   });
 
-  it('requires a second press to turn off — a single click only shows the confirm', async () => {
+  it('requires a second press to turn off - a single click only shows the confirm', async () => {
     const user = userEvent.setup();
     listMyRediscovery.mockResolvedValue({
       companies: [rediscoveryCompany({ state: 'on', expires_at: '2027-09-26T00:00:00Z' })],
@@ -611,7 +611,7 @@ describe('Applications — rediscovery', () => {
 const headings = (): string[] =>
   screen.getAllByRole('heading', { level: 2 }).map((h) => (h.textContent ?? '').replace(/\s*\d+$/, ''));
 
-describe('Applications — order and turn', () => {
+describe('Applications - order and turn', () => {
   it('orders the sections: Your move, With the hiring team, Closed, then the rest', async () => {
     listMyApplications.mockResolvedValue([
       app({ id: 'closed', job_title: 'Clerk', stage: 'Not progressing', closed: true }),
@@ -718,7 +718,7 @@ describe('Applications — order and turn', () => {
   });
 });
 
-describe('Applications — stage text', () => {
+describe('Applications - stage text', () => {
   const setLanguage = async (lng: 'en' | 'hi' | 'te') => {
     const { default: i18n } = await import('../lib/i18n');
     await i18n.changeLanguage(lng);
@@ -797,7 +797,7 @@ describe('Applications — stage text', () => {
   });
 });
 
-describe('Applications — interviews and offers', () => {
+describe('Applications - interviews and offers', () => {
   function offerRow(over: Record<string, unknown> = {}) {
     return {
       id: 'off-1',
@@ -894,7 +894,7 @@ describe('Applications — interviews and offers', () => {
   });
 });
 
-describe('Applications — offers and interviews do not depend on the applications list', () => {
+describe('Applications - offers and interviews do not depend on the applications list', () => {
   const sentOffer = {
     id: 'off-9',
     status: 'sent',
@@ -926,7 +926,7 @@ describe('Applications — offers and interviews do not depend on the applicatio
   });
 });
 
-describe('Applications — a 409 question belongs to the action that asked it', () => {
+describe('Applications - a 409 question belongs to the action that asked it', () => {
   it('drops the "open it here" question when the top action changes', async () => {
     mintMyExamLink.mockRejectedValue(
       new ApiError('This assessment is already open in another tab.', 409),

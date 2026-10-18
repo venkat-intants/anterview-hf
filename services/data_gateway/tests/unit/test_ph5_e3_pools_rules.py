@@ -289,4 +289,4 @@ def test_talent_pools_module_writes_enrolments_only_through_enrol_applicant() ->
         assert re.search(rf"(?i)\b(insert into|update|delete from)\s+{table}\b", src) is None, (
             f"talent_pools.py writes {table} directly"
         )
-    assert "enrol_applicant" in src, "the sentinel import is gone — has this scan gone blind?"
+    assert "enrol_applicant" in src, "the sentinel import is gone - has this scan gone blind?"

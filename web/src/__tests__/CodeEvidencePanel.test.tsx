@@ -143,7 +143,7 @@ const EVIDENCE: CodeEvidence = {
       algorithm_version: 'sim-1.0.0',
       created_at: '2026-08-02T00:00:00.000Z',
       caption:
-        'Automated, unreviewed — similar code is not evidence of misconduct on its own. Many candidates independently using the same tools or references can look alike.',
+        'Automated, unreviewed - similar code is not evidence of misconduct on its own. Many candidates independently using the same tools or references can look alike.',
     },
   ],
   findings: [
@@ -173,7 +173,7 @@ const COMPARE: SimilarityCompare = {
     blocks: [{ start_line: 1, lines: ['def other():', '    return 2'] }],
   },
   matched_regions: [{ low_start: 1, low_end: 1, high_start: 1, high_end: 1 }],
-  caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+  caption: 'Automated, unreviewed - similar code is not evidence of misconduct on its own.',
 };
 
 function renderPanel(examId = 'e-1', attemptId = 'att-1') {
@@ -201,7 +201,7 @@ function questionCard(shortQuestionId: string): HTMLElement {
   return marker.closest('div')!.parentElement as HTMLElement;
 }
 
-describe('CodeEvidencePanel — a signal is never a finding', () => {
+describe('CodeEvidencePanel - a signal is never a finding', () => {
   it('keeps similarity signals and integrity findings in separate, distinctly labelled sections', async () => {
     renderPanel();
     await screen.findAllByText('Code quality');
@@ -238,8 +238,8 @@ describe('CodeEvidencePanel — a signal is never a finding', () => {
   });
 });
 
-describe('CodeEvidencePanel — coverage and the approximation label', () => {
-  it('never shows a coverage figure — only the reason it is unavailable', async () => {
+describe('CodeEvidencePanel - coverage and the approximation label', () => {
+  it('never shows a coverage figure - only the reason it is unavailable', async () => {
     renderPanel();
     await screen.findAllByText('Code quality');
 
@@ -255,8 +255,8 @@ describe('CodeEvidencePanel — coverage and the approximation label', () => {
 
   it('labels the Python report as a full analysis and the JavaScript report as a token-level approximation', async () => {
     renderPanel();
-    expect(await screen.findByText('Full analysis — Python AST')).toBeInTheDocument();
-    expect(await screen.findByText('Token-level approximation — javascript')).toBeInTheDocument();
+    expect(await screen.findByText('Full analysis - Python AST')).toBeInTheDocument();
+    expect(await screen.findByText('Token-level approximation - javascript')).toBeInTheDocument();
   });
 
   it('shows the sandbox test results, labelled as results, not coverage', async () => {
@@ -268,7 +268,7 @@ describe('CodeEvidencePanel — coverage and the approximation label', () => {
   });
 });
 
-describe('CodeEvidencePanel — source is not prefetched', () => {
+describe('CodeEvidencePanel - source is not prefetched', () => {
   it('does not fetch source until HR clicks "View source"', async () => {
     renderPanel();
     await screen.findAllByText('Code quality');
@@ -282,7 +282,7 @@ describe('CodeEvidencePanel — source is not prefetched', () => {
   });
 });
 
-describe('CodeSimilarityCompare — record a finding', () => {
+describe('CodeSimilarityCompare - record a finding', () => {
   async function openCompare() {
     const user = userEvent.setup();
     renderPanel();
@@ -380,7 +380,7 @@ describe('CodeSimilarityCompare — record a finding', () => {
 // server-side, not by which attempt HR is reviewing — so the attempt under
 // review is `attempt_high_id` about half the time. The dialog must still
 // label ITS content "This submission", whichever side it lands on.
-describe('CodeSimilarityCompare — the pane matches whichever side this attempt is on', () => {
+describe('CodeSimilarityCompare - the pane matches whichever side this attempt is on', () => {
   it('labels the HIGH side "This submission" when the attempt under review is attempt_high_id', async () => {
     const withSwapped: CodeEvidence = {
       ...EVIDENCE,
@@ -408,7 +408,7 @@ describe('CodeSimilarityCompare — the pane matches whichever side this attempt
         blocks: [{ start_line: 1, lines: ['def this_candidate():', '    return 1'] }],
       },
       matched_regions: [{ low_start: 1, low_end: 1, high_start: 1, high_end: 1 }],
-      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+      caption: 'Automated, unreviewed - similar code is not evidence of misconduct on its own.',
     });
 
     const user = userEvent.setup();
@@ -436,7 +436,7 @@ describe('CodeSimilarityCompare — the pane matches whichever side this attempt
 // taken from the start of the file, so a screen numbering rows 1..N by their
 // position in the excerpt highlights the wrong lines (or none). Render from
 // `blocks`, numbering and highlighting by each block's own `start_line`.
-describe('CodeSimilarityCompare — blocks are numbered and highlighted by absolute source line', () => {
+describe('CodeSimilarityCompare - blocks are numbered and highlighted by absolute source line', () => {
   it('numbers and highlights a match at line 40 of a longer file by its real line number', async () => {
     api.getSimilarityCompare.mockResolvedValue({
       signal_id: 'sig-1',
@@ -451,7 +451,7 @@ describe('CodeSimilarityCompare — blocks are numbered and highlighted by absol
         blocks: [{ start_line: 1, lines: ['H1'] }],
       },
       matched_regions: [{ low_start: 40, low_end: 40, high_start: 1, high_end: 1 }],
-      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+      caption: 'Automated, unreviewed - similar code is not evidence of misconduct on its own.',
     });
 
     const user = userEvent.setup();
@@ -491,7 +491,7 @@ describe('CodeSimilarityCompare — blocks are numbered and highlighted by absol
         { low_start: 10, low_end: 11, high_start: 10, high_end: 11 },
         { low_start: 50, low_end: 51, high_start: 10, high_end: 11 },
       ],
-      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+      caption: 'Automated, unreviewed - similar code is not evidence of misconduct on its own.',
     });
 
     const user = userEvent.setup();
@@ -522,7 +522,7 @@ describe('CodeSimilarityCompare — blocks are numbered and highlighted by absol
 // pane, and an empty pane in the dialog where a misconduct finding is recorded
 // would be read as "nothing similar here", which is a conclusion rather than
 // the absence of one. It has to say which of the two it is.
-describe('CodeSimilarityCompare — a pair that cannot be lined up', () => {
+describe('CodeSimilarityCompare - a pair that cannot be lined up', () => {
   it('says so, rather than showing an empty pane', async () => {
     api.getSimilarityCompare.mockResolvedValue({
       signal_id: 'sig-1',
@@ -538,7 +538,7 @@ describe('CodeSimilarityCompare — a pair that cannot be lined up', () => {
         regions_unavailable: true,
       },
       matched_regions: [],
-      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+      caption: 'Automated, unreviewed - similar code is not evidence of misconduct on its own.',
     });
 
     const user = userEvent.setup();
@@ -576,7 +576,7 @@ describe('CodeSimilarityCompare — a pair that cannot be lined up', () => {
         blocks: [{ start_line: 1, lines: ['b = 2'] }],
       },
       matched_regions: [],
-      caption: 'Automated, unreviewed — similar code is not evidence of misconduct on its own.',
+      caption: 'Automated, unreviewed - similar code is not evidence of misconduct on its own.',
     });
 
     const user = userEvent.setup();

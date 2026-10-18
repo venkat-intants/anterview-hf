@@ -84,7 +84,7 @@ async def read_active_jobs(redis: Any) -> int | None:
         return int(raw)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "rooms.capacity_read_failed err=%s — failing open",
+            "rooms.capacity_read_failed err=%s - failing open",
             type(exc).__name__,
         )
         return None

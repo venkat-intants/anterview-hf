@@ -348,7 +348,7 @@ describe('Dashboard page', () => {
   });
 });
 
-describe('Dashboard — an account with applications', () => {
+describe('Dashboard - an account with applications', () => {
   const waiting = application({
     exam_assignment_id: 'asn-1',
     exam_expires_at: '2026-10-25T00:00:00Z',
@@ -493,7 +493,7 @@ describe('Dashboard — an account with applications', () => {
   });
 });
 
-describe('Dashboard — a failed request is not an empty queue', () => {
+describe('Dashboard - a failed request is not an empty queue', () => {
   const failedTitle = 'We could not check your applications';
 
   it('does not say "start practising" when the applications call fails; it offers a retry', async () => {

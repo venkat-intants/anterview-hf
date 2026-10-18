@@ -124,7 +124,7 @@ FAILURE_SENTENCES: dict[str, str] = {
         "PDF and upload that."
     ),
     "encrypted": "This PDF is password-protected. Remove the password and upload it again.",
-    "no_text": "This looks like a scan. We read text, not images — upload a text PDF.",
+    "no_text": "This looks like a scan. We read text, not images - upload a text PDF.",
     "parse_timeout": "We could not read this file in time. Try a smaller or simpler document.",
     "parse_error": "We could not read this file.",
     "too_long": "This document is longer than we index (about 400,000 characters). Split it.",
@@ -1106,7 +1106,7 @@ async def reindex_document(
     )
     if version is None or version["status"] != "failed":
         raise CorpusError(
-            409, "not_failed", "This document is not stuck — there is nothing to reindex.",
+            409, "not_failed", "This document is not stuck - there is nothing to reindex.",
         )
 
     await db.execute(

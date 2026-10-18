@@ -72,7 +72,7 @@ const VERSIONS: WorkflowSummary[] = [
 const WORKFLOW_PROPOSAL: Proposal = {
   id: 'p-1',
   kind: 'workflow',
-  title: 'Hiring process — Backend Engineer',
+  title: 'Hiring process - Backend Engineer',
   summary: '2 rounds · Screening test (60%) → Conversation (60%)',
   commit: {
     method: 'POST',
@@ -106,7 +106,7 @@ const WORKFLOW_PROPOSAL: Proposal = {
 
 const CHAT_REPLY: AgentChatResponse = {
   agent: 'workflow_copilot',
-  reply: 'Two rounds. I left Reliability unmeasured — no round covers it.',
+  reply: 'Two rounds. I left Reliability unmeasured - no round covers it.',
   proposals: [WORKFLOW_PROPOSAL],
   citations: [],
   tools_used: [{ name: 'get_opening_under_design', ok: true, duration_ms: 12 }],
@@ -328,7 +328,7 @@ beforeEach(() => {
   });
 });
 
-describe('WorkflowCopilot — what it sends', () => {
+describe('WorkflowCopilot - what it sends', () => {
   it('names the opening as surface context, so the model never picks one', async () => {
     renderBuilder();
     await ask('design something short');
@@ -370,7 +370,7 @@ describe('WorkflowCopilot — what it sends', () => {
   });
 });
 
-describe('WorkflowCopilot — citations (PH5-E1)', () => {
+describe('WorkflowCopilot - citations (PH5-E1)', () => {
   it('shows the evidence banner and the source strip when the reply read a record', async () => {
     askAgent.mockResolvedValue(CHAT_REPLY_WITH_EVIDENCE);
     renderBuilder();
@@ -418,7 +418,7 @@ describe('WorkflowCopilot — citations (PH5-E1)', () => {
   });
 });
 
-describe('ProposalPreview — the gate', () => {
+describe('ProposalPreview - the gate', () => {
   it('previews the drafted rounds instead of applying them', async () => {
     renderBuilder();
     await ask('design something short');
@@ -489,7 +489,7 @@ describe('ProposalPreview — the gate', () => {
   });
 });
 
-describe('WorkflowCopilot — a published version', () => {
+describe('WorkflowCopilot - a published version', () => {
   it('cannot be talked into changing, because there is nothing to change', async () => {
     listWorkflows.mockResolvedValue([{ ...VERSIONS[0], id: 'wf-live', status: 'published' }]);
     getWorkflow.mockResolvedValue(PUBLISHED);

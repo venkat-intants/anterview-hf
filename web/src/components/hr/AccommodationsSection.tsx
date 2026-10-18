@@ -96,10 +96,10 @@ function examRoundTitle(rounds: Round[], examRoundId: string): string | null {
  *  since-changed workflow), rather than showing nothing. */
 function scopeLabel(row: Accommodation, rounds: Round[]): string {
   if (row.round_id) {
-    return `Workflow round — ${roundTitle(rounds, row.round_id) ?? `round ${row.round_id.slice(0, 8)}`}`;
+    return `Workflow round - ${roundTitle(rounds, row.round_id) ?? `round ${row.round_id.slice(0, 8)}`}`;
   }
   if (row.exam_round_id) {
-    return `Exam round — ${examRoundTitle(rounds, row.exam_round_id) ?? `exam ${row.exam_round_id.slice(0, 8)}`}`;
+    return `Exam round - ${examRoundTitle(rounds, row.exam_round_id) ?? `exam ${row.exam_round_id.slice(0, 8)}`}`;
   }
   if (row.enrolment_id) return 'This application';
   return 'Whole applicant';
@@ -195,7 +195,7 @@ function AdjustmentFields({
     <div className="flex flex-col gap-3">
       <div className="grid gap-2.5 sm:grid-cols-2">
         <label className="block">
-          <span className={labelCls}>Extra time (10–200%)</span>
+          <span className={labelCls}>Extra time (10-200%)</span>
           <input
             type="number"
             min={10}
@@ -209,7 +209,7 @@ function AdjustmentFields({
           />
         </label>
         <label className="block">
-          <span className={labelCls}>Deadline extension (1–30 days)</span>
+          <span className={labelCls}>Deadline extension (1-30 days)</span>
           <input
             type="number"
             min={1}
@@ -248,7 +248,7 @@ function AdjustmentFields({
         />
         <p className={noteWarnCls}>
           <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-          HR only. The candidate is told only that an adjustment was recorded, never this text — and
+          HR only. The candidate is told only that an adjustment was recorded, never this text - and
           an interviewer never sees it either.
         </p>
       </label>
@@ -269,7 +269,7 @@ function AdjustmentFields({
         <p id={`${uidPrefix}-ivnote-warn`} className={noteWarnCls}>
           <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
           Shown to interviewers assigned to this candidate&rsquo;s rounds. Write only what the
-          interview needs — never a diagnosis. The candidate never sees it.
+          interview needs - never a diagnosis. The candidate never sees it.
         </p>
       </label>
 
@@ -287,7 +287,7 @@ function AdjustmentFields({
         />
         <p id={`${uidPrefix}-inote-warn`} className={noteWarnCls}>
           <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-          HR only. Interviewers do not see this note, and neither does the candidate — it never
+          HR only. Interviewers do not see this note, and neither does the candidate - it never
           leaves this record.
         </p>
       </label>
@@ -438,7 +438,7 @@ function RecordForm({
         </label>
         {!hasApplication ? (
           <p className="text-[12px] text-muted-foreground">
-            Open this from a specific application to scope an adjustment to a round — a round-scoped
+            Open this from a specific application to scope an adjustment to a round - a round-scoped
             adjustment needs an application.
           </p>
         ) : null}
@@ -503,7 +503,7 @@ function RecordForm({
             checked={basis === 'hr_initiated'}
             onChange={() => setBasis('hr_initiated')}
           />
-          HR-initiated — recorded on HR&rsquo;s own initiative
+          HR-initiated - recorded on HR&rsquo;s own initiative
         </label>
         <label className="flex items-center gap-2 text-[12.5px] text-foreground">
           <input
@@ -512,10 +512,10 @@ function RecordForm({
             checked={basis === 'candidate_request'}
             onChange={() => setBasis('candidate_request')}
           />
-          Candidate request — the candidate asked HR for this
+          Candidate request - the candidate asked HR for this
         </label>
         <p className="text-[12px] text-muted-foreground">
-          Either way, this is not treated as consent captured through the product — it only records
+          Either way, this is not treated as consent captured through the product - it only records
           why HR is holding this adjustment.
         </p>
       </fieldset>
@@ -575,7 +575,7 @@ function ReviseForm({
         effective_until: fields.effectiveUntil ? localInputToIso(fields.effectiveUntil) : null,
       }),
     onSuccess: () => {
-      toast.success('Accommodation revised — the earlier record is kept');
+      toast.success('Accommodation revised - the earlier record is kept');
       void qc.invalidateQueries({ queryKey: ['hr', 'applicant', applicantId, 'accommodations'] });
       onDone();
     },
@@ -603,7 +603,7 @@ function ReviseForm({
       aria-label="Revise this accommodation"
     >
       <p className="text-[12px] text-muted-foreground">
-        The scope and basis stay the same — a revision replaces the parameters, not what this
+        The scope and basis stay the same - a revision replaces the parameters, not what this
         adjustment applies to. The current record is kept, not edited: anything already taken under
         it keeps what it had.
       </p>
@@ -711,13 +711,13 @@ function HistoryRow({
           {row.revoked_at ? `Revoked ${formatDate(row.revoked_at)}` : 'Revoked'}
           {row.revoked_by_name
             ? ` by ${row.revoked_by_name}`
-            : ' — ended by the platform (retention or an erasure request), not a person'}
+            : ' - ended by the platform (retention or an erasure request), not a person'}
           {row.revoke_reason ? `: ${row.revoke_reason}` : ''}
         </p>
       ) : null}
       {row.superseded_at ? (
         <p className="mt-1 text-[12px] text-muted-foreground">
-          Revised {formatDate(row.superseded_at)} — see the newer record.
+          Revised {formatDate(row.superseded_at)} - see the newer record.
         </p>
       ) : null}
 

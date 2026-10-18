@@ -130,14 +130,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('uploadTimeoutMs — the deadline is sized from the payload', () => {
+describe('uploadTimeoutMs - the deadline is sized from the payload', () => {
   it('is finite and generous even for an empty body', () => {
     const base = uploadTimeoutMs(new FormData());
     expect(base).toBeGreaterThanOrEqual(60_000);
     expect(Number.isFinite(base)).toBe(true);
   });
 
-  it('adds transfer time at 1 Mbps — 5 MB buys ~40 more seconds', () => {
+  it('adds transfer time at 1 Mbps - 5 MB buys ~40 more seconds', () => {
     const delta = uploadTimeoutMs(formOfSize(5 * MB)) - uploadTimeoutMs(new FormData());
     expect(delta).toBeGreaterThanOrEqual(39_000);
     expect(delta).toBeLessThanOrEqual(41_000);
@@ -157,7 +157,7 @@ describe('uploadTimeoutMs — the deadline is sized from the payload', () => {
   });
 });
 
-describe('uploadWithProgress — a stalled upload settles instead of hanging', () => {
+describe('uploadWithProgress - a stalled upload settles instead of hanging', () => {
   it('rejects with an actionable message once the deadline passes', async () => {
     const { uploadWithProgress } = await import('../api/client');
     const records = installXhr(['stall']);
@@ -208,7 +208,7 @@ describe('uploadWithProgress — a stalled upload settles instead of hanging', (
   });
 });
 
-describe('uploadWithProgress — the deadline coexists with 401 → refresh → retry', () => {
+describe('uploadWithProgress - the deadline coexists with 401 → refresh → retry', () => {
   it('gives the retry a fresh deadline and still settles if that stalls too', async () => {
     const { uploadWithProgress } = await import('../api/client');
     const records = installXhr([401, 'stall']);

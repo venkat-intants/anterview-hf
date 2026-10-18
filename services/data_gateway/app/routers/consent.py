@@ -508,13 +508,13 @@ def _audit_withdrawal(
     "",
     status_code=status.HTTP_200_OK,
     response_model=ConsentRevocationResponse,
-    summary="Revoke this router's DPDP consents (DPDP §11 — right to withdraw)",
+    summary="Revoke this router's DPDP consents (DPDP §11 - right to withdraw)",
     description=(
         "Sets revoked_at = now() on the user's active consent of each type this "
         "router manages: 'interview_voice_recording' (voice/audio), "
         "'video_capture' (webcam / proctoring biometric), "
         "'preboarding_documents' (offer documents) and "
-        "'talent_pool_rediscovery' (being kept for future openings) — the last "
+        "'talent_pool_rediscovery' (being kept for future openings) - the last "
         "at EVERY company the user opted in at, which is what withdrawal "
         "'without restriction' means. A job-simulation/portfolio "
         "task's consent is NOT here: it is one per submission and is withdrawn "

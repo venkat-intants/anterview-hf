@@ -43,7 +43,7 @@ async def write_final_record(
     """
     if not await _persist_turns(session_id, transcript):
         logger.error(
-            "interview-worker.final_record_turns_failed room=%s — status left "
+            "interview-worker.final_record_turns_failed room=%s - status left "
             "in_progress and checkpoint kept for the reaper",
             session_id,
         )
@@ -86,7 +86,7 @@ async def settle_checkpoint(
         await clear(session_id)
         return
     logger.error(
-        "interview-worker.close_record_unwritten room=%s — checkpoint kept for the reaper",
+        "interview-worker.close_record_unwritten room=%s - checkpoint kept for the reaper",
         session_id,
     )
     await release_guard(session_id)

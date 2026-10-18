@@ -129,7 +129,7 @@ def test_a_score_starts_a_workflow_only_through_the_opt_in_path() -> None:
         )
     )
     assert readers == ["_auto_shortlist"], (
-        f"the ATS bar is read by {readers} — a score must advance candidates "
+        f"the ATS bar is read by {readers} - a score must advance candidates "
         "through the single opt-in path and nowhere else"
     )
 

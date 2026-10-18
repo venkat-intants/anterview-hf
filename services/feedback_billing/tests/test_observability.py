@@ -182,7 +182,7 @@ async def test_pdf_render_uses_thread_for_build() -> None:
         )
 
     assert result == "scorecards/sc-id-1/report.pdf"
-    assert to_thread_called, "asyncio.to_thread was not called — PDF build is blocking the loop"
+    assert to_thread_called, "asyncio.to_thread was not called - PDF build is blocking the loop"
 
 
 @pytest.mark.asyncio

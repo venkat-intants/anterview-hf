@@ -80,7 +80,7 @@ def test_the_source_carries_no_literal_invisibles() -> None:
     offenders = sorted({f"U+{ord(c):04X}" for c in src if ord(c) in set(INVISIBLE)})
     assert not offenders, (
         f"literal invisible characters are back in the source: {offenders}. "
-        r"Write them as \u escapes — see this module's docstring."
+        r"Write them as \u escapes - see this module's docstring."
     )
 
 

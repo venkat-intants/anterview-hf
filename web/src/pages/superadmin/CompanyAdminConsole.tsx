@@ -122,7 +122,7 @@ function StaffRoster({
       createFn({ email: v.email.trim(), full_name: v.fullName.trim() }),
     onSuccess: (_created, v) => {
       toast.success(
-        `${heading.replace(/s$/, '')} ${v.email} created — a set-password link was emailed.`,
+        `${heading.replace(/s$/, '')} ${v.email} created - a set-password link was emailed.`,
       );
       onCreateOpenChange(false);
       void qc.invalidateQueries({ queryKey: [queryKey] });
@@ -255,7 +255,7 @@ function StaffRoster({
 
       <p className="mt-4 flex items-center gap-1.5 text-[13px] text-muted-foreground">
         <KeyRound className="h-3.5 w-3.5 text-[var(--ui-info)]" aria-hidden="true" />A secure “set
-        your password” link is emailed to them — no password is shared here.
+        your password” link is emailed to them - no password is shared here.
       </p>
       {removalNote ? (
         <p className="mt-2 text-[12.5px] text-muted-foreground">{removalNote}</p>
@@ -390,7 +390,7 @@ export default function CompanyAdminConsole() {
         addLabel="Add HR"
         openLabel="New HR manager"
         showOpenButton={false}
-        emptyText="No HR managers yet — add your first one above."
+        emptyText="No HR managers yet - add your first one above."
         listLabel="HR managers"
         companyName={companyName}
         queryKey="my-hr-managers"
@@ -411,7 +411,7 @@ export default function CompanyAdminConsole() {
         addLabel="Add interviewer"
         openLabel="New interviewer"
         showOpenButton
-        emptyText="No interviewers yet — add your first one above."
+        emptyText="No interviewers yet - add your first one above."
         listLabel="Interviewers"
         companyName={companyName}
         // Removing an interviewer is destructive beyond the roster row: say so

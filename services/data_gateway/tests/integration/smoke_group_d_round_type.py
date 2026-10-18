@@ -28,7 +28,7 @@ PASS, FAIL = [], []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def main() -> None:
@@ -101,7 +101,7 @@ async def main() -> None:
                        json={"kind": "mcq"})
     back = next((x for x in r.json().get("rounds", []) if x["id"] == aptitude["id"]), {})
     report = (await ac.get(f"/hr/workflows/{wf_id}/validate")).json()
-    check("turning it back into a test invents no threshold — validation asks for one",
+    check("turning it back into a test invents no threshold - validation asks for one",
           back.get("pass_threshold") is None
           and any("Aptitude: needs an advance threshold" in e for e in report["errors"]),
           f"{back} {report['errors']}")

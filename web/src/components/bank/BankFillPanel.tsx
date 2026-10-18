@@ -150,7 +150,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
         // Not a success, and not a crash either — the file was read and every
         // row was unusable. Saying "0 added" with the reasons below is the
         // only honest report.
-        toast.warning('No rows could be imported — see the list below');
+        toast.warning('No rows could be imported - see the list below');
       }
     },
     onError: (e) => toast.error(errText(e, 'Could not import that file')),
@@ -187,7 +187,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
       } else {
         // The expected answer in a one-person company, so it is worded as the
         // rule rather than as a failure.
-        toast.warning('Nothing could be approved by you — another reviewer must');
+        toast.warning('Nothing could be approved by you - another reviewer must');
       }
     },
     onError: (e) => toast.error(errText(e, 'Could not approve these')),
@@ -302,7 +302,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
           {preview ? (
             <div className="mt-3" data-testid="bank-ai-preview">
               <p className="text-[13px] text-muted-foreground">
-                {preview.length} suggested — nothing is saved until you add them
+                {preview.length} suggested - nothing is saved until you add them
                 {bare ? ', and AI can be wrong, so read each one. They are saved as drafts.' : '.'}
               </p>
               <ul className="mt-2 flex flex-col gap-2">
@@ -353,8 +353,8 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
           </div>
           <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
             One question per row. The <span className="font-medium">Correct</span> column takes a
-            letter (A–D), a number (1–4) or the option&apos;s own text. Difficulty, Language and
-            Competency are optional — rows that leave them blank use the choices{' '}
+            letter (A-D), a number (1-4) or the option&apos;s own text. Difficulty, Language and
+            Competency are optional - rows that leave them blank use the choices{' '}
             {bare ? 'below' : 'above'}, so an exam sheet you already have will import as it is.
           </p>
           {bare ? (
@@ -445,7 +445,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
                 ))}
               </ul>
               <p className="mt-1.5 text-[12px] text-muted-foreground">
-                Everything else was imported. Fix these rows and import the file again — a question
+                Everything else was imported. Fix these rows and import the file again - a question
                 already in this bank is skipped rather than added twice, so re-importing the whole
                 file is safe.
               </p>
@@ -461,7 +461,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
           <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
             A question can only go into an exam once it is approved, and{' '}
             <span className="font-medium">someone other than its author must approve it</span>.
-            These two buttons do that in one request instead of one per question — they do not skip
+            These two buttons do that in one request instead of one per question - they do not skip
             it. If you wrote or imported these questions, the approve button will tell you it
             approved nothing.
           </p>
@@ -511,7 +511,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
                   {bulk.result.acted === 0 && bulk.what === 'approved' ? (
                     <p className="mt-1.5 text-[12px] leading-relaxed text-muted-foreground">
                       Nothing was approved. Ask another HR manager, or your company&apos;s super
-                      admin, to review these — that second pair of eyes is the point of the rule,
+                      admin, to review these - that second pair of eyes is the point of the rule,
                       not an obstacle to it.
                     </p>
                   ) : null}

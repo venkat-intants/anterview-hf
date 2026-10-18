@@ -389,7 +389,7 @@ def test_the_locator_drops_a_page_number_a_docx_does_not_have() -> None:
 def test_a_fenced_passage_is_labelled_data_and_closes_its_own_fence() -> None:
     fenced = _fenced_passage("P1", "Employee handbook", 2, 7, "Thirty days notice.")
 
-    assert fenced.startswith("<<<PASSAGE P1 · Employee handbook v2 · page 7 — ")
+    assert fenced.startswith("<<<PASSAGE P1 · Employee handbook v2 · page 7 - ")
     assert _CORPUS_FENCE_TAG in fenced
     assert fenced.endswith("<<<END PASSAGE P1>>>")
     assert "Thirty days notice." in fenced

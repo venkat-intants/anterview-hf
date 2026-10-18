@@ -145,7 +145,7 @@ async def _check_gemini() -> dict[str, Any]:
             usage = data.get("usageMetadata", {})
             return {
                 "ok": False,
-                "error": "MAX_TOKENS — model used all output budget on thoughts",
+                "error": "MAX_TOKENS - model used all output budget on thoughts",
                 "thoughtsTokens": usage.get("thoughtsTokenCount"),
                 "candidatesTokens": usage.get("candidatesTokenCount"),
                 "hint": "Increase gemini_max_tokens (current: "
@@ -228,7 +228,7 @@ async def _check_groq() -> dict[str, Any]:
                 }
             return {
                 "ok": False,
-                "error": "HTTP 403 — not a model-permission error",
+                "error": "HTTP 403 - not a model-permission error",
                 "model": settings.groq_model,
                 "hint": "check for an edge/WAF block on the caller before suspecting the key",
             }

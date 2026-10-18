@@ -409,7 +409,7 @@ beforeEach(() => {
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
-describe('HRAnalyticsPage — the funnel', () => {
+describe('HRAnalyticsPage - the funnel', () => {
   it('renders a rate with its own numerator and denominator, never over 100%', async () => {
     renderPage();
 
@@ -479,7 +479,7 @@ describe('HRAnalyticsPage — the funnel', () => {
   });
 });
 
-describe('HRAnalyticsPage — suppression', () => {
+describe('HRAnalyticsPage - suppression', () => {
   it('shows "too few to compare" for a suppressed check-in outcome, with n visible', async () => {
     renderPage();
 
@@ -496,7 +496,7 @@ describe('HRAnalyticsPage — suppression', () => {
     expect(screen.getByRole('button', { name: '4' })).toBeInTheDocument();
     // ...but retention_90d's numerator (who "retained") is never a button —
     // it renders null as a plain em dash, never a named list.
-    expect(screen.queryByRole('button', { name: '—' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '-' })).not.toBeInTheDocument();
     // A null value (check-in metric) never appears anywhere, tooltip included.
     expect(screen.queryByTitle(/%/)).not.toBeInTheDocument();
   });
@@ -545,7 +545,7 @@ describe('HRAnalyticsPage — suppression', () => {
   });
 });
 
-describe('HRAnalyticsPage — group comparison', () => {
+describe('HRAnalyticsPage - group comparison', () => {
   it('shows "Unknown / untracked" as a normal row, never hidden', async () => {
     getAnalyticsFunnel.mockImplementation((opts: { cohort?: string; group_by?: string } = {}) =>
       Promise.resolve(
@@ -575,7 +575,7 @@ describe('HRAnalyticsPage — group comparison', () => {
   });
 });
 
-describe('HRAnalyticsPage — cohort switch', () => {
+describe('HRAnalyticsPage - cohort switch', () => {
   it('refetches the funnel with the newly selected cohort basis', async () => {
     renderPage();
     await screen.findByText('12.5%');
@@ -600,7 +600,7 @@ describe('HRAnalyticsPage — cohort switch', () => {
   });
 });
 
-describe('HRAnalyticsPage — "How is this calculated?"', () => {
+describe('HRAnalyticsPage - "How is this calculated?"', () => {
   it('shows the metric@version, formula and change note', async () => {
     renderPage();
     await screen.findByText('12.5%');
@@ -625,7 +625,7 @@ describe('HRAnalyticsPage — "How is this calculated?"', () => {
     expect(within(dialog).getByText(/registry abc123def4/)).toBeInTheDocument();
   });
 
-  it('focuses inside the dialog on open and closes on Escape (code review — accessibility)', async () => {
+  it('focuses inside the dialog on open and closes on Escape (code review - accessibility)', async () => {
     renderPage();
     await screen.findByText('12.5%');
 
@@ -640,7 +640,7 @@ describe('HRAnalyticsPage — "How is this calculated?"', () => {
   });
 });
 
-describe('HRAnalyticsPage — definition versioning', () => {
+describe('HRAnalyticsPage - definition versioning', () => {
   it('renders only the current version once a metric has two on file, in the glossary and its dialog', async () => {
     const applicationsV1 = DEFINITIONS.metrics.find((m) => m.name === 'applications');
     if (!applicationsV1) throw new Error('fixture missing "applications"');
@@ -651,7 +651,7 @@ describe('HRAnalyticsPage — definition versioning', () => {
           ...applicationsV1,
           version: 1,
           current: false,
-          description: 'SUPERSEDED — the old, pre-v2 wording.',
+          description: 'SUPERSEDED - the old, pre-v2 wording.',
           formula: 'count(applied) [v1, superseded]',
         },
         {
@@ -690,7 +690,7 @@ describe('HRAnalyticsPage — definition versioning', () => {
   });
 });
 
-describe('HRAnalyticsPage — drill-down', () => {
+describe('HRAnalyticsPage - drill-down', () => {
   it('opens the members list and shows the truncation notice', async () => {
     renderPage();
     const hiresCount = await screen.findByText('37');
@@ -715,7 +715,7 @@ describe('HRAnalyticsPage — drill-down', () => {
     expect(await screen.findByText('drawer ap-1')).toBeInTheDocument();
   });
 
-  it('focuses inside the drill-down on open and closes on Escape (code review — accessibility)', async () => {
+  it('focuses inside the drill-down on open and closes on Escape (code review - accessibility)', async () => {
     renderPage();
     const hiresCount = await screen.findByText('37');
     const user = userEvent.setup();
@@ -729,7 +729,7 @@ describe('HRAnalyticsPage — drill-down', () => {
   });
 });
 
-describe('HRAnalyticsPage — quality of hire', () => {
+describe('HRAnalyticsPage - quality of hire', () => {
   it('shows the persistent quality-signals banner, distinct from pipeline numbers', async () => {
     renderPage();
 
@@ -749,8 +749,8 @@ describe('HRAnalyticsPage — quality of hire', () => {
   });
 });
 
-describe('HRAnalyticsPage — check-ins due', () => {
-  it('lists each row — name, opening, started, days since start', async () => {
+describe('HRAnalyticsPage - check-ins due', () => {
+  it('lists each row - name, opening, started, days since start', async () => {
     listCheckinsDue.mockResolvedValue([
       {
         enrolment_id: 'en-1',
@@ -798,7 +798,7 @@ describe('HRAnalyticsPage — check-ins due', () => {
   });
 });
 
-describe('HRAnalyticsPage — the drillable flag controls clickability', () => {
+describe('HRAnalyticsPage - the drillable flag controls clickability', () => {
   it('renders a part as plain text (not a button) once the definition says it is not drillable', async () => {
     const restricted: MetricDefinitionsResponse = {
       ...DEFINITIONS,
@@ -847,7 +847,7 @@ describe('HRAnalyticsPage — the drillable flag controls clickability', () => {
   });
 });
 
-describe('HRAnalyticsPage — role gating (super_admin sees definitions only)', () => {
+describe('HRAnalyticsPage - role gating (super_admin sees definitions only)', () => {
   it('shows the metric glossary but never calls the funnel endpoint', async () => {
     mockUseAuth.mockReturnValue({ user: { user_id: 'u-2', roles: ['super_admin'] } });
     renderPage();

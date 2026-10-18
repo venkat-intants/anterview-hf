@@ -345,5 +345,5 @@ def test_every_origin_the_service_can_write_is_allowed_by_the_model() -> None:
     service_src = (APP / "question_banks.py").read_text(encoding="utf-8")
     written = set(re.findall(r'origin="([a-z_]+)"', service_src))
     written |= set(re.findall(r'origin: str = "([a-z_]+)"', service_src))
-    assert written, "no origin writes found — has the keyword changed?"
+    assert written, "no origin writes found - has the keyword changed?"
     assert written <= allowed, f"service writes origins the model refuses: {written - allowed}"

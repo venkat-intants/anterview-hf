@@ -1,6 +1,6 @@
 import type { Shot } from '../components/ShotFrame'
 import {
-  GraduationCap, Building2, Landmark,
+  Building2, Briefcase, ClipboardCheck,
   ShieldCheck, UserCheck, Eraser, Building,
   type LucideIcon,
 } from 'lucide-react'
@@ -12,8 +12,8 @@ export const mailto = (subject: string) => `mailto:${CONTACT_EMAIL}?subject=${en
 
 export const NAV_LINKS = [
   { href: '#how', label: 'How it works' },
+  { href: '#audience', label: 'For hiring teams' },
   { href: '#candidates', label: 'For candidates' },
-  { href: '#audience', label: 'For institutions' },
   { href: '#languages', label: 'Languages' },
   { href: '#faq', label: 'FAQ' },
 ]
@@ -28,17 +28,17 @@ export const NAV_LINKS = [
 // the per-session cost) are deliberately absent: the last is an internal margin.
 
 export const PROOF = [
-  { value: '3', label: 'languages today: English, Hindi and Telugu' },
-  { value: '6', label: 'AI interviewers to choose from' },
-  { value: 'Voice', label: 'first: talk, don’t type' },
-  { value: 'PDF', label: 'scorecard after every interview' },
+  { value: '6', label: 'round types: exams, coding, AI and human interviews, tasks and portfolios' },
+  { value: '3', label: 'interview languages: English, Hindi and Telugu' },
+  { value: '6', label: 'AI interviewers candidates can choose from' },
+  { value: 'PDF', label: 'scorecard for every interview' },
 ]
 
 // Real screenshots of the app in demo mode (invented data), captured at 2x and
 // stored as WebP under /public/landing as a light and a dark twin. Sizes are the
 // files' intrinsic pixels, so the <img> reserves its space and nothing shifts.
 export const SHOTS: Record<'roles' | 'devices' | 'score' | 'history', Shot> = {
-  roles: { stem: 'roles', width: 1400, height: 447, alt: 'The practice roles page in AntHire: filters for level and language above role cards such as Junior Java Developer and Sales Associate, each with a Start Interview button.' },
+  roles: { stem: 'roles', width: 1400, height: 447, alt: 'The roles page in AntHire: filters for level and language above role cards such as Junior Java Developer and Sales Associate, each with a Start Interview button.' },
   devices: { stem: 'devices', width: 688, height: 1782, alt: 'The microphone and device check before an interview: microphone, connection and browser each marked Ready, a consent note, and the chosen role, level, language and interviewer.' },
   score: { stem: 'score', width: 1400, height: 1150, alt: 'A scorecard: an overall score of 71 out of 100, a radar chart, a score for each competency, key strengths and areas for improvement.' },
   history: { stem: 'history', width: 1400, height: 367, alt: 'Interview history: a table of past sessions with the role, the interview language, the status, the duration and a link to each scorecard.' },
@@ -46,30 +46,30 @@ export const SHOTS: Record<'roles' | 'devices' | 'score' | 'history', Shot> = {
 
 export const WALKTHROUGH: { title: string; desc: string; shot: keyof typeof SHOTS; maxWidth: number }[] = [
   {
-    title: 'Pick a role and an interviewer',
-    desc: 'Choose the job you are preparing for. AntHire builds the questions and the scoring rubric around it. Then pick one of six interviewers and the language you want to speak.',
+    title: 'Candidates choose how to interview',
+    desc: 'AntHire builds the interview questions and the scoring rubric around each role. Candidates pick one of six interviewers and the language they want to speak.',
     shot: 'roles',
     maxWidth: 760,
   },
   {
-    title: 'Talk it through',
-    desc: 'Check your microphone, give consent, then have a real conversation out loud. The interviewer listens and asks follow-up questions based on what you actually said.',
+    title: 'Candidates interview out loud',
+    desc: 'After a microphone check and consent, each candidate has a real conversation. The interviewer listens and asks follow-up questions based on what they actually said.',
     shot: 'devices',
     maxWidth: 300,
   },
   {
-    title: 'Get your scorecard',
-    desc: 'See a breakdown by competency, with strengths and gaps, right after the interview. Save it as a PDF, then practise again and see what changes.',
+    title: 'Your team reviews the scorecard',
+    desc: 'Every interview produces a breakdown by competency, with strengths and gaps, ready as a PDF. Your team compares candidates on the same rubric and makes the call.',
     shot: 'score',
     maxWidth: 760,
   },
 ]
 
 export const CANDIDATE_POINTS = [
-  'Practise out loud, in English, Hindi or Telugu',
+  'Interview out loud, in English, Hindi or Telugu',
   'Follow-up questions that react to what you actually said',
-  'A scorecard with strengths and gaps after every session',
-  'Practise again and compare your scorecards',
+  'Take it from any browser, at a time that suits you',
+  'Every hiring decision is made by a person',
 ]
 
 // The six interviewers in services/interview_core/app/avatars.py. Names match
@@ -90,45 +90,45 @@ export const LANGUAGES_LIVE = [
   { native: 'తెలుగు', name: 'Telugu' },
 ]
 
-export type AudienceKey = 'colleges' | 'hr' | 'gov'
+export type AudienceKey = 'growing' | 'talent' | 'managers'
 export const AUDIENCES: Record<AudienceKey, { icon: LucideIcon; title: string; sub: string; cta: string; subject: string; points: string[] }> = {
-  colleges: {
-    icon: GraduationCap,
-    title: 'Colleges and skill universities',
-    sub: 'Give every student a realistic first round before the real ones, in the language they are most at ease in.',
-    cta: 'Talk to us about placements',
-    subject: 'AntHire for colleges and universities',
-    points: [
-      'Voice interviews with no scheduling and no panel to book',
-      'A scorecard for every practice session',
-      'English, Hindi and Telugu today',
-      'Written exams and coding rounds that match the role',
-    ],
-  },
-  hr: {
+  growing: {
     icon: Building2,
-    title: 'Recruitment and L&D teams',
-    sub: 'Run a structured first round for every applicant and review the scorecards before you decide.',
+    title: 'Growing companies',
+    sub: 'Open a role, share the apply link and let a structured first round do the screening, without adding headcount to your hiring team.',
     cta: 'Book a demo',
     subject: 'AntHire demo request',
     points: [
-      'Role-aware questions and scoring rubrics',
-      'An HR workspace for roles, applicants and interviews',
-      'Exams and interviews that assess the same job',
-      'People make the hiring decision; scorecards inform it',
+      'A careers page and an apply link for every opening',
+      'CVs scored against the role, unreadable ones flagged for a person',
+      'Exams, coding rounds and AI voice interviews',
+      'A decision queue that shows who needs your call',
     ],
   },
-  gov: {
-    icon: Landmark,
-    title: 'Government skilling programmes',
-    sub: 'Assess candidates who are more comfortable speaking than typing, in their own language.',
-    cta: 'Talk to us about your programme',
-    subject: 'AntHire for skilling programmes',
+  talent: {
+    icon: Briefcase,
+    title: 'Talent acquisition teams',
+    sub: 'One hiring workflow per role, approved once and run the same way for every applicant.',
+    cta: 'Talk to us about your hiring',
+    subject: 'AntHire for talent acquisition',
     points: [
-      'Voice-first, with nothing to install',
-      'English, Hindi and Telugu today; more Indian languages planned',
-      'Admin analytics for programme owners',
-      'Consent asked for before each interview',
+      'Workflows with rounds, thresholds and approvals',
+      'Human interviews scheduled with kits and scorecards',
+      'Offers and preboarding in the same place',
+      'Analytics across openings, sources and quality of hire',
+    ],
+  },
+  managers: {
+    icon: ClipboardCheck,
+    title: 'Hiring managers and interviewers',
+    sub: 'Review the evidence for each candidate in one place and spend your time on the shortlist.',
+    cta: 'See it in a demo',
+    subject: 'AntHire demo request',
+    points: [
+      'CV, scores and interview results side by side',
+      'Interview kits with what to assess',
+      'Private notes and structured scorecards',
+      'People make the hiring decision; scorecards inform it',
     ],
   },
 }
@@ -142,9 +142,10 @@ export const PRIVACY: { icon: LucideIcon; title: string; desc: string }[] = [
 
 export const FAQS: readonly (readonly [string, string])[] = [
   ['Is it really a conversation, or just recorded questions?', 'It is a conversation. The avatar listens to your answer and asks follow-up questions based on what you said.'],
-  ['Which languages can I interview in?', 'English, Hindi and Telugu today. More Indian languages are planned.'],
-  ['How is my data handled?', 'You are asked for consent before an interview starts, and candidates can ask for their data to be erased. If you are evaluating AntHire for an institution, ask us where data is stored and processed and we will answer in writing.'],
-  ['What does the scorecard show?', 'The interview is scored against a rubric for the role. You see a breakdown by competency with strengths and gaps, and you can download it as a PDF.'],
-  ['Can an institution or company use this for many candidates?', 'AntHire includes an HR workspace and admin analytics for teams running interviews for many candidates. Tell us about your cohort and we will walk you through it.'],
-  ['Do I need to install anything?', 'No. It runs in your browser. You will need a microphone and to allow access when asked.'],
+  ['Which languages can candidates interview in?', 'English, Hindi and Telugu today. More languages are planned.'],
+  ['How is candidate data handled?', 'Candidates are asked for consent before an interview starts and can ask for their data to be erased. Each company only sees its own candidates. If you are evaluating AntHire, ask us where data is stored and processed and we will answer in writing.'],
+  ['What does the scorecard show?', 'Each interview is scored against a rubric for the role: a breakdown by competency with strengths and gaps, downloadable as a PDF.'],
+  ['Does the AI decide who gets hired?', 'No. AntHire screens, assesses and summarises. Every hire or reject decision is made by a person on your team.'],
+  ['Can we run every applicant through it?', 'Yes. Each opening has its own workflow, and every applicant goes through the same rounds. Tell us about your hiring volume and we will walk you through it.'],
+  ['Do candidates need to install anything?', 'No. It runs in the browser. Candidates need a microphone and to allow access when asked.'],
 ]

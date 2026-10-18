@@ -27,7 +27,7 @@ PASS, FAIL = [], []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def main() -> None:  # noqa: PLR0915 — one linear script
@@ -168,7 +168,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
           f"{r.status_code} {r.text[:200]}")
     board = r.json()
     rows = {o["title"]: o for o in board.get("openings", [])}
-    check("it lists this company's open openings only — not closed, not another company's",
+    check("it lists this company's open openings only - not closed, not another company's",
           set(rows) == {"Python Developer", "Data Analyst", "Office Manager", "Designer"},
           str(sorted(rows)))
 

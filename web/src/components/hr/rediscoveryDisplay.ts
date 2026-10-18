@@ -39,7 +39,7 @@ export function freshnessChipLabel(
   freshnessReason?: string,
 ): string {
   const label = freshness ? (FRESHNESS_LABEL[freshness] ?? freshness) : "Can't verify";
-  return freshnessReason ? `${label} — ${freshnessReason}` : label;
+  return freshnessReason ? `${label} - ${freshnessReason}` : label;
 }
 
 export const SIGNAL_LABEL: Record<RediscoverySignal, string> = {
@@ -67,9 +67,9 @@ export function ineligibleReasonLabel(reason: string | undefined): string {
 }
 
 export function fmtDate(iso: string | undefined): string {
-  return iso ? new Date(iso).toLocaleDateString() : '—';
+  return iso ? new Date(iso).toLocaleDateString() : '-';
 }
 
 export function fmtDateTime(iso: string | undefined): string {
-  return iso ? new Date(iso).toLocaleString() : '—';
+  return iso ? new Date(iso).toLocaleString() : '-';
 }

@@ -372,7 +372,7 @@ async def _find_pending_request(
         "Data-principal-initiated right to erasure. Soft-deletes the caller's "
         "own account and sessions, withdraws their live consents, purges "
         "proctoring events immediately, and schedules the full purge 30 days "
-        "out. The account is identified from the access token — this endpoint "
+        "out. The account is identified from the access token - this endpoint "
         "cannot be pointed at anyone else. Idempotent: a second call while a "
         "request is pending returns the existing one with already_pending=true."
     ),
@@ -510,7 +510,7 @@ async def request_own_erasure(
         "Full data purge is scheduled 30 days from the request date. "
         "Idempotency: returns 409 if a pending erasure request already exists "
         "(the self-service path at /users/me/dpdp/delete returns 202 with the "
-        "existing request instead — see the module docstring for why)."
+        "existing request instead - see the module docstring for why)."
     ),
 )
 async def request_erasure(

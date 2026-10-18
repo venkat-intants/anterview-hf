@@ -742,7 +742,7 @@ export default function Profile() {
                     />
                     <FormField label={t('profile.company')}>
                       {({ id }) => (
-                        <Input id={id} value={me.company_name ?? '—'} readOnly aria-readonly="true" className="bg-[var(--ui-inset-soft)] text-[var(--ui-soft)]" />
+                        <Input id={id} value={me.company_name ?? '-'} readOnly aria-readonly="true" className="bg-[var(--ui-inset-soft)] text-[var(--ui-soft)]" />
                       )}
                     </FormField>
                   </>

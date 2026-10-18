@@ -43,7 +43,7 @@ def test_select_persona_deterministic() -> None:
     first = select_persona(session_id)
     for _ in range(10):
         assert select_persona(session_id) == first, (
-            "select_persona is non-deterministic — every call with the "
+            "select_persona is non-deterministic - every call with the "
             "same session_id must return the same persona"
         )
 
@@ -84,11 +84,11 @@ def test_select_persona_uniform_distribution() -> None:
     for persona in PERSONA_ORDER:
         assert counts[persona] >= 200, (
             f"persona {persona!r} only hit {counts[persona]} / {sample_size} "
-            "times — uniform distribution regression. Expected ~250 each."
+            "times - uniform distribution regression. Expected ~250 each."
         )
         assert counts[persona] <= 300, (
             f"persona {persona!r} hit {counts[persona]} / {sample_size} "
-            "times — over-represented. Expected ~250 each."
+            "times - over-represented. Expected ~250 each."
         )
 
     # Totals consistency check — guards against a mutation that
@@ -126,7 +126,7 @@ def test_persona_delta_present_for_all_langs(
     """
     delta = get_persona_delta(persona, language)  # type: ignore[arg-type]
     assert delta, (
-        f"persona={persona!r} language={language!r} has empty delta — "
+        f"persona={persona!r} language={language!r} has empty delta - "
         "renderer would silently drop the persona overlay"
     )
     # Sanity — deltas must be at least 50 chars to carry the four
@@ -165,6 +165,6 @@ def test_get_persona_delta_unknown_language_falls_back_to_en() -> None:
     # not registered. Cast through Any to satisfy mypy strict on the test.
     bn_delta = get_persona_delta("warm_screener", "bn")  # type: ignore[arg-type]
     assert bn_delta == en_delta, (
-        "Unknown language did not fall back to EN — a Bengali session "
+        "Unknown language did not fall back to EN - a Bengali session "
         "would 500 once Bengali base prompt ships but personas don't yet"
     )

@@ -302,7 +302,7 @@ function DialogBody({
                   inputMode="numeric"
                   min={1}
                   max={10000}
-                  placeholder="—"
+                  placeholder="-"
                   className={FIELD}
                   {...described('target')}
                   {...register('target')}
@@ -434,7 +434,7 @@ function DialogBody({
                         }, ${v.budgetPeriod ? PERIOD_WORD[v.budgetPeriod].toLowerCase() : ''}`
                       : ''
                   }
-                  empty="Not set — add it in Setup"
+                  empty="Not set - add it in Setup"
                 />
               </dl>
               <p className="rounded-[12px] bg-[var(--ui-inset-soft)] px-3.5 py-3 text-[13px] leading-relaxed text-muted-foreground">
@@ -479,7 +479,7 @@ function DialogBody({
 function Fact({
   label,
   value,
-  empty = '—',
+  empty = '-',
 }: {
   label: string;
   value: string;

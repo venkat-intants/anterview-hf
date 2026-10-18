@@ -184,7 +184,7 @@ function CriteriaTable({
     <GlassCard className="p-4">
       <h3 className="text-[14px] font-semibold text-foreground">Criteria</h3>
       <p className="mt-1 text-[12px] text-muted-foreground">
-        The panel&apos;s own distribution on each frozen criterion — never an interviewer&apos;s
+        The panel&apos;s own distribution on each frozen criterion - never an interviewer&apos;s
         figure.
       </p>
       <div className="mt-3 overflow-x-auto">
@@ -193,7 +193,7 @@ function CriteriaTable({
             <tr className="border-b border-border">
               <th className="py-2 pr-3 font-medium text-muted-foreground">Criterion</th>
               <th className="py-2 pr-3 font-medium text-muted-foreground">Round</th>
-              <th className="py-2 pr-3 font-medium text-muted-foreground">Distribution (1–5)</th>
+              <th className="py-2 pr-3 font-medium text-muted-foreground">Distribution (1-5)</th>
               <th className="py-2 pr-3 font-medium text-muted-foreground">Mean</th>
               <th className="py-2 pr-3 font-medium text-muted-foreground">Disagreement</th>
             </tr>
@@ -203,7 +203,7 @@ function CriteriaTable({
               <tr key={c.criterion_key} className="border-b border-border last:border-0 align-top">
                 <td className="py-2 pr-3 text-foreground">{c.competency_name}</td>
                 <td className="py-2 pr-3 text-muted-foreground">
-                  {c.round_title ?? '—'}
+                  {c.round_title ?? '-'}
                   {c.workflow_version ? ` (v${c.workflow_version})` : ''}
                 </td>
                 {c.suppressed ? (
@@ -221,10 +221,10 @@ function CriteriaTable({
                         ))}
                       </div>
                     </td>
-                    <td className="py-2 pr-3 text-foreground">{c.mean ?? '—'}</td>
+                    <td className="py-2 pr-3 text-foreground">{c.mean ?? '-'}</td>
                     <td className="py-2 pr-3">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-foreground">{c.disagreement ?? '—'}</span>
+                        <span className="text-foreground">{c.disagreement ?? '-'}</span>
                         {c.signal === 'wide_disagreement' ? (
                           <StatusTag tone="amber">wide disagreement</StatusTag>
                         ) : null}
@@ -296,7 +296,7 @@ function CalibrationRowCard({
         </div>
         <div>
           <dt className="text-muted-foreground">Average of everything scored</dt>
-          <dd className="text-foreground">{row.mean ?? '—'}</dd>
+          <dd className="text-foreground">{row.mean ?? '-'}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Shared judgements</dt>
@@ -305,7 +305,7 @@ function CalibrationRowCard({
         <div>
           <dt className="text-muted-foreground">vs panel (paired)</dt>
           <dd className="text-foreground">
-            {row.mean_delta === null ? '—' : signed(row.mean_delta)}
+            {row.mean_delta === null ? '-' : signed(row.mean_delta)}
           </dd>
         </div>
       </dl>

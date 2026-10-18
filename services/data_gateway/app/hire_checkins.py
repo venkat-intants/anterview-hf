@@ -378,7 +378,7 @@ async def _assert_within_window(
     if employment == "employed" and days < DUE_AFTER_DAYS:
         raise CheckinError(
             409, f"This hire started on {start.date().isoformat()}, {days} day(s) ago. "
-                 f"'employed' can only be recorded from day {DUE_AFTER_DAYS} onward — "
+                 f"'employed' can only be recorded from day {DUE_AFTER_DAYS} onward - "
                  "record 'left' at any time up to day 180."
         )
 

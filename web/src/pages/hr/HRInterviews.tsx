@@ -174,7 +174,7 @@ function InviteRow({
               minute: '2-digit',
             })
           ) : (
-            <span className="text-muted-foreground">—</span>
+            <span className="text-muted-foreground">-</span>
           )}
         </div>
 
@@ -403,7 +403,7 @@ export default function HRInterviews() {
       await navigator.clipboard.writeText(link);
       toast.success('Link copied');
     } catch {
-      toast.error('Could not copy — select and copy manually.');
+      toast.error('Could not copy - select and copy manually.');
     }
   }
 
@@ -441,7 +441,7 @@ export default function HRInterviews() {
     <Page width="default">
       <PageHeader
         title="Interviews"
-        description="Invite shortlisted or exam-passed applicants to a voice interview with the AI avatar. Share the private link — they need no account."
+        description="Invite shortlisted or exam-passed applicants to a voice interview with the AI avatar. Share the private link - they need no account."
       />
 
       {/* Invite form */}
@@ -461,7 +461,7 @@ export default function HRInterviews() {
               <option value="">Select an eligible applicant…</option>
               {elig.map((a) => (
                 <option key={keyOf(a)} value={keyOf(a)}>
-                  {a.full_name} — {a.passed_exam ? 'exam passed' : 'shortlisted'}
+                  {a.full_name} - {a.passed_exam ? 'exam passed' : 'shortlisted'}
                   {a.has_active_invite ? ' (already invited)' : ''}
                   {a.opening_title ? ` · for ${a.opening_title}` : ''}
                 </option>
@@ -493,13 +493,13 @@ export default function HRInterviews() {
           <p className="text-[12.5px] leading-relaxed text-muted-foreground">
             <strong className="font-semibold text-foreground">Audio only</strong> drops the
             video avatar and runs the interview as voice. It costs less per minute and holds
-            up better on a weak connection — the questions, scoring and scorecard are
+            up better on a weak connection - the questions, scoring and scorecard are
             identical either way.
           </p>
 
           <label className="block text-sm">
             <span className="mb-1 block text-[13px] font-semibold text-foreground">
-              Schedule (optional — link works any time before expiry)
+              Schedule (optional - link works any time before expiry)
             </span>
             <input
               type="datetime-local"
@@ -530,7 +530,7 @@ export default function HRInterviews() {
               role="alert"
             >
               <p className="text-[13px] font-semibold text-[var(--ui-ok)]">
-                Share this link with the candidate — copy it now (shown once):
+                Share this link with the candidate - copy it now (shown once):
               </p>
               <div className="flex items-center gap-2">
                 <input

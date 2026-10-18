@@ -125,7 +125,7 @@ describe('the openings list shows real setup state', () => {
     ]);
     wrap(<Requisitions />);
     const [row] = await screen.findAllByTestId('opening-row');
-    const next = within(row).getByText(/closing date passed: 3 still in progress — close it once they finish/i);
+    const next = within(row).getByText(/closing date passed: 3 still in progress - close it once they finish/i);
     expect(next.closest('a')?.getAttribute('href')).toBe('/hr/requisitions/z?tab=pipeline');
   });
 

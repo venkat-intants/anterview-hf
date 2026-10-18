@@ -828,7 +828,7 @@ async def evidence_for_attempt(
                 "jaccard": float(s["jaccard"]), "shared_fingerprints": s["shared_fingerprints"],
                 "tokens_low": s["tokens_low"], "tokens_high": s["tokens_high"],
                 "algorithm_version": s["algorithm_version"], "created_at": s["created_at"].isoformat(),
-                "caption": "Automated, unreviewed — similar code is not evidence of "
+                "caption": "Automated, unreviewed - similar code is not evidence of "
                            "misconduct on its own. Many candidates independently using the "
                            "same tools or references can look alike.",
             }
@@ -962,7 +962,7 @@ async def compare_view(
                  # "there is nothing here".
                  "regions_unavailable": bool(not high_is_reference and not high_bounds)},
         "matched_regions": matched,
-        "caption": "Automated, unreviewed — similar code is not evidence of misconduct "
+        "caption": "Automated, unreviewed - similar code is not evidence of misconduct "
                    "on its own.",
     }
 
@@ -1220,7 +1220,7 @@ async def record_finding(
         )
         raise CodeEvidenceError(
             409,
-            "That finding could not be recorded — its attempt, question, signal or superseded "
+            "That finding could not be recorded - its attempt, question, signal or superseded "
             "finding no longer match.",
         ) from exc
 

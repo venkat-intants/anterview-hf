@@ -64,7 +64,7 @@ const CHART_TICKS = { fill: AXIS_STYLE.stroke, fontSize: 12 } as const;
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function fmtScore(v: number | null): string {
-  if (v === null) return '—';
+  if (v === null) return '-';
   return v.toFixed(2);
 }
 
@@ -73,7 +73,7 @@ function fmtPct(fraction: number): string {
 }
 
 function fmtDurationSecs(seconds: number | null): string {
-  if (seconds === null) return '—';
+  if (seconds === null) return '-';
   return formatDuration(Math.round(seconds));
 }
 

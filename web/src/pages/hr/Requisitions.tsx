@@ -140,7 +140,7 @@ function DotLegend(): JSX.Element {
     { state: 'done', text: 'confirmed' },
     { state: 'waiting', text: 'waiting on someone else' },
     { state: 'open', text: 'not done' },
-    { state: 'unknown', text: 'open to check — the list cannot confirm it (the server did not say)' },
+    { state: 'unknown', text: 'open to check - the list cannot confirm it (the server did not say)' },
     { state: 'optional', text: 'optional' },
   ];
   return (
@@ -395,7 +395,7 @@ export default function Requisitions(): JSX.Element {
         >
           <AlertTriangle className="h-4 w-4 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
           <span className="flex-1">
-            {pending} thing{pending === 1 ? '' : 's'} to confirm from your imported data — openings
+            {pending} thing{pending === 1 ? '' : 's'} to confirm from your imported data - openings
             that were grouped by job title, and people who may be duplicated.
           </span>
           <ChevronRight className="h-4 w-4 shrink-0" aria-hidden="true" />

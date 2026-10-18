@@ -286,7 +286,7 @@ const MOCK_INTERVIEW_DETAIL: InterviewDetailResponse = {
     problem_solving: 8.0,
     confidence: 7.75,
     strengths: [
-      'Articulate communicator — uses concrete examples effectively',
+      'Articulate communicator - uses concrete examples effectively',
       'Strong grasp of Java OOP fundamentals',
       'Structured problem-solving approach',
     ],
@@ -297,7 +297,7 @@ const MOCK_INTERVIEW_DETAIL: InterviewDetailResponse = {
       },
       {
         area: 'Confidence',
-        suggestion: 'Speaking pace slowed under pressure — practise timed responses.',
+        suggestion: 'Speaking pace slowed under pressure - practise timed responses.',
       },
     ],
     summary:

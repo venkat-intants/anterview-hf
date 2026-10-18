@@ -25,7 +25,7 @@ export default function ResetPassword() {
   const mutation = useMutation({
     mutationFn: () => resetPassword(token, pw),
     onSuccess: () => {
-      toast.success('Password updated — please sign in.');
+      toast.success('Password updated - please sign in.');
       void navigate('/login', { replace: true });
     },
     onError: (err: unknown) => {

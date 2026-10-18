@@ -191,11 +191,11 @@ function AutoShortlistToggle({
         <div className="text-[13px] text-foreground">Shortlist without my confirmation</div>
         <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
           {!hasBar
-            ? 'Set an ATS score of at least 1 above first — without one, every applicant would be shortlisted.'
+            ? 'Set an ATS score of at least 1 above first - without one, every applicant would be shortlisted.'
             : !autoAssign
-              ? 'Turn on “Send the first round automatically” first — otherwise applicants would be shortlisted and then left with nothing started.'
+              ? 'Turn on “Send the first round automatically” first - otherwise applicants would be shortlisted and then left with nothing started.'
               : on
-              ? `Applicants who applied through your careers page, scored ${bar * 10}/100 or higher and confirmed their email start round one with no one confirming them. Everyone else — below the bar, uploaded by HR, or not yet confirmed — stays in your queue. The final decision is still yours.`
+              ? `Applicants who applied through your careers page, scored ${bar * 10}/100 or higher and confirmed their email start round one with no one confirming them. Everyone else - below the bar, uploaded by HR, or not yet confirmed - stays in your queue. The final decision is still yours.`
               : 'Off: you confirm every shortlist. Turn on to let applicants above the bar start on their own.'}
         </div>
         {on && (
@@ -312,7 +312,7 @@ function SettingsPanel({
           SLA live here rather than in a round's inspector. Editable on a live
           version too — see StageSettings. */}
       <div className="border-t border-border pt-4">
-        <h3 className="mb-2 text-[13px] text-foreground">Final decision — owner &amp; SLA</h3>
+        <h3 className="mb-2 text-[13px] text-foreground">Final decision - owner &amp; SLA</h3>
         <StageSettings workflowId={workflow.id} roundId={null} label="the final decision" />
       </div>
     </div>
@@ -378,7 +378,7 @@ function EmptyState({
                     {i + 1}. {ROUND_KIND_META[r.kind].label}
                   </span>
                   {r.competencies.length > 0 ? (
-                    <span className="text-[var(--ui-faint)]"> — {r.competencies.join(', ')}</span>
+                    <span className="text-[var(--ui-faint)]"> - {r.competencies.join(', ')}</span>
                   ) : null}
                 </li>
               ))}
@@ -602,13 +602,13 @@ export default function WorkflowBuilder(): JSX.Element {
       const deferred = res.auto_shortlist_deferred ?? 0;
       toast.success(
         attached > 0
-          ? `Version ${res.version} is live — ${attached} waiting candidate${attached === 1 ? '' : 's'} joined${started > 0 ? `, ${started} started round 1` : ''}`
+          ? `Version ${res.version} is live - ${attached} waiting candidate${attached === 1 ? '' : 's'} joined${started > 0 ? `, ${started} started round 1` : ''}`
           : `Version ${res.version} is live`,
       );
       if (deferred > 0) {
         // Not an error: they are in the shortlist queue, as on a manual version.
         toast.info(
-          `${deferred} more waiting candidate${deferred === 1 ? ' was' : 's were'} not checked for automatic shortlisting at publish — review them in the shortlist queue.`,
+          `${deferred} more waiting candidate${deferred === 1 ? ' was' : 's were'} not checked for automatic shortlisting at publish - review them in the shortlist queue.`,
         );
       }
     },
@@ -627,7 +627,7 @@ export default function WorkflowBuilder(): JSX.Element {
       setActiveId(draft.id);
       applyWorkflow(draft);
       toast.success(
-        `Editing as version ${draft.version} — version ${draft.version - 1} stays live`,
+        `Editing as version ${draft.version} - version ${draft.version - 1} stays live`,
       );
     },
     onError: (e) => toast.error(errText(e, 'Could not open a new version')),
@@ -1046,7 +1046,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     ? 'An archived version, kept because candidates finished under it.'
                     : workflow.review_status === 'in_review'
                       ? 'This version is waiting for review, so it is locked. Withdraw it from review (Review and dry-run details) to make changes.'
-                      : 'This version has been approved, so it is locked. Reopen it (Review and dry-run details) to make changes — it will need approving again.'}
+                      : 'This version has been approved, so it is locked. Reopen it (Review and dry-run details) to make changes - it will need approving again.'}
               </Well>
             ) : null}
 

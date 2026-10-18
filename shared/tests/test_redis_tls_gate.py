@@ -124,6 +124,6 @@ def test_every_service_wires_the_gate() -> None:
             missing.append(svc)
 
     assert not missing, (
-        "these services would boot with a plaintext Redis — no validate_redis_tls "
+        "these services would boot with a plaintext Redis - no validate_redis_tls "
         f"call in the validator that enforces the database gate: {missing}"
     )

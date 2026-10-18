@@ -59,7 +59,7 @@ class Result:
     def one(self) -> Any:
         if not self._rows:
             raise AssertionError(
-                "one() on an empty result — the test's route table has no row for this statement"
+                "one() on an empty result - the test's route table has no row for this statement"
             )
         return self._rows[0]
 
@@ -138,7 +138,7 @@ class FakeSession:
     async def commit(self) -> None:
         if not self.allow_commit:
             raise AssertionError(
-                "app/corpus.py's contract is that the CALLER commits — this function did"
+                "app/corpus.py's contract is that the CALLER commits - this function did"
             )
         self.commits += 1
         self.timeline.append("COMMIT")

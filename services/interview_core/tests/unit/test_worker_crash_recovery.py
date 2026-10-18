@@ -596,7 +596,7 @@ async def test_reaper_keeps_the_checkpoint_when_the_db_will_not_answer() -> None
     assert reaped == []
     update.assert_not_awaited()
     assert wk._checkpoint_key(_SESSION_ID) in client.store, (
-        "the checkpoint must survive for the next sweep — deleting it here would "
+        "the checkpoint must survive for the next sweep - deleting it here would "
         "lose the transcript to a transient DB error"
     )
 

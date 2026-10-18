@@ -126,7 +126,7 @@ afterEach(() => {
   window.location.hash = '';
 });
 
-describe('PublicOffer — the link itself', () => {
+describe('PublicOffer - the link itself', () => {
   it('reads the token from the URL fragment and strips it from the address bar', async () => {
     renderPage();
     await screen.findByText('Backend Engineer');
@@ -160,7 +160,7 @@ describe('PublicOffer — the link itself', () => {
   });
 });
 
-describe('PublicOffer — a sent offer', () => {
+describe('PublicOffer - a sent offer', () => {
   it('shows the job, company and compensation', async () => {
     renderPage();
     await screen.findByText('Backend Engineer');
@@ -238,7 +238,7 @@ describe('PublicOffer — a sent offer', () => {
     const user = userEvent.setup();
     requestOfferCode.mockRejectedValue(
       new ApiError(
-        'Too many wrong codes. For your security this offer is locked — please ask the hiring team to send it to you again.',
+        'Too many wrong codes. For your security this offer is locked - please ask the hiring team to send it to you again.',
         423,
       ),
     );
@@ -256,7 +256,7 @@ describe('PublicOffer — a sent offer', () => {
   });
 });
 
-describe('PublicOffer — terminal states', () => {
+describe('PublicOffer - terminal states', () => {
   it('shows an expired offer as expired, not as an invalid link', async () => {
     viewOffer.mockResolvedValue({ ...SENT, status: 'expired' });
     renderPage();
@@ -278,7 +278,7 @@ describe('PublicOffer — terminal states', () => {
   });
 });
 
-describe('PublicOffer — documents, once accepted', () => {
+describe('PublicOffer - documents, once accepted', () => {
   beforeEach(() => {
     viewOffer.mockResolvedValue(ACCEPTED);
   });
@@ -531,7 +531,7 @@ describe('PublicOffer — documents, once accepted', () => {
 });
 
 // UX round 3 — the offer's three steps, driven by what the server holds.
-describe('PublicOffer — the three steps', () => {
+describe('PublicOffer - the three steps', () => {
   const current = () => {
     const nav = screen.getByRole('navigation', { name: 'Offer progress' });
     const item = nav.querySelector('li[aria-current="step"]');
@@ -579,7 +579,7 @@ describe('PublicOffer — the three steps', () => {
   });
 });
 
-describe('PublicOffer — joining documents in words', () => {
+describe('PublicOffer - joining documents in words', () => {
   async function openChecklist(checklist: PublicDocumentsChecklist) {
     viewOffer.mockResolvedValue(ACCEPTED);
     requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });

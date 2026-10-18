@@ -128,7 +128,7 @@ beforeEach(() => {
   listRequisitions.mockResolvedValue([]);
 });
 
-describe('HRConsole — the public careers link', () => {
+describe('HRConsole - the public careers link', () => {
   it('shows the board address, which appeared nowhere in this console before', async () => {
     // THE TEST THAT WOULD HAVE FAILED BEFORE THIS CHANGE, and the reason the card
     // exists. Candidates apply with no login at /careers/<slug>; the address was on
@@ -171,7 +171,7 @@ describe('HRConsole — the public careers link', () => {
   });
 });
 
-describe('HRConsole — greeting', () => {
+describe('HRConsole - greeting', () => {
   it('greets the signed-in manager by name once the profile loads', async () => {
     renderConsole();
     expect(
@@ -186,7 +186,7 @@ describe('HRConsole — greeting', () => {
   });
 });
 
-describe('HRConsole — funnel strip', () => {
+describe('HRConsole - funnel strip', () => {
   it('labels every stage of the ATS → exam → interview funnel', async () => {
     renderConsole();
     await screen.findByRole('heading', { name: /welcome/i });
@@ -219,7 +219,7 @@ describe('HRConsole — funnel strip', () => {
   });
 });
 
-describe('HRConsole — activity feed', () => {
+describe('HRConsole - activity feed', () => {
   it('renders each notification as an activity entry with a relative time', async () => {
     renderConsole();
 
@@ -249,7 +249,7 @@ describe('HRConsole — activity feed', () => {
   });
 });
 
-describe('HRConsole — stages at risk (PH4-O1)', () => {
+describe('HRConsole - stages at risk (PH4-O1)', () => {
   it('says nothing is overdue when the board is clear', async () => {
     renderConsole();
     await screen.findByRole('heading', { name: /welcome/i });
@@ -272,7 +272,7 @@ describe('HRConsole — stages at risk (PH4-O1)', () => {
     await screen.findByRole('heading', { name: /welcome/i });
 
     expect(
-      await screen.findByRole('button', { name: /Chetan Iyer — Fundamentals.*overdue/s }),
+      await screen.findByRole('button', { name: /Chetan Iyer - Fundamentals.*overdue/s }),
     ).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'View the full list' })).toHaveAttribute(
       'href',
@@ -282,7 +282,7 @@ describe('HRConsole — stages at risk (PH4-O1)', () => {
   });
 });
 
-describe('HRConsole — shortcuts', () => {
+describe('HRConsole - shortcuts', () => {
   it('links each shortcut to its console route', async () => {
     renderConsole();
     await screen.findByRole('heading', { name: /welcome/i });
@@ -316,7 +316,7 @@ const WATCHER_FINDING = {
   created_at: new Date(Date.now() - 3_600_000).toISOString(),
 };
 
-describe('HRConsole activity feed — events, not conditions', () => {
+describe('HRConsole activity feed - events, not conditions', () => {
   it('does not repeat a watcher finding the Attention panel owns', async () => {
     listNotifications.mockResolvedValue({
       unread_count: 2,
@@ -352,7 +352,7 @@ describe('HRConsole activity feed — events, not conditions', () => {
   });
 });
 
-describe('HRConsole activity feed — does not overwrite the bell', () => {
+describe('HRConsole activity feed - does not overwrite the bell', () => {
   it("leaves the bell's 30-item list in the cache when it fetches its own 8", async () => {
     // The feed and the bell used to share the exact key ['notifications'] with
     // different limits, so whichever fetched last owned the cache and the bell
@@ -399,7 +399,7 @@ function opening(over: Partial<Requisition>): Requisition {
   } as Requisition;
 }
 
-describe('HRConsole — needs you today', () => {
+describe('HRConsole - needs you today', () => {
   it('shows attention and stages at risk together, each with its real count', async () => {
     getAttention.mockResolvedValue({
       generated_at: new Date().toISOString(),
@@ -445,7 +445,7 @@ describe('HRConsole — needs you today', () => {
   });
 });
 
-describe('HRConsole — openings in setup', () => {
+describe('HRConsole - openings in setup', () => {
   it('lists only unclosed openings that are not yet approved and live, each to its setup tab', async () => {
     listRequisitions.mockResolvedValue([
       opening({ id: 'req-draft', title: 'Backend Engineer', approval_status: 'draft' }),
@@ -499,7 +499,7 @@ describe('HRConsole — openings in setup', () => {
   });
 });
 
-describe('HRConsole — pipeline stat group', () => {
+describe('HRConsole - pipeline stat group', () => {
   it('makes every cell a link to its list', async () => {
     renderConsole();
     await screen.findByText('avg ATS 72');

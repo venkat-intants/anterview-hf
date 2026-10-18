@@ -99,7 +99,7 @@ export function BankQuestionPicker({
         onAdded();
         void qc.invalidateQueries({ queryKey: ['hr', 'bank-questions'] });
       } else {
-        toast.error('Nothing was added — see the reasons below.');
+        toast.error('Nothing was added - see the reasons below.');
       }
     },
     onError: (e: unknown) => toast.error(errText(e, 'Could not add these questions')),
@@ -129,7 +129,7 @@ export function BankQuestionPicker({
       >
         <div className="border-b border-border px-5 py-4 pr-14">
           <DialogTitle className="text-[17px] font-bold leading-snug tracking-[-0.2px]">
-            Add from bank — {sectionKind === 'mcq' ? 'MCQ' : 'Coding'}
+            Add from bank - {sectionKind === 'mcq' ? 'MCQ' : 'Coding'}
           </DialogTitle>
           <p className="mt-1 text-[13px] text-muted-foreground">
             Approved questions from your banks. Each one is copied into this section.
@@ -246,7 +246,7 @@ export function BankQuestionPicker({
                         </p>
                       ) : reason ? (
                         <p className="mt-0.5 text-[12.5px] text-[var(--ui-danger)]">
-                          Skipped — {reason}
+                          Skipped - {reason}
                         </p>
                       ) : null}
                     </div>

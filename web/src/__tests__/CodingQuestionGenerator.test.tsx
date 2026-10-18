@@ -105,7 +105,7 @@ beforeEach(() => {
   );
 });
 
-describe('CodingQuestionGenerator — describe', () => {
+describe('CodingQuestionGenerator - describe', () => {
   it('opens on the describe step with one primary action', () => {
     renderPanel();
     expect(screen.getByTestId('generator-step-describe')).toBeInTheDocument();
@@ -175,7 +175,7 @@ describe('CodingQuestionGenerator — describe', () => {
   });
 });
 
-describe('CodingQuestionGenerator — generating', () => {
+describe('CodingQuestionGenerator - generating', () => {
   it('shows honest progress, and Cancel abandons the request', async () => {
     const user = userEvent.setup();
     let resolve: (v: BankCodingGenerateResult) => void = () => undefined;
@@ -237,7 +237,7 @@ describe('CodingQuestionGenerator — generating', () => {
   });
 });
 
-describe('CodingQuestionGenerator — what the server says when generation fails', () => {
+describe('CodingQuestionGenerator - what the server says when generation fails', () => {
   const PAUSED =
     'Usage limits are temporarily unavailable, so this action is paused. Please try again in a minute.';
   const DAILY =
@@ -281,7 +281,7 @@ describe('CodingQuestionGenerator — what the server says when generation fails
   });
 });
 
-describe('CodingQuestionGenerator — a save that outlives the panel', () => {
+describe('CodingQuestionGenerator - a save that outlives the panel', () => {
   it('still refreshes the lists, but does not call into the unmounted parent', async () => {
     const user = userEvent.setup();
     let finish: (rows: unknown[]) => void = () => undefined;
@@ -304,7 +304,7 @@ describe('CodingQuestionGenerator — a save that outlives the panel', () => {
   });
 });
 
-describe('CodingQuestionGenerator — review', () => {
+describe('CodingQuestionGenerator - review', () => {
   it('previews every draft and saves nothing by generating', async () => {
     const user = userEvent.setup();
     renderPanel();

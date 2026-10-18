@@ -87,7 +87,7 @@ export default function ReviewPanel({
       qc.setQueryData(['hr', 'workflow', workflowId, 'simulation'], res.simulation);
       toast.success(
         res.approvers > 0
-          ? `Submitted for review — ${res.approvers} approver${res.approvers === 1 ? '' : 's'} notified`
+          ? `Submitted for review - ${res.approvers} approver${res.approvers === 1 ? '' : 's'} notified`
           : 'Submitted for review',
       );
     },
@@ -119,7 +119,7 @@ export default function ReviewPanel({
     onSuccess: (state) => {
       setNote('');
       applyState(state);
-      toast.success('Reopened for edits — it will need approving again before it can be published');
+      toast.success('Reopened for edits - it will need approving again before it can be published');
     },
     onError: (e) => toast.error(errText(e, 'Could not reopen this version')),
   });
@@ -266,7 +266,7 @@ export default function ReviewPanel({
             {reopenMut.isPending ? 'Reopening…' : 'Reopen for edits'}
           </button>
           <p className="text-[12px] text-muted-foreground">
-            Reopening clears the approval — it will need approving again before it can go live.
+            Reopening clears the approval - it will need approving again before it can go live.
           </p>
         </div>
       ) : null}
@@ -296,7 +296,7 @@ export default function ReviewPanel({
             renderItem={(h) => (
               <li className="text-[12px] text-[var(--ui-soft)]">
                 {ACTION_WORDS[h.action]}
-                {h.actor_name ? ` — ${h.actor_name}` : ''}
+                {h.actor_name ? ` - ${h.actor_name}` : ''}
                 <span className="ml-1.5 text-[12px] text-[var(--ui-faint)]">
                   {new Date(h.at).toLocaleString()}
                 </span>

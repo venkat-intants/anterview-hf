@@ -299,7 +299,7 @@ def _round_checks(
                         "open.", rid,
                     )
         if kind not in HUMAN_EVALUATED_KINDS and r.get("pass_threshold") is None:
-            checks.error("Needs an advance threshold — without one nobody can pass it.", rid)
+            checks.error("Needs an advance threshold - without one nobody can pass it.", rid)
         if kind in AI_GRADED_KINDS and not criteria.get(rid):
             checks.error("An AI interview must assess at least one competency.", rid)
         if kind in TASK_KINDS and rid not in task_configs:
@@ -359,7 +359,7 @@ def _structural_checks(checks: _Checks, rounds: list[dict[str, Any]]) -> None:
         checks.error(rest or message, by_title.get(title))
     cycles, unreachable = graph_problems(rounds)
     for loop in cycles:
-        checks.error(f"The rounds form a loop — a candidate would never finish: {loop}.")
+        checks.error(f"The rounds form a loop - a candidate would never finish: {loop}.")
     for title in unreachable:
         checks.error(
             "Unreachable: no branch from the first round ever gets here.", by_title.get(title)

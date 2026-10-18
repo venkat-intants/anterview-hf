@@ -734,7 +734,7 @@ async def test_execute_one_erasure_s3_delete_called_for_every_key() -> None:
     # Assertion (a): delete_objects was called exactly once.
     assert len(delete_calls) == 1, (
         f"delete_objects must be called exactly once (called {len(delete_calls)} times). "
-        "If 0: the S3 delete call was removed — that is the DPDP §12 false-erasure bug."
+        "If 0: the S3 delete call was removed - that is the DPDP §12 false-erasure bug."
     )
 
     called_buckets = delete_calls[0]
@@ -973,7 +973,7 @@ async def test_erasure_nulls_the_applicant_embedding() -> None:
     )
     assert applicants_update is not None, "applicants UPDATE must run"
     assert "embedding = NULL" in applicants_update, (
-        "applicants.embedding must be nulled — it is a vector derived from the "
+        "applicants.embedding must be nulled - it is a vector derived from the "
         "resume_text this same statement nulls"
     )
 
@@ -1289,7 +1289,7 @@ async def test_execute_one_erasure_deletes_notifications() -> None:
     assert any(
         "DELETE FROM notifications" in sql and "user_id" in sql for sql in executed
     ), (
-        "erasure must delete the user's notifications — the ON DELETE CASCADE "
+        "erasure must delete the user's notifications - the ON DELETE CASCADE "
         "never fires because the users row is anonymised, not deleted"
     )
     assert "notifications_deleted" in artifacts

@@ -23,7 +23,7 @@ describe('EvidenceBanner', () => {
     render(<EvidenceBanner citationState="unread" />);
     expect(
       screen.getByText(
-        /No records were read for this answer — this is the assistant's own reading\./,
+        /No records were read for this answer - this is the assistant's own reading\./,
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Answered from your records/)).not.toBeInTheDocument();
@@ -33,7 +33,7 @@ describe('EvidenceBanner', () => {
     render(<EvidenceBanner citationState="unattributed" />);
     expect(
       screen.getByText(
-        /Records were read for this answer, but no claim in it is tied to a specific one — read it as the assistant's own summary, not a sourced fact\./,
+        /Records were read for this answer, but no claim in it is tied to a specific one - read it as the assistant's own summary, not a sourced fact\./,
       ),
     ).toBeInTheDocument();
     // It must never be mistaken for either of the other two states.

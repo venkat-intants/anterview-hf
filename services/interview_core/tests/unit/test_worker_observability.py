@@ -128,11 +128,11 @@ async def test_lookup_session_scans_but_never_alters_the_resume() -> None:
     scan.assert_called_once()
     assert scan.call_args.args[1] == poisoned
     assert ctx.resume_text == poisoned, (
-        "the resume must reach the prompt unmodified — this path detects, it "
+        "the resume must reach the prompt unmodified - this path detects, it "
         "does not sanitise"
     )
     assert ctx.injection_markers, (
-        "the markers must ride on the SessionContext (AG-07) — the caller "
+        "the markers must ride on the SessionContext (AG-07) - the caller "
         "persists them; a detection nobody can act on is not a control"
     )
 
@@ -190,7 +190,7 @@ async def test_markers_are_written_to_the_session_row() -> None:
     # A merge, not a whole-document write: _update_session_status writes other
     # columns of the same row concurrently.
     assert "||" in sql, (
-        "markers must be merged into metadata, not overwrite it — a "
+        "markers must be merged into metadata, not overwrite it - a "
         "read-modify-write of the whole document is a lost update"
     )
     assert json.loads(params["patch"]) == {
@@ -216,7 +216,7 @@ async def test_marker_write_never_carries_the_resume_text() -> None:
     payload = calls[0][1]["patch"]
     for leaked in ("Ignore previous instructions", "payment systems"):
         assert leaked not in payload, (
-            f"{leaked!r} reached sessions.metadata — the scan stores marker "
+            f"{leaked!r} reached sessions.metadata - the scan stores marker "
             "NAMES only; the resume itself is the candidate's personal data"
         )
 
@@ -306,7 +306,7 @@ def test_worker_installs_the_shared_redaction_processor(restore_logging: Any) ->
     processors = structlog.get_config()["processors"]
     assert redact_pii_processor in processors, (
         "the worker configured structlog without shared.observability.pii."
-        "redact_pii_processor — the process that handles transcripts is outside "
+        "redact_pii_processor - the process that handles transcripts is outside "
         "the redaction chain again (DPDP §8)"
     )
     # Immediately before the renderer: anything appended after it is not covered.
@@ -328,7 +328,7 @@ def test_stdlib_worker_logger_is_bridged_into_the_chain(restore_logging: Any) ->
     assert isinstance(formatter, structlog.stdlib.ProcessorFormatter)
     assert redact_pii_processor in formatter.foreign_pre_chain  # type: ignore[operator]
     assert wk.logger.propagate is False, (
-        "records must not ALSO reach livekit's root handler — a second, "
+        "records must not ALSO reach livekit's root handler - a second, "
         "unredacted copy of every line is worse than none, because the "
         "redacted one makes it look covered"
     )

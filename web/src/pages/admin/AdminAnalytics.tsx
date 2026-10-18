@@ -45,7 +45,7 @@ const CHART_TICKS = { fill: AXIS_STYLE.stroke, fontSize: 12 } as const;
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function fmtScore(v: number | null): string {
-  if (v === null) return '—';
+  if (v === null) return '-';
   return v.toFixed(2);
 }
 

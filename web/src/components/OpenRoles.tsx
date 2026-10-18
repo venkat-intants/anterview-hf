@@ -61,7 +61,7 @@ function salaryLine(role: OpenRole, t: TFunction): string | null {
   if (lo == null && hi == null) return null;
   const currency = role.salary_currency ?? '';
   const money = (n: number) => `${currency} ${n.toLocaleString()}`.trim();
-  if (lo != null && hi != null) return `${money(lo)} – ${money(hi)}`;
+  if (lo != null && hi != null) return `${money(lo)} - ${money(hi)}`;
   return lo != null
     ? t('jobs.salaryFrom', { amount: money(lo) })
     : t('jobs.salaryUpTo', { amount: money(hi as number) });

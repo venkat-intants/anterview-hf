@@ -186,3 +186,25 @@ describe('Landing media', () => {
     expect(dark).toHaveLength(light.length);
   });
 });
+
+describe('Landing: a company hiring platform', () => {
+  it('pitches hiring, not practice, campuses or government programmes', () => {
+    renderLanding();
+    const text = document.body.textContent ?? '';
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(/hire faster/i);
+    for (const word of [/practi[cs]e/i, /mock interview/i, /college/i, /skilling/i, /government/i, /naipunyam/i]) {
+      expect(text).not.toMatch(word);
+    }
+    // Long dashes read as generated text; the page uses none.
+    expect(text).not.toMatch(/[–—]/);
+  });
+
+  it('leads with the demo for companies; sign-up is for candidates', () => {
+    renderLanding();
+    const hero = screen.getByRole('heading', { level: 1 }).closest('section') as HTMLElement;
+    const actions = hero.querySelectorAll('a');
+    expect(actions[0]).toHaveTextContent('Book a demo');
+    expect(hero).toHaveTextContent('Candidate sign up');
+    expect(hero).toHaveTextContent(/companies are set up with our team/i);
+  });
+});

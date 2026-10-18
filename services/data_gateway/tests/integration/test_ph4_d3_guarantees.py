@@ -140,7 +140,7 @@ async def _refused(db: AsyncSession, sql: str, params: dict[str, Any], reason: s
     except DBAPIError as exc:
         await sp.rollback()
         message = str(exc.orig)
-        assert reason in message, f"refused for the WRONG reason — expected {reason!r}: {message[:300]}"
+        assert reason in message, f"refused for the WRONG reason - expected {reason!r}: {message[:300]}"
         return
     await sp.rollback()
     pytest.fail(f"was allowed, expected refusal ({reason}): {sql[:120]}")

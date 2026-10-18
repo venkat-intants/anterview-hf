@@ -423,7 +423,7 @@ async def test_lookup_session_normalises_nulls_to_safe_defaults() -> None:
         ctx = await _lookup_session(session_id)
 
     assert ctx.presenter_id is None, (
-        "Legacy rows with presenter_id=None must stay None — resolve_avatar(None) "
+        "Legacy rows with presenter_id=None must stay None - resolve_avatar(None) "
         "returns the default avatar."
     )
     assert ctx.resume_text == "", "A NULL users.resume_text must normalise to ''."

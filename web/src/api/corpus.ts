@@ -101,7 +101,7 @@ export const CORPUS_FAILURE_SENTENCES: Record<string, string> = {
   active_content:
     'This PDF contains scripts or embedded files. Save or print it as a plain PDF and upload that.',
   encrypted: 'This PDF is password-protected. Remove the password and upload it again.',
-  no_text: 'This looks like a scan. We read text, not images — upload a text PDF.',
+  no_text: 'This looks like a scan. We read text, not images - upload a text PDF.',
   parse_timeout: 'We could not read this file in time. Try a smaller or simpler document.',
   parse_error: 'We could not read this file.',
   too_long: 'This document is longer than we index (about 400,000 characters). Split it.',

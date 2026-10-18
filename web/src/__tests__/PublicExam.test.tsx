@@ -80,7 +80,7 @@ afterEach(() => {
   window.location.hash = '';
 });
 
-describe('PublicExam — intro card', () => {
+describe('PublicExam - intro card', () => {
   it('does not print an auto-named round as "Round 1: Round 1"', async () => {
     getPublicExam.mockResolvedValue(EXAM);
     renderExam();
@@ -123,7 +123,7 @@ describe('PublicExam — intro card', () => {
 // why. The round/section timers themselves already arrive pre-scaled from
 // the server (exam_take.py), so there is nothing to recompute here — only
 // this banner to show, in EN, HI and TE.
-describe('PublicExam — the accommodation banner (PH4-D2)', () => {
+describe('PublicExam - the accommodation banner (PH4-D2)', () => {
   afterEach(async () => {
     await i18n.changeLanguage('en');
   });
@@ -204,7 +204,7 @@ describe('PublicExam — the accommodation banner (PH4-D2)', () => {
 // Only reading the code verified this until now; this drives it through an
 // actual violation and checks the copy it produces: the no-countdown
 // "Violation N recorded." sentence, never "N remaining before auto-submit.".
-describe("PublicExam — the proctor's max_violations wiring (security review)", () => {
+describe("PublicExam - the proctor's max_violations wiring (security review)", () => {
   beforeEach(() => {
     // The violation banner also requires `isFullscreen` — jsdom implements no
     // real Fullscreen API, so this forces the one signal it can give:
@@ -288,7 +288,7 @@ describe("PublicExam — the proctor's max_violations wiring (security review)",
 });
 
 // Camera-proctoring contract §3 — the dedicated, never-bundled consent step.
-describe('PublicExam — camera proctoring consent (camera-proctoring contract)', () => {
+describe('PublicExam - camera proctoring consent (camera-proctoring contract)', () => {
   it('never shows the camera consent step for a round that does not require it', async () => {
     getPublicExam.mockResolvedValue(EXAM);
     renderExam();
@@ -382,7 +382,7 @@ describe('PublicExam — camera proctoring consent (camera-proctoring contract)'
   });
 });
 
-describe('PublicExam — the per-tab token does not outlive a link that cannot be used', () => {
+describe('PublicExam - the per-tab token does not outlive a link that cannot be used', () => {
   const KEY = 'anthire.exam.token';
 
   beforeEach(() => {

@@ -90,7 +90,7 @@ beforeEach(() => {
   listBankCompetencies.mockResolvedValue([]);
 });
 
-describe('BankQuestionPicker — rows already in the exam', () => {
+describe('BankQuestionPicker - rows already in the exam', () => {
   it('disables the checkbox and shows the reason, and does not count it as available', async () => {
     const user = userEvent.setup();
     searchBankQuestions.mockResolvedValue([
@@ -112,7 +112,7 @@ describe('BankQuestionPicker — rows already in the exam', () => {
   });
 });
 
-describe('BankQuestionPicker — selection cap', () => {
+describe('BankQuestionPicker - selection cap', () => {
   it('refuses to select a 101st question and shows why', async () => {
     const rows = Array.from({ length: 101 }, (_, i) =>
       row({ id: `q-${i}`, prompt: `Question ${i}` }),
@@ -136,7 +136,7 @@ describe('BankQuestionPicker — selection cap', () => {
   });
 });
 
-describe('BankQuestionPicker — adding, with skip reasons', () => {
+describe('BankQuestionPicker - adding, with skip reasons', () => {
   it('reports the server’s own skip reason for anything not added', async () => {
     const user = userEvent.setup();
     searchBankQuestions.mockResolvedValue([
@@ -163,12 +163,12 @@ describe('BankQuestionPicker — adding, with skip reasons', () => {
     );
     expect(await screen.findByText('1 added, 1 skipped.')).toBeInTheDocument();
     expect(
-      screen.getByText('Skipped — an identical question is already in this exam'),
+      screen.getByText('Skipped - an identical question is already in this exam'),
     ).toBeInTheDocument();
   });
 });
 
-describe('BankQuestionPicker — empty and error states', () => {
+describe('BankQuestionPicker - empty and error states', () => {
   it('shows an empty state when nothing approved matches the filters', async () => {
     searchBankQuestions.mockResolvedValue([]);
     renderPicker();

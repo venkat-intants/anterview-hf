@@ -138,11 +138,11 @@ _FRESHNESS_FACTOR = {"fresh": 1.0, "ageing": 0.6, "stale": 0.25, "unverifiable":
 _BAND_SEVERITY = {"fresh": 0, "ageing": 1, "stale": 2, "unverifiable": 3}
 
 #: The sentence the UI shows for a match with nothing to explain it.
-UNEXPLAINED_NOTE = "matched on similarity only — nothing here says why"
+UNEXPLAINED_NOTE = "matched on similarity only - nothing here says why"
 #: The one line shown for the similarity leg itself.
 SIMILARITY_NOTE = (
     "Their CV reads as similar to what you searched for. That is a similarity "
-    "score, not a stated fact — open the CV to check."
+    "score, not a stated fact - open the CV to check."
 )
 _AI_INTERVIEW_HIDDEN_REASON = (
     "the AI interview session was purged under the 90-day retention rule"

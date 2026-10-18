@@ -113,7 +113,7 @@ def test_every_call_site_passes_every_required_argument() -> None:
         for name, param in signature.parameters.items()
         if param.default is _inspect.Parameter.empty
     }
-    assert required, "the gate has no required arguments — has it gone fail-open again?"
+    assert required, "the gate has no required arguments - has it gone fail-open again?"
 
     seen = 0
     for path in APP.rglob("*.py"):
@@ -132,7 +132,7 @@ def test_every_call_site_passes_every_required_argument() -> None:
             missing = required - passed
             assert not missing, (
                 f"{path.relative_to(APP)}:{node.lineno} calls public_gate_open "
-                f"without {sorted(missing)} — this is a TypeError at runtime, "
+                f"without {sorted(missing)} - this is a TypeError at runtime, "
                 f"not a type error at build time."
             )
     # If the call sites are ever renamed away, this test must not silently pass.

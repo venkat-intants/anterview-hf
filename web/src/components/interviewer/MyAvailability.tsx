@@ -60,7 +60,7 @@ export default function MyAvailability(): JSX.Element {
     <section>
       <h2 className="text-[16px] font-semibold text-foreground">My availability</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        When HR can book you for an interview — in your own local time ({browserTimezone()}).
+        When HR can book you for an interview - in your own local time ({browserTimezone()}).
       </p>
 
       <GlassCard className="mt-3 p-4">

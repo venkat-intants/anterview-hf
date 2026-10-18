@@ -83,7 +83,7 @@ afterEach(() => {
   window.location.hash = '';
 });
 
-describe('InterviewInvite — link states', () => {
+describe('InterviewInvite - link states', () => {
   it('greets the applicant by name for the role they were invited to', async () => {
     renderInvite();
 
@@ -118,7 +118,7 @@ describe('InterviewInvite — link states', () => {
     expect(screen.getByText(/ask your recruiter for a fresh link/i)).toBeInTheDocument();
   });
 
-  it('offers a retry — not "invalid" — when the failure was transient', async () => {
+  it('offers a retry - not "invalid" - when the failure was transient', async () => {
     // A 503 during a Space replica swap must not tell a candidate with a
     // perfectly good link that their invite was revoked.
     getInterviewInvite.mockRejectedValue(new ApiError('Bad gateway', 503));
@@ -149,7 +149,7 @@ describe('InterviewInvite — link states', () => {
   });
 });
 
-describe('InterviewInvite — consent gate', () => {
+describe('InterviewInvite - consent gate', () => {
   it('keeps Begin disabled until consent is given', async () => {
     const user = userEvent.setup();
     renderInvite();
@@ -175,7 +175,7 @@ describe('InterviewInvite — consent gate', () => {
   });
 });
 
-describe('InterviewInvite — redeeming', () => {
+describe('InterviewInvite - redeeming', () => {
   it('signs the guest in and strips the token from the URL before leaving', async () => {
     const user = userEvent.setup();
     renderInvite();

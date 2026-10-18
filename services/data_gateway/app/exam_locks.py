@@ -26,10 +26,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import ExamAttempt, ExamRound
 
 PUBLISHED_REASON = (
-    "This round is published — its content is fixed. Unpublish it while nobody has "
+    "This round is published - its content is fixed. Unpublish it while nobody has "
     "taken it, or duplicate it to make changes."
 )
-TAKEN_REASON = "This round has been taken — its content is fixed."
+TAKEN_REASON = "This round has been taken - its content is fixed."
 RACE_REASON = "This changed while you were working. Reload and try again."
 
 

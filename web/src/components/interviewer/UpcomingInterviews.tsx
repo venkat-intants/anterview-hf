@@ -34,7 +34,7 @@ export default function UpcomingInterviews(): JSX.Element {
     <section>
       <h2 className="text-[16px] font-semibold text-foreground">Upcoming interviews</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        Sessions you are on — in your own local time ({browserTimezone()}).
+        Sessions you are on - in your own local time ({browserTimezone()}).
       </p>
 
       {isLoading ? (

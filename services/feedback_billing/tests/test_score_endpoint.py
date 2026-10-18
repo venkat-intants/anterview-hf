@@ -585,7 +585,7 @@ def test_internal_routes_accept_the_data_gateway_service_identity(
     resp = client.post(path, json=body, headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code not in (401, 403), (
         f"{path} rejected the data_gateway service identity with "
-        f"{resp.status_code} — that takes an HR feature offline. {resp.text[:200]}"
+        f"{resp.status_code} - that takes an HR feature offline. {resp.text[:200]}"
     )
 
 

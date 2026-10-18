@@ -96,7 +96,7 @@ def analyse(language: str, source: str, starter_code: str | None = None) -> dict
             findings = [
                 {
                     "rule": "ast_parse_failed", "severity": "info", "line": 1,
-                    "message": "Could not parse as Python 3 — falling back to "
+                    "message": "Could not parse as Python 3 - falling back to "
                                "token-level (approximate) metrics.",
                 },
                 *findings,
@@ -350,7 +350,7 @@ def python_smells(tree: ast.AST) -> list[dict[str, Any]]:
         elif isinstance(node, ast.Global | ast.Nonlocal):
             findings.append({
                 "rule": "global_use", "severity": "info", "line": node.lineno,
-                "message": "`global`/`nonlocal` — mutable shared state across calls.",
+                "message": "`global`/`nonlocal` - mutable shared state across calls.",
             })
         elif isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             findings.extend(_mutable_default_findings(node))
@@ -559,7 +559,7 @@ def token_smells(language: str, source: str) -> list[dict[str, Any]]:
     if language in ("javascript", "typescript"):
         findings.extend(
             {"rule": "var_usage", "severity": "info", "line": ln,
-             "message": "`var` — prefer `let`/`const`."}
+             "message": "`var` - prefer `let`/`const`."}
             for ln, ttype, text in stream if ttype in Keyword and text == "var"
         )
     if language == "typescript":
@@ -582,7 +582,7 @@ def token_smells(language: str, source: str) -> list[dict[str, Any]]:
     if language in ("c", "cpp"):
         findings.extend(
             {"rule": "goto_usage", "severity": "warning", "line": ln,
-             "message": "`goto` — unstructured control flow."}
+             "message": "`goto` - unstructured control flow."}
             for ln, ttype, text in stream if ttype in Keyword and text == "goto"
         )
 
@@ -592,7 +592,7 @@ def token_smells(language: str, source: str) -> list[dict[str, Any]]:
     ]
     findings.extend(
         {"rule": "magic_number", "severity": "info", "line": ln,
-         "message": f"Magic number {text} — consider a named constant."}
+         "message": f"Magic number {text} - consider a named constant."}
         for ln, text in magic[:20]
     )
     return findings

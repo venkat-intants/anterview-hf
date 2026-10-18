@@ -133,7 +133,7 @@ async function runSearch(user: ReturnType<typeof userEvent.setup>, query = 'hydr
   await user.click(screen.getByRole('button', { name: 'Search' }));
 }
 
-describe('Rediscovery — the empty universe', () => {
+describe('Rediscovery - the empty universe', () => {
   it('names the number of opted-in candidates, verbatim, when nobody has opted in', async () => {
     rediscoveryApi.getRediscoveryUniverse.mockResolvedValue({
       universe: { eligible: 0, total: 2317 },
@@ -158,7 +158,7 @@ describe('Rediscovery — the empty universe', () => {
   });
 });
 
-describe('Rediscovery — searching', () => {
+describe('Rediscovery - searching', () => {
   it('runs a search and shows a result', async () => {
     const user = userEvent.setup();
     rediscoveryApi.searchRediscovery.mockResolvedValue(searchResponse());
@@ -202,7 +202,7 @@ describe('Rediscovery — searching', () => {
     await runSearch(user);
 
     expect(
-      await screen.findByText('Semantic search is unavailable — matching keywords only'),
+      await screen.findByText('Semantic search is unavailable - matching keywords only'),
     ).toBeInTheDocument();
   });
 
@@ -216,12 +216,12 @@ describe('Rediscovery — searching', () => {
 
     await screen.findByText('Asha K');
     expect(
-      screen.queryByText('Semantic search is unavailable — matching keywords only'),
+      screen.queryByText('Semantic search is unavailable - matching keywords only'),
     ).not.toBeInTheDocument();
   });
 });
 
-describe('Rediscovery — the unexplained section is separate', () => {
+describe('Rediscovery - the unexplained section is separate', () => {
   it('keeps an unexplained row out of the explained list, under its own heading, with no one-click invite', async () => {
     const user = userEvent.setup();
     const explainedRow = result({ applicant_id: 'app-1', full_name: 'Asha K', explained: true });
@@ -229,7 +229,7 @@ describe('Rediscovery — the unexplained section is separate', () => {
       applicant_id: 'app-2',
       full_name: 'Ravi P',
       explained: false,
-      unexplained_note: 'matched on similarity only — nothing here says why',
+      unexplained_note: 'matched on similarity only - nothing here says why',
     });
     rediscoveryApi.searchRediscovery.mockResolvedValue(
       searchResponse({ results: [explainedRow, unexplainedRow], matched: 2, returned: 2 }),
@@ -240,7 +240,7 @@ describe('Rediscovery — the unexplained section is separate', () => {
 
     await screen.findByText('Asha K');
     expect(
-      screen.getByText('Matched on similarity only — nothing here says why'),
+      screen.getByText('Matched on similarity only - nothing here says why'),
     ).toBeInTheDocument();
 
     // MUTATION CHECK performed by hand: temporarily rendered `results` as one
@@ -259,7 +259,7 @@ describe('Rediscovery — the unexplained section is separate', () => {
   });
 });
 
-describe('Rediscovery — the why panel', () => {
+describe('Rediscovery - the why panel', () => {
   it('renders a resume_terms snippet\'s [[…]] markers as a highlight, never raw HTML', async () => {
     const user = userEvent.setup();
     const row = result({
@@ -313,7 +313,7 @@ describe('Rediscovery — the why panel', () => {
   });
 });
 
-describe('Rediscovery — add to pool', () => {
+describe('Rediscovery - add to pool', () => {
   it('adds a single result to an existing pool with its frozen match reason', async () => {
     const user = userEvent.setup();
     rediscoveryApi.searchRediscovery.mockResolvedValue(searchResponse());

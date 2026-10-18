@@ -44,7 +44,7 @@ test.describe('the same person applying twice', () => {
     const onPlatform = await enrolmentFor(api, platform.id, candidate.name);
     expect(
       onBackend.applicant_id,
-      'one person, not two — the second application joins the applicant who already exists',
+      'one person, not two - the second application joins the applicant who already exists',
     ).toBe(onPlatform.applicant_id);
     expect(onBackend.id, 'but two applications, one per opening').not.toBe(onPlatform.id);
 

@@ -626,7 +626,7 @@ export default function TaskEditor({
         </div>
       ) : (
         <p className="text-[13px] text-muted-foreground">
-          This workflow version is fixed — its task configuration cannot change here.
+          This workflow version is fixed - its task configuration cannot change here.
         </p>
       )}
     </div>

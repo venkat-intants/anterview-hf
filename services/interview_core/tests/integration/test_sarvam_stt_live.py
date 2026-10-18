@@ -83,7 +83,7 @@ async def test_sarvam_stt_live_silence() -> None:
     raised. The empty-transcript guard is tested in unit tests.
     """
     if not settings.sarvam_api_key:
-        pytest.skip("SARVAM_API_KEY not set — skipping live Sarvam test")
+        pytest.skip("SARVAM_API_KEY not set - skipping live Sarvam test")
 
     silence_wav = _make_silence_wav(sample_rate=16000, duration_seconds=1)
     adapter = SarvamSTTAdapter(
@@ -104,7 +104,7 @@ async def test_sarvam_stt_live_silence() -> None:
         # Any HTTP error (401, 422, 500) indicates a request shape problem.
         if exc.status is not None and exc.status not in (200,):
             pytest.fail(
-                f"Sarvam returned HTTP {exc.status} — "
+                f"Sarvam returned HTTP {exc.status} - "
                 f"check request shape. body={exc.body!r}"
             )
         # STTError("empty transcript") with no status is fine for silence.

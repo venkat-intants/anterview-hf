@@ -299,8 +299,8 @@ def _risk(**kw: object) -> str | None:
 @pytest.mark.parametrize(
     ("closes_at", "target", "why"),
     [
-        (None, 10, "no closing date — nothing to be late for"),
-        (_T0 + timedelta(days=100), None, "no target — no definition of enough"),
+        (None, 10, "no closing date - nothing to be late for"),
+        (_T0 + timedelta(days=100), None, "no target - no definition of enough"),
         (_T0 + timedelta(days=100), 0, "a zero target is not a target"),
     ],
 )

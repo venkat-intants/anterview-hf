@@ -57,7 +57,7 @@ beforeEach(() => {
   ]);
 });
 
-describe('AvailabilityTab (panel) — choosing an interviewer', () => {
+describe('AvailabilityTab (panel) - choosing an interviewer', () => {
   it('asks for an interviewer before showing anything else', async () => {
     renderTab();
     expect(
@@ -97,7 +97,7 @@ describe('AvailabilityTab (panel) — choosing an interviewer', () => {
   });
 });
 
-describe('AvailabilityTab (panel) — adding and removing', () => {
+describe('AvailabilityTab (panel) - adding and removing', () => {
   it('adds a window for the chosen interviewer', async () => {
     schedulingApi.getInterviewerAvailability.mockResolvedValue([]);
     schedulingApi.addInterviewerAvailability.mockResolvedValue({

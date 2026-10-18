@@ -509,7 +509,7 @@ export function CodingQuestionGenerator({
             />
             <div className="min-w-0">
               <p className="text-[13.5px] font-medium text-foreground">
-                Waiting for the AI — this is one request and usually takes up to a minute.
+                Waiting for the AI - this is one request and usually takes up to a minute.
               </p>
               <p className="mt-0.5 text-[13px] text-muted-foreground">
                 Nothing is saved while this runs.

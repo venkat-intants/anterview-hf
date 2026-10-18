@@ -145,7 +145,7 @@ def test_notifications_refuses_a_guest_token_too() -> None:
     from app.main import app
 
     routes = [r for r in app.routes if getattr(r, "path", "").startswith("/notifications")]
-    assert routes, "no notification routes found — this test would pass vacuously"
+    assert routes, "no notification routes found - this test would pass vacuously"
     for r in routes:
         assert "guest_candidate" in _gate_covers(r), r.path
 
@@ -161,7 +161,7 @@ def test_consent_withdrawal_stays_reachable_by_a_guest() -> None:
     from app.main import app
 
     consent = [r for r in app.routes if getattr(r, "path", "") == "/consent"]
-    assert consent, "no /consent route found — this test would pass vacuously"
+    assert consent, "no /consent route found - this test would pass vacuously"
     for r in consent:
         assert "guest_candidate" not in _gate_covers(r), (
             "withdrawal must stay reachable without an account; if this is "

@@ -193,11 +193,11 @@ export interface ActivityItem {
 }
 
 export const HR_ACTIVITY: ActivityItem[] = [
-  { id: 'av1', who: 'Sara Khan', what: 'completed Frontend L2 — scored 86', when: '12 min ago', tone: 'forest' },
+  { id: 'av1', who: 'Sara Khan', what: 'completed Frontend L2 - scored 86', when: '12 min ago', tone: 'forest' },
   { id: 'av2', who: 'You', what: 'invited 8 applicants to Backend exam', when: '1 hour ago', tone: 'electric' },
   { id: 'av3', who: 'Dev Patel', what: 'moved to Interviewed stage', when: '2 hours ago', tone: 'amber' },
   { id: 'av4', who: 'You', what: 'published “Data Analyst L1” exam', when: 'Yesterday', tone: 'lavender' },
-  { id: 'av5', who: 'Vikram Joshi', what: 'accepted offer — Data Analyst', when: 'Yesterday', tone: 'forest' },
+  { id: 'av5', who: 'Vikram Joshi', what: 'accepted offer - Data Analyst', when: 'Yesterday', tone: 'forest' },
 ];
 
 export const HR_INTERVIEWS: { id: string; name: string; role: string; when: string; status: 'Scheduled' | 'Completed' | 'In progress'; score: number | null; seed: number }[] = [

@@ -23,7 +23,7 @@ export interface Tenant {
 
 function readTenant(): Tenant {
   if (!fs.existsSync(TENANT_FILE)) {
-    throw new Error(`No tenant at ${TENANT_FILE} — run the suite with \`npm run e2e\` so global setup provisions one.`);
+    throw new Error(`No tenant at ${TENANT_FILE} - run the suite with \`npm run e2e\` so global setup provisions one.`);
   }
   return JSON.parse(fs.readFileSync(TENANT_FILE, 'utf8')) as Tenant;
 }
@@ -155,7 +155,7 @@ export async function runBackgroundPasses(
     });
     expect(
       res.ok(),
-      `test hook ${pass} returned ${res.status()} — is data_gateway running with TEST_HOOKS_ENABLED and the same token?`,
+      `test hook ${pass} returned ${res.status()} - is data_gateway running with TEST_HOOKS_ENABLED and the same token?`,
     ).toBeTruthy();
   }
 }
@@ -222,7 +222,7 @@ export async function createLiveMcqOpening(
   await approver.post(`/hr/requisitions/${opening.id}/approval/approve`, { note: null });
 
   const exam = await api.post<{ id: string }>('/hr/exams', {
-    title: `Aptitude — ${opening.title}`,
+    title: `Aptitude - ${opening.title}`,
     kind: 'mcq',
     pass_threshold: passThreshold,
     time_limit_seconds: 1800,
@@ -322,7 +322,7 @@ export async function createLiveCodingOpening(
   await approver.post(`/hr/requisitions/${opening.id}/approval/approve`, { note: null });
 
   const exam = await api.post<{ id: string }>('/hr/exams', {
-    title: `Coding — ${opening.title}`,
+    title: `Coding - ${opening.title}`,
     kind: 'coding',
     pass_threshold: 60,
     time_limit_seconds: 1800,
@@ -416,7 +416,7 @@ export async function enrolmentFor(
   const mine = rows.find((r) => r.full_name === fullName);
   expect(
     mine,
-    `no application for ${fullName} on this opening — found: ${rows.map((r) => r.full_name).join(', ') || '(none)'}`,
+    `no application for ${fullName} on this opening - found: ${rows.map((r) => r.full_name).join(', ') || '(none)'}`,
   ).toBeTruthy();
   return mine!;
 }

@@ -97,7 +97,7 @@ const KNOWN_EVENT_TYPES = new Set([
 function warnUnsupportedEventType(eventType: string): void {
   // eslint-disable-next-line no-console -- deliberate, visible diagnostic; see the docstring above.
   console.warn(
-    `useExamProctor: dropping unsupported event_type ${JSON.stringify(eventType)} — ` +
+    `useExamProctor: dropping unsupported event_type ${JSON.stringify(eventType)} - ` +
       'the client and server proctoring vocabularies have drifted (see KNOWN_EVENT_TYPES).',
   );
 }

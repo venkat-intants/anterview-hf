@@ -287,7 +287,7 @@ export function useLiveKitInterview(
     } catch {
       // Non-fatal: mic may be denied; the interview can still proceed with
       // audio from the avatar side; surface a warning.
-      toast.warning('Microphone access denied — your responses will not be recorded.');
+      toast.warning('Microphone access denied - your responses will not be recorded.');
     }
 
     // Phase A — candidate camera (1:1 video). Only when the candidate has
@@ -300,7 +300,7 @@ export function useLiveKitInterview(
         attachLocalCamera();
         setIsCameraEnabled(true);
       } catch {
-        toast.warning('Camera access denied — continuing without video.');
+        toast.warning('Camera access denied - continuing without video.');
       }
     }
   }, [

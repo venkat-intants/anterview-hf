@@ -56,7 +56,7 @@ function suggestionsFor(hasRounds: boolean, jobTitle: string): string[] {
       ]
     : [
         `Design a hiring process for a ${jobTitle}`,
-        'Something short — I only want one written test and a conversation',
+        'Something short - I only want one written test and a conversation',
         'What would you assess for this role, and in what order?',
       ];
 }
@@ -140,7 +140,7 @@ export default function WorkflowCopilot({
           <div>
             <p className="text-[12.5px] leading-relaxed text-muted-foreground">
               Describe the process you want and I&rsquo;ll lay it out on the canvas. I can read this
-              opening&rsquo;s role model and your exams. I can&rsquo;t create anything — you approve
+              opening&rsquo;s role model and your exams. I can&rsquo;t create anything - you approve
               every change, and it stays a draft until you publish.
             </p>
             <div className="mt-3 flex flex-col gap-1.5">
@@ -187,7 +187,7 @@ export default function WorkflowCopilot({
                       aria-hidden="true"
                     />
                     {turn.proposals.length === 1
-                      ? 'Previewed on the canvas — review it there.'
+                      ? 'Previewed on the canvas - review it there.'
                       : `${turn.proposals.length} changes previewed on the canvas.`}
                   </div>
                 ) : null}
@@ -198,7 +198,7 @@ export default function WorkflowCopilot({
                     {turn.stopReason === 'no_llm'
                       ? 'No language model is configured for this deployment.'
                       : turn.stopReason === 'max_steps'
-                        ? 'I stopped early — try a narrower request.'
+                        ? 'I stopped early - try a narrower request.'
                         : 'That answer may be incomplete.'}
                   </div>
                 ) : null}
@@ -227,7 +227,7 @@ export default function WorkflowCopilot({
           onChange={(e) => setInput(e.target.value)}
           disabled={!editable || busy}
           aria-label="Ask the design assistant"
-          placeholder={editable ? 'Describe the process you want…' : 'Published — clone to edit'}
+          placeholder={editable ? 'Describe the process you want…' : 'Published - clone to edit'}
           className="min-w-0 flex-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
         />
         <button

@@ -105,7 +105,7 @@ def test_a_token_missing_one_required_claim_is_rejected(claim: str, why: str) ->
 
     assert claim in str(exc.value) or "required" in str(exc.value).lower(), (
         f"a token with no {claim!r} was rejected, but not for a reason that names it "
-        f"— {why}. Got: {exc.value}"
+        f"- {why}. Got: {exc.value}"
     )
 
 
@@ -141,14 +141,14 @@ def test_every_claim_the_options_require_has_a_test_here() -> None:
     block = re.search(r'"require":\s*\[([^\]]*)\]', source)
     assert block is not None, (
         "no `require` list found in verify_access_token. If the spelling changed "
-        "again, update this regex — and check all five claims are still in it, "
+        "again, update this regex - and check all five claims are still in it, "
         "because a library that ignores an unrecognised options key turns a typo "
         "here into five silently disabled checks"
     )
     declared = set(re.findall(r'"(\w+)"', block.group(1)))
     assert declared == set(_REQUIRED), (
         f"the verifier requires {sorted(declared)} but this file tests "
-        f"{sorted(_REQUIRED)} — reconcile the two"
+        f"{sorted(_REQUIRED)} - reconcile the two"
     )
 
 

@@ -120,7 +120,7 @@ def render_role_model_block(profile: RoleProfile) -> str:
     lines.append("")
     lines.append(
         "Assess the candidate against these competencies. The weight is how "
-        "much this role depends on each one — spend your questions "
+        "much this role depends on each one - spend your questions "
         "accordingly. The examples are SHAPES of question, not a script: "
         "phrase them naturally and follow what the candidate actually says."
     )
@@ -151,7 +151,7 @@ def render_plan_block(plans: list[TurnPlan]) -> str:
         "[QUESTION PLAN]",
         (
             f"Ask exactly {len(plans)} questions, one per turn, in this order. "
-            "The plan tells you what each turn is FOR — you still write the "
+            "The plan tells you what each turn is FOR - you still write the "
             "question, adapt it to what the candidate just said, and may ask a "
             "brief clarifier within the same turn."
         ),
@@ -159,17 +159,17 @@ def render_plan_block(plans: list[TurnPlan]) -> str:
     for plan in plans:
         if plan.kind == "intro":
             lines.append(
-                f"  Q{plan.turn_index} — Opening: invite the candidate to "
+                f"  Q{plan.turn_index} - Opening: invite the candidate to "
                 "introduce themselves and walk through their background."
             )
         elif plan.kind == "wrap":
             lines.append(
-                f"  Q{plan.turn_index} — Close: a warm wrap-up question (their "
+                f"  Q{plan.turn_index} - Close: a warm wrap-up question (their "
                 "goals, or anything they want to ask)."
             )
         else:
             hint = f" e.g. {plan.probe_hint}" if plan.probe_hint else ""
-            lines.append(f"  Q{plan.turn_index} — {plan.competency_name}.{hint}")
+            lines.append(f"  Q{plan.turn_index} - {plan.competency_name}.{hint}")
 
     lines.append("")
     lines.append(
@@ -195,7 +195,7 @@ def render_turn_directive(plan: TurnPlan, *, turn_index: int, max_turns: int) ->
         )
     elif plan.kind == "wrap":
         body = (
-            "This turn CLOSES the interview. Ask one warm wrap-up question — "
+            "This turn CLOSES the interview. Ask one warm wrap-up question - "
             "their goals, or whether they have anything to ask. Do not open a "
             "new assessment topic."
         )
@@ -211,7 +211,7 @@ def render_turn_directive(plan: TurnPlan, *, turn_index: int, max_turns: int) ->
     return (
         f"{body}\n"
         "Ask ONE concise question (1-2 sentences). Acknowledge the previous "
-        "answer only if it would feel unnatural not to — do not pad.\n"
+        "answer only if it would feel unnatural not to - do not pad.\n"
         f"(turn {turn_index} of {max_turns})"
     )
 
@@ -249,14 +249,14 @@ def render_scoring_rubric_block(profile: RoleProfile) -> str:
 
     lines.append("")
     lines.append(
-        "Axis weighting for this role (already applied by the system — shown "
+        "Axis weighting for this role (already applied by the system - shown "
         "so you calibrate emphasis, do NOT compute a composite yourself): "
         + ", ".join(f"{axis} {weights[axis]:.2f}" for axis in CANONICAL_AXES)
         + "."
     )
     lines.append(
         "Interpret the four axes THROUGH the competencies above. 'Technical "
-        "Knowledge' means the technical and domain competencies of THIS role — "
+        "Knowledge' means the technical and domain competencies of THIS role - "
         "never a generic or software-flavoured notion of technical skill."
     )
 
@@ -267,7 +267,7 @@ def render_scoring_rubric_block(profile: RoleProfile) -> str:
             "and only if the transcript actually evidences them: "
             + "; ".join(profile.red_flags)
             + ". Report them as observations. Never treat them as grounds for "
-            "rejection — you do not make hiring decisions."
+            "rejection - you do not make hiring decisions."
         )
 
     return "\n".join(lines)
@@ -290,7 +290,7 @@ def render_exam_blueprint(profile: RoleProfile, num_questions: int) -> str:
 
     allocation = allocate_by_weight(profile, max(1, num_questions))
     lines: list[str] = [
-        "## Role model — spread the questions across these competencies",
+        "## Role model - spread the questions across these competencies",
         f"Role : {profile.job_title} ({profile.domain_label}, {profile.seniority} level)",
     ]
     if profile.summary:
@@ -308,7 +308,7 @@ def render_exam_blueprint(profile: RoleProfile, num_questions: int) -> str:
     lines.append("")
     lines.append(
         "Questions must be about THIS occupation. Never import vocabulary from "
-        "another field — no algorithms or code for a trade or clinical role, no "
+        "another field - no algorithms or code for a trade or clinical role, no "
         "machinery for an office role."
     )
     return "\n".join(lines)
@@ -346,7 +346,7 @@ def render_round_blueprint(
         max(1, num_questions),
     )
     lines = [
-        f"## This round — spread the questions across what '{round_title}' assesses",
+        f"## This round - spread the questions across what '{round_title}' assesses",
         f"Role : {job_title}" if job_title else "",
         "",
         "Question quota per competency (respect these counts):",
@@ -382,5 +382,5 @@ def render_competency_output_spec(profile: RoleProfile) -> str:
         '{"score": <int 0-10>, "evidence": "<what in the transcript supports '
         'this, or state plainly that the interview did not cover it>"}. '
         "If a competency was never asked about, score it conservatively and "
-        "SAY SO in the evidence — do not invent support for it."
+        "SAY SO in the evidence - do not invent support for it."
     )

@@ -588,7 +588,7 @@ async def _enforce_email_verified(db: AsyncSession, user_id_str: str) -> None:
         await db.rollback()
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
-        detail="Please confirm your email before signing in. We've just re-sent your confirmation link — check your inbox.",
+        detail="Please confirm your email before signing in. We've just re-sent your confirmation link - check your inbox.",
     )
 
 
@@ -883,7 +883,7 @@ async def update_profile(
     if isinstance(avatar, str) and len(avatar) > 800_000:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Avatar image is too large — please use a smaller picture.",
+            detail="Avatar image is too large - please use a smaller picture.",
         )
 
     # notify_login_email is a bool, handled outside the text-field whitelist loop.
@@ -921,7 +921,7 @@ class ChangePasswordBody(BaseModel):
     current_password: str | None = Field(
         default=None,
         description=(
-            "Current password — required unless must_change_password is true "
+            "Current password - required unless must_change_password is true "
             "(bootstrap first-change flow)."
         ),
     )

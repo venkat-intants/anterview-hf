@@ -955,7 +955,7 @@ def test_the_fix_keeps_winnowing_choosing_the_same_positions() -> None:
             else:
                 assert new == raw - top
                 changed += 1
-    assert changed, "no hash reached 2**63 — the test would pass vacuously"
+    assert changed, "no hash reached 2**63 - the test would pass vacuously"
 
 
 def test_the_algorithm_version_did_not_move() -> None:

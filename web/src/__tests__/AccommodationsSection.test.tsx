@@ -116,7 +116,7 @@ beforeEach(() => {
   workflowsApi.getWorkflow.mockResolvedValue(undefined);
 });
 
-describe('AccommodationsSection — history', () => {
+describe('AccommodationsSection - history', () => {
   it('says so when nothing has been recorded', async () => {
     renderSection();
     expect(await screen.findByText('No accommodation recorded for this applicant.')).toBeInTheDocument();
@@ -148,7 +148,7 @@ describe('AccommodationsSection — history', () => {
     });
     renderSection({ enrolmentId: 'en-1', requisitionId: 'req-1' });
 
-    expect(await screen.findByText('Workflow round — Panel interview')).toBeInTheDocument();
+    expect(await screen.findByText('Workflow round - Panel interview')).toBeInTheDocument();
   });
 
   it('shows a superseded row without revise/revoke controls', async () => {
@@ -199,7 +199,7 @@ describe('AccommodationsSection — history', () => {
   });
 });
 
-describe('AccommodationsSection — scope rules', () => {
+describe('AccommodationsSection - scope rules', () => {
   it('disables application/round/exam-round scopes without an application, and says why', async () => {
     const user = userEvent.setup();
     renderSection({ enrolmentId: null });
@@ -274,7 +274,7 @@ describe('AccommodationsSection — scope rules', () => {
   });
 });
 
-describe('AccommodationsSection — the note warnings', () => {
+describe('AccommodationsSection - the note warnings', () => {
   it('warns that the other-adjustment text is HR-only, never the candidate or an interviewer', async () => {
     const user = userEvent.setup();
     renderSection();
@@ -307,7 +307,7 @@ describe('AccommodationsSection — the note warnings', () => {
   });
 });
 
-describe('AccommodationsSection — recording', () => {
+describe('AccommodationsSection - recording', () => {
   it('records a whole-applicant adjustment with the fields entered', async () => {
     accApi.recordAccommodation.mockResolvedValue({ id: 'acc-new' });
     const user = userEvent.setup();
@@ -317,7 +317,7 @@ describe('AccommodationsSection — recording', () => {
     await user.type(screen.getByLabelText('Extra time percent'), '50');
     await user.type(
       screen.getByPlaceholderText('What an interviewer needs to know to run this round fairly'),
-      'Extra time granted — no other change needed.',
+      'Extra time granted - no other change needed.',
     );
     await user.click(screen.getByRole('button', { name: 'Record accommodation' }));
 
@@ -330,7 +330,7 @@ describe('AccommodationsSection — recording', () => {
       exam_round_id: null,
       extra_time_percent: 50,
       basis: 'hr_initiated',
-      interviewer_note: 'Extra time granted — no other change needed.',
+      interviewer_note: 'Extra time granted - no other change needed.',
       internal_note: null,
       other_adjustment: null,
     });
@@ -377,7 +377,7 @@ describe('AccommodationsSection — recording', () => {
   });
 });
 
-describe('AccommodationsSection — revise and revoke', () => {
+describe('AccommodationsSection - revise and revoke', () => {
   it('revises a live accommodation in the same scope', async () => {
     accApi.listAccommodations.mockResolvedValue([row({ id: 'acc-1', extra_time_percent: 50 })]);
     accApi.reviseAccommodation.mockResolvedValue({ id: 'acc-2' });
@@ -394,7 +394,7 @@ describe('AccommodationsSection — revise and revoke', () => {
     const [id, body] = accApi.reviseAccommodation.mock.calls[0] as [string, Record<string, unknown>];
     expect(id).toBe('acc-1');
     expect(body).toMatchObject({ extra_time_percent: 75 });
-    expect(toastSuccess).toHaveBeenCalledWith('Accommodation revised — the earlier record is kept');
+    expect(toastSuccess).toHaveBeenCalledWith('Accommodation revised - the earlier record is kept');
   });
 
   it('carries the effective window through a revision instead of clearing it', async () => {
@@ -450,7 +450,7 @@ describe('AccommodationsSection — revise and revoke', () => {
   });
 });
 
-describe('AccommodationsSection — who recorded and revoked (PH4-D2)', () => {
+describe('AccommodationsSection - who recorded and revoked (PH4-D2)', () => {
   it('shows who recorded the adjustment', async () => {
     accApi.listAccommodations.mockResolvedValue([row({ recorded_by_name: 'Priya HR' })]);
     renderSection();

@@ -74,8 +74,8 @@ describe('StatGroup', () => {
         <Stat label="Time" value={null} missingLabel="Not measured" />
       </StatGroup>,
     );
-    expect(screen.getByRole('img', { name: 'No data yet' })).toHaveTextContent('—');
-    expect(screen.getByRole('img', { name: 'Not measured' })).toHaveTextContent('—');
+    expect(screen.getByRole('img', { name: 'No data yet' })).toHaveTextContent('-');
+    expect(screen.getByRole('img', { name: 'Not measured' })).toHaveTextContent('-');
   });
 
   it('a cell with `to` is a link, and the cell target is at least 40px tall by padding', () => {

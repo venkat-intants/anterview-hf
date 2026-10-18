@@ -133,7 +133,7 @@ OMITTED_ALWAYS: tuple[OmittedItem, ...] = (
     OmittedItem(
         kind="offer_compensation",
         reason=(
-            "An offer node carries status and timing only — never base salary, "
+            "An offer node carries status and timing only - never base salary, "
             "bonus, equity or any other compensation figure."
         ),
     ),
@@ -970,9 +970,9 @@ _ERASED_REASON_OMISSION = OmittedItem(
     kind="decision_reason",
     reason=(
         "The candidate has been erased (AR-5, closed). stage_transitions.reason "
-        "is redacted at the source once erasure runs, but not before — an "
+        "is redacted at the source once erasure runs, but not before - an "
         "erasure request marks the candidate erased immediately, up to 30 days "
-        "before the executor redacts anything — so this graph and the copilot "
+        "before the executor redacts anything - so this graph and the copilot "
         "withhold the free text from the moment of request regardless."
     ),
 )

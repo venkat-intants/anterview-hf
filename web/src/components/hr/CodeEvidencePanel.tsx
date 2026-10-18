@@ -75,8 +75,8 @@ function editorLanguage(language: string | null | undefined): string {
 // ---------------------------------------------------------------------------
 
 function analyserLabel(report: CodeQualityReport): string {
-  if (report.analyser === 'python-ast') return 'Full analysis — Python AST';
-  return `Token-level approximation — ${report.language}`;
+  if (report.analyser === 'python-ast') return 'Full analysis - Python AST';
+  return `Token-level approximation - ${report.language}`;
 }
 
 function QualityMetrics({ report }: { report: CodeQualityReport }) {
@@ -91,7 +91,7 @@ function QualityMetrics({ report }: { report: CodeQualityReport }) {
   if (report.status === 'failed') {
     return (
       <p className="text-[13px] text-[var(--ui-warn)]">
-        Analysis failed{report.error_class ? ` (${report.error_class})` : ''} — the submission
+        Analysis failed{report.error_class ? ` (${report.error_class})` : ''} - the submission
         itself is unaffected.
       </p>
     );
@@ -205,14 +205,14 @@ function QualityCard({ report }: { report: CodeQualityReport | undefined }) {
         </>
       ) : (
         <p className="mt-2 text-[13px] text-muted-foreground">
-          Not analysed yet — run analysis for this attempt to see quality metrics here.
+          Not analysed yet - run analysis for this attempt to see quality metrics here.
         </p>
       )}
       {/* Coverage is never available for any language — a reason, never a
           figure (checklist #6). */}
       <p className="mt-3 flex items-start gap-1.5 text-[12px] text-muted-foreground">
         <Info size={11} className="mt-0.5 shrink-0" aria-hidden="true" />
-        Test coverage: not available —{' '}
+        Test coverage: not available -{' '}
         {report?.coverage.reason ??
           'coverage requires instrumented execution, which this analyser never does.'}
       </p>

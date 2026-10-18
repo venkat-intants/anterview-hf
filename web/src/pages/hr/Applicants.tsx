@@ -383,7 +383,7 @@ function ApplicantDrawer({
                       scoreTextClass(atsDisplay),
                     )}
                   >
-                    {atsDisplay ?? '—'}
+                    {atsDisplay ?? '-'}
                   </div>
                 </div>
                 <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
@@ -691,7 +691,7 @@ function ApplicantRow({
           scoreTextClass(atsDisplay),
         )}
       >
-        {atsDisplay ?? '—'}
+        {atsDisplay ?? '-'}
       </td>
 
       {/* Match score (during search) — else shortlisted badge */}
@@ -777,7 +777,7 @@ function UploadBatchProgress({ batchId }: { batchId: string }) {
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p className="text-[13px] font-semibold text-foreground">
-          {data.finished ? 'Upload finished' : 'Processing upload'} — {data.requisition_title}
+          {data.finished ? 'Upload finished' : 'Processing upload'} - {data.requisition_title}
         </p>
         <span className="text-[12px] tabular-nums text-muted-foreground">
           {read} of {data.total_files} files read
@@ -800,13 +800,13 @@ function UploadBatchProgress({ batchId }: { batchId: string }) {
       <p className="mt-1 text-[12px] text-muted-foreground">
         {data.finished
           ? 'Every added candidate is filed under this opening.'
-          : 'You can leave this page — it carries on, and you will be notified when it is done.'}
+          : 'You can leave this page - it carries on, and you will be notified when it is done.'}
       </p>
       {data.failures && data.failures.length > 0 ? (
         <ul className="mt-2 space-y-0.5 text-[13px] text-[var(--ui-warn)]">
           {data.failures.map((f, i) => (
             <li key={`${f.filename}-${i}`} className="truncate">
-              <span className="font-medium">{f.filename}</span> — {f.error}
+              <span className="font-medium">{f.filename}</span> - {f.error}
             </li>
           ))}
         </ul>
@@ -1103,7 +1103,7 @@ export default function Applicants() {
       if (res.remaining > 0 && res.reindexed > 0) {
         reindexMut.mutate(); // keep draining batches until none remain
       } else if (res.remaining > 0) {
-        toast.error('Some resumes could not be indexed — try again shortly.');
+        toast.error('Some resumes could not be indexed - try again shortly.');
       } else {
         toast.success('All resumes are now searchable.');
       }
@@ -1125,12 +1125,12 @@ export default function Applicants() {
       setBatchId(res.batch_id);
       if (res.accepted > 0) {
         toast.success(
-          `${res.accepted} resume${res.accepted === 1 ? '' : 's'} accepted — reading and ` +
+          `${res.accepted} resume${res.accepted === 1 ? '' : 's'} accepted - reading and ` +
             'scoring them in the background' +
             (res.failed_count > 0 ? ` · ${res.failed_count} refused` : ''),
         );
       } else {
-        toast.error('None of those files could be accepted — see why below.');
+        toast.error('None of those files could be accepted - see why below.');
       }
       setFiles([]);
       void qc.invalidateQueries({ queryKey: ['hr', 'applicants'] });
@@ -1190,13 +1190,13 @@ export default function Applicants() {
         }
       }
       if (merged.length > MAX_BULK_FILES) {
-        toast.error(`Max ${MAX_BULK_FILES} resumes per batch — extra files ignored.`);
+        toast.error(`Max ${MAX_BULK_FILES} resumes per batch - extra files ignored.`);
       }
       const capped = merged.slice(0, MAX_BULK_FILES);
       const bytes = capped.reduce((total, f) => total + f.size, 0);
       if (bytes > MAX_BULK_TOTAL_BYTES) {
         toast.error(
-          `That batch is ${Math.round(bytes / 1024 / 1024)} MB — the limit is ` +
+          `That batch is ${Math.round(bytes / 1024 / 1024)} MB - the limit is ` +
             `${Math.round(MAX_BULK_TOTAL_BYTES / 1024 / 1024)} MB. Split it into two uploads.`,
         );
       }
@@ -1250,7 +1250,7 @@ export default function Applicants() {
       <PageHeader
         className="mb-0"
         title="Resume screening"
-        description="Drop in many resumes at once — each candidate's name & email are read straight from the resume, AI-scored against the role, then ranked."
+        description="Drop in many resumes at once - each candidate's name & email are read straight from the resume, AI-scored against the role, then ranked."
       />
 
       {/* Upload panel */}
@@ -1278,7 +1278,7 @@ export default function Applicants() {
             <p className="flex items-center gap-2 text-[13px] text-foreground">
               <AlertTriangle size={14} aria-hidden="true" />
               {reindexStatus.remaining} earlier resume{reindexStatus.remaining === 1 ? '' : 's'}{' '}
-              {reindexStatus.remaining === 1 ? "isn't" : "aren't"} searchable yet — index{' '}
+              {reindexStatus.remaining === 1 ? "isn't" : "aren't"} searchable yet - index{' '}
               {reindexStatus.remaining === 1 ? 'it' : 'them'} to include in semantic search.
             </p>
             <Button

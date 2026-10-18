@@ -559,7 +559,7 @@ async def test_an_exception_reason_stays_out_of_the_audit_log(monkeypatch: pytes
     res = MagicMock()
     res.mappings.return_value.first.return_value = row
     db.execute = AsyncMock(return_value=res)
-    reason = "Asha asked to reschedule — travelling to Pune until Friday"
+    reason = "Asha asked to reschedule - travelling to Pune until Friday"
     await sla.raise_exception(db, company_id=uuid.uuid4(), enrolment_id=row["id"],
                               reason=reason, owner_user_id=None, actor=uuid.uuid4())
     details = db.add.call_args.args[0].details

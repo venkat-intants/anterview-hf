@@ -170,7 +170,7 @@ test.describe('an offer moves from creation to preboarding complete', () => {
     await expect(page.getByText('PAN card')).toBeVisible();
     await page.getByRole('button', { name: 'Reject' }).click();
     await page.getByLabel(/tell the candidate/i).fill('The scan is unreadable');
-    await page.getByRole('button', { name: /Confirm — Reject/ }).click();
+    await page.getByRole('button', { name: /Confirm - Reject/ }).click();
     await expect(page.getByText(/rejected/i).first()).toBeVisible();
 
     // ── 8. The candidate re-uploads — a fresh visit to the same emailed link,
@@ -207,7 +207,7 @@ test.describe('an offer moves from creation to preboarding complete', () => {
     // review control rather than on that word.
     await expect(page.getByRole('button', { name: 'Verify' })).toBeVisible();
     await page.getByRole('button', { name: 'Verify' }).click();
-    await page.getByRole('button', { name: /Confirm — Verify/ }).click();
+    await page.getByRole('button', { name: /Confirm - Verify/ }).click();
     await expect(page.getByText('Verified', { exact: true }).first()).toBeVisible();
     await page.getByRole('button', { name: 'Mark preboarding complete' }).click();
     await expect(page.getByText(/Preboarding completed on/).first()).toBeVisible();

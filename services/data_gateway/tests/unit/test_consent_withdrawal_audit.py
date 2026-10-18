@@ -279,7 +279,7 @@ class TestItIsWiredIntoTheRoute:
 
         routes = [r for r in app.routes if getattr(r, "path", "") == "/consent"]
 
-        assert routes, "no /consent route found — this test would pass vacuously"
+        assert routes, "no /consent route found - this test would pass vacuously"
         for route in routes:
             deps = getattr(route, "dependencies", [])
             names = [getattr(d.dependency, "__qualname__", "") for d in deps]

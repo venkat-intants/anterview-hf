@@ -78,7 +78,7 @@ export default function AdminJobJd() {
       if (!selectedJobId) return Promise.reject(new Error('Select a job first'));
       return uploadJd(selectedJobId, file, accessToken, onProgress).then((result) => {
         toast.success(
-          `JD processed — ${result.text_length.toLocaleString()} characters extracted.`,
+          `JD processed - ${result.text_length.toLocaleString()} characters extracted.`,
         );
         return { text_length: result.text_length };
       });
@@ -96,7 +96,7 @@ export default function AdminJobJd() {
       <PageHeader
         className="mb-0"
         title="Practice-interview job descriptions"
-        description="Attach a job description to a role in the platform-wide practice catalogue that candidates use for practice interviews. A company's own openings are not managed here — each company's HR adds the job description on the opening itself (Openings → the opening → Role and posting)."
+        description="Attach a job description to a role in the platform-wide practice catalogue that candidates use for practice interviews. A company's own openings are not managed here - each company's HR adds the job description on the opening itself (Openings → the opening → Role and posting)."
       />
 
       {/* ══════════════════════════════════════════════════════════════════════
@@ -116,7 +116,7 @@ export default function AdminJobJd() {
             <div>
               <h2 className="text-[17px] font-semibold text-foreground">Upload Job Description</h2>
               <p className="text-[13px] text-muted-foreground">
-                PDF only — maximum 10 MB. The document will be parsed and indexed for AI question
+                PDF only - maximum 10 MB. The document will be parsed and indexed for AI question
                 generation.
               </p>
             </div>
@@ -185,7 +185,7 @@ export default function AdminJobJd() {
                     'focus:border-[var(--accent)] focus:ring-0',
                   )}
                 >
-                  <SelectValue placeholder="— select a job —" />
+                  <SelectValue placeholder="- select a job -" />
                 </SelectTrigger>
                 <SelectContent>
                   {jobs.map((job) => (

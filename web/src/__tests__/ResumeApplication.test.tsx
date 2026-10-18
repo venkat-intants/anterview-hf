@@ -110,7 +110,7 @@ beforeEach(() => {
     enrolment_id: 'e-1',
     full_name: 'Priya S. Sharma',
     already_applied: false,
-    message: 'Thanks — your application is in.',
+    message: 'Thanks - your application is in.',
   });
 });
 
@@ -231,14 +231,14 @@ describe('the confirmation step', () => {
 describe('submitting', () => {
   it('is blocked, and says why, with no CV', async () => {
     renderPage();
-    expect(await screen.findByText(/CV uploaded — still needed/)).toBeInTheDocument();
+    expect(await screen.findByText(/CV uploaded - still needed/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Submit application/ })).toBeDisabled();
   });
 
   it('is blocked until the details are confirmed', async () => {
     getDraft.mockResolvedValue(draft({ has_resume: true, full_name: 'Priya' }));
     renderPage();
-    expect(await screen.findByText(/Details confirmed — still needed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Details confirmed - still needed/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Submit application/ })).toBeDisabled();
   });
 
@@ -320,14 +320,14 @@ describe('deleting a saved application', () => {
     expect(screen.getByText(/cannot be undone/)).toBeInTheDocument();
   });
 
-  it('takes two clicks — it destroys their work', async () => {
+  it('takes two clicks - it destroys their work', async () => {
     renderPage();
     await userEvent.click(
       await screen.findByRole('button', { name: /Delete my saved application/ }),
     );
     expect(deleteDraft).not.toHaveBeenCalled();
     await userEvent.click(
-      screen.getByRole('button', { name: /Confirm — delete everything/ }),
+      screen.getByRole('button', { name: /Confirm - delete everything/ }),
     );
     await waitFor(() => expect(deleteDraft).toHaveBeenCalledWith('tok-123'));
   });
@@ -350,7 +350,7 @@ describe('deleting a saved application', () => {
       await screen.findByRole('button', { name: /Delete my saved application/ }),
     );
     await userEvent.click(
-      screen.getByRole('button', { name: /Confirm — delete everything/ }),
+      screen.getByRole('button', { name: /Confirm - delete everything/ }),
     );
     expect(await screen.findByText(/has been deleted/)).toBeInTheDocument();
     expect(screen.getByText(/CV you uploaded/)).toBeInTheDocument();
@@ -392,7 +392,7 @@ describe('the resume token', () => {
 // `en` and missing in `hi` silently falls back to English, which is exactly
 // the bug, and would pass any test that only checked for a key's presence.
 // ===========================================================================
-describe('ResumeApplication — localisation', () => {
+describe('ResumeApplication - localisation', () => {
   afterEach(async () => {
     await i18n.changeLanguage('en');
   });
@@ -474,7 +474,7 @@ describe('ResumeApplication — localisation', () => {
 // between clear() and type() overwrote the typed text. The test now waits for
 // the seeded value before editing.
 // ===========================================================================
-describe('ResumeApplication — the seed is idempotent', () => {
+describe('ResumeApplication - the seed is idempotent', () => {
   it('a refetch of unchanged data leaves typed values alone', async () => {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },

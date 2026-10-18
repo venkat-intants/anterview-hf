@@ -17,10 +17,10 @@
 import type { RoundStatus } from '@/api/exams';
 
 export const PUBLISHED_REASON =
-  'This round is published — its content is fixed. Unpublish it while nobody has ' +
+  'This round is published - its content is fixed. Unpublish it while nobody has ' +
   'taken it, or duplicate it to make changes.';
 
-export const TAKEN_REASON = 'This round has been taken — its content is fixed.';
+export const TAKEN_REASON = 'This round has been taken - its content is fixed.';
 
 /** The proactive half of the lock — see the module comment for why this is
  *  the only case knowable before a write is attempted. */

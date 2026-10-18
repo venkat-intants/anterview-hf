@@ -59,7 +59,7 @@ export default function VerifyEmail() {
               </Link>
             }
           >
-            <p>Thanks — your email address is verified. You can sign in and get started.</p>
+            <p>Thanks - your email address is verified. You can sign in and get started.</p>
           </StatusPanel>
         )}
 

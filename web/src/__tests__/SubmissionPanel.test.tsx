@@ -50,7 +50,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('SubmissionPanel — the link interstitial', () => {
+describe('SubmissionPanel - the link interstitial', () => {
   it('does not open a link before a reviewer confirms', async () => {
     getScorecardSubmission.mockResolvedValue({
       ...BASE,
@@ -90,7 +90,7 @@ describe('SubmissionPanel — the link interstitial', () => {
           text_value: null,
           link_url: 'https://attacker.example/x',
           link_kind: 'other',
-          title: 'github.com — my project',
+          title: 'github.com - my project',
           description: null,
           original_name: null,
           content_type: null,
@@ -101,7 +101,7 @@ describe('SubmissionPanel — the link interstitial', () => {
     const user = userEvent.setup();
     renderPanel();
 
-    await screen.findByText('github.com — my project');
+    await screen.findByText('github.com - my project');
     await user.click(screen.getByRole('button', { name: /open link/i }));
 
     // The resolved host is its own element (a <strong>), so this is an exact
@@ -181,7 +181,7 @@ describe('SubmissionPanel — the link interstitial', () => {
 // github.com" and rendered it as the anchor's own href. `vbscript:`, `http:`
 // and a protocol-relative `//host` all had the same gap. The fix requires
 // `url.protocol === 'https:'`.
-describe('SubmissionPanel — the interstitial refuses a non-https scheme', () => {
+describe('SubmissionPanel - the interstitial refuses a non-https scheme', () => {
   const realLocation = window.location;
 
   beforeEach(() => {
@@ -240,7 +240,7 @@ describe('SubmissionPanel — the interstitial refuses a non-https scheme', () =
   });
 });
 
-describe('SubmissionPanel — evidence, not a verdict', () => {
+describe('SubmissionPanel - evidence, not a verdict', () => {
   it('renders a text answer as plain text', async () => {
     getScorecardSubmission.mockResolvedValue({
       ...BASE,
@@ -275,7 +275,7 @@ describe('SubmissionPanel — evidence, not a verdict', () => {
 // Gap 2/3 fixes: `submission_for_reviewer` now returns the round's brief and
 // item prompts, and a dedicated materials-download route — previously a
 // reviewer saw only a raw item key and an un-clickable material title.
-describe('SubmissionPanel — the round in context (gap 2/3 fixes)', () => {
+describe('SubmissionPanel - the round in context (gap 2/3 fixes)', () => {
   it("shows the round's brief and an item's actual prompt, not its key", async () => {
     getScorecardSubmission.mockResolvedValue({
       ...BASE,
@@ -353,7 +353,7 @@ describe('SubmissionPanel — the round in context (gap 2/3 fixes)', () => {
 // work the candidate had not yet sent. The backend gates this too
 // (`submission_for_reviewer` only returns a `submitted` row); this is the
 // belt to that brace.
-describe('SubmissionPanel — nothing renders before the candidate submits', () => {
+describe('SubmissionPanel - nothing renders before the candidate submits', () => {
   it('shows only a not-yet-submitted message for an in-progress submission, never its responses', async () => {
     getScorecardSubmission.mockResolvedValue({
       ...BASE,
@@ -364,7 +364,7 @@ describe('SubmissionPanel — nothing renders before the candidate submits', () 
           id: 'r-1',
           item_key: 'design_doc',
           response_type: 'text',
-          text_value: 'Draft — do not read this yet.',
+          text_value: 'Draft - do not read this yet.',
           link_url: null,
           link_kind: null,
           title: null,
@@ -378,7 +378,7 @@ describe('SubmissionPanel — nothing renders before the candidate submits', () 
     renderPanel();
 
     expect(await screen.findByText(/not yet submitted/i)).toBeInTheDocument();
-    expect(screen.queryByText('Draft — do not read this yet.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Draft - do not read this yet.')).not.toBeInTheDocument();
     expect(screen.queryByText(/evidence, not a verdict/i)).not.toBeInTheDocument();
   });
 });

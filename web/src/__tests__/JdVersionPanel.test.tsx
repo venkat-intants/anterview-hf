@@ -203,7 +203,7 @@ describe('history', () => {
     renderPanel();
     await openHistory();
     // The window a wording was live for is the question PH3-B6 Task 5 asks.
-    expect(await screen.findByText(/Live .*–.*/)).toBeInTheDocument();
+    expect(await screen.findByText(/Live .*-.*/)).toBeInTheDocument();
   });
 
   it('attributes a version to whoever wrote it', async () => {

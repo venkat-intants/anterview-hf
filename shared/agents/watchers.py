@@ -197,7 +197,7 @@ def watch_stalled_applicants(data: WatcherInput) -> list[WatcherFinding]:
         worst = group[0]
         names = ", ".join(a.name for a in group[:5])
         more = f" and {len(group) - 5} more" if len(group) > 5 else ""
-        opening = f" — {worst.requisition_title}" if rid and worst.requisition_title else ""
+        opening = f" - {worst.requisition_title}" if rid and worst.requisition_title else ""
         where = f" for {worst.requisition_title}" if opening else ""
         citations = (
             [Citation(kind="job", id=rid, label=worst.requisition_title,
@@ -281,7 +281,7 @@ def watch_exam_quality(data: WatcherInput) -> list[WatcherFinding]:
                 WatcherFinding(
                     watcher="exam_quality",
                     severity="warning",
-                    title=f"Q{stat.position} in '{stat.exam_title}' — almost nobody passes it",
+                    title=f"Q{stat.position} in '{stat.exam_title}' - almost nobody passes it",
                     body=(
                         f"{stat.correct} of {stat.attempts} attempts correct "
                         f"({rate:.0%}). A question this hard is more often "
@@ -403,7 +403,7 @@ def watch_decision_backlog(data: WatcherInput) -> list[WatcherFinding]:
                 # point the candidate has almost certainly concluded they were
                 # rejected, and the decision is being made by default.
                 severity="critical" if opening.longest_wait_days >= 14 else "warning",
-                title=f"{waiting} candidate(s) waiting on you — {opening.title}",
+                title=f"{waiting} candidate(s) waiting on you - {opening.title}",
                 body=(
                     f"{waiting} candidate(s) have finished everything the workflow "
                     f"can do for {opening.title}. The longest has been waiting "
@@ -459,13 +459,13 @@ def watch_round_stalls(data: WatcherInput) -> list[WatcherFinding]:
             WatcherFinding(
                 watcher="round_stalls",
                 severity="critical" if critical else "warning",
-                title=f"{s.requisition_title} — {s.round_title} pipeline has stalled",
+                title=f"{s.requisition_title} - {s.round_title} pipeline has stalled",
                 body=(
                     f"{s.waiting} {people} been waiting for more than {s.threshold_days} "
                     f"days on {s.round_title}. The longest has waited "
                     f"{s.longest_days:.0f} days."
                     + (f" Waiting: {named}{more}." if named else "")
-                    + " Nobody is rejected for this — they are simply not moving."
+                    + " Nobody is rejected for this - they are simply not moving."
                 ),
                 link=f"/hr/requisitions/{s.requisition_id}",
                 # Per opening and round, and by size band: a stall that grows
@@ -558,7 +558,7 @@ def watch_openings_without_workflow(data: WatcherInput) -> list[WatcherFinding]:
             WatcherFinding(
                 watcher="openings_without_workflow",
                 severity="warning",
-                title=f"{opening.live_enrolments} candidate(s) and no workflow — {opening.title}",
+                title=f"{opening.live_enrolments} candidate(s) and no workflow - {opening.title}",
                 body=(
                     f"{opening.title} has {opening.live_enrolments} candidate(s) but no "
                     f"published hiring workflow, so none of them can be moved "
@@ -634,9 +634,9 @@ def digest(findings: list[WatcherFinding], *, when: datetime | None = None) -> s
     """Render findings as a plain-text digest for email or a console banner."""
     stamp = (when or datetime.now(tz=UTC)).strftime("%d %b %Y")
     if not findings:
-        return f"Pipeline check — {stamp}\n\nNothing needs attention."
+        return f"Pipeline check - {stamp}\n\nNothing needs attention."
 
-    lines = [f"Pipeline check — {stamp}", ""]
+    lines = [f"Pipeline check - {stamp}", ""]
     icon = {"critical": "!!", "warning": " !", "info": "  "}
     for finding in findings:
         lines.append(f"{icon[finding.severity]} {finding.title}")

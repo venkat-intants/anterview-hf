@@ -387,7 +387,7 @@ describe('the approval queue', () => {
     renderQueue();
     await userEvent.click(await screen.findByRole('button', { name: /Request changes/ }));
     expect(rejectRequisition).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: /Confirm — send back/ }));
+    await userEvent.click(screen.getByRole('button', { name: /Confirm - send back/ }));
     await waitFor(() => expect(rejectRequisition).toHaveBeenCalledWith('req-9', undefined));
   });
 

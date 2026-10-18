@@ -178,7 +178,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
   return (
     <SectionCard
       title="The posting"
-      description="What a candidate sees on the job board and before applying. Everything here is optional — leave a field blank and it simply is not shown."
+      description="What a candidate sees on the job board and before applying. Everything here is optional - leave a field blank and it simply is not shown."
     >
       <h3 className={GROUP_TITLE}>Basics</h3>
       <div className="grid gap-4 sm:grid-cols-2">
@@ -324,7 +324,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
             {form.salary_visible ? null : (
               <span className="text-muted-foreground">
                 {' '}
-                Off — the range is kept for your planning and never sent to the job board.
+                Off - the range is kept for your planning and never sent to the job board.
               </span>
             )}
           </span>

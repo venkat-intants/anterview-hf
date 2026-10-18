@@ -132,7 +132,7 @@ describe('Careers board', () => {
       }),
     );
     renderBoard();
-    const expected = `INR ${(1_800_000).toLocaleString()} – INR ${(3_000_000).toLocaleString()}`;
+    const expected = `INR ${(1_800_000).toLocaleString()} - INR ${(3_000_000).toLocaleString()}`;
     expect(await screen.findByText(expected)).toBeInTheDocument();
   });
 

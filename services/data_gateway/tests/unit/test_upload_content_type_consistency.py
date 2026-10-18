@@ -93,7 +93,7 @@ def test_every_gate_in_the_module_is_found(module: str, expected_gates: int) -> 
     assert len(gates) == expected_gates, (
         f"{module}: found {len(gates)} content-type gate(s), expected "
         f"{expected_gates}. If an upload path was added or removed, update "
-        "_PDF_UPLOAD_MODULES — do not loosen this number to make it pass."
+        "_PDF_UPLOAD_MODULES - do not loosen this number to make it pass."
     )
 
 
@@ -106,7 +106,7 @@ def test_every_pdf_upload_accepts_the_same_content_types(module: str) -> None:
         assert gate == _ACCEPTED, (
             f"{module} has a gate accepting {sorted(gate)} rather than "
             f"{sorted(_ACCEPTED)}. octet-stream is what curl with no --header, some "
-            "Android pickers and some corporate proxies send for an ordinary PDF — "
+            "Android pickers and some corporate proxies send for an ordinary PDF - "
             "and the parser, not this header, is what refuses a non-PDF."
         )
 
@@ -122,7 +122,7 @@ def test_no_pdf_upload_path_is_stricter_than_the_public_one() -> None:
         for gate in _gates(module):
             assert gate >= widest, (
                 f"{module} accepts {sorted(gate)}, narrower than the public apply "
-                f"form's {sorted(widest)} — the same PDF would upload anonymously "
+                f"form's {sorted(widest)} - the same PDF would upload anonymously "
                 "and be refused when signed in"
             )
 

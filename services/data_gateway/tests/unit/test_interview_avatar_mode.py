@@ -93,7 +93,7 @@ class TestThePatchRouteIsStatusGated:
         altered nothing the worker will read."""
         src = inspect.getsource(hr_interviews.set_invite_avatar_mode)
         assert 'inv.status != "invited"' in src, (
-            "the status gate is gone — HR can now 'change' the mode of an "
+            "the status gate is gone - HR can now 'change' the mode of an "
             "interview already in flight and be told it worked"
         )
         assert "409" in src, "the refusal must be a conflict, not a silent no-op"
@@ -140,7 +140,7 @@ class TestTheCopyToTheSessionHappens:
         stmt = src[start : start + 400]
         assert ":amode" in stmt, "avatar_mode must be a bound parameter"
         assert "f'" not in stmt and 'f"' not in stmt, (
-            "the sessions INSERT gained an f-string — bind it instead"
+            "the sessions INSERT gained an f-string - bind it instead"
         )
 
 
@@ -161,7 +161,7 @@ def test_every_invite_response_carries_the_mode() -> None:
         and isinstance(n.func, ast.Name)
         and n.func.id == "InviteOut"
     ]
-    assert sites, "no InviteOut construction found — this test stopped checking anything"
+    assert sites, "no InviteOut construction found - this test stopped checking anything"
     for call in sites:
         kwargs = {k.arg for k in call.keywords}
         assert "avatar_mode" in kwargs, (

@@ -70,7 +70,7 @@ async def main() -> None:
             candidate_turns = sum(1 for t in turns if t["role"] == "candidate")
             if candidate_turns < 2:
                 print(
-                    f"  SKIP {session_id} — only {candidate_turns} candidate "
+                    f"  SKIP {session_id} - only {candidate_turns} candidate "
                     f"answer(s) in the DB (no transcript to re-score)."
                 )
                 continue

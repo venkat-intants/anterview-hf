@@ -113,7 +113,7 @@ async def run_agent(
         # A deployment with no model key: say so rather than silently returning
         # an empty answer that reads like the agent had nothing to say.
         run.reply = (
-            "The assistant is not available — no language model is configured "
+            "The assistant is not available - no language model is configured "
             "for this deployment."
         )
         run.stop_reason = "no_llm"
@@ -175,7 +175,7 @@ async def run_agent(
                         name=call.name,
                         ok=False,
                         error="tool budget exhausted",
-                        content='{"error":"tool call budget exhausted for this turn — '
+                        content='{"error":"tool call budget exhausted for this turn - '
                         'answer with what you have"}',
                     )
                 )
@@ -211,7 +211,7 @@ async def run_agent(
         if not run.reply:
             run.reply = (
                 "I could not finish within the step limit. Here is what I "
-                "gathered — try asking something more specific."
+                "gathered - try asking something more specific."
             )
 
     run.stop_reason = stop_reason
@@ -397,7 +397,7 @@ def _build_sources_line(sourced: list[Citation]) -> str:
     line = " | ".join(entries)
     dropped = len(sourced) - len(entries)
     if dropped:
-        line += f" | +{dropped} more source(s) not shown — narrow your query to see them"
+        line += f" | +{dropped} more source(s) not shown - narrow your query to see them"
     return line
 
 

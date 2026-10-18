@@ -59,10 +59,10 @@ const rowOf = (over: Partial<OfferListResponse['items'][number]>): OfferListResp
   items: [{ ...RESPONSE.items[0], ...over }],
 });
 
-describe('Offers — each row says what it needs from the reader', () => {
+describe('Offers - each row says what it needs from the reader', () => {
   it.each([
     ['draft', 'Yours to submit'],
-    ['rejected', 'Sent back — yours to revise'],
+    ['rejected', 'Sent back - yours to revise'],
     ['approved', 'Yours to send'],
     ['pending_approval', 'With the company admin'],
     ['sent', 'Waiting on the candidate'],
@@ -81,7 +81,7 @@ describe('Offers — each row says what it needs from the reader', () => {
   });
 });
 
-describe('Offers — the list', () => {
+describe('Offers - the list', () => {
   it('shows the candidate, job title, status in words and document progress', async () => {
     renderPage();
     await screen.findByText('Kiran Rao');

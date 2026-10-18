@@ -94,9 +94,9 @@ def _schema_tables() -> set[str]:
 def test_schema_discovery_actually_found_the_schema() -> None:
     orm = _orm_tables()
     migrations = _migration_tables()
-    assert "users" in orm, f"ORM discovery found {sorted(orm)} — did {_MODELS_PY} move?"
+    assert "users" in orm, f"ORM discovery found {sorted(orm)} - did {_MODELS_PY} move?"
     assert "users" in migrations, (
-        f"migration discovery found {sorted(migrations)} — did {_MIGRATIONS_DIR} move?"
+        f"migration discovery found {sorted(migrations)} - did {_MIGRATIONS_DIR} move?"
     )
     # 26 in the ORM at the time of writing; well under that means the walk broke.
     assert len(_schema_tables()) >= 25
@@ -144,7 +144,7 @@ def test_inventory_names_no_table_the_schema_does_not_have() -> None:
     phantom = (set(ERASED_TABLES) | set(EXCLUDED_TABLES)) - known
     assert not phantom, (
         f"The inventory names tables that no longer exist: {sorted(phantom)}. "
-        "They were probably renamed — check whether the new name is assigned."
+        "They were probably renamed - check whether the new name is assigned."
     )
 
 

@@ -67,7 +67,7 @@ PERSONA_ORDER: tuple[Persona, ...] = (
 # ever drift apart (e.g. someone added a fifth persona to the Literal but
 # forgot the tuple), the selection bucket-count would silently mismatch.
 assert tuple(get_args(Persona)) == PERSONA_ORDER, (
-    "Persona Literal members and PERSONA_ORDER tuple drifted apart — "
+    "Persona Literal members and PERSONA_ORDER tuple drifted apart - "
     "update both together to keep the hash-bucket distribution stable."
 )
 
@@ -98,19 +98,19 @@ PERSONA_DELTAS_EN: dict[Persona, str] = {
         "- Be warm and conversational; low-stakes tone, not chatty.\n"
         "- When the four-competency rotation rule leaves a free choice, "
         "prefer Behavioural & communication or Role fit.\n"
-        "The four-competency rotation rule above STILL applies — the "
+        "The four-competency rotation rule above STILL applies - the "
         "persona only influences tie-breaks within it."
     ),
     "direct_technical": (
         "Your interviewing style for this session:\n"
         "- Be brisk and on-task. Skip small-talk preamble.\n"
         "- Do NOT acknowledge or paraphrase the candidate before your next "
-        "question — go directly to the question.\n"
+        "question - go directly to the question.\n"
         "- When the candidate uses a concrete technical term, your next "
         "question should test that term at one level of depth deeper.\n"
         "- When the four-competency rotation rule leaves a free choice, "
         "prefer Technical depth or Project / experience depth.\n"
-        "The four-competency rotation rule above STILL applies — the "
+        "The four-competency rotation rule above STILL applies - the "
         "persona only influences tie-breaks within it."
     ),
     "scenario_led": (
@@ -126,7 +126,7 @@ PERSONA_DELTAS_EN: dict[Persona, str] = {
         "to reason through.\n"
         "- When the four-competency rotation rule leaves a free choice, "
         "prefer Project / experience depth or Behavioural & communication.\n"
-        "The four-competency rotation rule above STILL applies — the "
+        "The four-competency rotation rule above STILL applies - the "
         "persona only influences tie-breaks within it."
     ),
     "balanced_fit_first": (
@@ -140,7 +140,7 @@ PERSONA_DELTAS_EN: dict[Persona, str] = {
         "Otherwise skip acknowledgements.\n"
         "- When the four-competency rotation rule leaves a free choice, "
         "prefer Role fit or Behavioural & communication.\n"
-        "The four-competency rotation rule above STILL applies — the "
+        "The four-competency rotation rule above STILL applies - the "
         "persona only influences tie-breaks within it."
     ),
 }
@@ -169,19 +169,19 @@ PERSONA_DELTAS_HI: dict[Persona, str] = {
         "- Jab four-competency rotation rule mein free choice ho, toh "
         "Behavioural & communication ya Role fit ko prefer kijiye.\n"
         "Upar wala four-competency rotation rule abhi bhi apply hota hai "
-        "— persona sirf tie-break ko influence karta hai."
+        "- persona sirf tie-break ko influence karta hai."
     ),
     "direct_technical": (
         "Is session ke liye aapka interviewing style:\n"
         "- Brisk aur on-task raho. Small-talk preamble skip kijiye.\n"
-        "- Anavashyak acknowledgement ya paraphrase mat dijiye — seedha "
+        "- Anavashyak acknowledgement ya paraphrase mat dijiye - seedha "
         "next question pucho.\n"
         "- Jab candidate koi concrete technical term use kare, toh aapka "
         "next question us term ko ek level deeper test kare.\n"
         "- Jab four-competency rotation rule mein free choice ho, toh "
         "Technical depth ya Project / experience depth prefer kijiye.\n"
         "Upar wala four-competency rotation rule abhi bhi apply hota hai "
-        "— persona sirf tie-break ko influence karta hai."
+        "- persona sirf tie-break ko influence karta hai."
     ),
     "scenario_led": (
         "Is session ke liye aapka interviewing style:\n"
@@ -197,7 +197,7 @@ PERSONA_DELTAS_HI: dict[Persona, str] = {
         "Project / experience depth ya Behavioural & communication prefer "
         "kijiye.\n"
         "Upar wala four-competency rotation rule abhi bhi apply hota hai "
-        "— persona sirf tie-break ko influence karta hai."
+        "- persona sirf tie-break ko influence karta hai."
     ),
     "balanced_fit_first": (
         "Is session ke liye aapka interviewing style:\n"
@@ -211,7 +211,7 @@ PERSONA_DELTAS_HI: dict[Persona, str] = {
         "- Jab four-competency rotation rule mein free choice ho, toh "
         "Role fit ya Behavioural & communication prefer kijiye.\n"
         "Upar wala four-competency rotation rule abhi bhi apply hota hai "
-        "— persona sirf tie-break ko influence karta hai."
+        "- persona sirf tie-break ko influence karta hai."
     ),
 }
 
@@ -236,20 +236,20 @@ PERSONA_DELTAS_TE: dict[Persona, str] = {
         "chatty ga maraku.\n"
         "- Four-competency rotation rule lo free choice unappudu, "
         "Behavioural & communication leda Role fit prefer cheyandi.\n"
-        "Paina unna four-competency rotation rule inka apply avutundi — "
+        "Paina unna four-competency rotation rule inka apply avutundi - "
         "persona kevalam tie-break ni influence chestundi."
     ),
     "direct_technical": (
         "Ee session kosam mee interviewing style:\n"
         "- Brisk ga and on-task ga undandi. Small-talk preamble skip "
         "cheyandi.\n"
-        "- Adanapu acknowledgement leda paraphrase ivvaku — direct ga next "
+        "- Adanapu acknowledgement leda paraphrase ivvaku - direct ga next "
         "question adagandi.\n"
         "- Candidate edaina concrete technical term use chesinappudu, mee "
         "next question aa term ni okka level deeper test cheyaali.\n"
         "- Four-competency rotation rule lo free choice unappudu, Technical "
         "depth leda Project / experience depth prefer cheyandi.\n"
-        "Paina unna four-competency rotation rule inka apply avutundi — "
+        "Paina unna four-competency rotation rule inka apply avutundi - "
         "persona kevalam tie-break ni influence chestundi."
     ),
     "scenario_led": (
@@ -264,7 +264,7 @@ PERSONA_DELTAS_TE: dict[Persona, str] = {
         "cheyandi, candidate reason cheyyalsina vidham ga.\n"
         "- Four-competency rotation rule lo free choice unappudu, Project / "
         "experience depth leda Behavioural & communication prefer cheyandi.\n"
-        "Paina unna four-competency rotation rule inka apply avutundi — "
+        "Paina unna four-competency rotation rule inka apply avutundi - "
         "persona kevalam tie-break ni influence chestundi."
     ),
     "balanced_fit_first": (
@@ -278,7 +278,7 @@ PERSONA_DELTAS_TE: dict[Persona, str] = {
         "ledhu\"). Lekapothe acknowledgement skip cheyandi.\n"
         "- Four-competency rotation rule lo free choice unappudu, Role fit "
         "leda Behavioural & communication prefer cheyandi.\n"
-        "Paina unna four-competency rotation rule inka apply avutundi — "
+        "Paina unna four-competency rotation rule inka apply avutundi - "
         "persona kevalam tie-break ni influence chestundi."
     ),
 }

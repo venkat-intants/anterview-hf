@@ -90,7 +90,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('QuestionReviewQueue — a question you wrote or submitted', () => {
+describe('QuestionReviewQueue - a question you wrote or submitted', () => {
   it('is disabled, with the reason shown, instead of offering Approve', async () => {
     const fetchQueue = vi
       .fn()
@@ -105,7 +105,7 @@ describe('QuestionReviewQueue — a question you wrote or submitted', () => {
   });
 });
 
-describe('QuestionReviewQueue — approving someone else’s question', () => {
+describe('QuestionReviewQueue - approving someone else’s question', () => {
   it('offers Approve and Request changes', async () => {
     const fetchQueue = vi.fn().mockResolvedValue([row()]);
     renderQueue({ fetchQueue, approve: vi.fn(), requestChanges: vi.fn() });
@@ -120,7 +120,7 @@ describe('QuestionReviewQueue — approving someone else’s question', () => {
     const approve = vi
       .fn()
       .mockRejectedValue(
-        new Error('You wrote or submitted this question — another reviewer must approve it.'),
+        new Error('You wrote or submitted this question - another reviewer must approve it.'),
       );
     renderQueue({ fetchQueue, approve, requestChanges: vi.fn() });
 
@@ -129,7 +129,7 @@ describe('QuestionReviewQueue — approving someone else’s question', () => {
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
-        'You wrote or submitted this question — another reviewer must approve it.',
+        'You wrote or submitted this question - another reviewer must approve it.',
       ),
     );
   });
@@ -156,7 +156,7 @@ describe('QuestionReviewQueue — approving someone else’s question', () => {
   });
 });
 
-describe('QuestionReviewQueue — empty and error states', () => {
+describe('QuestionReviewQueue - empty and error states', () => {
   it('shows the empty hint when nothing is waiting', async () => {
     const fetchQueue = vi.fn().mockResolvedValue([]);
     renderQueue({ fetchQueue, approve: vi.fn(), requestChanges: vi.fn() });

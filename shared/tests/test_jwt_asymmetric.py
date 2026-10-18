@@ -244,7 +244,7 @@ def test_the_library_would_not_have_caught_that_on_its_own() -> None:
         )
 
     assert not isinstance(exc.value, AttributeError), (
-        "an AttributeError escaped issuance — the marker guard in "
+        "an AttributeError escaped issuance - the marker guard in "
         "issue_access_token has gone, and a public key in JWT_PRIVATE_KEY is a 500 "
         "again instead of a refusal"
     )

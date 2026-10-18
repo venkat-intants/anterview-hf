@@ -124,7 +124,7 @@ describe('AdminInterviews page', () => {
     renderInterviews();
     await waitFor(() => {
       // Rahul has null score — should show '—' somewhere in the table
-      const emDashes = screen.getAllByText('—');
+      const emDashes = screen.getAllByText('-');
       expect(emDashes.length).toBeGreaterThan(0);
     });
   });
@@ -181,7 +181,7 @@ describe('AdminInterviews page', () => {
     expect(screen.getByText(/no interviews yet/i)).toBeInTheDocument();
   });
 
-  it('applies status filter — listInterviews is called with status param', async () => {
+  it('applies status filter - listInterviews is called with status param', async () => {
     // Radix Select does not work in jsdom (lacks pointer capture APIs).
     // We test the filter integration by directly asserting the API is called
     // with the initial default filters on mount, which already validates the

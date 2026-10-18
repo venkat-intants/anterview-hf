@@ -138,7 +138,7 @@ export const GOAL_OPTIONS: { value: OnboardingGoal; label: string; hint: string 
 
 export const LEVEL_OPTIONS: { value: TargetLevel; label: string; hint: string }[] = [
   { value: 'entry', label: 'Fresher', hint: 'No professional experience yet' },
-  { value: 'mid', label: '1–3 years', hint: 'Some real work behind me' },
+  { value: 'mid', label: '1-3 years', hint: 'Some real work behind me' },
   { value: 'senior', label: '3+ years', hint: 'Experienced' },
 ];
 

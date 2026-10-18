@@ -319,7 +319,7 @@ function approvalStage(i: OpeningSetupInput): OpeningStage {
         at: shortDate(i.submittedAt) || undefined,
       };
     case 'rejected': {
-      const note = i.approvalNote ? ` — “${clip(i.approvalNote)}”` : '';
+      const note = i.approvalNote ? ` - “${clip(i.approvalNote)}”` : '';
       return {
         ...base,
         state: 'active',
@@ -371,7 +371,7 @@ function goLiveStage(i: OpeningSetupInput, processDone: boolean, approvalDone: b
   return {
     ...base,
     state: 'todo',
-    fact: i.status === 'open' ? 'Ready — applications are off' : `Opening is ${i.status}`,
+    fact: i.status === 'open' ? 'Ready - applications are off' : `Opening is ${i.status}`,
     action: { label: 'Open to applications', to: null },
   };
 }

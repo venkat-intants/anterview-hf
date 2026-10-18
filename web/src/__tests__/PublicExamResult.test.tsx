@@ -132,7 +132,7 @@ afterEach(async () => {
   await i18n.changeLanguage('en');
 });
 
-describe('PublicExam — the finish screen is not a verdict', () => {
+describe('PublicExam - the finish screen is not a verdict', () => {
   it.each([
     ['a passing result', RESULT],
     ['a failing result', { ...RESULT, passed: false, score_raw: 1, score_percent: 20 }],

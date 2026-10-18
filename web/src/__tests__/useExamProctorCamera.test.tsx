@@ -60,7 +60,7 @@ beforeEach(() => {
   capturedEnabled = null;
 });
 
-describe('useExamProctor — camera event submission (camera-proctoring contract §1)', () => {
+describe('useExamProctor - camera event submission (camera-proctoring contract §1)', () => {
   it('forwards a known camera event in the contract shape', async () => {
     sendIntegrityEvent.mockResolvedValue({
       accepted: true,
@@ -106,7 +106,7 @@ describe('useExamProctor — camera event submission (camera-proctoring contract
     expect(res).toBeNull();
   });
 
-  it("never sends image/frame/landmark data — only the contract's known fields", async () => {
+  it("never sends image/frame/landmark data - only the contract's known fields", async () => {
     sendIntegrityEvent.mockResolvedValue({
       accepted: true,
       violation_count: 1,
@@ -283,7 +283,7 @@ describe('useExamProctor — camera event submission (camera-proctoring contract
     expect(capturedEnabled).toBe(false);
   });
 
-  it('defaults cameraEnabled to false — a caller that never opts in gets no camera signal at all', async () => {
+  it('defaults cameraEnabled to false - a caller that never opts in gets no camera signal at all', async () => {
     setup({ cameraEnabled: undefined });
     await waitFor(() => expect(capturedEnabled).not.toBeNull());
     expect(capturedEnabled).toBe(false);

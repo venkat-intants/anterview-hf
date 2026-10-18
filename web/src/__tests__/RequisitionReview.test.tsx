@@ -135,7 +135,7 @@ beforeEach(() => {
   ]);
 });
 
-describe('RequisitionReview — what the backfill guessed', () => {
+describe('RequisitionReview - what the backfill guessed', () => {
   it('flags the opening that folded several spellings, and not the one that did not', async () => {
     renderPage();
     await screen.findByTestId('opening-req-folded');
@@ -183,7 +183,7 @@ describe('RequisitionReview — what the backfill guessed', () => {
   });
 });
 
-describe('RequisitionReview — splitting', () => {
+describe('RequisitionReview - splitting', () => {
   it('refuses to move every candidate out, because that is a rename', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -233,7 +233,7 @@ describe('RequisitionReview — splitting', () => {
   });
 });
 
-describe('RequisitionReview — merging two openings', () => {
+describe('RequisitionReview - merging two openings', () => {
   it('does not merge on a single click, and names what will happen', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -287,7 +287,7 @@ describe('RequisitionReview — merging two openings', () => {
   });
 });
 
-describe('RequisitionReview — applicants with no opening', () => {
+describe('RequisitionReview - applicants with no opening', () => {
   it('counts them rather than losing them from view', async () => {
     getBackfillReview.mockResolvedValue({ ...REVIEW, unfiled_applicants: 2 });
     renderPage();
@@ -295,7 +295,7 @@ describe('RequisitionReview — applicants with no opening', () => {
   });
 });
 
-describe('RequisitionReview — merging duplicate people', () => {
+describe('RequisitionReview - merging duplicate people', () => {
   it('does not merge on a single click', async () => {
     const user = userEvent.setup();
     renderPage();
@@ -342,7 +342,7 @@ describe('RequisitionReview — merging duplicate people', () => {
   });
 });
 
-describe('RequisitionReview — nothing to do', () => {
+describe('RequisitionReview - nothing to do', () => {
   it('says so rather than rendering two empty sections', async () => {
     getBackfillReview.mockResolvedValue({
       backfilled_requisitions: [],

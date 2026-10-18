@@ -570,7 +570,7 @@ def test_rediscovery_never_reads_ai_scored_or_unreviewed_evidence() -> None:
         path = APP / module
         assert path.exists(), f"{module} is gone; this guard would scan nothing"
         src = _code_without_prose(path)
-        assert sentinel in src, f"{module} has no {sentinel!r} — has the scan gone blind?"
+        assert sentinel in src, f"{module} has no {sentinel!r} - has the scan gone blind?"
         for name in forbidden:
             assert name not in src, f"{module} references {name}"
         assert re.search(r"\bfrom sessions\b", src) is None, module

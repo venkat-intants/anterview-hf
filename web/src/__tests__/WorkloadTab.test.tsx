@@ -69,7 +69,7 @@ function renderTab() {
 
 beforeEach(() => vi.clearAllMocks());
 
-describe('WorkloadTab — states', () => {
+describe('WorkloadTab - states', () => {
   it('shows a loading state', () => {
     schedulingApi.getWorkload.mockImplementation(() => new Promise(() => undefined));
     renderTab();
@@ -89,7 +89,7 @@ describe('WorkloadTab — states', () => {
   });
 });
 
-describe('WorkloadTab — flags in words', () => {
+describe('WorkloadTab - flags in words', () => {
   it('states every flag as a sentence, never colour alone', async () => {
     schedulingApi.getWorkload.mockResolvedValue(workload());
     renderTab();
@@ -135,7 +135,7 @@ describe('WorkloadTab — flags in words', () => {
   });
 });
 
-describe('WorkloadTab — capacity edit', () => {
+describe('WorkloadTab - capacity edit', () => {
   it('saves a new daily/weekly limit', async () => {
     schedulingApi.getWorkload.mockResolvedValue(workload());
     schedulingApi.setInterviewerCapacity.mockResolvedValue({

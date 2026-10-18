@@ -110,7 +110,7 @@ class CircuitBreaker:
                 )
                 raise CircuitOpenError(
                     f"Circuit breaker '{self._name}' is OPEN. "
-                    "Service unavailable — try again later."
+                    "Service unavailable - try again later."
                 )
 
         # Execute outside the lock so other coroutines are not blocked

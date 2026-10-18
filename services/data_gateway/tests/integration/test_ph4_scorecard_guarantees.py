@@ -115,7 +115,7 @@ async def _refused(db: AsyncSession, sql: str, params: dict[str, Any], reason: s
         await sp.rollback()
         message = str(exc.orig)
         assert reason in message, (
-            f"refused for the WRONG reason — expected {reason!r}, got: {message[:200]}"
+            f"refused for the WRONG reason - expected {reason!r}, got: {message[:200]}"
         )
         return
     await sp.rollback()

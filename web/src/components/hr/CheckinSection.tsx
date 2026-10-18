@@ -60,9 +60,9 @@ const FIELD_CLS =
 
 function summaryLine(c: CheckinOut): string {
   if (c.employment === 'left') {
-    return `Left${c.left_reason ? ` — ${LEFT_REASON_LABEL[c.left_reason]}` : ''}`;
+    return `Left${c.left_reason ? ` - ${LEFT_REASON_LABEL[c.left_reason]}` : ''}`;
   }
-  return `Still employed${c.performance ? ` — ${PERFORMANCE_LABEL[c.performance]}` : ''}`;
+  return `Still employed${c.performance ? ` - ${PERFORMANCE_LABEL[c.performance]}` : ''}`;
 }
 
 /** Never the raw id — a departed recorder's name goes null, not the UUID. */
@@ -286,7 +286,7 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
             </select>
             {!employedAvailable ? (
               <p className="mt-1 text-[12px] text-muted-foreground">
-                Available from {win.employed_from ? formatDate(win.employed_from) : '—'}
+                Available from {win.employed_from ? formatDate(win.employed_from) : '-'}
               </p>
             ) : null}
           </div>

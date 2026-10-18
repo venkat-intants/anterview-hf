@@ -41,7 +41,7 @@ afterEach(() => {
 // Mock data completeness — sessions
 // ===========================================================================
 
-describe('mockSessionsResponse — shape and content', () => {
+describe('mockSessionsResponse - shape and content', () => {
   it('has 3 items, total 3, page 1, per_page 20', async () => {
     const { mockSessionsResponse } = await import('../api/mock');
     expect(mockSessionsResponse.items).toHaveLength(3);
@@ -90,7 +90,7 @@ describe('mockSessionsResponse — shape and content', () => {
 // createSession — basic contract
 // ===========================================================================
 
-describe('createSession — basic contract', () => {
+describe('createSession - basic contract', () => {
   it('CreateSessionRequest works with job_id and language', async () => {
     vi.stubGlobal(
       'fetch',
@@ -113,7 +113,7 @@ describe('createSession — basic contract', () => {
 // listSessions — URL construction
 // ===========================================================================
 
-describe('listSessions — URL and query param construction', () => {
+describe('listSessions - URL and query param construction', () => {
   it('builds URL with page and per_page params', async () => {
     const mockBody = { items: [], total: 0, page: 2, per_page: 10 };
     const fetchMock = vi.fn().mockResolvedValue(makeFetchResponse(200, mockBody));
@@ -188,7 +188,7 @@ describe('listSessions — URL and query param construction', () => {
 // Mock data completeness — scorecards
 // ===========================================================================
 
-describe('mockScorecardsResponse — shape and content', () => {
+describe('mockScorecardsResponse - shape and content', () => {
   it('has 2 items, total 2, page 1, per_page 20', async () => {
     const { mockScorecardsResponse } = await import('../api/mock');
     expect(mockScorecardsResponse.items).toHaveLength(2);
@@ -238,7 +238,7 @@ describe('mockScorecardsResponse — shape and content', () => {
 // listScorecards — URL construction
 // ===========================================================================
 
-describe('listScorecards — URL and query param construction', () => {
+describe('listScorecards - URL and query param construction', () => {
   it('builds /api/scorecards with page and per_page', async () => {
     const mockBody = { items: [], total: 0, page: 1, per_page: 10 };
     const fetchMock = vi.fn().mockResolvedValue(makeFetchResponse(200, mockBody));
@@ -298,7 +298,7 @@ describe('listScorecards — URL and query param construction', () => {
 // Mock data completeness — resumes
 // ===========================================================================
 
-describe('mockResumesResponse — shape and content', () => {
+describe('mockResumesResponse - shape and content', () => {
   it('has 2 resume versions', async () => {
     const { mockResumesResponse } = await import('../api/mock');
     expect(mockResumesResponse).toHaveLength(2);
@@ -337,7 +337,7 @@ describe('mockResumesResponse — shape and content', () => {
   });
 });
 
-describe('mockCurrentResume — shape and content', () => {
+describe('mockCurrentResume - shape and content', () => {
   it('matches the is_current=true resume from mockResumesResponse', async () => {
     const { mockResumesResponse, mockCurrentResume } = await import('../api/mock');
     const current = mockResumesResponse.find((r) => r.is_current);
@@ -362,7 +362,7 @@ describe('mockCurrentResume — shape and content', () => {
 // resume.ts — live path: URL + HTTP method assertions
 // ===========================================================================
 
-describe('resume — URL and method via fetch stub', () => {
+describe('resume - URL and method via fetch stub', () => {
   it('listResumes calls GET /users/me/resumes (plural)', async () => {
     const fetchMock = vi.fn().mockResolvedValue(makeFetchResponse(200, []));
     vi.stubGlobal('fetch', fetchMock);
@@ -374,7 +374,7 @@ describe('resume — URL and method via fetch stub', () => {
     expect(url).toContain('/users/me/resumes');
   });
 
-  it('getCurrentResume calls GET /users/me/resume (singular — exact path)', async () => {
+  it('getCurrentResume calls GET /users/me/resume (singular - exact path)', async () => {
     const body = {
       resume_id: 'r1',
       filename: 'cv.pdf',

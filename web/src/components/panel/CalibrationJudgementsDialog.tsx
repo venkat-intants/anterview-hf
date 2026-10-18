@@ -20,7 +20,7 @@ function errText(e: unknown, fallback: string): string {
 }
 
 function signedGap(n: number | null): string {
-  if (n === null) return '—';
+  if (n === null) return '-';
   return `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
 }
 
@@ -150,7 +150,7 @@ export default function CalibrationJudgementsDialog({
                     <span className="text-[13px] font-semibold text-foreground">
                       {row.score}
                       <span className="ml-1 text-[12px] font-normal text-muted-foreground">
-                        panel {row.panel_mean ?? '—'} ({row.panel_size})
+                        panel {row.panel_mean ?? '-'} ({row.panel_size})
                       </span>
                     </span>
                   </div>

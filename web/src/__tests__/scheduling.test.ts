@@ -36,7 +36,7 @@ beforeEach(() => {
   client.apiDelete.mockResolvedValue(undefined);
 });
 
-describe('scheduling.ts — HR loop/session URLs', () => {
+describe('scheduling.ts - HR loop/session URLs', () => {
   it('lists loops for an enrolment', async () => {
     client.apiGet.mockResolvedValue([]);
     await scheduling.listLoopsForEnrolment(UUID_A);
@@ -90,7 +90,7 @@ describe('scheduling.ts — HR loop/session URLs', () => {
   });
 });
 
-describe('scheduling.ts — availability URLs (HR-on-anyone vs the interviewer’s own)', () => {
+describe('scheduling.ts - availability URLs (HR-on-anyone vs the interviewer’s own)', () => {
   it('reads and writes any interviewer’s availability by user id', async () => {
     await scheduling.getInterviewerAvailability(UUID_A);
     expect(client.apiGet).toHaveBeenCalledWith(`/hr/interviewers/${UUID_A}/availability`);
@@ -104,7 +104,7 @@ describe('scheduling.ts — availability URLs (HR-on-anyone vs the interviewer�
     );
   });
 
-  it('removes a window by its own id — HR path and the interviewer’s own path differ', async () => {
+  it('removes a window by its own id - HR path and the interviewer’s own path differ', async () => {
     await scheduling.removeInterviewerAvailability(UUID_A);
     expect(client.apiDelete).toHaveBeenCalledWith(`/hr/availability/${UUID_A}`);
     await scheduling.removeMyAvailability(UUID_A);
@@ -119,7 +119,7 @@ describe('scheduling.ts — availability URLs (HR-on-anyone vs the interviewer�
   });
 });
 
-describe('scheduling.ts — the candidate’s own URLs', () => {
+describe('scheduling.ts - the candidate’s own URLs', () => {
   it('reads slots and books by loop and session id', async () => {
     await scheduling.getMySessionSlots(UUID_A, UUID_B);
     expect(client.apiGet).toHaveBeenCalledWith(
@@ -142,7 +142,7 @@ describe('scheduling.ts — the candidate’s own URLs', () => {
   });
 });
 
-describe('scheduling.ts — panel workload and calibration', () => {
+describe('scheduling.ts - panel workload and calibration', () => {
   it('builds the workload query string from the given range', async () => {
     client.apiGet.mockResolvedValue({ interviewers: [] });
     await scheduling.getWorkload('2026-09-01T00:00:00.000Z', '2026-09-08T00:00:00.000Z');

@@ -59,7 +59,7 @@ describe('InterviewErrorBoundary', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('contains a render crash — the surrounding app stays mounted', () => {
+  it('contains a render crash - the surrounding app stays mounted', () => {
     renderScoped();
 
     expect(screen.getByText(APP_CHROME)).toBeInTheDocument();
@@ -103,7 +103,7 @@ describe('InterviewErrorBoundary', () => {
 
 // The new `fallback` prop must be purely additive — App.tsx mounts ErrorBoundary
 // with children only, and that path has to keep rendering the reload card.
-describe('ErrorBoundary — default fallback (unchanged app-root behaviour)', () => {
+describe('ErrorBoundary - default fallback (unchanged app-root behaviour)', () => {
   it('renders the reload card when no custom fallback is supplied', () => {
     render(
       <ErrorBoundary>

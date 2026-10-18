@@ -117,7 +117,7 @@ describe('AdminInterviewDetail page', () => {
       });
     });
 
-    it('renders session metadata — role and language', async () => {
+    it('renders session metadata - role and language', async () => {
       renderDetail('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
       await waitFor(() => {
         // The redesigned UI renders job_title in two places: the candidate
@@ -208,7 +208,7 @@ describe('AdminInterviewDetail page', () => {
   });
 });
 
-describe('AdminInterviewDetail — the proctoring event timeline is closed by default', () => {
+describe('AdminInterviewDetail - the proctoring event timeline is closed by default', () => {
   const withEvents = (n: number): InterviewDetailResponse => ({
     ...SCORED_DETAIL,
     integrity_score: 82,

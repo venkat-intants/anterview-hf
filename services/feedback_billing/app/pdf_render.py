@@ -111,8 +111,8 @@ def _build_pdf_bytes(
         # Not escaped on purpose: the document title is PDF DocInfo metadata,
         # written as a PDF string by ReportLab — no markup parser sees it, and
         # escaping would surface a literal "&amp;" in the viewer's title bar.
-        title=f"Interview Scorecard — {candidate_name}",
-        author="AntHire — AI Interview Platform",
+        title=f"Interview Scorecard - {candidate_name}",
+        author="AntHire - AI Interview Platform",
     )
 
     base_styles = getSampleStyleSheet()
@@ -198,7 +198,7 @@ def _build_pdf_bytes(
     )
 
     # ---- Header block -------------------------------------------------------
-    story.append(Paragraph("AntHire — AI Interview Platform", header_style))
+    story.append(Paragraph("AntHire - AI Interview Platform", header_style))
     story.append(Paragraph("APSSDC Skilling Initiative", subheader_style))
     story.append(HRFlowable(width="100%", thickness=1.5, color=_INTANTS_BLUE, spaceAfter=8))
 

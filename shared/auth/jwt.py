@@ -254,7 +254,7 @@ def issue_access_token(
         raise ValueError(
             f"cannot sign with {algorithm}: the key material has no "
             f"{_PRIVATE_KEY_MARKER!r} marker, so it is a PUBLIC key. Only "
-            "data_gateway holds a private key — see docs/ACCEPTED-RISKS.md AR-2."
+            "data_gateway holds a private key - see docs/ACCEPTED-RISKS.md AR-2."
         )
 
     result: str = jwt.encode(claims, secret, algorithm=algorithm, headers=headers)
@@ -350,7 +350,7 @@ def _validate_rsa_pem(pem: str, *, label: str, want_private: bool) -> None:
         raise ValueError(
             f"{label} looks like a PRIVATE key (contains a {_PRIVATE_KEY_MARKER!r} "
             "marker) but only a PUBLIC key belongs here. Only data_gateway may "
-            "ever hold a private key — see docs/ACCEPTED-RISKS.md AR-2."
+            "ever hold a private key - see docs/ACCEPTED-RISKS.md AR-2."
         )
 
 

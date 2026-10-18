@@ -51,7 +51,7 @@ PASS, FAIL = [], []
 
 def check(label, cond, detail=""):
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 def tiny_pdf(line: str) -> bytes:
@@ -236,7 +236,7 @@ async def main() -> None:
         # What matters is that the TENANT is derived from the opening rather
         # than from anything the applicant sends.
         r = await c.get(f"/apply/{r_foreign}")
-        check("another company's PUBLIC opening is visible — it is a job board",
+        check("another company's PUBLIC opening is visible - it is a job board",
               r.status_code == 200, str(r.status_code))
         check("and it reports that company, not ours",
               r.json()["company_name"] == "Globex", str(r.json())[:120])

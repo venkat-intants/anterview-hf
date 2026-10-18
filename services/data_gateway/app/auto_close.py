@@ -152,7 +152,7 @@ async def close_expired(db: AsyncSession, *, now: datetime) -> int:
             db,
             user_id=row["owner"],
             kind="requisition_auto_closed",
-            title=f"{row['title']} closed — its closing date passed",
+            title=f"{row['title']} closed - its closing date passed",
             body="Nobody was still in it. Reopen it with a new closing date if you need more applicants.",
             link=f"/hr/requisitions/{row['id']}",
             dedupe_key=f"requisition.auto_closed:{row['id']}:{int(row['closes_at'].timestamp())}",
@@ -199,7 +199,7 @@ async def nudge_overdue(db: AsyncSession, *, now: datetime) -> int:
             title=f"{row['title']} is past its closing date",
             body=(
                 f"{n} candidate{'s are' if n != 1 else ' is'} still in progress, so it was not "
-                "closed automatically. Close it once they finish, or close it yourself now — "
+                "closed automatically. Close it once they finish, or close it yourself now - "
                 "nobody is rejected for you."
             ),
             link=f"/hr/requisitions/{row['id']}?tab=pipeline",

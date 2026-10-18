@@ -123,7 +123,7 @@ afterEach(() => {
   window.location.hash = '';
 });
 
-describe('PublicTask — the link itself', () => {
+describe('PublicTask - the link itself', () => {
   it('reads the token from the URL fragment and strips it from the address bar', async () => {
     renderPage();
     await screen.findByText('Take-home simulation');
@@ -157,7 +157,7 @@ describe('PublicTask — the link itself', () => {
   });
 });
 
-describe('PublicTask — before starting: consent, nothing else', () => {
+describe('PublicTask - before starting: consent, nothing else', () => {
   it('shows the brief but never the items or materials before starting', async () => {
     renderPage();
     await screen.findByText('Take-home simulation');
@@ -220,7 +220,7 @@ describe('PublicTask — before starting: consent, nothing else', () => {
   });
 });
 
-describe('PublicTask — working on it', () => {
+describe('PublicTask - working on it', () => {
   beforeEach(() => {
     viewTask.mockResolvedValue(IN_PROGRESS);
   });
@@ -280,7 +280,7 @@ describe('PublicTask — working on it', () => {
 // A "file" item is answered through POST /task/artifacts carrying the item's
 // key — before that existed, the page could only say the item was
 // unanswerable, and a REQUIRED file item made the task impossible to submit.
-describe('PublicTask — a file item', () => {
+describe('PublicTask - a file item', () => {
   const WITH_FILE_ITEM: PublicTaskShape = {
     ...IN_PROGRESS,
     items: [
@@ -366,7 +366,7 @@ describe('PublicTask — a file item', () => {
 // withdraw ON THIS PAGE, and `POST /task/consent/withdraw` needs a control
 // that actually calls it. Mirrors PublicOffer.test.tsx's document-consent
 // withdrawal shape: a plain link, a two-step confirm, then a done state.
-describe('PublicTask — withdrawing consent', () => {
+describe('PublicTask - withdrawing consent', () => {
   beforeEach(() => {
     viewTask.mockResolvedValue(IN_PROGRESS);
   });
@@ -441,7 +441,7 @@ describe('PublicTask — withdrawing consent', () => {
 // was withdrawn, so a reload of an already-withdrawn in-progress task must
 // show the withdrawn state immediately rather than losing it (the old
 // "local state only" behaviour this file's comments used to describe).
-describe('PublicTask — consent already withdrawn (e.g. after a reload)', () => {
+describe('PublicTask - consent already withdrawn (e.g. after a reload)', () => {
   it('shows the withdrawn state on load: no withdraw link, and the field disabled', async () => {
     viewTask.mockResolvedValue({ ...IN_PROGRESS, consent_withdrawn: true });
     renderPage();
@@ -479,8 +479,8 @@ describe('PublicTask — consent already withdrawn (e.g. after a reload)', () =>
   });
 });
 
-describe('PublicTask — after submitting', () => {
-  it('shows "Submitted — with the hiring team" and never an evaluation', async () => {
+describe('PublicTask - after submitting', () => {
+  it('shows "Submitted - with the hiring team" and never an evaluation', async () => {
     viewTask.mockResolvedValue(SUBMITTED);
     renderPage();
 

@@ -190,7 +190,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
               />
               <div className="text-[13px] leading-relaxed text-foreground">
                 These titles were treated as one opening. If two of them are really different jobs,
-                split them apart before building a workflow — a workflow is configured per opening,
+                split them apart before building a workflow - a workflow is configured per opening,
                 so everyone here would otherwise be assessed against the same rounds.
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {req.source_titles.map((t) => (
@@ -331,7 +331,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
               Move some of these candidates into their own opening
             </div>
             <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
-              Tick the candidates who do not belong here. They keep every assessment they have —
+              Tick the candidates who do not belong here. They keep every assessment they have -
               only which opening they sit in changes.
             </p>
 
@@ -379,7 +379,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
 
             {wouldEmpty ? (
               <p role="alert" className="mt-2 text-[13px] text-[var(--ui-warn)]">
-                That moves every candidate out — rename the opening instead of splitting it.
+                That moves every candidate out - rename the opening instead of splitting it.
               </p>
             ) : null}
 
@@ -570,7 +570,7 @@ export default function RequisitionReview(): JSX.Element {
           />
         }
         title="Review imported openings"
-        description="Your existing applicants were sorted into openings by job title. Confirm what that produced before you build workflows on top of it — a workflow belongs to one opening, so the grouping decides who gets assessed together."
+        description="Your existing applicants were sorted into openings by job title. Confirm what that produced before you build workflows on top of it - a workflow belongs to one opening, so the grouping decides who gets assessed together."
       />
       {(data?.unfiled_applicants ?? 0) > 0 ? (
         // The backfill could not group anyone without a job title, and used
@@ -578,7 +578,7 @@ export default function RequisitionReview(): JSX.Element {
         <p className="-mt-3 flex items-start gap-1.5 text-[13px] text-[var(--ui-warn)]">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           {data?.unfiled_applicants} applicant
-          {data?.unfiled_applicants === 1 ? ' is' : 's are'} not filed under any opening — they had
+          {data?.unfiled_applicants === 1 ? ' is' : 's are'} not filed under any opening - they had
           no job title to group by. Re-upload them against an opening to include them.
         </p>
       ) : null}

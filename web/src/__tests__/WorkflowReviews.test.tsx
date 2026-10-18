@@ -116,7 +116,7 @@ beforeEach(() => {
   getWorkflowReviewDetail.mockResolvedValue(DETAIL);
 });
 
-describe('WorkflowReviews — the queue', () => {
+describe('WorkflowReviews - the queue', () => {
   it('lists a waiting version, oldest-looking first, linking to its detail', async () => {
     renderPage();
     await screen.findByText('Backend Engineer · v2');
@@ -134,7 +134,7 @@ describe('WorkflowReviews — the queue', () => {
   });
 });
 
-describe('WorkflowReviews — one version in full', () => {
+describe('WorkflowReviews - one version in full', () => {
   beforeEach(() => {
     paramWorkflowId = 'wf-1';
   });
@@ -199,7 +199,7 @@ describe('WorkflowReviews — one version in full', () => {
     await screen.findByText('Fundamentals');
     // History is a closed disclosure until opened (structural change).
     await userEvent.click(screen.getByRole('button', { name: /History/ }));
-    expect(screen.getByText(/Submitted for review — Rekha HR/)).toBeTruthy();
+    expect(screen.getByText(/Submitted for review - Rekha HR/)).toBeTruthy();
   });
 
   it('approves with an optional note', async () => {
@@ -279,7 +279,7 @@ describe('WorkflowReviews — one version in full', () => {
   });
 });
 
-describe('WorkflowReviews — where this version is', () => {
+describe('WorkflowReviews - where this version is', () => {
   beforeEach(() => {
     paramWorkflowId = 'wf-1';
   });
@@ -308,7 +308,7 @@ describe('WorkflowReviews — where this version is', () => {
 // and until this section existed, this page rendered none of a version's
 // automation settings at all.
 
-describe('WorkflowReviews — the approver sees whether shortlisting is automatic', () => {
+describe('WorkflowReviews - the approver sees whether shortlisting is automatic', () => {
   beforeEach(() => {
     paramWorkflowId = 'wf-1';
   });

@@ -268,7 +268,7 @@ export function BankQuestionEditor({
         <p className="flex items-start gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] px-3.5 py-3 text-[13px] text-muted-foreground">
           <Lock size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span>
-            This question is {question?.status.replace('_', ' ')} — only a draft can be edited.
+            This question is {question?.status.replace('_', ' ')} - only a draft can be edited.
             {question?.status === 'approved' || question?.status === 'retired'
               ? ' Start a new version to change it.'
               : ''}

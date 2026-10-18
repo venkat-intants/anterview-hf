@@ -36,7 +36,7 @@ SCORE = {"overall": 7, "breakdown": {"skills": 7}, "strengths": ["x"], "concerns
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def main() -> None:  # noqa: PLR0915 — one linear script
@@ -301,7 +301,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script
             " WHERE full_name IN ('scoring_off','no_workflow_yet')"))).mappings().all()}
     check("an application whose workflow switches scoring off stops 'being read'",
           flags.get("scoring_off") is False, str(flags))
-    check("one with no workflow yet stays pending — publishing may still score it",
+    check("one with no workflow yet stays pending - publishing may still score it",
           flags.get("no_workflow_yet") is True, str(flags))
 
     await ac.aclose()

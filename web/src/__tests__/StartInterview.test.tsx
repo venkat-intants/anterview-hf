@@ -322,7 +322,7 @@ describe('StartInterview page', () => {
     });
   });
 
-  it('avatar picker: falls back gracefully on fetch error — start still works', async () => {
+  it('avatar picker: falls back gracefully on fetch error - start still works', async () => {
     mockGetAvatars.mockRejectedValue(new Error('Network error'));
     mockCreateCustomJob.mockResolvedValue({ id: 'job-fallback', title: 'Dev' });
     mockCreateSession.mockResolvedValue({ session_id: 'sess-fallback' });

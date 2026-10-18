@@ -70,7 +70,7 @@ describe('codeEvidenceLabel', () => {
   });
 });
 
-describe('CodeEvidenceCounts — the candidate drawer', () => {
+describe('CodeEvidenceCounts - the candidate drawer', () => {
   it('shows the counts and points at the attempt, where the evidence is', async () => {
     getCodeEvidenceSummary.mockResolvedValue(counts({ signal_count: 1, unreviewed_signal_count: 1 }));
     renderCounts();

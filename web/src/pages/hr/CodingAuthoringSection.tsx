@@ -466,7 +466,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
       {/* Composer */}
       {locked ? (
         <div className="flex items-center gap-2 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] px-4 py-3 text-[13.5px] text-muted-foreground">
-          <Lock size={15} className="shrink-0" aria-hidden="true" /> Questions are locked — see the
+          <Lock size={15} className="shrink-0" aria-hidden="true" /> Questions are locked - see the
           banner above.
         </div>
       ) : (
@@ -510,7 +510,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
               <div className="space-y-4">
                 <h3 className="text-[15px] font-bold text-foreground">What to generate</h3>
                 <Input
-                  placeholder="Topic — e.g. arrays & strings, SQL joins, or Junior Python Developer"
+                  placeholder="Topic - e.g. arrays & strings, SQL joins, or Junior Python Developer"
                   value={aiTopic}
                   onChange={(e) => setAiTopic(e.target.value)}
                   aria-label="Topic"
@@ -588,7 +588,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                 <div className="space-y-3 border-t border-border pt-5">
                   <h3 className="text-[15px] font-bold text-foreground">Review the drafts</h3>
                   <p className="text-[13px] text-muted-foreground">
-                    Review the drafts — check the sample cases and remove any problem you don&apos;t
+                    Review the drafts - check the sample cases and remove any problem you don&apos;t
                     want. Each problem ships with hidden test cases used for grading.
                   </p>
                   {aiPreview.map((q, i) => {
@@ -661,7 +661,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                 <textarea
                   className={cn(FIELD_CLS, 'resize-y')}
                   rows={3}
-                  placeholder="Problem statement — describe the task, input format, and output format…"
+                  placeholder="Problem statement - describe the task, input format, and output format…"
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   aria-label="Problem statement"
@@ -681,7 +681,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                 {/* Starter code */}
                 <div>
                   <span className={LABEL_CLS}>
-                    Starter code (optional) — {LANG_LABEL[editorLang]}
+                    Starter code (optional) - {LANG_LABEL[editorLang]}
                   </span>
                   <Suspense fallback={<Skeleton className="h-28 rounded-[12px]" />}>
                     <CodeEditor

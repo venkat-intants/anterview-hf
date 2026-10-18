@@ -282,7 +282,7 @@ async def test_no_llm_calls_in_unit_test(
         def _ctor(*_a: Any, **_kw: Any) -> Any:
             sentinel_calls.append(name)
             raise AssertionError(
-                f"unit test attempted to instantiate {name} — "
+                f"unit test attempted to instantiate {name} - "
                 "graph must not make network calls"
             )
 

@@ -149,7 +149,7 @@ describe('nav role scoping', () => {
     expect(hr).toContain('/hr/rediscovery');
   });
 
-  it('offers pools and rediscovery to NO role except hr_manager — a pool names a candidate', () => {
+  it('offers pools and rediscovery to NO role except hr_manager - a pool names a candidate', () => {
     // A pool and a rediscovery result both name a candidate, so this is
     // `candidate_pii` (`DATA_CLASS_ROLES`), which is `{hr_manager}` alone —
     // a company super_admin is deliberately NOT a superset of HR

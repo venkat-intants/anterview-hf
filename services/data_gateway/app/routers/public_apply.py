@@ -1230,7 +1230,7 @@ async def submit_draft(
         enrolment_id=outcome.enrolment_id,
         full_name=name,
         already_applied=False,
-        message="Thanks — your application is in. We will be in touch by email.",
+        message="Thanks - your application is in. We will be in touch by email.",
     )
 
 
@@ -1495,7 +1495,7 @@ async def submit_application(
             "public.apply.storage_failed",
             error_type=type(exc).__name__,
             hint=(
-                "no object storage configured — set S3_* for a real bucket, or "
+                "no object storage configured - set S3_* for a real bucket, or "
                 "STORAGE_LOCAL_DIR to write to disk in development"
                 if not settings.s3_access_key_id and not settings.storage_local_dir
                 else None
@@ -1709,7 +1709,7 @@ async def submit_application(
         enrolment_id=outcome.enrolment_id,
         full_name=name,
         already_applied=False,
-        message="Thanks — your application is in. We will be in touch by email.",
+        message="Thanks - your application is in. We will be in touch by email.",
     )
 
 

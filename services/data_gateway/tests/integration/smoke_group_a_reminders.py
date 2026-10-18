@@ -34,7 +34,7 @@ PASS, FAIL = [], []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def seed(f):
@@ -306,7 +306,7 @@ async def main() -> None:
     check("24h exam reminder sent for a deadline 20h out",
           [e["dedupe_key"].rsplit(":", 1)[1] for e in to("asha@cand.test", "exam_reminder")]
           == ["24h"], str(to("asha@cand.test")))
-    check("a deadline 40 min out gets the 1h touch only — not both at once",
+    check("a deadline 40 min out gets the 1h touch only - not both at once",
           [e["dedupe_key"].rsplit(":", 1)[1] for e in to("bharat@cand.test")]
           == ["1h"], str([e["dedupe_key"] for e in to("bharat@cand.test")]))
     check("candidate who already sat the exam gets nothing", not to("dev@cand.test"))

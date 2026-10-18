@@ -30,7 +30,7 @@ beforeEach(() => {
   listBankCompetencies.mockResolvedValue([]);
 });
 
-describe('BankQuestionEditor — creating', () => {
+describe('BankQuestionEditor - creating', () => {
   it('defaults to MCQ, and refuses to save with a blank option', async () => {
     const user = userEvent.setup();
     const onSave = vi.fn();
@@ -77,7 +77,7 @@ describe('BankQuestionEditor — creating', () => {
   });
 });
 
-describe('BankQuestionEditor — anything but draft is read-only', () => {
+describe('BankQuestionEditor - anything but draft is read-only', () => {
   function approvedQuestion(): BankQuestion {
     return {
       id: 'q-1', bank_id: 'bank-1', root_id: 'q-1', version: 1, kind: 'mcq',
@@ -107,7 +107,7 @@ describe('BankQuestionEditor — anything but draft is read-only', () => {
   });
 });
 
-describe('BankQuestionEditor — the server-stamped unverified tag is locked', () => {
+describe('BankQuestionEditor - the server-stamped unverified tag is locked', () => {
   const aiCoding: BankQuestion = {
     id: 'q-ai', bank_id: 'bank-1', root_id: 'q-ai', version: 1, kind: 'coding',
     prompt: 'Reverse a string', points: 100, options: null, correct_index: null,
@@ -155,7 +155,7 @@ describe('BankQuestionEditor — the server-stamped unverified tag is locked', (
   });
 });
 
-describe('BankQuestionEditor — the form belongs to the question it is showing', () => {
+describe('BankQuestionEditor - the form belongs to the question it is showing', () => {
   function draft(over: Partial<BankQuestion>): BankQuestion {
     return {
       id: 'q-a', bank_id: 'bank-1', root_id: 'q-a', version: 1, kind: 'mcq',

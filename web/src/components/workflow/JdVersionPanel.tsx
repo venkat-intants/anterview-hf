@@ -73,7 +73,7 @@ function when(iso: string | null): string {
 function liveWindow(v: JdVersion): string | null {
   if (!v.published_at) return null;
   const from = when(v.published_at);
-  return v.superseded_at ? `Live ${from} – ${when(v.superseded_at)}` : `Live since ${from}`;
+  return v.superseded_at ? `Live ${from} - ${when(v.superseded_at)}` : `Live since ${from}`;
 }
 
 export default function JdVersionPanel({ requisition }: { requisition: Requisition }) {

@@ -133,7 +133,7 @@ function makeForm(): FormData {
   return form;
 }
 
-describe('uploadWithProgress — token expires mid-upload', () => {
+describe('uploadWithProgress - token expires mid-upload', () => {
   it('refreshes and re-issues the upload once, resolving with the retry body', async () => {
     const calls = installXhr({
       statuses: [401, 200],
@@ -211,7 +211,7 @@ describe('uploadWithProgress — token expires mid-upload', () => {
     expect(calls).toHaveLength(1);
   });
 
-  it('leaves non-401 failures exactly as they were — no refresh attempted', async () => {
+  it('leaves non-401 failures exactly as they were - no refresh attempted', async () => {
     const calls = installXhr({
       statuses: [400],
       responseText: JSON.stringify({ detail: 'Only PDF files are accepted.' }),
@@ -229,7 +229,7 @@ describe('uploadWithProgress — token expires mid-upload', () => {
   });
 });
 
-describe('uploadWithProgress — shares the single-flight refresh', () => {
+describe('uploadWithProgress - shares the single-flight refresh', () => {
   it('two concurrent uploads that both 401 fire exactly ONE refresh', async () => {
     // Hold both first attempts open until each has been recorded, so the two
     // 401s are genuinely in flight together rather than serialised by luck.
@@ -287,7 +287,7 @@ describe('uploadWithProgress — shares the single-flight refresh', () => {
   });
 });
 
-describe('uploadWithProgress — behaviour preserved from before FE-1', () => {
+describe('uploadWithProgress - behaviour preserved from before FE-1', () => {
   it('reports upload progress as a percentage', async () => {
     const onProgress = vi.fn();
     class FakeXhr {

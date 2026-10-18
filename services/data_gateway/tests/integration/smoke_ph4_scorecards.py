@@ -34,7 +34,7 @@ FAIL: list[str] = []
 
 def check(label: str, cond: bool, detail: str = "") -> None:
     (PASS if cond else FAIL).append(label)
-    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' — ' + detail) if detail and not cond else ''}")
+    print(f"  {'PASS' if cond else 'FAIL'}  {label}{(' - ' + detail) if detail and not cond else ''}")
 
 
 async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bottom
@@ -163,7 +163,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://smoke") as client:
-        print("\nPH4-A1 — who can interview")
+        print("\nPH4-A1 - who can interview")
         r = await client.get("/hr/interviewers")
         ids = {p["user_id"] for p in r.json()} if r.status_code == 200 else set()
         check("HR lists interviewers", r.status_code == 200, r.text[:120])
@@ -171,7 +171,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("an HR manager can also be assigned", str(hr_uid) in ids)
         check("another company's interviewer is NOT listed", str(outsider) not in ids)
 
-        print("\nPH4-A1 — assignment")
+        print("\nPH4-A1 - assignment")
         r = await client.post(f"/hr/enrolments/{enrolment}/scorecards",
                               json={"round_id": str(rnd), "interviewer_user_ids": [str(iv1), str(iv2)]})
         check("HR assigns two interviewers", r.status_code == 201, f"{r.status_code} {r.text[:160]}")
@@ -201,7 +201,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         hr_card = (r.json().get("created") or [{}])[0].get("scorecard_id", "") \
             if r.status_code == 201 else ""
 
-        print("\nPH4-A1 — interviewers see only their own")
+        print("\nPH4-A1 - interviewers see only their own")
         act_as(iv1)
         r = await client.get("/interviewer/assignments")
         mine = r.json() if r.status_code == 200 else []
@@ -231,7 +231,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await client.get("/interviewer/assignments")
         check("and sees none of Acme's assignments", r.status_code == 200 and r.json() == [], r.text[:120])
 
-        print("\nPH4-A1 — drafting and submission")
+        print("\nPH4-A1 - drafting and submission")
         act_as(iv1)
         r = await client.put(f"/interviewer/scorecards/{card1}",
                              json={"scores": [{"competency_id": "made_up", "score": 5}]})
@@ -261,7 +261,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
             {"competency_id": "problem_solving", "score": 1}]})
         check("a submitted scorecard cannot be edited", r.status_code == 409, str(r.status_code))
 
-        print("\nPH4-A1 — a scorecard never decides")
+        print("\nPH4-A1 - a scorecard never decides")
         async with factory() as db:
             row = (await db.execute(text(
                 "SELECT status, current_round_id FROM enrolments WHERE id=:e"),
@@ -269,7 +269,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("the candidate's status did not move", row["status"] == "shortlisted", str(row["status"]))
         check("the candidate is still on the same round", row["current_round_id"] == rnd)
 
-        print("\nPH4-A1 — HR reads the evidence")
+        print("\nPH4-A1 - HR reads the evidence")
         # Read by the HR manager who is NOT on the panel; the one who is, is blinded below.
         acting["hr"] = hr2_uid
         r = await client.get(f"/hr/enrolments/{enrolment}/scorecards")
@@ -289,7 +289,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               rnd0.get("hidden_until_you_submit") is True and c1.get("scores") is None,
               str(rnd0.get("hidden_until_you_submit")))
 
-        print("\nPH4-A1 — independence for the HR managers who interview (M2)")
+        print("\nPH4-A1 - independence for the HR managers who interview (M2)")
         r = await client.post(f"/hr/scorecards/{hr_card}/withdraw", json={"reason": "busy"})
         check("an HR manager cannot withdraw themselves from the panel",
               r.status_code == 409 and "another HR manager" in r.text, f"{r.status_code} {r.text[:120]}")
@@ -303,7 +303,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               r.status_code == 201 and r.json().get("already_assigned") == [str(hr_uid)],
               r.text[:160])
 
-        print("\nPH4-A1 — the audited correction path")
+        print("\nPH4-A1 - the audited correction path")
         act_as(iv1)
         r = await client.post(f"/interviewer/scorecards/{card1}/correction", json={"reason": "short"})
         check("a correction needs a real reason", r.status_code == 422, str(r.status_code))
@@ -378,7 +378,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                 {"competency_id": "system_design", "score": 4}]})
         check("and it resubmits", r.status_code == 200, r.text[:120])
 
-        print("\nPH4-A1 — withdrawal")
+        print("\nPH4-A1 - withdrawal")
         r = await client.post(f"/hr/scorecards/{card2}/withdraw", json={"reason": "Travelling"})
         check("HR withdraws an unsubmitted assignment", r.status_code == 204, f"{r.status_code} {r.text[:120]}")
         act_as(iv2)
@@ -406,7 +406,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await client.post(f"/hr/scorecards/{card1b}/withdraw", json={})
         check("a SUBMITTED scorecard cannot be withdrawn", r.status_code == 409, str(r.status_code))
 
-        print("\nPH4-A1 — decisions lock the evidence")
+        print("\nPH4-A1 - decisions lock the evidence")
         async with factory() as db:
             await db.execute(text("UPDATE enrolments SET status='rejected' WHERE id=:e"), {"e": enrolment})
             await db.commit()
@@ -418,7 +418,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("no private notes once a final decision exists (M3)", r.status_code == 409,
               str(r.status_code))
 
-        print("\nPH4-A1 — audit trail")
+        print("\nPH4-A1 - audit trail")
         async with factory() as db:
             actions = set((await db.execute(text(
                 "SELECT action FROM audit_log WHERE resource_type='interviewer_scorecard'"
@@ -427,7 +427,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
                   "scorecard.correction_opened", "scorecard.withdrawn"):
             check(f"audited: {a}", a in actions, str(sorted(actions)))
 
-        print("\nPH4-A1 — removing an interviewer")
+        print("\nPH4-A1 - removing an interviewer")
         async with factory() as db:
             await db.execute(text("UPDATE enrolments SET status='shortlisted' WHERE id=:e"), {"e": enrolment})
             await db.commit()
@@ -451,7 +451,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               str(per_card))
         check("and their sessions were revoked", str(iv2) in auth_stub.revoked)
 
-        print("\nPH4-A5 — interview kits")
+        print("\nPH4-A5 - interview kits")
         r = await client.get(f"/hr/rounds/{rnd}/kit")
         kit = r.json() if r.status_code == 200 else {}
         check("HR reads a round with no kit yet", r.status_code == 200, r.text[:160])
@@ -502,7 +502,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await client.get(f"/interviewer/scorecards/{card1b}/kit")
         check("nobody else can read it through that scorecard", r.status_code == 404, str(r.status_code))
 
-        print("\nPH4-A5 — private interviewer notes")
+        print("\nPH4-A5 - private interviewer notes")
         act_as(iv1)
         r = await client.put(f"/interviewer/scorecards/{card1b}/notes",
                              json={"notes": "Mentioned leading a migration at a fintech."})
@@ -512,7 +512,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         r = await client.get(f"/hr/enrolments/{enrolment}/scorecards")
         check("HR's evidence view never contains the notes", "migration" not in r.text)
 
-        print("\nPH4-A5 — kits survive a new workflow version")
+        print("\nPH4-A5 - kits survive a new workflow version")
         from app.workflows import clone_for_edit
         async with factory() as db:
             draft = await clone_for_edit(db, company_id=cid, workflow_id=wf, created_by=hr_uid)
@@ -523,7 +523,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("cloning the workflow carries the kit to the new round",
               len(copied) == 1 and (copied[0] or "").startswith("45 minutes"), str(copied))
 
-        print("\nPH4-O4 — decision reason codes")
+        print("\nPH4-O4 - decision reason codes")
         r = await client.get("/hr/decision-reasons")
         codes = [x["code"] for x in r.json()] if r.status_code == 200 else []
         check("HR gets the default categories on first use",
@@ -629,7 +629,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
               {"decision_reason.created", "decision_reason.updated"} <= reason_audits,
               str(reason_audits))
 
-        print("\nPH4-A1 — nothing new about an erased candidate (M4)")
+        print("\nPH4-A1 - nothing new about an erased candidate (M4)")
         async with factory() as db:
             await db.execute(text(
                 "UPDATE enrolments SET status='shortlisted' WHERE id=:e"), {"e": enrolment})
@@ -653,7 +653,7 @@ async def main() -> None:  # noqa: PLR0915 — one linear script, read top to bo
         check("and the scorecard shows as locked",
               r.status_code == 200 and r.json()["can_correct"] is False, r.text[:120])
 
-        print("\nPH4-A1 — no session, no access")
+        print("\nPH4-A1 - no session, no access")
         app.dependency_overrides.pop(get_interviewer_company, None)
         app.dependency_overrides.pop(get_hr_company, None)
         r = await client.get("/interviewer/assignments")

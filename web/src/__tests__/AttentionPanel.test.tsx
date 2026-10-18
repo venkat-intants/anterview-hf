@@ -110,7 +110,7 @@ describe('AttentionPanel', () => {
     expect(await screen.findByText('Asha Rao')).toBeInTheDocument();
   });
 
-  it('makes a citation its own link to the record — PH5-E1, the href was always there', async () => {
+  it('makes a citation its own link to the record - PH5-E1, the href was always there', async () => {
     // Previously a non-interactive <span>, discarding a real href. The chip
     // is a sibling of the finding's own link, never nested inside it (an <a>
     // inside an <a> would break both for keyboard and screen-reader users).

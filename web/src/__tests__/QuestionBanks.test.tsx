@@ -61,7 +61,7 @@ beforeEach(() => {
   listQuestionBanks.mockResolvedValue([BANK]);
 });
 
-describe('QuestionBanks — the list', () => {
+describe('QuestionBanks - the list', () => {
   it('shows each bank with its status counts and usage', async () => {
     renderPage();
     expect(await screen.findByRole('link', { name: 'Backend Core' })).toBeInTheDocument();
@@ -81,7 +81,7 @@ describe('QuestionBanks — the list', () => {
   });
 });
 
-describe('QuestionBanks — next action per bank', () => {
+describe('QuestionBanks - next action per bank', () => {
   const at = (id: string, name: string, counts: BankOut['counts']): BankOut => ({
     ...BANK,
     id,
@@ -120,7 +120,7 @@ describe('QuestionBanks — next action per bank', () => {
   });
 });
 
-describe('QuestionBanks — search and filter', () => {
+describe('QuestionBanks - search and filter', () => {
   beforeEach(() => {
     listQuestionBanks.mockResolvedValue([
       { ...BANK, id: 'b-1', name: 'SQL basics', description: null, counts: { draft: 2 } },
@@ -170,7 +170,7 @@ describe('QuestionBanks — search and filter', () => {
   });
 });
 
-describe('QuestionBanks — MCQ / coding split (optional kind_counts)', () => {
+describe('QuestionBanks - MCQ / coding split (optional kind_counts)', () => {
   it('shows "n MCQ · n coding" and a kind filter when a bank carries kind_counts', async () => {
     listQuestionBanks.mockResolvedValue([
       { ...BANK, id: 'b-1', name: 'Mixed bank', kind_counts: { mcq: 12, coding: 3 } },
@@ -206,7 +206,7 @@ describe('QuestionBanks — MCQ / coding split (optional kind_counts)', () => {
   });
 });
 
-describe('QuestionBanks — New bank is the one primary', () => {
+describe('QuestionBanks - New bank is the one primary', () => {
   it('is a link into the creation flow, and the permanent create form is gone', async () => {
     renderPage();
     await screen.findByRole('link', { name: 'Backend Core' });
@@ -221,7 +221,7 @@ describe('QuestionBanks — New bank is the one primary', () => {
   });
 });
 
-describe('QuestionBanks — rename and archive', () => {
+describe('QuestionBanks - rename and archive', () => {
   it('renames a bank', async () => {
     const user = userEvent.setup();
     updateQuestionBank.mockResolvedValue({ ...BANK, name: 'Backend Fundamentals' });

@@ -34,7 +34,7 @@ function withRouter(ui: ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>);
 }
 
-describe('CitationChips — strip', () => {
+describe('CitationChips - strip', () => {
   it('renders a real Link for a citation with an href', () => {
     withRouter(<CitationChips citations={[citation()]} />);
     const link = screen.getByRole('link', { name: /Asha Rao/ });
@@ -100,7 +100,7 @@ describe('CitationChips — strip', () => {
   });
 });
 
-describe('CitedText — inline [S…] markers', () => {
+describe('CitedText - inline [S…] markers', () => {
   it('renders a matched marker as a chip linking to the same target as the strip entry', () => {
     const source = citation({
       kind: 'document',

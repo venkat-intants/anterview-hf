@@ -95,7 +95,7 @@ class ScoreRequest(BaseModel):
         description="BCP-47 language code: 'en', 'hi', or 'te'",
     )
     jd_text: str = Field(
-        default="", description="Parsed JD text — optional, improves scoring accuracy"
+        default="", description="Parsed JD text - optional, improves scoring accuracy"
     )
     turns: list[TurnIn] = Field(
         ..., description="Ordered list of conversation turns"
@@ -112,7 +112,7 @@ class ScoreRequest(BaseModel):
     # 422-ing and costing the candidate their scorecard.
     role_profile: dict[str, Any] | None = Field(
         default=None,
-        description="Derived RoleProfile (shared.intelligence) — optional",
+        description="Derived RoleProfile (shared.intelligence) - optional",
     )
 
 
@@ -505,7 +505,7 @@ class ResumeScoreRequest(BaseModel):
     resume_text: str = Field(..., min_length=1, description="Extracted resume text")
     job_title: str = Field(default="General Role", min_length=1)
     level: str = Field(default="mid", description="entry | mid | senior")
-    jd_text: str = Field(default="", description="Job description — optional, improves accuracy")
+    jd_text: str = Field(default="", description="Job description - optional, improves accuracy")
 
 
 class ResumeScoreResponse(BaseModel):

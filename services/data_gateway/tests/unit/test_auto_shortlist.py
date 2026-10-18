@@ -355,7 +355,7 @@ def test_every_place_that_writes_an_ats_score_offers_auto_shortlist() -> None:
                 callers += 1
                 if "maybe_auto_shortlist" not in names:
                     offenders.append(f"{path.relative_to(APP)}::{fn.name}")
-    assert callers >= 4, f"found {callers} scoring callers — this test stopped looking"
+    assert callers >= 4, f"found {callers} scoring callers - this test stopped looking"
     assert not offenders, (
         f"these write an ATS score without offering auto-shortlist: {offenders}"
     )
@@ -865,7 +865,7 @@ def test_a_swallowed_failure_never_logs_the_exception_message() -> None:
         and isinstance(n.args[0], ast.Constant)
         and n.args[0].value == "runner.auto_shortlist_failed"
     ]
-    assert len(calls) == 1, "the failure log call was not found — this test stopped checking"
+    assert len(calls) == 1, "the failure log call was not found - this test stopped checking"
     keywords = {k.arg for k in calls[0].keywords}
     assert "exc_type" in keywords, "the failure must still say WHAT failed"
     assert "exc_msg" not in keywords

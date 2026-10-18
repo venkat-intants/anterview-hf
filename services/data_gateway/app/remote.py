@@ -47,7 +47,7 @@ def describe_unreachable(exc: httpx.RequestError, *, what: str, url: str) -> str
     if isinstance(exc, httpx.TimeoutException):
         return (
             f"{what} timed out waiting for feedback_billing at {origin}. The "
-            "service is up but the model call did not finish — try fewer items, "
+            "service is up but the model call did not finish - try fewer items, "
             "or check that service's logs."
         )
     return f"{what} could not reach feedback_billing at {origin}: {exc}"

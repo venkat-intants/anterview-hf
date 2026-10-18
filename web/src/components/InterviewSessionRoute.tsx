@@ -93,7 +93,7 @@ export default function InterviewSessionRoute() {
         </h1>
         <p className="mt-2 text-[14px] leading-relaxed text-muted-foreground">
           Your session timed out on this device. Open the interview link from your
-          email again to pick up where you left off — your invite is still valid
+          email again to pick up where you left off - your invite is still valid
           until it expires. No account or sign-in needed.
         </p>
         <p className="mt-4 text-[12.5px] text-[var(--ui-faint)]">

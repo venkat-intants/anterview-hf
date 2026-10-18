@@ -97,7 +97,7 @@ describe('ProfileView', () => {
   });
 });
 
-describe('ProfileView — candidate-controlled link safety', () => {
+describe('ProfileView - candidate-controlled link safety', () => {
   it('renders an http(s) profile link as a real anchor', async () => {
     renderProfile();
 

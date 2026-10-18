@@ -29,8 +29,8 @@ const COPY: Record<CitationState, string> = {
   sourced: 'Answered from your records. Claims marked [S…] link to the source.',
   unattributed:
     'Records were read for this answer, but no claim in it is tied to a ' +
-    "specific one — read it as the assistant's own summary, not a sourced fact.",
-  unread: "No records were read for this answer — this is the assistant's own reading.",
+    "specific one - read it as the assistant's own summary, not a sourced fact.",
+  unread: "No records were read for this answer - this is the assistant's own reading.",
 };
 
 const ICON: Record<CitationState, typeof CheckCircle2> = {

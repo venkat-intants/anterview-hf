@@ -197,7 +197,7 @@ async def post_integrity_events(
 
     if not consent_ok:
         log.warning(
-            "integrity.consent_absent — rejecting biometric batch",
+            "integrity.consent_absent - rejecting biometric batch",
             session_id=str(session_id),
             user_id=current_user["sub"],
             consent_type=VIDEO_CONSENT_TYPE,

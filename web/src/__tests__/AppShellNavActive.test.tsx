@@ -54,7 +54,7 @@ function renderShell(path: string, roles: string[]) {
   );
 }
 
-describe('AppShell — one active menu item (QA ANTHIRE-007/010)', () => {
+describe('AppShell - one active menu item (QA ANTHIRE-007/010)', () => {
   const active = (): string[] =>
     Array.from(document.querySelectorAll('nav a[aria-current="page"]')).map(
       (a) => a.textContent?.trim() ?? '',
@@ -76,7 +76,7 @@ describe('AppShell — one active menu item (QA ANTHIRE-007/010)', () => {
   });
 });
 
-describe('AppShell — notifications popup (QA ANTHIRE-009)', () => {
+describe('AppShell - notifications popup (QA ANTHIRE-009)', () => {
   it('closes when the person clicks the page outside it', async () => {
     const user = userEvent.setup();
     renderShell('/hr', ['hr_manager']);
@@ -88,7 +88,7 @@ describe('AppShell — notifications popup (QA ANTHIRE-009)', () => {
   });
 });
 
-describe('AppShell — language switcher scope (QA ANTHIRE-012)', () => {
+describe('AppShell - language switcher scope (QA ANTHIRE-012)', () => {
   it('tells staff the console stays in English', async () => {
     const user = userEvent.setup();
     renderShell('/hr', ['hr_manager']);
@@ -105,7 +105,7 @@ describe('AppShell — language switcher scope (QA ANTHIRE-012)', () => {
   });
 });
 
-describe('AppShell — sidebar keeps its scroll position (QA ANTHIRE-013)', () => {
+describe('AppShell - sidebar keeps its scroll position (QA ANTHIRE-013)', () => {
   it('restores where the menu was scrolled when the shell is rebuilt', async () => {
     // HR -> "My interviews" crosses into another route group, which mounts a
     // fresh AppShell. Simulated here as unmount + mount.

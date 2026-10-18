@@ -81,7 +81,7 @@ beforeEach(() => {
   api.approveAllBankQuestions.mockResolvedValue({ acted: 0, skipped: [] });
 });
 
-describe('BankFillPanel — everything arrives as a draft', () => {
+describe('BankFillPanel - everything arrives as a draft', () => {
   it('says so before HR adds anything', () => {
     renderPanel();
     const panel = screen.getByTestId('bank-fill-panel');
@@ -90,7 +90,7 @@ describe('BankFillPanel — everything arrives as a draft', () => {
   });
 });
 
-describe('BankFillPanel — AI is a preview, not a save', () => {
+describe('BankFillPanel - AI is a preview, not a save', () => {
   it('generating stores nothing', async () => {
     const user = userEvent.setup();
     renderPanel();
@@ -180,7 +180,7 @@ describe('BankFillPanel — AI is a preview, not a save', () => {
   });
 });
 
-describe('BankFillPanel — importing a spreadsheet', () => {
+describe('BankFillPanel - importing a spreadsheet', () => {
   it('sends the chosen file with the difficulty and language defaults', async () => {
     const user = userEvent.setup();
     api.importBankQuestions.mockResolvedValue({ added: 3, errors: [], questions: [] });
@@ -249,13 +249,13 @@ describe('BankFillPanel — importing a spreadsheet', () => {
   it('explains that the Correct column takes a letter, a number or the text', () => {
     renderPanel();
     const panel = screen.getByTestId('bank-fill-panel');
-    expect(panel).toHaveTextContent(/letter \(A–D\)/i);
-    expect(panel).toHaveTextContent(/number \(1–4\)/i);
+    expect(panel).toHaveTextContent(/letter \(A-D\)/i);
+    expect(panel).toHaveTextContent(/number \(1-4\)/i);
     expect(panel).toHaveTextContent(/option.s own text/i);
   });
 });
 
-describe('BankFillPanel — the two-person rule survives the bulk button', () => {
+describe('BankFillPanel - the two-person rule survives the bulk button', () => {
   it('states the rule before HR presses anything', () => {
     renderPanel();
     const panel = screen.getByTestId('bank-fill-panel');
@@ -270,8 +270,8 @@ describe('BankFillPanel — the two-person rule survives the bulk button', () =>
     api.approveAllBankQuestions.mockResolvedValue({
       acted: 0,
       skipped: [
-        { question_id: 'q1', reason: 'You wrote or submitted this question — another reviewer must approve it.' },
-        { question_id: 'q2', reason: 'You wrote or submitted this question — another reviewer must approve it.' },
+        { question_id: 'q1', reason: 'You wrote or submitted this question - another reviewer must approve it.' },
+        { question_id: 'q2', reason: 'You wrote or submitted this question - another reviewer must approve it.' },
       ],
     });
     renderPanel();
@@ -291,9 +291,9 @@ describe('BankFillPanel — the two-person rule survives the bulk button', () =>
     api.approveAllBankQuestions.mockResolvedValue({
       acted: 5,
       skipped: [
-        { question_id: 'a', reason: 'You wrote or submitted this question — another reviewer must approve it.' },
-        { question_id: 'b', reason: 'You wrote or submitted this question — another reviewer must approve it.' },
-        { question_id: 'c', reason: "You changed this question's content — another reviewer must approve it." },
+        { question_id: 'a', reason: 'You wrote or submitted this question - another reviewer must approve it.' },
+        { question_id: 'b', reason: 'You wrote or submitted this question - another reviewer must approve it.' },
+        { question_id: 'c', reason: "You changed this question's content - another reviewer must approve it." },
       ],
     });
     renderPanel();
@@ -335,7 +335,7 @@ describe('BankFillPanel — the two-person rule survives the bulk button', () =>
   });
 });
 
-describe('BankFillPanel — review 2026-10-05 fixes', () => {
+describe('BankFillPanel - review 2026-10-05 fixes', () => {
   it('refreshes the REVIEWER queue after sending a batch for review', async () => {
     // The whole point of "send all for review" is to populate someone else's
     // queue. That queue is keyed ['hr','bank-review-queue'], which neither of
@@ -407,7 +407,7 @@ describe('BankFillPanel — review 2026-10-05 fixes', () => {
     api.importBankQuestions.mockResolvedValue({
       added: 1,
       errors: [
-        { row: 2, message: 'already in this bank — skipped' },
+        { row: 2, message: 'already in this bank - skipped' },
         { row: 4, message: 'missing question text' },
       ],
       questions: [],

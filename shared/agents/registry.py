@@ -94,7 +94,7 @@ class ToolContext:
         """Fetch a resource, failing loudly if the router forgot to inject it."""
         if key not in self.resources:
             raise KeyError(
-                f"ToolContext is missing resource {key!r} — the router must "
+                f"ToolContext is missing resource {key!r} - the router must "
                 "inject it before invoking tools"
             )
         return self.resources[key]
@@ -156,7 +156,7 @@ class ToolRegistry:
         if spec.effect not in ("read", "draft"):
             raise ValueError(
                 f"tool {spec.name!r} declares effect {spec.effect!r}; the agent "
-                "layer permits only 'read' and 'draft' — actions must be "
+                "layer permits only 'read' and 'draft' - actions must be "
                 "emitted as a Proposal for a human to commit"
             )
         if spec.name in self._tools:

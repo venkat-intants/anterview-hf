@@ -561,10 +561,10 @@ class TestMintRefreshSession:
         assert len(store) == 1, "exactly one Redis key must be written"
         stored_value = next(iter(store.values()))
         assert stored_value.startswith(f"{user_id}:"), (
-            f"Redis value must start with '<user_id>:' — got {stored_value!r}"
+            f"Redis value must start with '<user_id>:' - got {stored_value!r}"
         )
         ts_part = stored_value[len(user_id) + 1:]
-        assert ts_part.isdigit(), f"created_at part must be a digit string — got {ts_part!r}"
+        assert ts_part.isdigit(), f"created_at part must be a digit string - got {ts_part!r}"
 
     @pytest.mark.asyncio
     async def test_adds_key_to_session_index(self) -> None:
@@ -661,7 +661,7 @@ class TestMintRefreshSession:
         refresh_key = next(iter(session_index))
         stored_value = store[refresh_key]
         assert ":" in stored_value, (
-            "AUTH-01 REGRESSION: SSO token stored in legacy plain format — "
+            "AUTH-01 REGRESSION: SSO token stored in legacy plain format - "
             f"got {stored_value!r}, expected '<user_id>:<created_at>'"
         )
 
@@ -735,7 +735,7 @@ class TestEpochOutlivesRefreshToken:
         _key, ttl, _epoch = redis.setex.await_args.args
         assert ttl >= 7 * 86400, (
             f"epoch TTL {ttl}s expires before the 7-day refresh token it must "
-            "revoke — the token becomes usable again once the epoch lapses"
+            "revoke - the token becomes usable again once the epoch lapses"
         )
 
 
@@ -794,5 +794,5 @@ class TestRefreshRevokedMidRotation:
         # And the token it minted before noticing must not be left usable.
         assert redis.delete.await_count >= 2, (
             "the freshly minted refresh key was not deleted after the "
-            "post-rotation epoch check failed — it would renew indefinitely"
+            "post-rotation epoch check failed - it would renew indefinitely"
         )

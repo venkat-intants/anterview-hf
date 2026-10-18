@@ -232,7 +232,7 @@ def _assert_watcher_metrics_are_checkin_safe(names: tuple[str, ...]) -> None:
     unsafe = [name for name in names if uses_checkin_data(current[name])]
     if unsafe:
         raise RuntimeError(
-            f"watch_runner._WATCHER_FUNNEL_METRICS names a check-in metric {unsafe!r} — "
+            f"watch_runner._WATCHER_FUNNEL_METRICS names a check-in metric {unsafe!r} - "
             "a nightly finding must never carry post-hire outcome data about a "
             "named former candidate."
         )

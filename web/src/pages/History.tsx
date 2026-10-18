@@ -155,7 +155,7 @@ function SessionRow({ session }: { session: SessionListItem }) {
           </Link>
         ) : (
           <span className="text-[12px] text-muted-foreground" aria-hidden="true">
-            —
+            -
           </span>
         )}
       </td>

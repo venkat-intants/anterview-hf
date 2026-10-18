@@ -48,7 +48,7 @@ export default function ForgotPassword() {
         >
           <p>
             If an account exists for <span className="font-semibold text-foreground">{email.trim()}</span>, we’ve sent
-            a password-reset link. It expires soon — check spam if you don’t see it.
+            a password-reset link. It expires soon - check spam if you don’t see it.
           </p>
         </StatusPanel>
       </AuthLayout>

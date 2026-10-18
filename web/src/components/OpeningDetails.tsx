@@ -83,7 +83,7 @@ export default function OpeningDetails({ requisition: req }: { requisition: Requ
             max={10000}
             value={target}
             onChange={(e) => setTarget(e.target.value)}
-            placeholder="—"
+            placeholder="-"
             aria-label="Hires wanted"
           />
         </label>

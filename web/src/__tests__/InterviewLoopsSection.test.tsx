@@ -112,7 +112,7 @@ beforeEach(() => {
   });
 });
 
-describe('InterviewLoopsSection — loading/error/empty', () => {
+describe('InterviewLoopsSection - loading/error/empty', () => {
   it('shows a loading state', () => {
     schedulingApi.listLoopsForEnrolment.mockImplementation(() => new Promise(() => undefined));
     renderSection();
@@ -134,7 +134,7 @@ describe('InterviewLoopsSection — loading/error/empty', () => {
   });
 });
 
-describe('InterviewLoopsSection — creating a loop', () => {
+describe('InterviewLoopsSection - creating a loop', () => {
   it('creates a loop with the chosen title and settings', async () => {
     schedulingApi.listLoopsForEnrolment.mockResolvedValue([]);
     schedulingApi.createLoop.mockResolvedValue(loop());
@@ -157,7 +157,7 @@ describe('InterviewLoopsSection — creating a loop', () => {
   });
 });
 
-describe('InterviewLoopsSection — adding a session', () => {
+describe('InterviewLoopsSection - adding a session', () => {
   it('adds a session with the chosen round, interviewer and time', async () => {
     schedulingApi.listLoopsForEnrolment.mockResolvedValue([loop({ sessions: [] })]);
     schedulingApi.addSession.mockResolvedValue(loop());
@@ -231,7 +231,7 @@ describe('InterviewLoopsSection — adding a session', () => {
   });
 });
 
-describe('InterviewLoopsSection — a session’s controls', () => {
+describe('InterviewLoopsSection - a session’s controls', () => {
   it('hides completed/no-show before the session has started', async () => {
     schedulingApi.listLoopsForEnrolment.mockResolvedValue([
       loop({ sessions: [session({ starts_at: '2099-01-01T05:00:00.000Z' })] }),
@@ -321,7 +321,7 @@ describe('InterviewLoopsSection — a session’s controls', () => {
   });
 });
 
-describe('InterviewLoopsSection — loop-level controls', () => {
+describe('InterviewLoopsSection - loop-level controls', () => {
   it('sends the loop to the candidate', async () => {
     schedulingApi.listLoopsForEnrolment.mockResolvedValue([loop()]);
     schedulingApi.sendLoop.mockResolvedValue({ loop_id: 'loop-1', status: 'scheduled', sent: 'itinerary', version: 1 });

@@ -406,7 +406,7 @@ describe('the list on screen', () => {
     renderList();
     const rollup = await screen.findByTestId('openings-rollup');
     expect(rollup.textContent).toMatch(/6 awaiting you · 40 candidates · 2 hired · 1 accepting applications/);
-    expect(screen.getByText(/open to check — the list cannot confirm it/)).toBeTruthy();
+    expect(screen.getByText(/open to check - the list cannot confirm it/)).toBeTruthy();
   });
 
   it('is quiet while loading and plain when it fails', async () => {

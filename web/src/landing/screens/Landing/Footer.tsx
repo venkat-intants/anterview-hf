@@ -15,11 +15,11 @@ const COLS: { h: string; links: FooterLink[] }[] = [
     ],
   },
   {
-    h: 'For institutions',
+    h: 'For hiring teams',
     links: [
-      { label: 'Colleges and universities', href: '#audience' },
-      { label: 'Recruitment and L&D', href: '#audience' },
-      { label: 'Skilling programmes', href: '#audience' },
+      { label: 'Growing companies', href: '#audience' },
+      { label: 'Talent acquisition', href: '#audience' },
+      { label: 'Hiring managers', href: '#audience' },
       { label: 'Book a demo', href: mailto('AntHire demo request') },
     ],
   },

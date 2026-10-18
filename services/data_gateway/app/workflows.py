@@ -378,7 +378,7 @@ def validate_chain(rounds: list[dict[str, Any]]) -> list[str]:
 
     cycles, unreachable = graph_problems(rounds)
     for loop in cycles:
-        errors.append(f"The rounds form a loop — a candidate would never finish: {loop}.")
+        errors.append(f"The rounds form a loop - a candidate would never finish: {loop}.")
     if unreachable:  # independent of any loop: report both, fix both in one pass
         errors.append("Unreachable from the first round: " + ", ".join(unreachable))
     return errors
@@ -438,7 +438,7 @@ def exam_round_problem(readiness: dict[str, Any] | None) -> str | None:
     if readiness is None:
         return "no longer exists"
     if readiness.get("status") != "published":
-        return "is still a draft — publish it in the exam editor"
+        return "is still a draft - publish it in the exam editor"
     if not readiness.get("questions"):
         return "has no questions"
     return None
@@ -499,13 +499,13 @@ def build_coverage(
         if row.times_assessed == 0:
             warnings.append(
                 f"'{row.competency_name}' carries weight {row.profile_weight:.2f} in this role "
-                "but no round assesses it — add it to a round, or accept that it stays out "
+                "but no round assesses it - add it to a round, or accept that it stays out "
                 "of the composite."
             )
         elif row.times_assessed > 2:
             warnings.append(
                 f"'{row.competency_name}' is assessed in {row.times_assessed} rounds "
-                "(" + ", ".join(row.assessed_in) + ") — deliberate reinforcement is fine, "
+                "(" + ", ".join(row.assessed_in) + ") - deliberate reinforcement is fine, "
                 "flagged so it is a choice rather than an accident."
             )
     return rows, warnings
@@ -1111,7 +1111,7 @@ async def update_settings(
             # including one the scorer failed on and recorded as 0.
             raise WorkflowError(
                 "Set an ATS shortlist threshold of at least 1 before turning on "
-                "automatic shortlisting — without one, every applicant would be "
+                "automatic shortlisting - without one, every applicant would be "
                 "shortlisted."
             )
         if on and not assign:
@@ -1120,7 +1120,7 @@ async def update_settings(
             # watching, because the shortlist was the step a person used to see.
             raise WorkflowError(
                 "Automatic shortlisting needs \"Send the first round automatically\" "
-                "on — otherwise applicants would be shortlisted and then left "
+                "on - otherwise applicants would be shortlisted and then left "
                 "waiting with nothing started."
             )
     sets = ", ".join(f"{k} = :{k}" for k in updates)
@@ -1259,7 +1259,7 @@ async def validate(
                 report.errors.append(f"{r['title']}: needs a brief and its items before publishing.")
             if not criteria.get(str(r["id"])):
                 report.errors.append(
-                    f"{r['title']}: needs at least one evaluation criterion — a reviewer scores "
+                    f"{r['title']}: needs at least one evaluation criterion - a reviewer scores "
                     "a submission against the role's competencies, never a threshold."
                 )
 
@@ -1293,7 +1293,7 @@ WITH attached AS (
 )
 -- Oldest application first, so when publish offers only the first
 -- PUBLISH_AUTO_SHORTLIST_LIMIT to auto-shortlist, the ones offered are the
--- ones who have waited longest — not whatever order the UPDATE happened in.
+-- ones who have waited longest - not whatever order the UPDATE happened in.
 SELECT id, status FROM attached ORDER BY created_at, id
 """
 
@@ -1363,14 +1363,14 @@ async def publish(
     if row["review_status"] != "approved":
         # PH4-O6. The database refuses it as well; this says so in words.
         raise WorkflowError(
-            "This version has not been approved. Submit it for review — a company "
+            "This version has not been approved. Submit it for review - a company "
             "super admin approves a workflow before it can go live."
         )
     if await workflow_fingerprint(db, workflow_id) != row["review_fingerprint"]:
         # The version itself is locked once submitted, but an exam round it uses
         # is not: what goes live must be what the reviewer approved.
         raise WorkflowError(
-            "Something this version uses — such as an exam round's questions — changed "
+            "Something this version uses - such as an exam round's questions - changed "
             "after it was approved. Reopen it and submit it for review again."
         )
 
@@ -1601,7 +1601,7 @@ async def _assert_draft(db: AsyncSession, workflow_id: uuid.UUID) -> None:
     st, review = row[0], row[1]
     if st != "draft":
         raise WorkflowError(
-            f"This workflow is {st}. Create a new version to change it — "
+            f"This workflow is {st}. Create a new version to change it - "
             "candidates already enrolled must finish on the version they started."
         )
     # PH4-O6: what the reviewer sees is what goes live.
@@ -1613,7 +1613,7 @@ async def _assert_draft(db: AsyncSession, workflow_id: uuid.UUID) -> None:
     if review == "approved":
         raise WorkflowError(
             "This version has been approved, so it cannot be edited. Reopen it to make "
-            "changes — it will need approving again."
+            "changes - it will need approving again."
         )
 
 

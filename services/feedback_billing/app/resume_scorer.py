@@ -43,7 +43,7 @@ _RECOMMENDATIONS: frozenset[str] = frozenset({"strong_fit", "moderate_fit", "wea
 _PROMPT_TEMPLATE: str = """\
 You are an expert technical recruiter / ATS scoring a candidate's RESUME against
 a specific role. Judge how well the resume fits the role. Be objective and ground
-EVERY judgement in the resume text — never invent experience that is not present.
+EVERY judgement in the resume text - never invent experience that is not present.
 
 ## Role
 Title : {{JOB_TITLE}}
@@ -75,12 +75,12 @@ Level : {{LEVEL}}
 
 Rules:
 - Extract candidate_name and candidate_email verbatim from the resume (usually
-  the header). Use an empty string if absent — never invent them.
+  the header). Use an empty string if absent - never invent them.
 - "overall" is a HOLISTIC fit score (not merely the average of sub-scores).
 - Ground all claims in the resume; if key info is missing, say so and let it
   lower the relevant sub-score.
 - "concerns" = real gaps vs THIS role (missing skills, thin/irrelevant
-  experience, etc.) — not generic filler.
+  experience, etc.) - not generic filler.
 - Be calibrated: a generic or unrelated resume scores low; a strong, on-target
   resume scores high.
 

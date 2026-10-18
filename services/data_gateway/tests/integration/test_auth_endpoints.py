@@ -141,7 +141,7 @@ async def test_register_response_has_no_refresh_token_in_body(client: AsyncClien
     )
     assert resp.status_code == 201, resp.text
     assert "refresh_token" not in resp.json(), (
-        "refresh_token MUST NOT be present in the JSON response body — "
+        "refresh_token MUST NOT be present in the JSON response body - "
         "it must be set as an httpOnly cookie only."
     )
 

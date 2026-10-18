@@ -355,7 +355,7 @@ export default function TaskSubmissionSection({
                         it is just no longer visible or usable here. */}
                     {row.consent_withdrawn ? (
                       <StatusTag tone="ember" dot>
-                        Consent withdrawn — content hidden
+                        Consent withdrawn - content hidden
                       </StatusTag>
                     ) : null}
                     <StatusTag tone={STATUS_TONE[row.status]} dot>

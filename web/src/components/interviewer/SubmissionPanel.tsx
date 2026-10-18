@@ -104,7 +104,7 @@ export function ExternalLinkGate({ href }: { href: string }) {
           className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]"
           aria-hidden="true"
         />
-        This is a link the candidate provided — the server never fetches it, only your browser will,
+        This is a link the candidate provided - the server never fetches it, only your browser will,
         and only if you continue. It resolves to{' '}
         <strong className="text-foreground">{hostname}</strong>.
       </p>
@@ -309,7 +309,7 @@ export default function SubmissionPanel({ scorecardId }: { scorecardId: string }
   if (data.status !== 'submitted') {
     return (
       <p className="py-6 text-[13px] text-muted-foreground">
-        Not yet submitted ({data.status.replace('_', ' ')}) — nothing to show the reviewer until the
+        Not yet submitted ({data.status.replace('_', ' ')}) - nothing to show the reviewer until the
         candidate submits.
       </p>
     );
@@ -380,7 +380,7 @@ export default function SubmissionPanel({ scorecardId }: { scorecardId: string }
 
       <p className="flex items-start gap-1.5 text-[12px] leading-relaxed text-muted-foreground">
         <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        This is evidence, not a verdict — score it against the checklist in the Scorecard tab.
+        This is evidence, not a verdict - score it against the checklist in the Scorecard tab.
       </p>
     </div>
   );

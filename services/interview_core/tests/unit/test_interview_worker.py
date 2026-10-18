@@ -91,7 +91,7 @@ def test_instructions_hi_directs_native_script() -> None:
     text = _interviewer_instructions("Software Engineer", "hi")
     assert "Devanagari" in text, (
         "HI instructions must explicitly mention 'Devanagari' to anchor the "
-        "model to native script output — B-038"
+        "model to native script output - B-038"
     )
     assert "NOT roman" in text or "NOT Roman" in text, (
         "HI instructions must prohibit Roman transliteration"
@@ -103,7 +103,7 @@ def test_instructions_te_directs_native_script() -> None:
     text = _interviewer_instructions("Software Engineer", "te")
     assert "Telugu script" in text, (
         "TE instructions must explicitly mention 'Telugu script' to anchor the "
-        "model to native script output — B-038"
+        "model to native script output - B-038"
     )
     assert "NOT roman" in text or "NOT Roman" in text, (
         "TE instructions must prohibit Roman transliteration"
@@ -143,7 +143,7 @@ def test_instructions_no_company_stays_neutral() -> None:
     text = _interviewer_instructions("Backend Engineer", "en")
     for platform_name in ("AntHire", "Intants"):
         assert platform_name not in text, (
-            "No-company interviews must stay company-neutral — candidates were "
+            "No-company interviews must stay company-neutral - candidates were "
             "being asked 'why did you apply to <the platform>?' for third-party roles"
         )
     assert "do NOT invent" in text

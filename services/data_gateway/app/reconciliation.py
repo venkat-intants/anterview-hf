@@ -356,7 +356,7 @@ async def _notify_batch_done(
     if unreadable:
         body = (
             f"{total - unreadable} of {total} resumes have been read and scored. "
-            f"{unreadable} could not be read — open them to check the file."
+            f"{unreadable} could not be read - open them to check the file."
         )
     staged = await create_notification(
         db,

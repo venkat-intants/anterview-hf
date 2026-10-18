@@ -79,7 +79,7 @@ beforeEach(() => {
   checkinsApi.getEnrolmentCheckins.mockResolvedValue(checkinsResponse());
 });
 
-describe('CheckinSection — notice and empty state', () => {
+describe('CheckinSection - notice and empty state', () => {
   it('shows the server notice verbatim, and the create form with nothing recorded yet', async () => {
     renderSection();
 
@@ -90,7 +90,7 @@ describe('CheckinSection — notice and empty state', () => {
   });
 });
 
-describe('CheckinSection — iff fields', () => {
+describe('CheckinSection - iff fields', () => {
   it('shows Reason only when Left is chosen', async () => {
     renderSection();
     const user = userEvent.setup();
@@ -110,7 +110,7 @@ describe('CheckinSection — iff fields', () => {
   });
 });
 
-describe('CheckinSection — create', () => {
+describe('CheckinSection - create', () => {
   it('is disabled until a full combination is chosen, then saves it', async () => {
     checkinsApi.createCheckin.mockResolvedValue(liveCheckin());
     renderSection();
@@ -171,7 +171,7 @@ describe('CheckinSection — create', () => {
   });
 });
 
-describe('CheckinSection — correction (no reason field)', () => {
+describe('CheckinSection - correction (no reason field)', () => {
   it('shows the live check-in, then a pre-filled form with no reason textarea', async () => {
     checkinsApi.getEnrolmentCheckins.mockResolvedValue(
       checkinsResponse({ checkins: [liveCheckin()] }),
@@ -179,7 +179,7 @@ describe('CheckinSection — correction (no reason field)', () => {
     renderSection();
     const user = userEvent.setup();
 
-    expect(await screen.findByText('Still employed — Meets expectations')).toBeInTheDocument();
+    expect(await screen.findByText('Still employed - Meets expectations')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Correct' }));
 
     expect(
@@ -190,7 +190,7 @@ describe('CheckinSection — correction (no reason field)', () => {
     expect(screen.getByLabelText('Performance')).toHaveValue('meets');
   });
 
-  it('submits the same shape as a create — no correction_reason', async () => {
+  it('submits the same shape as a create - no correction_reason', async () => {
     checkinsApi.getEnrolmentCheckins.mockResolvedValue(
       checkinsResponse({ checkins: [liveCheckin()] }),
     );
@@ -211,7 +211,7 @@ describe('CheckinSection — correction (no reason field)', () => {
   });
 });
 
-describe('CheckinSection — who recorded it', () => {
+describe('CheckinSection - who recorded it', () => {
   it('shows the recorder by name', async () => {
     checkinsApi.getEnrolmentCheckins.mockResolvedValue(
       checkinsResponse({ checkins: [liveCheckin({ recorded_by_name: 'Ishaan Kapoor' })] }),
@@ -221,7 +221,7 @@ describe('CheckinSection — who recorded it', () => {
     expect(await screen.findByText(/Recorded by Ishaan Kapoor on/)).toBeInTheDocument();
   });
 
-  it('falls back to "a former team member" — never the raw id — when the name is null', async () => {
+  it('falls back to "a former team member" - never the raw id - when the name is null', async () => {
     checkinsApi.getEnrolmentCheckins.mockResolvedValue(
       checkinsResponse({ checkins: [liveCheckin({ recorded_by_name: null })] }),
     );
@@ -232,7 +232,7 @@ describe('CheckinSection — who recorded it', () => {
   });
 });
 
-describe('CheckinSection — the check-in window', () => {
+describe('CheckinSection - the check-in window', () => {
   it('shows no form once the window has closed, and says so when nothing was ever recorded', async () => {
     checkinsApi.getEnrolmentCheckins.mockResolvedValue(
       checkinsResponse({
@@ -268,7 +268,7 @@ describe('CheckinSection — the check-in window', () => {
     );
     renderSection();
 
-    expect(await screen.findByText('Still employed — Meets expectations')).toBeInTheDocument();
+    expect(await screen.findByText('Still employed - Meets expectations')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Correct' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Employment')).not.toBeInTheDocument();
   });
@@ -292,7 +292,7 @@ describe('CheckinSection — the check-in window', () => {
   });
 });
 
-describe('CheckinSection — earlier versions', () => {
+describe('CheckinSection - earlier versions', () => {
   it('collapses superseded rows under "Earlier versions"', async () => {
     checkinsApi.getEnrolmentCheckins.mockResolvedValue(
       checkinsResponse({
@@ -311,7 +311,7 @@ describe('CheckinSection — earlier versions', () => {
 
     expect(await screen.findByText('Earlier versions (1)')).toBeInTheDocument();
     expect(
-      screen.getByText('Still employed — Below expectations', { exact: false }),
+      screen.getByText('Still employed - Below expectations', { exact: false }),
     ).toBeInTheDocument();
   });
 });

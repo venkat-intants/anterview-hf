@@ -48,7 +48,7 @@ function renderCard(
   );
 }
 
-describe('ProposalCard — citations', () => {
+describe('ProposalCard - citations', () => {
   it('renders a citation as a real link via the shared chip renderer', () => {
     renderCard();
     const link = screen.getByRole('link', { name: /Asha Rao/ });
@@ -66,7 +66,7 @@ describe('ProposalCard — citations', () => {
 // five surfaces required to carry it, using the CHAT TURN's own state (a
 // proposal's own rationale has no marker convention of its own to check).
 // ---------------------------------------------------------------------------
-describe('ProposalCard — citation state banner', () => {
+describe('ProposalCard - citation state banner', () => {
   it('renders nothing when no citationState is given', () => {
     renderCard(PROPOSAL, undefined);
     expect(screen.queryByText(/Answered from your records/)).not.toBeInTheDocument();
@@ -86,7 +86,7 @@ describe('ProposalCard — citation state banner', () => {
     expect(screen.getByText(/No records were read for this answer/)).toBeInTheDocument();
   });
 
-  it('shows the unattributed caution — the adversarial case this exists for', () => {
+  it('shows the unattributed caution - the adversarial case this exists for', () => {
     // The whole point: a proposal drafted alongside a reply whose every
     // marker was invented must be flagged here too, not just above the reply.
     renderCard(PROPOSAL, 'unattributed');

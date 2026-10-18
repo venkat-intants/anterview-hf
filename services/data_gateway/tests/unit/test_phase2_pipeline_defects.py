@@ -265,7 +265,7 @@ def test_english_copy_still_names_the_company() -> None:
     from app.email_templates import render
 
     out = render("application_received", "en", _CTX)
-    assert "Thanks — your application for Python Developer at Acme & Co is in." in out.text
+    assert "Thanks - your application for Python Developer at Acme & Co is in." in out.text
     assert "<strong>Acme &amp; Co</strong>" in out.html
 
 
@@ -273,9 +273,9 @@ def test_without_a_company_no_dangling_words_remain() -> None:
     from app.email_templates import render
 
     ctx = {**_CTX, "company": None}
-    assert "Thanks — your application for Python Developer is in." in render(
+    assert "Thanks - your application for Python Developer is in." in render(
         "application_received", "en", ctx).text
-    assert "धन्यवाद — Python Developer के लिए आपका आवेदन मिल गया है।" in render(
+    assert "धन्यवाद - Python Developer के लिए आपका आवेदन मिल गया है।" in render(
         "application_received", "hi", ctx).text
 
 

@@ -49,7 +49,7 @@ export default function AtRiskRow({
       />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-foreground">
-          {row.full_name} &mdash; {row.stage}
+          {row.full_name} &middot; {row.stage}
         </span>
         <span className="block truncate text-[12px] text-muted-foreground">
           {row.opening_title} &middot; {STATE_WORD[row.state]}

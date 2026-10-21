@@ -195,7 +195,7 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
             {c.frozen_probes.length > 0 || c.probes.length > 0 ? (
               <div className="mt-2">
                 <p className="text-[12px] font-medium text-[var(--ui-faint)]">
-                  Suggested probes &mdash; guidance, not mandatory questions
+                  Suggested probes (guidance, not mandatory questions)
                 </p>
                 <ul className="mt-1 list-disc pl-4 text-[12.5px] leading-relaxed text-[var(--ui-soft)]">
                   {[...c.frozen_probes, ...c.probes].map((x, i) => (
@@ -734,7 +734,7 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
                         htmlFor="correction-reason"
                         className="text-[13px] font-medium text-foreground"
                       >
-                        Why does this need correcting? (10&ndash;1000 characters)
+                        Why does this need correcting? (10 to 1000 characters)
                       </label>
                       <textarea
                         id="correction-reason"

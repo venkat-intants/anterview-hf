@@ -56,6 +56,7 @@ import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import ViewCvButton from '@/components/hr/ViewCvButton';
+import { statusLabel } from '@/lib/statusLabel';
 
 // Each block of the drawer is a titled section divided from the last by a
 // hairline — the drawer is a long read, so the rhythm does the grouping.
@@ -777,7 +778,7 @@ export default function CandidateDrawer({
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               {candidate.status ? (
                 <StatusTag tone={STATUS_TONE[candidate.status] ?? 'neutral'} dot>
-                  {candidate.status}
+                  {statusLabel(candidate.status, 'candidate')}
                 </StatusTag>
               ) : null}
               {candidate.current_round_title ? (

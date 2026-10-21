@@ -43,6 +43,7 @@ import {
   Send,
   Ban,
 } from '@/design/components/icons';
+import { statusLabel } from '@/lib/statusLabel';
 
 const inputCls =
   'mt-1 w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] ' +
@@ -658,7 +659,7 @@ function SessionRow({
           </p>
         </div>
         <StatusTag tone={SESSION_TONE[session.status]} dot>
-          {session.status.replace('_', ' ')}
+          {statusLabel(session.status, 'session')}
         </StatusTag>
       </div>
 
@@ -800,7 +801,7 @@ function LoopCard({ loop, requisitionId }: { loop: InterviewLoop; requisitionId:
           </p>
         </div>
         <StatusTag tone={LOOP_TONE[loop.status]} dot>
-          {loop.status}
+          {statusLabel(loop.status, 'loop')}
         </StatusTag>
       </div>
 

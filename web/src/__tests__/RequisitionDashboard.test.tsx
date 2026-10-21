@@ -162,6 +162,9 @@ describe('the per-opening dashboard (E1)', () => {
     expect(screen.getByText('Hyderabad')).toBeTruthy();
     expect(screen.getByText('Engineering')).toBeTruthy();
     expect(screen.getByTestId('workflow-state').textContent).toBe('workflow v2 live · v3 draft');
+    // The status pill is in words, not the raw lowercase value (audit X12).
+    expect(screen.getByText('Open')).toBeTruthy();
+    expect(screen.queryByText('open')).toBeNull();
   });
 
   it('reads hires against the target and counts who is where', async () => {

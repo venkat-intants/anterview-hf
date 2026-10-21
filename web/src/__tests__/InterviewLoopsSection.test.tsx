@@ -277,6 +277,8 @@ describe('InterviewLoopsSection - a session’s controls', () => {
     const user = userEvent.setup();
     renderSection();
 
+    // The session pill is in words, not "awaiting slot" (audit X12).
+    expect(await screen.findByText('Awaiting slot')).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: 'Set a time' }));
     const input = screen.getByLabelText<HTMLInputElement>('New start time');
     expect(input.value).toBe('');

@@ -65,6 +65,7 @@ import ApprovalPill from '@/components/hr/opening/ApprovalPill';
 import SetupTab, { type RoleStepRequest } from '@/components/hr/opening/SetupTab';
 import { useOpeningSetup } from '@/components/hr/opening/useOpeningSetup';
 import { formatScore } from '@/lib/formatters';
+import { statusLabel } from '@/lib/statusLabel';
 
 type Tab = 'setup' | 'pipeline';
 
@@ -877,7 +878,7 @@ export default function RequisitionDashboard({
               }
               dot={req.status === 'open'}
             >
-              {req.status}
+              {statusLabel(req.status, 'opening')}
             </StatusTag>
             {notLive ? (
               // 'open' is the opening's lifecycle; this says whether the public

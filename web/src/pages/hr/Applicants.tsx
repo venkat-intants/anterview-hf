@@ -57,6 +57,8 @@ import {
 import { initialsOf } from '@/design/data/shared';
 import { matchTextClass, scoreTextClass } from '@/lib/scoreTone';
 import { ACTIVE_POLL_MS, LIVE_POLL_MS } from '../../lib/polling';
+import { statusLabel } from '@/lib/statusLabel';
+import { formatScore } from '@/lib/formatters';
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -94,23 +96,9 @@ const STATUS_TONE: Record<string, TagTone> = {
   rejected: 'ember',
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  new: 'New',
-  shortlisted: 'Shortlisted',
-  held: 'Held',
-  interviewed: 'Interviewed',
-  hired: 'Hired',
-  rejected: 'Rejected',
-};
-
 /** A tone that claims nothing for a status this build has never seen. */
 function statusTone(status: string): TagTone {
   return STATUS_TONE[status] ?? 'neutral';
-}
-
-/** The raw value rather than a blank: a person can report "foo", not nothing. */
-function statusLabel(status: string): string {
-  return STATUS_LABEL[status] ?? status;
 }
 
 const BREAKDOWN_LABELS: Record<string, string> = {
@@ -390,7 +378,7 @@ function ApplicantDrawer({
                   <div className="text-[12px] font-semibold text-muted-foreground">Status</div>
                   <div className="mt-2">
                     <StatusTag tone={statusTone(a.status)} dot>
-                      {statusLabel(a.status)}
+                      {statusLabel(a.status, 'candidate')}
                     </StatusTag>
                   </div>
                 </div>
@@ -489,8 +477,10 @@ function ApplicantDrawer({
                             {app.opening_title ?? 'Untitled opening'}
                           </p>
                           <p className="text-[12px] text-muted-foreground">
-                            {app.status}
-                            {app.ats_overall != null ? ` · resume ${app.ats_overall}/100` : ''}
+                            {statusLabel(app.status, 'candidate')}
+                            {app.ats_overall != null
+                              ? ` · resume ${formatScore('resume', app.ats_overall)}`
+                              : ''}
                             {app.is_latest ? ' · latest' : ''}
                           </p>
                         </div>
@@ -677,7 +667,7 @@ function ApplicantRow({
       <td className={TD}>
         <div className="flex flex-col items-start gap-1">
           <StatusTag tone={statusTone(a.status)} dot>
-            {statusLabel(a.status)}
+            {statusLabel(a.status, 'candidate')}
           </StatusTag>
           {a.ats_recommendation && <StatusTag tone={rec.tone}>{rec.label}</StatusTag>}
         </div>

@@ -33,7 +33,10 @@ from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from shared.auth.factory import get_auth_provider
-from shared.http_observability import install_http_observability
+from shared.http_observability import (
+    install_http_observability,
+    install_validation_error_handler,
+)
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
@@ -648,6 +651,7 @@ app.add_middleware(
 # HTTP metrics and the generic unhandled-exception handler (XS-01/XS-05/XS-06) —
 # see shared/http_observability.py.
 install_http_observability(app, service_name=settings.service_name)
+install_validation_error_handler(app)
 
 app.include_router(health_router)
 app.include_router(auth_router)

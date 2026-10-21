@@ -29,6 +29,11 @@ Install it once, at import time, before the app starts serving::
 
     install_http_observability(app, service_name=..., registry=_registry)
 
+Each service also installs the readable 422 (audit X1, see the section at the
+end of this module)::
+
+    install_validation_error_handler(app)
+
 What the label means
 --------------------
 The ``path`` label is the **matched route template** (``/hr/jobs/{job_id}``),
@@ -71,8 +76,8 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable, Iterable
-from typing import NamedTuple
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Any, NamedTuple
 
 import structlog
 from prometheus_client import REGISTRY, CollectorRegistry, Counter, Histogram
@@ -85,7 +90,11 @@ __all__ = [
     "UNKNOWN_METHOD",
     "UNMATCHED_PATH",
     "HTTPObservabilityMiddleware",
+    "humanise_field",
     "install_http_observability",
+    "install_validation_error_handler",
+    "sanitise_validation_errors",
+    "validation_error_message",
 ]
 
 #: Label used for any request the router did not match to a route template.
@@ -508,3 +517,244 @@ def install_http_observability(
         return JSONResponse(status_code=500, content={"detail": "Internal server error."})
 
     app.add_exception_handler(Exception, unhandled_exception_handler)
+
+
+# ---------------------------------------------------------------------------
+# Request validation errors (audit X1)
+# ---------------------------------------------------------------------------
+#
+# FastAPI answers a request that fails its Pydantic model with
+# ``{"detail": [{"type", "loc", "msg", "input", "ctx"}, ...]}``. Two things were
+# wrong with that default, and both are fixed here once instead of per service:
+#
+# * **Nobody could read it.** The web client only understood a string or an
+#   object ``detail``, so every one of these surfaced as the toast "HTTP 422" on
+#   every form in the product. The handler below keeps ``detail`` as the same
+#   array (tests and callers index ``detail[0]["loc"]``) and ADDS a top-level
+#   ``message``: one plain sentence about the first problem, with the field name
+#   written the way a person would say it.
+# * **It echoed what was submitted.** ``input`` is the raw value the caller sent,
+#   so a register form that failed on a weak password sent the password back in
+#   the response body, where proxies, browser extensions and error trackers can
+#   keep it. ``input`` is dropped, and the submitted value is masked wherever an
+#   application validator quoted it back inside ``msg`` or ``ctx``.
+
+#: Where a value came from. The first ``loc`` element names it, and it is never
+#: the field a person typed into.
+_LOC_SOURCES = frozenset({"body", "query", "path", "header", "cookie"})
+
+#: Tags Pydantic inserts into ``loc`` for union members and wrapped validators
+#: (``("body", "email", "function-after[...]")``). They name a type, not a field.
+_LOC_TYPE_TAGS = frozenset(
+    {"str", "int", "float", "bool", "list", "dict", "set", "tuple", "bytes", "none", "literal"}
+)
+
+#: Field-name words that read wrong in sentence case.
+_FIELD_ACRONYMS = {
+    "id": "ID",
+    "ids": "IDs",
+    "url": "URL",
+    "urls": "URLs",
+    "jd": "JD",
+    "ats": "ATS",
+    "ctc": "CTC",
+    "mcq": "MCQ",
+    "pdf": "PDF",
+    "otp": "OTP",
+    "sla": "SLA",
+    "utc": "UTC",
+}
+
+_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_EMAIL_IN_TEXT = _VALUE_PATTERNS[0]
+
+#: Shortest submitted value that is masked where a message quotes it back. One-
+#: to three-character inputs ("a", "no") are not secrets, and masking them would
+#: shred ordinary words in the sentence ("a" inside "a valid integer").
+_MIN_ECHO_MASK_CHARS = 4
+
+#: What replaces a submitted value that a message quoted back.
+_ECHO_PLACEHOLDER = "this value"
+
+_REQUEST_UNREADABLE = "The request could not be read. Refresh the page and try again."
+
+#: Pydantic error types that mean "the body is not the right shape at all".
+_SHAPE_ERRORS = frozenset({"json_invalid", "model_attributes_type", "dict_type", "model_type"})
+
+#: Bound errors: the ``ctx`` key holding the limit, and how to say it.
+_BOUND_ERRORS = {
+    "greater_than_equal": ("ge", "{} or more"),
+    "greater_than": ("gt", "more than {}"),
+    "less_than_equal": ("le", "{} or less"),
+    "less_than": ("lt", "less than {}"),
+}
+
+
+def humanise_field(loc: Sequence[object]) -> str | None:
+    """The field a validation error is about, as a person would name it.
+
+    ``("body", "max_candidates")`` gives ``"Max candidates"``,
+    ``("body", "items", 2, "unitPrice")`` gives ``"Unit price"`` (the innermost
+    named field; list indexes are skipped), and ``("body",)`` gives ``None``
+    because the error is about the request as a whole.
+    """
+    names = [
+        part
+        for i, part in enumerate(loc)
+        if isinstance(part, str)
+        and _IDENTIFIER.match(part)
+        and not (i == 0 and part in _LOC_SOURCES)
+    ]
+    # Drop trailing union/validator tags, but only while a real field name is
+    # still in front of them: a field genuinely called "list" stays.
+    while len(names) > 1 and names[-1].lower() in _LOC_TYPE_TAGS:
+        names.pop()
+    if not names:
+        return None
+    words = [w for w in _CAMEL_BOUNDARY.sub("_", names[-1]).lower().split("_") if w]
+    if not words:
+        return None
+    words = [_FIELD_ACRONYMS.get(w, w) for w in words]
+    words[0] = words[0][:1].upper() + words[0][1:]
+    return " ".join(words)
+
+
+def _mask_echo(text: str, submitted: object) -> str:
+    """Remove a submitted value (and any e-mail address) from *text*."""
+    if isinstance(submitted, str | int | float) and not isinstance(submitted, bool):
+        value = str(submitted)
+        if len(value) >= _MIN_ECHO_MASK_CHARS and value in text:
+            text = text.replace(value, _ECHO_PLACEHOLDER)
+    return _EMAIL_IN_TEXT.sub(_REDACTED, text)
+
+
+def _sentence(text: str) -> str:
+    text = text.strip()
+    text = text[:1].upper() + text[1:]
+    return text if text.endswith((".", "!", "?")) else f"{text}."
+
+
+def _describe(error: Mapping[str, Any]) -> str:
+    """One plain sentence for one Pydantic error (already sanitised)."""
+    kind = str(error.get("type", ""))
+    raw_ctx = error.get("ctx")
+    ctx: Mapping[str, Any] = raw_ctx if isinstance(raw_ctx, Mapping) else {}
+    raw_loc = error.get("loc")
+    field = humanise_field(raw_loc if isinstance(raw_loc, list | tuple) else ())
+    subject = field or "This value"
+    msg = str(error.get("msg", "")).strip()
+    for prefix in ("Value error, ", "Assertion failed, "):
+        if msg.startswith(prefix):
+            msg = msg[len(prefix) :]
+
+    if kind in _SHAPE_ERRORS and not field:
+        return _REQUEST_UNREADABLE
+    if kind == "missing":
+        return f"{field} is required." if field else "Some required information is missing."
+    if kind == "string_too_short":
+        minimum = ctx.get("min_length")
+        if minimum in (None, 1):
+            return f"{subject} cannot be empty."
+        return f"{subject} must be at least {minimum} characters."
+    if kind == "string_too_long" and "max_length" in ctx:
+        return f"{subject} must be at most {ctx['max_length']} characters."
+    if kind == "too_short" and "min_length" in ctx:
+        return f"{subject} needs at least {ctx['min_length']} items."
+    if kind == "too_long" and "max_length" in ctx:
+        return f"{subject} can have at most {ctx['max_length']} items."
+    if kind in _BOUND_ERRORS and _BOUND_ERRORS[kind][0] in ctx:
+        key, template = _BOUND_ERRORS[kind]
+        return f"{subject} must be {template.format(ctx[key])}."
+    if kind in {"int_parsing", "int_type", "int_from_float"}:
+        return f"{subject} must be a whole number."
+    if kind in {"float_parsing", "float_type", "decimal_parsing", "decimal_type"}:
+        return f"{subject} must be a number."
+    if kind in {"bool_parsing", "bool_type"}:
+        return f"{subject} must be yes or no."
+    if kind in {"literal_error", "enum"} and "expected" in ctx:
+        return f"{subject} must be one of {ctx['expected']}."
+    if kind.startswith("uuid"):
+        return f"{subject} is not a valid ID."
+    if kind.startswith(("datetime", "date", "time_")):
+        return f"{subject} must be a valid date and time."
+    if kind in {"timezone_aware", "timezone_naive"}:
+        return f"{subject} needs a time zone."
+    if kind.startswith("url"):
+        return f"{subject} must be a valid web address."
+    if msg.startswith("value is not a valid email address"):
+        return f"{subject} must be a valid email address."
+    if not msg:
+        return f"{subject} is not valid."
+    return _sentence(f"{field}: {msg}" if field else msg)
+
+
+def sanitise_validation_errors(errors: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """The ``detail`` array with every echo of the submitted values removed.
+
+    Keeps ``type``, ``loc``, ``msg`` and ``ctx`` (callers index ``loc`` and read
+    ``ctx["max_length"]``); drops ``input`` and ``url``; masks the submitted
+    value wherever ``msg`` or a string in ``ctx`` quotes it back, plus any e-mail
+    address in either. A ``ctx`` value that is not a JSON scalar (an application
+    validator's ``ValueError`` lands there) is rendered with ``str`` and masked
+    the same way.
+    """
+    clean: list[dict[str, Any]] = []
+    for error in errors:
+        submitted = error.get("input")
+        item: dict[str, Any] = {
+            "type": str(error.get("type", "")),
+            "loc": [p if isinstance(p, str | int) else str(p) for p in error.get("loc", ())],
+            "msg": _mask_echo(str(error.get("msg", "")), submitted),
+        }
+        raw_ctx = error.get("ctx")
+        if isinstance(raw_ctx, Mapping):
+            ctx: dict[str, Any] = {}
+            for key, value in raw_ctx.items():
+                if value is None or isinstance(value, bool | int | float):
+                    ctx[str(key)] = value
+                else:
+                    ctx[str(key)] = _mask_echo(str(value), submitted)
+            item["ctx"] = ctx
+        clean.append(item)
+    return clean
+
+
+def validation_error_message(errors: Sequence[Mapping[str, Any]]) -> str:
+    """One sentence describing the FIRST problem, for showing to a person.
+
+    Only the first: a form shows one message, and fixing the first problem is
+    what moves the person forward. Pass errors through
+    :func:`sanitise_validation_errors` first; this function does not mask.
+    """
+    if not errors:
+        return _REQUEST_UNREADABLE
+    return _describe(errors[0])
+
+
+def install_validation_error_handler(app: Starlette) -> None:
+    """Register the readable, non-echoing 422 for FastAPI request validation.
+
+    The response keeps FastAPI's shape, ``{"detail": [...]}`` with the same
+    ``type``/``loc``/``msg``/``ctx`` keys, and adds ``"message"``::
+
+        {"detail": [{"type": "missing", "loc": ["body", "title"],
+                     "msg": "Field required"}],
+         "message": "Title is required."}
+
+    Imported lazily because this module deliberately depends on Starlette, not
+    FastAPI (see the module docstring); only a FastAPI app can raise
+    ``RequestValidationError`` in the first place. Call it next to
+    :func:`install_http_observability`, at import time.
+    """
+    from fastapi.exceptions import RequestValidationError
+
+    async def request_validation_handler(request: Request, exc: Exception) -> Response:
+        raw = exc.errors() if isinstance(exc, RequestValidationError) else []
+        detail = sanitise_validation_errors(raw)
+        return JSONResponse(
+            status_code=422,
+            content={"detail": detail, "message": validation_error_message(detail)},
+        )
+
+    app.add_exception_handler(RequestValidationError, request_validation_handler)

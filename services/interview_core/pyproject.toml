@@ -76,7 +76,7 @@ grpcio = "1.80.0"
 livekit-protocol = "1.1.11"
 onnxruntime = "1.26.0"
 openai = "2.38.0"
-pillow = "12.2.0"
+pillow = "13.0.0"
 tqdm = "4.67.3"
 typer = "0.26.4"
 

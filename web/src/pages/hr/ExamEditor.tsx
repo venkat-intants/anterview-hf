@@ -75,6 +75,7 @@ import { saveExamQuestionToBank, type SaveToBankInput } from '@/api/questionBank
 import { getPipeline, type PipelineRow } from '@/api/pipeline';
 import { applicationKey } from '@/lib/applicationKey';
 import { roundLockReason } from '@/lib/examLocks';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { GlassCard, Pill, StatusTag } from '@/design/components/primitives';
@@ -156,7 +157,7 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
       setSavingToBankId(null);
     },
     onError: (e: unknown) => {
-      toast.error(e instanceof Error ? e.message : 'Could not save this question to a bank');
+      toast.error(errorMessage(e, 'Could not save this question to a bank.'));
       setSavingToBankId(null);
     },
   });
@@ -170,13 +171,13 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
       setPoints('1');
       refresh();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Add failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not add the question.')),
   });
 
   const delMut = useMutation({
     mutationFn: (qid: string) => deleteSectionQuestion(examId, sectionId, qid),
     onSuccess: refresh,
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Delete failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not delete the question.')),
   });
 
   // AI generate uses legacy exam-level endpoint — the questions are added
@@ -215,7 +216,7 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
       toast.success(`${created.length} question(s) added`);
       refresh();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Add failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not add the generated questions.')),
   });
 
   const importMut = useMutation({
@@ -226,7 +227,7 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
       else toast.error('No questions imported - check the file.');
       refresh();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Import failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not import the questions.')),
   });
 
   function submitQuestion(ev: React.FormEvent) {
@@ -246,7 +247,7 @@ export function McqSection({ examId, sectionId, locked }: McqSectionProps) {
     try {
       await downloadQuestionTemplate();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Template download failed');
+      toast.error(errorMessage(e, 'Could not download the template.'));
     }
   }
 
@@ -746,7 +747,7 @@ function SectionPanel({ examId, section, locked, onDelete, deleting }: SectionPa
       setEditing(false);
       void qc.invalidateQueries({ queryKey: ['hr', 'exam', examId, 'structure'] });
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Rename failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not rename the section.')),
   });
 
   const kindLabel = section.kind === 'coding' ? 'Coding' : 'MCQ';
@@ -923,7 +924,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
       toast.success(`${res.length} link(s) created`);
       void qc.invalidateQueries({ queryKey: ['hr', 'exam', examId, 'assignments'] });
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Assign failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not assign the exam.')),
   });
 
   const revokeMut = useMutation({
@@ -932,7 +933,7 @@ function RoundAssignPanel({ examId, roundId, isPublished }: RoundAssignPanelProp
       toast.success('Link revoked');
       void qc.invalidateQueries({ queryKey: ['hr', 'exam', examId, 'assignments'] });
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Revoke failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not revoke the exam link.')),
   });
 
   async function copyLink(link: string) {
@@ -1147,13 +1148,13 @@ function RoundPanel({
       setEditingTitle(false);
       invalidateStructure();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Rename failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not rename the round.')),
   });
 
   const publishMut = useMutation({
     mutationFn: (status: 'draft' | 'published') => updateRound(examId, round.id, { status }),
     onSuccess: invalidateStructure,
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Update failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not change the round status.')),
   });
 
   const thresholdMut = useMutation({
@@ -1162,14 +1163,14 @@ function RoundPanel({
       toast.success('Saved');
       invalidateStructure();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Save failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not save the pass mark.')),
   });
 
   const advancesMut = useMutation({
     mutationFn: (advances_to_interview: boolean) =>
       updateRound(examId, round.id, { advances_to_interview }),
     onSuccess: invalidateStructure,
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Update failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not update the interview step setting.')),
   });
 
   // Camera proctoring is per round and OFF by default, which is the right
@@ -1183,7 +1184,7 @@ function RoundPanel({
       toast.success('Saved');
       invalidateStructure();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Update failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not update camera proctoring.')),
   });
 
   const addSectionMut = useMutation({
@@ -1200,13 +1201,13 @@ function RoundPanel({
       setAddingSection(false);
       invalidateStructure();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Add section failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not add the section.')),
   });
 
   const deleteSectionMut = useMutation({
     mutationFn: (sectionId: string) => deleteSection(examId, round.id, sectionId),
     onSuccess: invalidateStructure,
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Delete section failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not delete the section.')),
   });
 
   // PH4-D1 — the way forward once this round is locked: duplicate it into a
@@ -1218,7 +1219,7 @@ function RoundPanel({
       invalidateStructure();
     },
     onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not duplicate this round'),
+      toast.error(errorMessage(e, 'Could not duplicate this round.')),
   });
 
   const isPublished = round.status === 'published';
@@ -1605,13 +1606,13 @@ export default function ExamEditor() {
       setAddingRound(false);
       invalidateAll();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Add round failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not add the round.')),
   });
 
   const deleteRoundMut = useMutation({
     mutationFn: (roundId: string) => deleteRound(examId, roundId),
     onSuccess: invalidateAll,
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Delete failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not delete the round.')),
   });
 
   function handleMoveUp(roundId: string) {

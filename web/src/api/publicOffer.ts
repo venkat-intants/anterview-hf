@@ -21,16 +21,14 @@
 // for_candidate=True)` EXACTLY.
 
 import { pathId } from './pathId';
-import { ApiError } from './client';
+import { apiErrorFromResponse } from './client';
 import type { DocType, DocumentState, EmploymentType, OfferStatus, PayPeriod } from './offers';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
 
 async function readError(res: Response): Promise<never> {
-  const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
-  const detail = typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`;
-  throw new ApiError(detail, res.status);
+  throw await apiErrorFromResponse(res);
 }
 
 function offerHeaders(token: string, extra?: Record<string, string>): HeadersInit {

@@ -14,7 +14,7 @@
 //    storing the person's CV (DPDP Act 2023); sending it because the form was
 //    submitted would make the record a lie.
 
-import { ApiError } from './client';
+import { apiErrorFromResponse } from './client';
 import { pathId } from './pathId';
 
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -97,9 +97,7 @@ export interface ApplicationResult {
 }
 
 async function readError(res: Response): Promise<never> {
-  const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
-  const detail = typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`;
-  throw new ApiError(detail, res.status);
+  throw await apiErrorFromResponse(res);
 }
 
 /**

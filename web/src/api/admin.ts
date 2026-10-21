@@ -4,7 +4,7 @@
 
 import { simulateDelay } from './mock';
 import { csvRow } from '../lib/csv';
-import { clientFetch, fetchBlobWithAuth } from './client';
+import { apiErrorFromResponse, clientFetch, fetchBlobWithAuth } from './client';
 import { pathId } from './pathId';
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
@@ -615,10 +615,7 @@ export async function exportInterviewsCsv(filters: InterviewFilters = {}): Promi
 
   const qs = buildQs(filters);
   const res = await adminGetRaw(`/admin/interviews/export.csv${qs}`);
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { detail?: string };
-    throw new Error(body.detail ?? `HTTP ${res.status}`);
-  }
+  if (!res.ok) throw await apiErrorFromResponse(res);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

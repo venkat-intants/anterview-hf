@@ -83,6 +83,14 @@ regexes = [
   '''sk-ant-your-key-here''',
   '''intants_dev_pw''',
   '''your-project\.livekit\.cloud''',
+
+  # shared/tests/test_validation_errors.py, commit 4186eeb: the sample
+  # password the 422-masking tests feed a validator so they can assert it is
+  # never echoed back. A test needs a value the detector fires on to prove
+  # the masking works; this one belongs to no account anywhere. Allowlisted
+  # as an EXACT literal because the scanner walks history and the commit is
+  # published.
+  '''Tr0ub4dor-and-3''',
 ]
 
 # Catch the class that already bit this repo once: a working login pasted into

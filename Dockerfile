@@ -87,6 +87,25 @@ RUN python -m venv /venvs/ao && /venvs/ao/bin/pip install --no-cache-dir -r /tmp
 # Supervisor gets its own tiny venv so it never collides with service pins.
 RUN python -m venv /venvs/tools && /venvs/tools/bin/pip install --no-cache-dir "supervisor==4.3.0"
 
+# ---- Stage 2b: caddy ---------------------------------------------------------
+# Compiled here from the official release tag rather than copied out of
+# caddy:2-alpine. The prebuilt binary is only as current as the Go toolchain
+# upstream last released with: caddy 2.11.7-alpine (2026-10-06) was built with
+# Go 1.26.8, and Trivy fails the image on CVE-2026-111943 (crypto/x509, HIGH,
+# fixed in Go 1.26.10) until upstream cuts a new release. The builder image is
+# refreshed far more often than the release image, so building the SAME pinned
+# version with it picks up Go stdlib security fixes as soon as Go ships them,
+# instead of arguing a toolchain CVE into .trivyignore.
+# Bump CADDY_VERSION deliberately; never build an untagged tree.
+FROM caddy:2.11.7-builder-alpine AS caddybuild
+ARG CADDY_VERSION=v2.11.7
+# CGO off: the binary is built on Alpine (musl) but runs on Debian (glibc), so
+# it must be fully static, as the prebuilt one was.
+ENV CGO_ENABLED=0
+RUN xcaddy build "${CADDY_VERSION}" --output /usr/bin/caddy \
+    && go version \
+    && /usr/bin/caddy version
+
 # ---- Stage 3: runtime --------------------------------------------------------
 FROM python:3.12-slim AS runtime
 # Security updates from the base image, then the runtime libraries.
@@ -125,8 +144,8 @@ RUN echo "apt refresh: ${APT_REFRESH}" \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Caddy static binary from the official image (no apt repo needed).
-COPY --from=caddy:2-alpine /usr/bin/caddy /usr/local/bin/caddy
+# Caddy static binary, compiled in the caddybuild stage above.
+COPY --from=caddybuild /usr/bin/caddy /usr/local/bin/caddy
 
 # HF Spaces convention: run as UID 1000.
 RUN useradd -m -u 1000 appuser

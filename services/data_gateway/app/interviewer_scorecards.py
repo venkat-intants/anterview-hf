@@ -59,6 +59,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.email_time import format_email_date
 from app.mailer import enqueue_email
 from app.models import AuditLog
 from app.notifications_util import create_notification
@@ -385,7 +386,7 @@ async def assign(
         await create_notification(
             db, user_id=interviewer_id, kind="interview_assigned",
             title=f"You're interviewing {enrolment['full_name']}",
-            body=f"{round_['title']} · {enrolment['job_title']} · due {due_at:%d %b %Y}",
+            body=f"{round_['title']} · {enrolment['job_title']} · due {format_email_date(due_at)}",
             link=link,
         )
         await enqueue_email(
@@ -396,7 +397,7 @@ async def assign(
                 "body": (
                     f"You have been assigned to {round_['title']} for the "
                     f"{enrolment['job_title']} opening. Your scorecard is due by "
-                    f"{due_at:%d %b %Y}. The interview kit and scorecard are ready "
+                    f"{format_email_date(due_at)}. The interview kit and scorecard are ready "
                     "when you sign in."
                 ),
                 "cta_label": "Open the scorecard",

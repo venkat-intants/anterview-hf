@@ -18,6 +18,7 @@ import { EmptyState, PageHeader, Toolbar } from '@/design/components/page';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
 import { getHiringBoard, type BoardOpening, type HealthBand } from '@/api/companyBoard';
+import { statusLabel } from '@/lib/statusLabel';
 
 const BAND: Record<HealthBand, { label: string; chip: string }> = {
   not_published: {
@@ -132,7 +133,7 @@ export default function HiringBoard(): JSX.Element {
                         <div className="text-[12px] text-muted-foreground">{o.location}</div>
                       ) : null}
                     </td>
-                    <td className="px-3 py-3 text-[var(--ui-soft)]">{o.status}</td>
+                    <td className="px-3 py-3 text-[var(--ui-soft)]">{statusLabel(o.status, 'opening')}</td>
                     <td className="px-3 py-3 text-[var(--ui-soft)]">{workflowText(o)}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{o.applied}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{o.in_play}</td>

@@ -36,6 +36,7 @@ import { toast } from '@/lib/toast';
 import { queryKeys } from '@/lib/queryKeys';
 import { GlassCard, Pill } from '@/design/components/primitives';
 import { AlertCircle } from '@/design/components/icons';
+import { formatDateTime } from '@/lib/formatters';
 
 const INPUT =
   'w-full rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
@@ -77,12 +78,6 @@ function toInstant(local: string): string | null {
   if (!local) return null;
   const d = new Date(local);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
-}
-
-function when(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? '' : d.toLocaleString();
 }
 
 /**
@@ -332,12 +327,12 @@ export default function GovernancePanel({
                   {status === 'pending_approval'
                     ? `Submitted${
                         requisition.submitted_for_approval_at
-                          ? ` ${when(requisition.submitted_for_approval_at)}`
+                          ? ` ${formatDateTime(requisition.submitted_for_approval_at)}`
                           : ''
                       }. Your company admin decides from their own console.`
                     : `Approved${
                         requisition.approval_decided_at
-                          ? ` ${when(requisition.approval_decided_at)}`
+                          ? ` ${formatDateTime(requisition.approval_decided_at)}`
                           : ''
                       }.`}
                 </p>
@@ -366,7 +361,7 @@ export default function GovernancePanel({
             {schedule.data?.publish_at ? (
               <>
                 <p className="mt-1.5 text-[12.5px] text-foreground">
-                  Scheduled for {when(schedule.data.publish_at)}
+                  Scheduled for {formatDateTime(schedule.data.publish_at)}
                 </p>
                 <p className="mt-0.5 text-[12px] text-[var(--ui-soft)]">
                   {schedule.data.tolerance}
@@ -432,7 +427,7 @@ export default function GovernancePanel({
             )}
             {schedule.data?.published_at ? (
               <p className="mt-2 text-[12px] text-[var(--ui-soft)]">
-                Last published automatically on {when(schedule.data.published_at)}.
+                Last published automatically on {formatDateTime(schedule.data.published_at)}.
               </p>
             ) : null}
           </div>

@@ -64,6 +64,8 @@ import { appPath } from '@/lib/safeUrl';
 import ApprovalPill from '@/components/hr/opening/ApprovalPill';
 import SetupTab, { type RoleStepRequest } from '@/components/hr/opening/SetupTab';
 import { useOpeningSetup } from '@/components/hr/opening/useOpeningSetup';
+import { formatScore } from '@/lib/formatters';
+import { statusLabel } from '@/lib/statusLabel';
 
 type Tab = 'setup' | 'pipeline';
 
@@ -496,13 +498,13 @@ function TimingAndScores({ data }: { data: Dashboard }) {
           <div className="flex justify-between gap-3">
             <span className="text-[var(--ui-soft)]">Average resume match</span>
             <span className="tabular-nums text-foreground">
-              {scores.avg_ats === null ? '-' : `${Math.round(scores.avg_ats)}/100`}
+              {formatScore('resume', scores.avg_ats)}
             </span>
           </div>
           <div className="flex justify-between gap-3">
             <span className="text-[var(--ui-soft)]">Average across assessed rounds</span>
             <span className="tabular-nums text-foreground">
-              {scores.avg_composite === null ? '-' : `${Math.round(scores.avg_composite)}%`}
+              {formatScore('round', scores.avg_composite)}
             </span>
           </div>
         </div>
@@ -876,7 +878,7 @@ export default function RequisitionDashboard({
               }
               dot={req.status === 'open'}
             >
-              {req.status}
+              {statusLabel(req.status, 'opening')}
             </StatusTag>
             {notLive ? (
               // 'open' is the opening's lifecycle; this says whether the public

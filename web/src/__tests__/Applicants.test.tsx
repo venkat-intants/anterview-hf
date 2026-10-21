@@ -637,12 +637,14 @@ describe('Applicants - status badges', () => {
     expect(screen.getAllByText(label).length).toBeGreaterThan(0);
   });
 
-  it('shows an unknown status as its raw value, not a blank', async () => {
+  it('shows an unknown status in readable words, not a blank and not raw', async () => {
     listApplicants.mockResolvedValue([{ ...SCORED, status: 'on_the_moon' as Applicant['status'] }]);
     renderPage();
 
     await screen.findByText('Bhavya Nair');
-    expect(screen.getAllByText('on_the_moon').length).toBeGreaterThan(0);
+    // statusLabel humanises a value this build has never seen (audit X12).
+    expect(screen.getAllByText('On the moon').length).toBeGreaterThan(0);
+    expect(screen.queryByText('on_the_moon')).not.toBeInTheDocument();
   });
 });
 

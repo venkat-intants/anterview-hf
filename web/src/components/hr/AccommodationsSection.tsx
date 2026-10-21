@@ -42,7 +42,7 @@ import { localInputToIso, toLocalInputValue } from '@/lib/localDatetime';
 import { toast } from '@/lib/toast';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { StatusTag } from '@/design/components/primitives';
-import { Clock, Info, Loader2 } from '@/design/components/icons';
+import { Clock, Info, Loader2, Ban } from '@/design/components/icons';
 
 const inputCls =
   'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] ' +
@@ -744,7 +744,7 @@ function HistoryRow({
             />
             <ConfirmDeleteButton
               label="Revoke"
-              confirmText="Revoke"
+              icon={Ban}
               pending={revokeMut.isPending}
               onConfirm={() => revokeMut.mutate()}
             />

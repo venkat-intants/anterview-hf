@@ -98,7 +98,7 @@ describe('DocumentRequirementsSection', () => {
     await screen.findByText('PAN card');
 
     await user.click(screen.getByRole('button', { name: 'Remove PAN card' }));
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await user.click(screen.getByRole('button', { name: 'Remove' }));
 
     await waitFor(() => expect(deleteDocumentRequirement).toHaveBeenCalledWith('dr-1'));
   });

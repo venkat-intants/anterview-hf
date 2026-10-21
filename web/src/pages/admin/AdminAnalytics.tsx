@@ -31,7 +31,7 @@ import {
   Legend,
 } from 'recharts';
 import { getByRole, getByLanguage, getScoreDistribution } from '@/api/admin';
-import { languageLabel } from '@/lib/formatters';
+import { languageLabel, formatScore } from '@/lib/formatters';
 import { toast } from '@/lib/toast';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, PageHeader, SectionCard, Page } from '@/design/components/page';
@@ -43,11 +43,6 @@ const CHART_GRID = GRID_STROKE;
 const CHART_TICKS = { fill: AXIS_STYLE.stroke, fontSize: 12 } as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-function fmtScore(v: number | null): string {
-  if (v === null) return '-';
-  return v.toFixed(2);
-}
 
 // ── Chart skeleton ─────────────────────────────────────────────────────────────
 
@@ -204,9 +199,10 @@ function ByLanguagePie({
             <Tooltip
               contentStyle={TOOLTIP_STYLE}
               formatter={(value, _name, props) => [
-                `${Number(value ?? 0)} interviews · avg ${fmtScore(
+                `${Number(value ?? 0)} interviews · avg ${formatScore(
+                  'interview',
                   (props.payload as { avg?: number | null } | undefined)?.avg ?? null,
-                )} / 10`,
+                )}`,
               ]}
             />
           </PieChart>
@@ -227,7 +223,7 @@ function ByLanguagePie({
               {d.interview_count} interviews
             </span>
             <span className="text-muted-foreground tabular-nums">
-              avg {fmtScore(d.avg_composite)}
+              avg {formatScore('interview', d.avg_composite)}
             </span>
           </div>
         ))}
@@ -280,19 +276,19 @@ function DistributionSection({
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 border-t border-border pt-3 text-[13px] text-muted-foreground sm:grid-cols-2">
         <span>
           Communication:{' '}
-          <strong className="font-semibold text-foreground">{fmtScore(avgCommunication)}</strong>
+          <strong className="font-semibold text-foreground">{formatScore('interview', avgCommunication)}</strong>
         </span>
         <span>
           Technical:{' '}
-          <strong className="font-semibold text-foreground">{fmtScore(avgTechnical)}</strong>
+          <strong className="font-semibold text-foreground">{formatScore('interview', avgTechnical)}</strong>
         </span>
         <span>
           Problem Solving:{' '}
-          <strong className="font-semibold text-foreground">{fmtScore(avgProblemSolving)}</strong>
+          <strong className="font-semibold text-foreground">{formatScore('interview', avgProblemSolving)}</strong>
         </span>
         <span>
           Confidence:{' '}
-          <strong className="font-semibold text-foreground">{fmtScore(avgConfidence)}</strong>
+          <strong className="font-semibold text-foreground">{formatScore('interview', avgConfidence)}</strong>
         </span>
       </div>
     </div>

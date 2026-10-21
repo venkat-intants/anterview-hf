@@ -990,11 +990,13 @@ describe('CandidateDrawer', () => {
       renderDrawer({ enrolmentId: 'en-1' });
       await screen.findByText('Farah Khan');
 
-      await user.click(screen.getByRole('button', { name: /withdraw/i }));
+      await user.click(screen.getByRole('button', { name: 'Withdraw scorecard' }));
+      // The confirm repeats the action; it used to say "Delete" (audit X5).
       await user.click(
-        within(screen.getByRole('group', { name: /confirm deletion/i })).getByRole('button', {
-          name: /^delete$/i,
-        }),
+        within(screen.getByRole('group', { name: 'Confirm: Withdraw scorecard' })).getByRole(
+          'button',
+          { name: 'Withdraw scorecard' },
+        ),
       );
 
       await waitFor(() =>

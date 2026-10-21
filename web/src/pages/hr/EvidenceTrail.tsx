@@ -27,6 +27,7 @@ import {
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { Breadcrumbs, PageHeader, Page } from '@/design/components/page';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatDateTime } from '@/lib/formatters';
 
 const KIND_LABELS: Record<EvidenceNode['kind'], string> = {
   application: 'Application',
@@ -126,16 +127,6 @@ function contentSummary(kind: EvidenceNode['kind'], content: EvidenceNodeContent
   })();
   const text = parts.filter((p): p is string => Boolean(p)).join(' · ');
   return text || null;
-}
-
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
 }
 
 function EvidenceRow({

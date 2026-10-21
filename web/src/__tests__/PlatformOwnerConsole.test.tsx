@@ -414,7 +414,11 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
 
     // Armed, not fired.
     expect(api.deleteCompany).not.toHaveBeenCalled();
-    await user.click(within(screen.getByRole('group', { name: /confirm deletion/i })).getByRole('button', { name: /^delete$/i }));
+    await user.click(
+      within(screen.getByRole('group', { name: 'Confirm: Delete company' })).getByRole('button', {
+        name: 'Delete company',
+      }),
+    );
     await waitFor(() => expect(api.deleteCompany).toHaveBeenCalledWith('c-acme'));
   });
 });

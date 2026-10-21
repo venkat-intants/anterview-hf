@@ -9,6 +9,7 @@ import {
   apiPut,
   apiDelete,
   apiPatch,
+  ApiError,
   clientFetch,
   fetchBlobWithAuth,
   uploadWithProgress,
@@ -291,7 +292,7 @@ export async function downloadQuestionTemplate(): Promise<void> {
   // The .xlsx body must bypass clientFetch's JSON parsing, but not its
   // refresh-on-401 — fetchBlobWithAuth keeps the raw Response and the retry.
   const res = await fetchBlobWithAuth(`${API_BASE}/hr/exam-question-template`);
-  if (!res.ok) throw new Error(`Could not download template (HTTP ${res.status})`);
+  if (!res.ok) throw new ApiError('Could not download the template.', res.status);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

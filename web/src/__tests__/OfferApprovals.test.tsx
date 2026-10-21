@@ -99,8 +99,8 @@ describe('OfferApprovals - the queue', () => {
   it('lists a waiting offer, with compensation, linking to its detail', async () => {
     renderPage();
     await screen.findByText('Kiran Rao · Backend Engineer');
-    expect(screen.getByText(/INR/)).toBeInTheDocument();
-    expect(screen.getByText(/1,200,000|12,00,000/)).toBeInTheDocument();
+    // en-IN grouping, whatever the browser locale is (audit X18).
+    expect(screen.getByText(/₹12,00,000/)).toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'Kiran Rao · Backend Engineer' });
     expect(link).toHaveAttribute('href', '/superadmin/offer-approvals/offer-1');
   });

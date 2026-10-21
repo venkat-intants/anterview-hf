@@ -18,7 +18,10 @@ from prometheus_client import (
     Histogram,
     generate_latest,
 )
-from shared.http_observability import install_http_observability
+from shared.http_observability import (
+    install_http_observability,
+    install_validation_error_handler,
+)
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
@@ -221,6 +224,7 @@ app.add_middleware(
 # SQL and its bound parameters into str(exc). In this service those parameters
 # are erasure user_ids and analytics filters over candidate data.
 install_http_observability(app, service_name=settings.service_name, registry=_registry)
+install_validation_error_handler(app)
 
 app.include_router(health_router)
 app.include_router(admin_router)

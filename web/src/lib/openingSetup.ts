@@ -24,6 +24,7 @@
 import type { ApprovalStatus, BudgetBasis, BudgetPeriod, RequisitionStatus } from '@/api/requisitions';
 import type { JourneyStage, JourneySubstep, SubstepState } from '@/design/components/journey-rail';
 import { stepStates, type StepState } from '@/lib/workflowLifecycle';
+import { MISSING, formatDate } from '@/lib/formatters';
 
 export type StageKey = 'role' | 'process' | 'approval' | 'golive' | 'documents';
 
@@ -121,12 +122,10 @@ export const APPROVAL_LABEL: Record<ApprovalStatus, string> = {
   rejected: 'Changes requested',
 };
 
-export function shortDate(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ''
-    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+/** A stage fact's date, or nothing when there is none to show. */
+function factDate(iso: string | null | undefined): string | undefined {
+  const text = formatDate(iso);
+  return text === MISSING ? undefined : text;
 }
 
 const BASIS: Record<BudgetBasis, string> = { per_hire: 'per hire', total: 'total' };
@@ -308,7 +307,7 @@ function approvalStage(i: OpeningSetupInput): OpeningStage {
         state: 'done',
         fact: budget ? `Approved · ${budget}` : 'Approved',
         actor: i.decidedByName ? `Approved by ${i.decidedByName}` : undefined,
-        at: shortDate(i.decidedAt) || undefined,
+        at: factDate(i.decidedAt),
       };
     case 'pending_approval':
       return {
@@ -316,7 +315,7 @@ function approvalStage(i: OpeningSetupInput): OpeningStage {
         state: 'awaiting',
         fact: 'Waiting for your company admin',
         actor: i.submittedByName ? `Submitted by ${i.submittedByName}` : undefined,
-        at: shortDate(i.submittedAt) || undefined,
+        at: factDate(i.submittedAt),
       };
     case 'rejected': {
       const note = i.approvalNote ? ` - “${clip(i.approvalNote)}”` : '';
@@ -325,7 +324,7 @@ function approvalStage(i: OpeningSetupInput): OpeningStage {
         state: 'active',
         fact: `Changes requested${note}`,
         actor: i.decidedByName ? `Sent back by ${i.decidedByName}` : undefined,
-        at: shortDate(i.decidedAt) || undefined,
+        at: factDate(i.decidedAt),
         action: { label: 'Revise and resubmit', to: null },
       };
     }
@@ -366,7 +365,7 @@ function goLiveStage(i: OpeningSetupInput, processDone: boolean, approvalDone: b
     };
   }
   if (i.publishAt) {
-    return { ...base, state: 'awaiting', fact: `Scheduled to open on ${shortDate(i.publishAt)}` };
+    return { ...base, state: 'awaiting', fact: `Scheduled to open on ${formatDate(i.publishAt)}` };
   }
   return {
     ...base,

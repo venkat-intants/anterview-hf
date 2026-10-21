@@ -241,6 +241,10 @@ describe('downloadQuestionTemplate - survives an expiry at the call site', () =>
 
     const { downloadQuestionTemplate } = await import('../api/exams');
 
-    await expect(downloadQuestionTemplate()).rejects.toThrow('HTTP 500');
+    // A sentence, never "HTTP 500" (audit X16); the status rides on the ApiError.
+    await expect(downloadQuestionTemplate()).rejects.toMatchObject({
+      message: 'Could not download the template.',
+      status: 500,
+    });
   });
 });

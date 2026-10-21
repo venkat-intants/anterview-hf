@@ -55,7 +55,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import OfferDocumentsPanel from '@/components/OfferDocumentsPanel';
-import { Download, Loader2 } from '@/design/components/icons';
+import { Download, Loader2, XCircle } from '@/design/components/icons';
+import { formatDateTime } from '@/lib/formatters';
 
 const inputCls =
   'mt-1 min-h-[40px] w-full rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
@@ -85,10 +86,6 @@ const PAY_PERIODS: PayPeriod[] = ['annual', 'monthly', 'hourly'];
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
-}
-
-function fmt(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleString() : '-';
 }
 
 function downloadJson(filename: string, data: unknown): void {
@@ -642,6 +639,7 @@ function OfferApprovalTrack({
           />
           <ConfirmDeleteButton
             label="Withdraw offer"
+            icon={XCircle}
             confirmText="Withdraw"
             confirmGroupLabel="Confirm withdrawal"
             pending={withdrawMut.isPending}
@@ -692,7 +690,7 @@ function DocumentsTab({ offer, life }: { offer: OfferDetailShape; life: OfferLif
       <Section title="Preboarding">
         {offer.preboarding_completed_at ? (
           <p className="text-[12.5px] text-[var(--ui-ok)]">
-            Preboarding completed on {fmt(offer.preboarding_completed_at)}.
+            Preboarding completed on {formatDateTime(offer.preboarding_completed_at)}.
           </p>
         ) : (
           <p className="text-[12.5px] text-muted-foreground">
@@ -824,7 +822,7 @@ function OfferLoaded({ offer }: { offer: OfferDetailShape }) {
             {offerStatusWord(offer.status)}
           </DocStatusPill>
         }
-        meta={offer.expires_at ? <span>Expires {fmt(offer.expires_at)}</span> : undefined}
+        meta={offer.expires_at ? <span>Expires {formatDateTime(offer.expires_at)}</span> : undefined}
         saveState={saveState}
       />
 

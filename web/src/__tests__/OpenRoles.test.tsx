@@ -118,7 +118,8 @@ describe('OpenRoles - what a card shows', () => {
       role({ salary_min: 2_400_000, salary_max: 3_600_000, salary_currency: 'INR' }),
     ]);
     renderRoles();
-    const expected = `INR ${(2_400_000).toLocaleString()} - INR ${(3_600_000).toLocaleString()}`;
+    // The visitor's locale (en-IN here), not the browser default (audit X18).
+    const expected = '₹24,00,000 - ₹36,00,000';
     expect(await screen.findByText(expected)).toBeInTheDocument();
   });
 

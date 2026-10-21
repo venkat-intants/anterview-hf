@@ -65,11 +65,3 @@ export function ineligibleReasonLabel(reason: string | undefined): string {
   if (!reason) return 'Not eligible';
   return INELIGIBLE_REASON_LABEL[reason as PoolIneligibleReason] ?? reason;
 }
-
-export function fmtDate(iso: string | undefined): string {
-  return iso ? new Date(iso).toLocaleDateString() : '-';
-}
-
-export function fmtDateTime(iso: string | undefined): string {
-  return iso ? new Date(iso).toLocaleString() : '-';
-}

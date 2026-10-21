@@ -37,6 +37,7 @@ from app.code_evidence import coding_results_for_screen
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
+from app.email_time import format_email_datetime
 from app.exam_ai_client import (
     ExamGenerationError,
     client_message,
@@ -1150,10 +1151,10 @@ async def assign_exam(
                 "exam_title": exam.title,
                 "exam_url": magic_link,
                 "when": (
-                    body.scheduled_at.strftime("%d %b %Y, %H:%M UTC")
+                    format_email_datetime(body.scheduled_at)
                     if body.scheduled_at else None
                 ),
-                "expires": expires_at.strftime("%d %b %Y, %H:%M UTC"),
+                "expires": format_email_datetime(expires_at),
             },
             company_id=company_id,
             related_kind="exam_assignment",

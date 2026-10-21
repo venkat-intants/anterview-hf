@@ -29,6 +29,7 @@ import {
   ToggleLeft,
   AlertTriangle,
   ClipboardList,
+  UserMinus,
 } from '@/design/components/icons';
 import {
   listCompanies,
@@ -198,6 +199,8 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
             )}
             <ConfirmDeleteButton
               title={`Remove super admin ${admin.email}`}
+              confirmText="Remove"
+              icon={UserMinus}
               pending={removeAdminMut.isPending}
               onConfirm={() => removeAdminMut.mutate()}
             />

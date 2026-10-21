@@ -429,7 +429,7 @@ function DeviceCheckRow({ icon, label, row }: DeviceCheckRowProps) {
         >
           {passed ? <CheckCircle2 size={14} aria-hidden="true" /> : null}
           {failed ? <XCircle size={14} aria-hidden="true" /> : null}
-          {unchecked ? <span aria-hidden="true" className="w-3.5 text-center">&ndash;</span> : null}
+          {unchecked ? <span aria-hidden="true" className="w-3.5 text-center">-</span> : null}
           {row.state === 'running' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : null}
           {statusText}
         </span>

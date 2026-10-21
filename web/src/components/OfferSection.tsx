@@ -24,6 +24,7 @@ import { FileText } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { formatMoney } from '@/lib/formatters';
 
 // Same hairline-divided, 15px-titled block the candidate drawer uses for every
 // section, so the offer reads as one more of them.
@@ -238,7 +239,7 @@ export default function OfferSection({
                     <span className="min-w-0 truncate text-[13px] text-foreground">
                       {o.job_title}
                       {o.currency && o.base_salary
-                        ? ` · ${o.currency} ${Number(o.base_salary).toLocaleString()}`
+                        ? ` · ${formatMoney(o.base_salary, o.currency)}`
                         : ''}
                     </span>
                     <StatusTag tone={OFFER_TONE[o.status]} dot>

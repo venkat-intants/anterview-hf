@@ -273,14 +273,14 @@ describe('submitting', () => {
       draft({ has_resume: true, confirmed: true, full_name: 'Priya' }),
     );
     submitDraft.mockRejectedValue(
-      new Error('You applied for this role before and we are not able to consider a new application until 2026-12-05.'),
+      new Error('You applied for this role before and we are not able to consider a new application until 05 Dec 2026.'),
     );
     renderPage();
     await waitFor(() =>
       expect(screen.getByRole('button', { name: /Submit application/ })).toBeEnabled(),
     );
     await userEvent.click(screen.getByRole('button', { name: /Submit application/ }));
-    expect(await screen.findByText(/until 2026-12-05/)).toBeInTheDocument();
+    expect(await screen.findByText(/until 05 Dec 2026/)).toBeInTheDocument();
   });
 });
 

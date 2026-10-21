@@ -246,7 +246,9 @@ describe('QuestionBanks - rename and archive', () => {
     await screen.findByRole('link', { name: 'Backend Core' });
 
     await user.click(screen.getByRole('button', { name: 'Archive' }));
-    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    // Archiving is confirmed with "Archive", not "Delete" (audit X5).
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Archive' }));
 
     await waitFor(() => expect(archiveQuestionBank).toHaveBeenCalledWith('bank-1'));
   });

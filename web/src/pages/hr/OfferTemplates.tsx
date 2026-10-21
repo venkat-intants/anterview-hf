@@ -295,6 +295,7 @@ function TemplateRow({ template }: { template: OfferTemplate }) {
           </button>
           <ConfirmDeleteButton
             title={`Delete ${template.name}`}
+            confirmText="Delete"
             pending={deleteMut.isPending}
             onConfirm={() => deleteMut.mutate()}
           />

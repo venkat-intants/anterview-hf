@@ -57,10 +57,12 @@ export async function completeGoogleLogin(code: string, state: string): Promise<
   });
 
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as {
-      detail?: string;
-    };
-    throw new Error(body.detail ?? `Google sign-in failed (HTTP ${response.status})`);
+    const body = (await response.json().catch(() => ({}))) as { detail?: unknown };
+    throw new Error(
+      typeof body.detail === 'string' && body.detail
+        ? body.detail
+        : 'Google sign-in did not complete. Try again.',
+    );
   }
 
   const tokens = (await response.json()) as SsoTokenResponse;

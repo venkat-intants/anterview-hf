@@ -10,7 +10,7 @@
 // because a board is useless until all three have arrived, and two round trips
 // would render a page whose dropdowns pop in afterwards.
 
-import { ApiError } from './client';
+import { apiErrorFromResponse } from './client';
 import { pathSegment } from './pathId';
 
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -83,9 +83,7 @@ export interface BoardQuery {
 }
 
 async function readError(res: Response): Promise<never> {
-  const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
-  const detail = typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`;
-  throw new ApiError(detail, res.status);
+  throw await apiErrorFromResponse(res);
 }
 
 /**

@@ -22,7 +22,7 @@ import {
 import { listInterviews, exportInterviewsCsv } from '@/api/admin';
 import type { InterviewListItem, InterviewFilters } from '@/api/admin';
 import { toast } from '@/lib/toast';
-import { formatDate, formatDuration, statusProps, languageLabel } from '@/lib/formatters';
+import { formatDate, formatDuration, statusProps, languageLabel, formatScore } from '@/lib/formatters';
 import { SegTabs, StatusTag, Avatar } from '@/design/components/primitives';
 import { EmptyState, PageHeader, SectionCard, Toolbar, Page } from '@/design/components/page';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -34,11 +34,6 @@ import { cn } from '@/lib/utils';
 const PER_PAGE = 20;
 
 const COLUMNS = ['Candidate', 'Email', 'Role', 'Status', 'Language', 'Score', 'Date', 'Duration'];
-
-function fmtScore(v: number | null): string {
-  if (v === null) return '-';
-  return v.toFixed(2);
-}
 
 function scoreColorInline(score: number): string {
   const pct = score * 10;
@@ -321,7 +316,7 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
               : scoreColorInline(item.composite_score),
         }}
       >
-        {fmtScore(item.composite_score)}
+        {formatScore('interview', item.composite_score)}
       </td>
 
       <td className="whitespace-nowrap px-4 py-3 text-[13px] text-muted-foreground">

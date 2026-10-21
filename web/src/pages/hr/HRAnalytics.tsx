@@ -57,6 +57,7 @@ import MetricInfoDialog from '@/components/hr/analytics/MetricInfoDialog';
 import MembersDrillDown from '@/components/hr/analytics/MembersDrillDown';
 import CheckinDueCard from '@/components/hr/analytics/CheckinDueCard';
 import OutcomeSignalsSection from '@/components/hr/analytics/OutcomeSignalsSection';
+import { formatScore } from '@/lib/formatters';
 
 // ── Tooltip style (design spec) ───────────────────────────────────────────────
 
@@ -192,14 +193,16 @@ export default function HRAnalytics() {
             {avg.avg_ats !== null && (
               <span>
                 Avg ATS score:{' '}
-                <span className="font-semibold text-foreground">{Math.round(avg.avg_ats)}</span>
+                <span className="font-semibold text-foreground">
+                  {formatScore('resume', avg.avg_ats)}
+                </span>
               </span>
             )}
             {avg.avg_exam_percent !== null && (
               <span>
                 Avg exam score:{' '}
                 <span className="font-semibold text-foreground">
-                  {Math.round(avg.avg_exam_percent)}%
+                  {formatScore('exam', avg.avg_exam_percent)}
                 </span>
               </span>
             )}
@@ -207,7 +210,7 @@ export default function HRAnalytics() {
               <span>
                 Avg interview score:{' '}
                 <span className="font-semibold text-foreground">
-                  {avg.avg_interview_composite.toFixed(1)}/10
+                  {formatScore('interview', avg.avg_interview_composite)}
                 </span>
               </span>
             )}

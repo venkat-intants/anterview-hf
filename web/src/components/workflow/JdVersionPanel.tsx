@@ -36,6 +36,7 @@ import { GlassCard, Pill } from '@/design/components/primitives';
 import { AlertCircle } from '@/design/components/icons';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
+import { formatDate } from '@/lib/formatters';
 
 const INPUT =
   'w-full rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
@@ -54,14 +55,6 @@ const STATUS_TONE: Record<JdVersion['status'], string> = {
   archived: 'border-border text-muted-foreground',
 };
 
-function when(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ''
-    : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-}
-
 /**
  * The window in which this wording was the one candidates actually saw.
  *
@@ -72,8 +65,8 @@ function when(iso: string | null): string {
  */
 function liveWindow(v: JdVersion): string | null {
   if (!v.published_at) return null;
-  const from = when(v.published_at);
-  return v.superseded_at ? `Live ${from} - ${when(v.superseded_at)}` : `Live since ${from}`;
+  const from = formatDate(v.published_at);
+  return v.superseded_at ? `Live ${from} - ${formatDate(v.superseded_at)}` : `Live since ${from}`;
 }
 
 export default function JdVersionPanel({ requisition }: { requisition: Requisition }) {
@@ -228,7 +221,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
             noun="version"
             latest={
               newestVersion
-                ? `v${newestVersion.version} ${STATUS_LABEL[newestVersion.status].toLowerCase()}, ${when(newestVersion.created_at)}`
+                ? `v${newestVersion.version} ${STATUS_LABEL[newestVersion.status].toLowerCase()}, ${formatDate(newestVersion.created_at)}`
                 : undefined
             }
             persistKey={historyKey}
@@ -259,7 +252,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
                         </span>
                       </div>
                       <p className="mt-0.5 text-[12px] text-muted-foreground">
-                        {when(v.created_at)}
+                        {formatDate(v.created_at)}
                         {v.created_by_name ? ` · ${v.created_by_name}` : ''}
                         {liveWindow(v) ? ` · ${liveWindow(v)}` : ''}
                       </p>

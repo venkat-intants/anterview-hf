@@ -25,6 +25,7 @@ import type { PipelineRow, PipelineStatus } from '@/api/pipeline';
 import { applicationKey } from '@/lib/applicationKey';
 import { offerOutcomeTag } from '@/lib/offerOutcome';
 import { Avatar, StatusTag, type TagTone } from '@/design/components/primitives';
+import { formatScore } from '@/lib/formatters';
 
 /**
  * The columns, in the order a candidate passes through them.
@@ -74,13 +75,13 @@ function initialsOf(name: string): string {
  */
 function headlineScore(row: PipelineRow): { label: string; value: string } | null {
   if (row.interview_score != null) {
-    return { label: 'Interview', value: `${row.interview_score.toFixed(1)}/10` };
+    return { label: 'Interview', value: formatScore('interview', row.interview_score) };
   }
   if (row.best_exam_percent != null) {
-    return { label: 'Exam', value: `${row.best_exam_percent}%` };
+    return { label: 'Exam', value: formatScore('exam', row.best_exam_percent) };
   }
   if (row.ats_overall != null) {
-    return { label: 'Resume', value: `${row.ats_overall}/100` };
+    return { label: 'Resume', value: formatScore('resume', row.ats_overall) };
   }
   return null;
 }

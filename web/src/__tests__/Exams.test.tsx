@@ -232,3 +232,31 @@ describe('Exams - create form', () => {
     expect(within(screen.getByRole('heading', { name: /new exam/i }).parentElement!).getByLabelText(/exam title/i)).toHaveValue('SQL Screening');
   });
 });
+
+describe('Exams - a failed load (audit X3)', () => {
+  it('says the load failed instead of "No exams yet", and Try again refetches', async () => {
+    listExams.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const user = userEvent.setup();
+    renderExams();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load exams.');
+    expect(alert).toHaveTextContent('Could not reach the server.');
+    expect(screen.queryByText('No exams yet')).not.toBeInTheDocument();
+    expect(screen.queryByText('Create your first exam')).not.toBeInTheDocument();
+
+    await user.click(within(alert).getByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByText('Python Fundamentals Screening')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(listExams).toHaveBeenCalledTimes(2);
+  });
+
+  it('still shows the empty state when the list really is empty', async () => {
+    listExams.mockResolvedValueOnce([]);
+    renderExams();
+
+    expect(await screen.findByText('No exams yet')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+});

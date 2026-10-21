@@ -7,6 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { AttemptResult, ExamDetail, AttemptBreakdown } from '../api/exams';
@@ -357,5 +358,56 @@ describe('ExamResults - similarity signals column', () => {
     await screen.findByText('Bhavya Nair');
     const row = screen.getByText('Bhavya Nair').parentElement!.parentElement!;
     expect(within(row).getByText('-')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit X3 / consistency D1: a failed load used to read "No attempts yet".
+// ---------------------------------------------------------------------------
+
+describe('ExamResults - failed loads', () => {
+  it('says the attempts failed to load instead of "No attempts yet"', async () => {
+    listAttempts.mockRejectedValueOnce(new Error('Network error - could not reach server'));
+    const user = userEvent.setup();
+    renderResults();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load the attempts for this exam.');
+    expect(alert).toHaveTextContent('Could not reach the server.');
+    expect(screen.queryByText(/no attempts yet/i)).not.toBeInTheDocument();
+
+    await user.click(within(alert).getByRole('button', { name: 'Try again' }));
+
+    expect(await screen.findByText('Bhavya Nair')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('shows the empty state only for a real empty list', async () => {
+    listAttempts.mockResolvedValueOnce([]);
+    renderResults();
+
+    expect(await screen.findByText('No attempts yet')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('reports a failed exam lookup without hiding the attempts', async () => {
+    getExam.mockRejectedValueOnce(new Error('Exam service unavailable'));
+    renderResults();
+
+    expect(await screen.findByText('Bhavya Nair')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      "Could not load this exam's details.",
+    );
+  });
+
+  it('says similarity could not be checked rather than "-" for every attempt', async () => {
+    getExam.mockResolvedValue({ ...EXAM, kind: 'coding' });
+    listSimilaritySignals.mockRejectedValueOnce(new Error('Signals unavailable'));
+    renderResults();
+
+    expect(await screen.findByText('Bhavya Nair')).toBeInTheDocument();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Could not load the similarity signals.',
+    );
   });
 });

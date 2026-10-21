@@ -9,6 +9,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listExams, createExam, type ExamSummary } from '@/api/exams';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { appPath } from '@/lib/safeUrl';
 import { cn } from '@/lib/utils';
@@ -16,6 +17,8 @@ import { Reveal } from '@/design/components/Reveal';
 import { PageHeader, EmptyState, Toolbar, Page } from '@/design/components/page';
 import { GlassCard, Pill, StatusTag, Field, ToggleSwitch } from '@/design/components/primitives';
 import { ArrowLeft, Plus, Pencil, BarChart3, Sparkles, Search } from '@/design/components/icons';
+import { QueryState } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
 
 // ── Status → design tone mapping ─────────────────────────────────────────────
 type ToneKey = 'forest' | 'neutral' | 'amber';
@@ -117,10 +120,12 @@ export default function Exams() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  const { data: exams, isLoading } = useQuery({
+  const examsQuery = useQuery({
     queryKey: ['hr', 'exams'],
     queryFn: () => listExams(),
   });
+  const exams = examsQuery.data;
+  const isLoading = exams === undefined && !examsQuery.isError;
 
   const createMut = useMutation({
     mutationFn: () =>
@@ -144,7 +149,7 @@ export default function Exams() {
       void qc.invalidateQueries({ queryKey: ['hr', 'exams'] });
       void navigate(`/hr/exams/${e.id}`);
     },
-    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : 'Create failed'),
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not create the exam.')),
   });
 
   function onSubmit(ev: React.FormEvent) {
@@ -335,44 +340,45 @@ export default function Exams() {
         >
           <Plus size={28} aria-hidden="true" />
           <span className="text-[14px] font-semibold">
-            {all.length === 0 ? 'Create your first exam' : 'Create new exam'}
+            {exams?.length === 0 ? 'Create your first exam' : 'Create new exam'}
           </span>
         </button>
 
-        {/* Loading skeletons */}
-        {isLoading &&
-          [0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="h-[212px] w-full animate-pulse rounded-card bg-[var(--ui-inset)]"
+        {/* Loading, failed, empty or the cards. A failed load used to fall
+            through to "No exams yet" (audit X3). */}
+        <QueryState
+          query={examsQuery}
+          errorTitle="Could not load exams."
+          errorClassName="sm:col-span-1 lg:col-span-2"
+          loading={[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-[212px] w-full rounded-card" />
+          ))}
+          isEmpty={(rows) => rows.length === 0}
+          empty={
+            <EmptyState
+              icon={Sparkles}
+              title="No exams yet"
+              description="Create one, add questions, then publish to start receiving attempts."
+              className="sm:col-span-1 lg:col-span-2"
             />
-          ))}
-
-        {/* Empty hint when no exams */}
-        {!isLoading && all.length === 0 && (
-          <EmptyState
-            icon={Sparkles}
-            title="No exams yet"
-            description="Create one, add questions, then publish to start receiving attempts."
-            className="sm:col-span-1 lg:col-span-2"
-          />
-        )}
-
-        {!isLoading && all.length > 0 && list.length === 0 && filtering ? (
-          <EmptyState
-            title="No exams match"
-            description="Clear the search or the status filter to see every exam."
-            className="sm:col-span-1 lg:col-span-2"
-          />
-        ) : null}
-
-        {/* Exam cards */}
-        {!isLoading &&
-          list.map((e) => (
-            <Reveal key={e.id} dir="zoom">
-              <ExamCard e={e} />
-            </Reveal>
-          ))}
+          }
+        >
+          {() =>
+            list.length === 0 && filtering ? (
+              <EmptyState
+                title="No exams match"
+                description="Clear the search or the status filter to see every exam."
+                className="sm:col-span-1 lg:col-span-2"
+              />
+            ) : (
+              list.map((e) => (
+                <Reveal key={e.id} dir="zoom">
+                  <ExamCard e={e} />
+                </Reveal>
+              ))
+            )
+          }
+        </QueryState>
       </div>
     </Page>
   );

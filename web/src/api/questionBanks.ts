@@ -12,6 +12,7 @@
 // Every id interpolated into a URL goes through `pathId`.
 
 import {
+  ApiError,
   apiDelete,
   apiGet,
   apiPatch,
@@ -531,7 +532,7 @@ export async function downloadBankQuestionTemplate(): Promise<void> {
   // The .xlsx body must bypass clientFetch's JSON parsing but keep its
   // refresh-on-401 — fetchBlobWithAuth is the helper that does both.
   const res = await fetchBlobWithAuth(`${API_BASE}/hr/question-bank-template`);
-  if (!res.ok) throw new Error(`Could not download template (HTTP ${res.status})`);
+  if (!res.ok) throw new ApiError('Could not download the template.', res.status);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

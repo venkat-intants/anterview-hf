@@ -23,6 +23,7 @@
 
 import { getToken, setToken, clearToken } from './tokenStore';
 import { toast } from '../lib/toast';
+import { isReadableMessage, statusMessage, validationMessage } from '../lib/errorMessage';
 
 /**
  * Error thrown for non-2xx API responses. Carries the HTTP status so callers
@@ -44,33 +45,74 @@ export class ApiError extends Error {
    * and rendered as "[object Object]".
    */
   detail?: unknown;
+  /**
+   * False when the server sent no sentence of its own and `message` is the
+   * client's status copy (statusMessage). lib/errorMessage and
+   * lib/generationError read it so a caller's action-specific fallback ("Could
+   * not save the round.") beats the generic status line.
+   */
+  hasServerMessage: boolean;
 
-  constructor(message: string, status: number, detail?: unknown) {
+  constructor(message: string, status: number, detail?: unknown, hasServerMessage = true) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
+    this.hasServerMessage = hasServerMessage;
   }
 }
 
 /**
- * Turn a response body's `detail` into (message, detail).
+ * Turn an error response body into (message, detail, hasServerMessage).
  *
- * A string detail is the message and carries no structure. An object detail is
- * kept whole for callers that know its shape, and its `message` field — if it
- * has one — becomes the human-readable text so a generic error toast still
- * reads correctly.
+ *  - A string `detail` is the message and carries no structure.
+ *  - An array `detail` is a FastAPI validation failure. The services add a
+ *    top-level `message` sentence for it (shared/http_observability.py), which
+ *    wins; without one the first entry is described here. The array is kept on
+ *    `detail` for callers that map errors to fields. Before this, the array was
+ *    ignored and every rejected form toasted "HTTP 422".
+ *  - An object `detail` is kept whole for callers that know its shape, and its
+ *    `message` field, if it has one, becomes the text.
+ *  - Anything else falls back to statusMessage(status), never "HTTP nnn".
  */
 function splitDetail(
-  detail: unknown,
-  fallback: string,
-): { message: string; detail?: unknown } {
-  if (typeof detail === 'string' && detail) return { message: detail };
+  body: unknown,
+  status: number,
+): { message: string; detail?: unknown; hasServerMessage: boolean } {
+  const fallback = { message: statusMessage(status), hasServerMessage: false };
+  if (!body || typeof body !== 'object') return fallback;
+  const { detail, message: topMessage } = body as { detail?: unknown; message?: unknown };
+  if (typeof detail === 'string' && detail) return { message: detail, hasServerMessage: true };
+  if (Array.isArray(detail)) {
+    const text = isReadableMessage(topMessage) ? topMessage : validationMessage(detail);
+    return text
+      ? { message: text, detail, hasServerMessage: true }
+      : { ...fallback, detail };
+  }
   if (detail && typeof detail === 'object') {
     const msg = (detail as { message?: unknown }).message;
-    return { message: typeof msg === 'string' && msg ? msg : fallback, detail };
+    return typeof msg === 'string' && msg
+      ? { message: msg, detail, hasServerMessage: true }
+      : { ...fallback, detail };
   }
-  return { message: fallback };
+  return fallback;
+}
+
+/**
+ * Build the ApiError for a non-2xx response body that has already been parsed
+ * (or `undefined` when it was not JSON). For API modules that cannot use the
+ * typed helpers below (public token-header pages, binary downloads) so their
+ * errors read the same as everyone else's.
+ */
+export function apiErrorFromBody(body: unknown, status: number): ApiError {
+  const d = splitDetail(body, status);
+  return new ApiError(d.message, status, d.detail, d.hasServerMessage);
+}
+
+/** Read a non-2xx Response's JSON body (tolerating none) into an ApiError. */
+export async function apiErrorFromResponse(res: Response): Promise<ApiError> {
+  const body: unknown = await res.json().catch(() => undefined);
+  return apiErrorFromBody(body, res.status);
 }
 
 /**
@@ -239,11 +281,7 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
       });
 
       if (!retryResponse.ok) {
-        const errorBody = (await retryResponse.json().catch(() => ({}))) as {
-          detail?: unknown;
-        };
-        const d = splitDetail(errorBody.detail, `HTTP ${retryResponse.status}`);
-        throw new ApiError(d.message, retryResponse.status, d.detail);
+        throw await apiErrorFromResponse(retryResponse);
       }
 
       return parseJsonOrEmpty<T>(retryResponse);
@@ -259,11 +297,7 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
   }
 
   if (!response.ok) {
-    const errorBody = (await response.json().catch(() => ({}))) as {
-      detail?: unknown;
-    };
-    const d = splitDetail(errorBody.detail, `HTTP ${response.status}`);
-    throw new ApiError(d.message, response.status, d.detail);
+    throw await apiErrorFromResponse(response);
   }
 
   return parseJsonOrEmpty<T>(response);
@@ -595,14 +629,11 @@ export async function uploadWithProgress<T>(
     }
   }
 
-  let split: { message: string; detail?: unknown } = {
-    message: `HTTP ${result.status}`,
-  };
+  let body: unknown;
   try {
-    const body = JSON.parse(result.responseText) as { detail?: unknown };
-    split = splitDetail(body.detail, `HTTP ${result.status}`);
+    body = JSON.parse(result.responseText);
   } catch {
-    // leave default
+    // Not JSON (a proxy's HTML error page): the status copy stands.
   }
   // ApiError, not Error, so the status survives to the caller — the same
   // contract clientFetch and the typed helpers already have. isTransientApiError
@@ -613,7 +644,7 @@ export async function uploadWithProgress<T>(
   // Deliberately only THIS throw. The network, timeout and session-expired paths
   // above stay plain Errors: no HTTP response was received in those cases, so
   // there is no status to carry and "retry" really is the right reading.
-  throw new ApiError(split.message, result.status, split.detail);
+  throw apiErrorFromBody(body, result.status);
 }
 
 /** Raw clientFetch for callers that need full control over the URL. */

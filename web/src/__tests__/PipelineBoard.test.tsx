@@ -177,7 +177,8 @@ describe('PipelineBoard - the score on a card', () => {
 
   it('falls back to the exam, then the resume', () => {
     const { unmount } = renderBoard([row({ ats_overall: 78, best_exam_percent: 64 })]);
-    expect(screen.getByText('64%')).toBeInTheDocument();
+    // Exam and resume are both out of 100 now, written the same way (audit X13).
+    expect(screen.getByText('64/100')).toBeInTheDocument();
     unmount();
 
     renderBoard([row({ ats_overall: 78 })]);

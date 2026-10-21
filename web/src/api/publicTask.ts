@@ -14,7 +14,7 @@
 // Field names match services/data_gateway/app/routers/job_tasks.py's
 // `public_router` and app/job_tasks.py's `candidate_view` EXACTLY.
 
-import { ApiError } from './client';
+import { apiErrorFromResponse } from './client';
 import { pathSegment } from './pathId';
 import type { TaskItem, TaskKind, TaskLinkKind, TaskResponseOut } from './jobTasks';
 
@@ -22,9 +22,7 @@ import type { TaskItem, TaskKind, TaskLinkKind, TaskResponseOut } from './jobTas
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
 
 async function readError(res: Response): Promise<never> {
-  const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
-  const detail = typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`;
-  throw new ApiError(detail, res.status);
+  throw await apiErrorFromResponse(res);
 }
 
 function taskHeaders(token: string, extra?: Record<string, string>): HeadersInit {

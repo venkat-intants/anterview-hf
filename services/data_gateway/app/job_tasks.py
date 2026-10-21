@@ -68,6 +68,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import accommodations
 from app import document_storage as store
 from app.config import settings
+from app.email_time import format_email_date, format_email_datetime
 from app.guest_identity import link_or_reuse_guest
 from app.interviewer_scorecards import RequestMeta
 from app.mailer import candidate_language, enqueue_email
@@ -749,7 +750,7 @@ async def issue(
         ctx={
             "name": enrolment.get("full_name"), "round_title": round_["title"],
             "kind": round_["kind"], "task_url": task_link(raw),
-            "due": due_at.strftime("%d %b %Y, %H:%M UTC"),
+            "due": format_email_datetime(due_at),
         },
         company_id=company_id, related_kind="task_submission", related_id=sub_id,
         dedupe_key=f"task_assign:{sub_id}",
@@ -758,7 +759,7 @@ async def issue(
         await create_notification(
             db, user_id=workflow["created_by_user_id"], kind="task_issued",
             title=f"{enrolment['full_name']} was sent {round_['title']}",
-            body=f"Due {due_at:%d %b %Y}", link="/hr/requisitions",
+            body=f"Due {format_email_date(due_at)}", link="/hr/requisitions",
         )
     log.info("job_tasks.issued", enrolment_id=str(enrolment["id"]), round_id=str(round_["id"]))
     return sub_id

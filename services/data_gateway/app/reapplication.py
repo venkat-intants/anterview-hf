@@ -28,6 +28,8 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.email_time import format_email_date
+
 log = structlog.get_logger(__name__)
 
 
@@ -45,13 +47,16 @@ class CooldownVerdict:
         """Candidate-facing, and deliberately not apologetic or vague.
 
         It says the date rather than "please try later": a person refused with
-        no date has no way to act on the refusal, and will simply retry.
+        no date has no way to act on the refusal, and will simply retry. The
+        date is the Indian calendar day, written the way the candidate emails
+        write it (audit X6): the window is stored in UTC, and a window that ends
+        at 20:00 UTC ends on the NEXT day in India.
         """
         if self.allowed or self.until is None:
             return ""
         return (
             "You applied for this role before and we are not able to consider a "
-            f"new application until {self.until.date().isoformat()}."
+            f"new application until {format_email_date(self.until)}."
         )
 
 

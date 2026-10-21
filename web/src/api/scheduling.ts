@@ -12,7 +12,15 @@
 //
 // Every id interpolated into a URL goes through `pathId` — see pathId.ts.
 
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut, fetchBlobWithAuth } from './client';
+import {
+  apiDelete,
+  apiErrorFromResponse,
+  apiGet,
+  apiPatch,
+  apiPost,
+  apiPut,
+  fetchBlobWithAuth,
+} from './client';
 import { pathId } from './pathId';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -261,11 +269,7 @@ export function getSessionSlots(sessionId: string): Promise<string[]> {
 
 async function downloadIcs(path: string, filename: string): Promise<void> {
   const res = await fetchBlobWithAuth(`${API_BASE}${path}`);
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
-    const detail = typeof body.detail === 'string' ? body.detail : `HTTP ${res.status}`;
-    throw new Error(detail);
-  }
+  if (!res.ok) throw await apiErrorFromResponse(res);
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

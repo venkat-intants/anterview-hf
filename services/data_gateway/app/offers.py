@@ -34,6 +34,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.email_time import format_email_date
 from app.interviewer_scorecards import RequestMeta
 from app.mailer import candidate_language, enqueue_email
 from app.models import AuditLog
@@ -737,7 +738,7 @@ async def send(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
     await _email_candidate(
         db, offer, "offer_ready",
         {"company": offer["company_name"], "offer_url": offer_link(raw),
-         "expires": expires.strftime("%d %b %Y"), "resent": again,
+         "expires": format_email_date(expires), "resent": again,
          "accepted": offer["status"] == "accepted"},
         # A resend is keyed on the link it carries, not on the clock: a
         # one-second timestamp collapsed two resends in the same second into one

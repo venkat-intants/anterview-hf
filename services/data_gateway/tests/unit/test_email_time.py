@@ -4,7 +4,10 @@ The interview invite and the exam-assignment emails printed UTC ("10:00 UTC"
 for a 15:30 slot) while the reminder for the same event printed IST. These pin
 the shared formatter, the one call site that is cheap to drive end to end (the
 invite and reschedule email), and a source guard over every module that sends
-email, so a new ``strftime(... UTC)`` in a template context fails here.
+email, so a new ``strftime(... UTC)`` in a template context fails here. A
+second guard covers sentences that reach a candidate other than by email (the
+reapplication refusal), where a UTC ``.date().isoformat()`` names the wrong day
+near midnight IST.
 """
 
 from __future__ import annotations
@@ -102,6 +105,45 @@ def _email_senders() -> list[pathlib.Path]:
         if "__pycache__" not in p.parts
         and p.name != "email_time.py"
         and "enqueue_email" in p.read_text(encoding="utf-8")
+    )
+
+
+# A UTC calendar date put into a sentence: ``f"... until {x.date().isoformat()}"``.
+# Inside an f-string it is copy for a person; a bare ``.date().isoformat()`` (a
+# JSON field, a cache key) is machine data and is left alone.
+_UTC_DATE_IN_COPY = re.compile(r"\{[^{}]*\.date\(\)\.isoformat\(\)[^{}]*\}")
+
+#: Modules whose sentences reach a candidate other than by email: the public
+#: apply flow and the refusals it relays.
+_CANDIDATE_REPLY_MODULES = ("reapplication.py", "routers/public_apply.py")
+
+
+def _candidate_facing() -> list[pathlib.Path]:
+    extra = [APP_DIR / name for name in _CANDIDATE_REPLY_MODULES]
+    return sorted(set(_email_senders()) | set(extra))
+
+
+def test_the_utc_date_guard_sees_the_candidate_modules() -> None:
+    paths = _candidate_facing()
+    assert all(p.is_file() for p in paths), [str(p) for p in paths if not p.is_file()]
+    assert {"reapplication.py", "public_apply.py", "offers.py"} <= {p.name for p in paths}
+
+
+def test_the_utc_date_guard_matches_what_it_is_for() -> None:
+    assert _UTC_DATE_IN_COPY.search('f"until {self.until.date().isoformat()}."')
+    assert not _UTC_DATE_IN_COPY.search("return d.date().isoformat()")
+
+
+def test_no_candidate_facing_sentence_states_a_utc_date() -> None:
+    offenders = [
+        f"{p.relative_to(APP_DIR)}:{n}"
+        for p in _candidate_facing()
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if _UTC_DATE_IN_COPY.search(line)
+    ]
+    assert not offenders, (
+        "state a date to a candidate with app.email_time.format_email_date, "
+        f"which takes the Indian calendar day: {offenders}"
     )
 
 

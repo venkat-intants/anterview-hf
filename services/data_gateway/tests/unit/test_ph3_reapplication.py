@@ -117,7 +117,17 @@ async def test_inside_the_window_is_refused_with_a_date() -> None:
     )
     assert verdict.allowed is False
     assert verdict.until == NOW - timedelta(days=10) + timedelta(days=90)
-    assert "2026-12-05" in verdict.message()
+    assert "until 05 Dec 2026." in verdict.message()
+
+
+def test_the_refusal_names_the_indian_calendar_day() -> None:
+    """A window that ends at 20:00 UTC ends on the next day in India (audit X6);
+    the UTC date would tell the candidate they may apply a day too early."""
+    from app.reapplication import CooldownVerdict
+
+    verdict = CooldownVerdict(allowed=False, until=datetime(2026, 12, 5, 20, 0, tzinfo=UTC))
+    assert verdict.message().endswith("until 06 Dec 2026.")
+    assert "2026-12-05" not in verdict.message()
 
 
 @pytest.mark.asyncio

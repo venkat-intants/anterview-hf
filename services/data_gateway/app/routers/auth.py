@@ -58,6 +58,7 @@ from app.auth_tokens import hash_token, mint_token, ttl_hours_for
 from app.config import settings
 from app.database import get_db_session
 from app.dependencies import get_auth_provider_dep, get_current_user, reject_role
+from app.email_time import format_email_datetime
 from app.mailer import enqueue_email
 from app.models import AuthToken
 from app.notifications_util import create_notification
@@ -612,7 +613,7 @@ async def _maybe_send_login_alert(
         if not row or not row[3]:  # no row, or login alerts not opted in
             return
         device = (request.headers.get("user-agent") or "Unknown device")[:200]
-        when = datetime.now(tz=UTC).strftime("%d %b %Y, %H:%M UTC")
+        when = format_email_datetime(datetime.now(tz=UTC))
         await enqueue_email(
             db,
             to=row[0],

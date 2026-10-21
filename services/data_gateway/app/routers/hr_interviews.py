@@ -26,6 +26,7 @@ from app import accommodations
 from app.config import settings
 from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
+from app.email_time import format_email_datetime
 from app.interview_link import hash_interview_token, mint_interview_token
 from app.mailer import enqueue_email
 from app.models import Applicant, AuditLog, InterviewInvite, Job, Scorecard
@@ -237,7 +238,7 @@ async def _tell_candidate_about_invite(
     Values are escaped inside the template renderer (a candidate name / job title
     can contain markup). ``magic_link=None`` renders the "use your original link"
     copy (reschedule path — the link is not re-minted)."""
-    when = scheduled_at.strftime("%d %b %Y, %H:%M UTC") if scheduled_at else None
+    when = format_email_datetime(scheduled_at) if scheduled_at else None
 
     # In-app first, email second — and deliberately in that order.
     #

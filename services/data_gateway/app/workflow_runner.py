@@ -58,6 +58,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app import accommodations, job_tasks
 from app.application_source import SOURCES, UNTRACKED, normalise_detail
 from app.config import settings
+from app.email_time import format_email_datetime
 from app.exam_link import hash_exam_token, mint_exam_token
 from app.mailer import candidate_language, enqueue_email
 from app.notifications_util import create_notification
@@ -566,7 +567,7 @@ async def _assign_round(
                 "name": enrolment["full_name"],
                 "exam_title": round_["title"],
                 "exam_url": f"{base}/exam#{raw}",
-                "expires": expires.strftime("%d %b %Y, %H:%M UTC"),
+                "expires": format_email_datetime(expires),
             },
             company_id=company_id,
             related_kind="exam_assignment",

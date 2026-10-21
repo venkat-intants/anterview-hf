@@ -49,6 +49,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.config import settings
+from app.email_time import format_email_datetime
 from app.mailer import candidate_language, enqueue_email
 from app.notifications_util import create_notification
 from app.scheduling import record_loop_pass
@@ -149,12 +150,12 @@ def _fmt(dt: datetime | None) -> str | None:
 
     Rendered here rather than in the template because the templates take
     pre-formatted strings (see the existing exam_link builder), and because a
-    reader should see one timezone rather than guessing at UTC.
+    reader should see one timezone rather than guessing at UTC. The format
+    itself lives in ``app.email_time`` so every candidate email agrees with it.
     """
     if dt is None:
         return None
-    ist = dt.astimezone(UTC) + timedelta(hours=5, minutes=30)
-    return ist.strftime("%d %b %Y, %I:%M %p IST")
+    return format_email_datetime(dt)
 
 
 async def _lang_for_user(db: AsyncSession, user_id: uuid.UUID | None) -> str:

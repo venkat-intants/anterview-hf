@@ -8,16 +8,25 @@
 //   Client-side CSV export from loaded attempts (no fake endpoint).
 //   No flagged/proctoring field (no backend field).
 
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getExam, listAttempts, type AttemptResult } from '@/api/exams';
 import { listSimilaritySignals } from '@/api/codeEvidence';
-import { PageHeader, Breadcrumbs, Page } from '@/design/components/page';
+import { PageHeader, Breadcrumbs, Page, EmptyState } from '@/design/components/page';
+import { QueryErrorPanel, QueryState } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { csvRow } from '@/lib/csv';
 import { GlassCard, StatCard, StatusTag, Avatar, Pill } from '@/design/components/primitives';
-import { Download, Eye, CheckCircle2, XCircle, Clock } from '@/design/components/icons';
+import {
+  Download,
+  Eye,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ListChecks,
+} from '@/design/components/icons';
 import { ACTIVE_POLL_MS } from '../../lib/polling';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -78,26 +87,29 @@ function exportCsv(attempts: AttemptResult[], examTitle: string): void {
 export default function ExamResults() {
   const { examId = '' } = useParams<{ examId: string }>();
 
-  const { data: exam } = useQuery({
+  const examQuery = useQuery({
     queryKey: ['hr', 'exam', examId],
     queryFn: () => getExam(examId),
   });
+  const exam = examQuery.data;
 
-  const { data: attempts, isLoading } = useQuery({
+  const attemptsQuery = useQuery({
     queryKey: ['hr', 'exam', examId, 'attempts'],
     // A5: attempts land while the manager watches.
     refetchInterval: ACTIVE_POLL_MS,
     queryFn: () => listAttempts(examId),
   });
+  const attempts = attemptsQuery.data;
 
   // PH4-D3 — counts only, never the content: the compare view (matched
   // regions, excerpts) lives one click away on the attempt itself.
   const showSimilarity = exam?.kind === 'coding';
-  const { data: signals } = useQuery({
+  const signalsQuery = useQuery({
     queryKey: ['hr', 'exam', examId, 'similarity'],
     queryFn: () => listSimilaritySignals(examId),
     enabled: Boolean(examId) && showSimilarity,
   });
+  const signals = signalsQuery.data;
   const similarityByAttempt = useMemo(() => {
     const m = new Map<string, number>();
     for (const s of signals ?? []) {
@@ -152,8 +164,19 @@ export default function ExamResults() {
         }
       />
 
+      {/* The exam's own details only feed the title and the pass mark, so a
+          failure there is reported without hiding the attempts below. */}
+      {examQuery.isError && !exam ? (
+        <QueryErrorPanel
+          title="Could not load this exam's details."
+          error={examQuery.error}
+          onRetry={() => void examQuery.refetch()}
+          retrying={examQuery.isFetching}
+        />
+      ) : null}
+
       {/* ── Summary KPI row ── */}
-      {!isLoading && list.length > 0 && (
+      {list.length > 0 && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard label="Attempts" value={String(list.length)} delta="all-time" trend="flat" />
           <StatCard
@@ -179,80 +202,107 @@ export default function ExamResults() {
           misconduct on its own. See an attempt&rsquo;s own Code evidence tab for detail.
         </p>
       )}
-      <GlassCard className="overflow-hidden p-0">
-        {/* The scroll container is what makes the header sticky: it scrolls
-            the rows under a header that stays put, and scrolls sideways on a
-            narrow screen instead of squeezing the columns. */}
-        <div className="max-h-[70vh] overflow-auto">
-          <table className="w-full min-w-[760px] border-collapse text-left">
-            <caption className="sr-only">Graded attempts for this exam</caption>
-            <thead>
-              <tr className="text-[12px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">
-                <th scope="col" className={TH}>
-                  Candidate
-                </th>
-                <th scope="col" className={cn(TH, 'text-right')}>
-                  Score
-                </th>
-                <th scope="col" className={TH}>
-                  Submitted
-                </th>
-                <th scope="col" className={TH}>
-                  Status
-                </th>
-                {showSimilarity && (
-                  <th scope="col" className={cn(TH, 'text-right')}>
-                    Similarity signals
-                  </th>
-                )}
-                <th scope="col" className={cn(TH, 'text-right')}>
-                  Action
-                </th>
+      {showSimilarity && signalsQuery.isError && !signals ? (
+        // Without this the column read "-" for every attempt, which says "no
+        // signals" when the truth is "we could not check".
+        <QueryErrorPanel
+          title="Could not load the similarity signals."
+          error={signalsQuery.error}
+          onRetry={() => void signalsQuery.refetch()}
+          retrying={signalsQuery.isFetching}
+        />
+      ) : null}
+      <QueryState
+        query={attemptsQuery}
+        errorTitle="Could not load the attempts for this exam."
+        loading={
+          <ResultsTable showSimilarity={showSimilarity} busy>
+            {[0, 1, 2].map((i) => (
+              <tr key={i} aria-hidden="true">
+                <td colSpan={showSimilarity ? 6 : 5} className="border-b border-border p-0">
+                  <Skeleton className="h-[56px] rounded-none" />
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {/* Loading state */}
-              {isLoading &&
-                [0, 1, 2].map((i) => (
-                  <tr key={i} aria-hidden="true">
-                    <td colSpan={showSimilarity ? 6 : 5} className="border-b border-border p-0">
-                      <div className="h-[56px] animate-pulse bg-[var(--ui-inset-soft)]" />
-                    </td>
-                  </tr>
-                ))}
-
-              {/* Empty state */}
-              {!isLoading && list.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={showSimilarity ? 6 : 5}
-                    className="px-6 py-12 text-center text-[14px] text-muted-foreground"
-                  >
-                    No attempts yet - assign the exam and share the links.
-                  </td>
-                </tr>
-              )}
-
-              {/* Rows */}
-              {!isLoading &&
-                list.map((a) => (
-                  <AttemptRow
-                    key={a.attempt_id}
-                    a={a}
-                    examId={examId}
-                    showSimilarity={showSimilarity}
-                    similarityCount={similarityByAttempt.get(a.attempt_id) ?? 0}
-                  />
-                ))}
-            </tbody>
-          </table>
-        </div>
-      </GlassCard>
+            ))}
+          </ResultsTable>
+        }
+        isEmpty={(rows) => rows.length === 0}
+        empty={
+          <EmptyState
+            icon={ListChecks}
+            title="No attempts yet"
+            description="Assign the exam and share the links. Attempts appear here as candidates submit."
+          />
+        }
+      >
+        {(rows) => (
+          <ResultsTable showSimilarity={showSimilarity}>
+            {rows.map((a) => (
+              <AttemptRow
+                key={a.attempt_id}
+                a={a}
+                examId={examId}
+                showSimilarity={showSimilarity}
+                similarityCount={similarityByAttempt.get(a.attempt_id) ?? 0}
+              />
+            ))}
+          </ResultsTable>
+        )}
+      </QueryState>
     </Page>
   );
 }
 
 const TH = 'sticky top-0 z-[1] whitespace-nowrap border-b border-border bg-card px-6 py-3.5';
+
+// ── Results table frame ───────────────────────────────────────────────────────
+function ResultsTable({
+  showSimilarity,
+  busy = false,
+  children,
+}: {
+  showSimilarity: boolean;
+  busy?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <GlassCard className="overflow-hidden p-0">
+      {/* The scroll container is what makes the header sticky: it scrolls
+          the rows under a header that stays put, and scrolls sideways on a
+          narrow screen instead of squeezing the columns. */}
+      <div className="max-h-[70vh] overflow-auto" aria-busy={busy ? 'true' : undefined}>
+        <table className="w-full min-w-[760px] border-collapse text-left">
+          <caption className="sr-only">Graded attempts for this exam</caption>
+          <thead>
+            <tr className="text-[12px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">
+              <th scope="col" className={TH}>
+                Candidate
+              </th>
+              <th scope="col" className={cn(TH, 'text-right')}>
+                Score
+              </th>
+              <th scope="col" className={TH}>
+                Submitted
+              </th>
+              <th scope="col" className={TH}>
+                Status
+              </th>
+              {showSimilarity && (
+                <th scope="col" className={cn(TH, 'text-right')}>
+                  Similarity signals
+                </th>
+              )}
+              <th scope="col" className={cn(TH, 'text-right')}>
+                Action
+              </th>
+            </tr>
+          </thead>
+          <tbody>{children}</tbody>
+        </table>
+      </div>
+    </GlassCard>
+  );
+}
 const TD = 'border-b border-border px-6 py-3.5 align-middle group-last:border-0';
 
 // ── Attempt row ───────────────────────────────────────────────────────────────

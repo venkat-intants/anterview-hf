@@ -47,7 +47,7 @@ import InterviewLoopsSection from '@/components/InterviewLoopsSection';
 import OfferSection from '@/components/OfferSection';
 import CheckinSection from '@/components/hr/CheckinSection';
 import { getMetricDefinitions, sourceLabel } from '@/api/metrics';
-import { AlertTriangle, ExternalLink, Info } from '@/design/components/icons';
+import { AlertTriangle, ExternalLink, Info, XCircle } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { DataList } from '@/design/components/page';
@@ -589,7 +589,8 @@ function HumanInterviewSection({
                             className="h-9 w-full max-w-[220px] rounded-[10px] border border-input bg-card px-3 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
                           />
                           <ConfirmDeleteButton
-                            label="Withdraw"
+                            label="Withdraw scorecard"
+                            icon={XCircle}
                             pending={
                               withdrawMut.isPending && withdrawMut.variables?.id === sc.scorecard_id
                             }

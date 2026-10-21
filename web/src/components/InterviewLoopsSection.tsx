@@ -41,6 +41,7 @@ import {
   Download,
   Loader2,
   Send,
+  Ban,
 } from '@/design/components/icons';
 
 const inputCls =
@@ -725,7 +726,8 @@ function SessionRow({
             className="w-[180px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           />
           <ConfirmDeleteButton
-            label="Cancel"
+            label="Cancel session"
+            icon={Ban}
             pending={outcomeMut.isPending}
             onConfirm={() => outcomeMut.mutate('cancelled')}
           />
@@ -875,6 +877,7 @@ function LoopCard({ loop, requisitionId }: { loop: InterviewLoop; requisitionId:
             />
             <ConfirmDeleteButton
               label="Cancel loop"
+              icon={Ban}
               pending={cancelMut.isPending}
               onConfirm={() => cancelMut.mutate()}
             />

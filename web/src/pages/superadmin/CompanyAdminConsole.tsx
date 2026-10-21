@@ -23,6 +23,7 @@ import {
   ClipboardCheck,
   Search,
   type LucideIcon,
+  UserMinus,
 } from '@/design/components/icons';
 import { getMe } from '@/api/auth';
 import CareersLinkCard from '@/components/hr/CareersLinkCard';
@@ -242,6 +243,8 @@ function StaffRoster({
                     )}
                     <ConfirmDeleteButton
                       title={`Remove ${row.full_name}`}
+                      confirmText="Remove"
+                      icon={UserMinus}
                       pending={deleteMut.isPending && deleteMut.variables === row.user_id}
                       onConfirm={() => deleteMut.mutate(row.user_id)}
                     />

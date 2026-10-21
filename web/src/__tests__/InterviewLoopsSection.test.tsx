@@ -351,7 +351,10 @@ describe('InterviewLoopsSection - loop-level controls', () => {
 
     const footer = (await screen.findByRole('button', { name: 'Cancel loop' })).closest('div') as HTMLElement;
     await user.click(within(footer).getByRole('button', { name: 'Cancel loop' }));
-    await user.click(within(footer).getByRole('button', { name: 'Delete' }));
+    // Armed: the confirm repeats the action and the way out says Keep, so
+    // "Cancel" never means both (audit X5).
+    expect(within(footer).getByRole('button', { name: 'Keep' })).toBeInTheDocument();
+    await user.click(within(footer).getByRole('button', { name: 'Cancel loop' }));
 
     await waitFor(() => expect(schedulingApi.cancelLoop).toHaveBeenCalledWith('loop-1', null));
   });

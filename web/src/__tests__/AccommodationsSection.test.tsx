@@ -438,7 +438,7 @@ describe('AccommodationsSection - revise and revoke', () => {
     await user.type(screen.getByPlaceholderText('Revoke reason (optional)'), 'No longer needed');
     await user.click(screen.getByRole('button', { name: 'Revoke' }));
     await user.click(
-      within(screen.getByRole('group', { name: /confirm deletion/i })).getByRole('button', {
+      within(screen.getByRole('group', { name: 'Confirm: Revoke' })).getByRole('button', {
         name: 'Revoke',
       }),
     );

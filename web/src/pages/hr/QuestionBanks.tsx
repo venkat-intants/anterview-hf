@@ -20,7 +20,16 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, CheckCircle2, Clock, Library, Pencil, Plus, Search } from '@/design/components/icons';
+import {
+  Archive,
+  ArrowRight,
+  CheckCircle2,
+  Clock,
+  Library,
+  Pencil,
+  Plus,
+  Search,
+} from '@/design/components/icons';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { Page, PageHeader, EmptyState, Toolbar } from '@/design/components/page';
 import { Card } from '@/design/components/card';
@@ -343,12 +352,13 @@ export default function QuestionBanks(): JSX.Element {
                                 Rename
                               </button>
                               {/* ConfirmDeleteButton has no className prop, and its
-                                  armed Sure?/Delete/Cancel state must stay as it is, so
+                                  armed Sure?/Archive/Cancel state must stay as it is, so
                                   the idle button is quieted from outside. The pair it
                                   swaps to when armed is a span and is not touched. */}
                               <span className={QUIET_ARCHIVE}>
                                 <ConfirmDeleteButton
                                   label="Archive"
+                                  icon={Archive}
                                   pending={archiveMut.isPending}
                                   onConfirm={() => archiveMut.mutate(b.id)}
                                 />

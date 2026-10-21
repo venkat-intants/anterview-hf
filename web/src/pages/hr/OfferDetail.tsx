@@ -55,7 +55,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import OfferDocumentsPanel from '@/components/OfferDocumentsPanel';
-import { Download, Loader2 } from '@/design/components/icons';
+import { Download, Loader2, XCircle } from '@/design/components/icons';
 
 const inputCls =
   'mt-1 min-h-[40px] w-full rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
@@ -642,6 +642,7 @@ function OfferApprovalTrack({
           />
           <ConfirmDeleteButton
             label="Withdraw offer"
+            icon={XCircle}
             confirmText="Withdraw"
             confirmGroupLabel="Confirm withdrawal"
             pending={withdrawMut.isPending}

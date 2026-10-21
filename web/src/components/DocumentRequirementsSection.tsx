@@ -212,6 +212,7 @@ function RequirementRow({
         </Button>
         <ConfirmDeleteButton
           title={`Remove ${requirement.name}`}
+          confirmText="Remove"
           pending={removeMut.isPending}
           onConfirm={() => removeMut.mutate()}
         />

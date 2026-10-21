@@ -336,8 +336,8 @@ describe('CompanyAdminConsole - removing an HR manager', () => {
     expect(api.deleteMyHrManager).not.toHaveBeenCalled();
 
     await user.click(
-      within(screen.getByRole('group', { name: /confirm deletion/i })).getByRole('button', {
-        name: /^delete$/i,
+      within(screen.getByRole('group', { name: 'Confirm: Remove' })).getByRole('button', {
+        name: 'Remove',
       }),
     );
     await waitFor(() => expect(api.deleteMyHrManager).toHaveBeenCalledWith('u-hr-2'));
@@ -398,8 +398,8 @@ describe('CompanyAdminConsole - interviewers (D4-1)', () => {
     expect(api.deleteMyInterviewer).not.toHaveBeenCalled();
 
     await user.click(
-      within(screen.getByRole('group', { name: /confirm deletion/i })).getByRole('button', {
-        name: /^delete$/i,
+      within(screen.getByRole('group', { name: 'Confirm: Remove' })).getByRole('button', {
+        name: 'Remove',
       }),
     );
     await waitFor(() => expect(api.deleteMyInterviewer).toHaveBeenCalledWith('u-iv-1'));

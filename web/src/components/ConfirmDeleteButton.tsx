@@ -26,6 +26,13 @@ interface CommonProps {
    * The action's in-flight flag. While it is true the armed pair stays up with
    * the confirm button busy; when it falls back to false the control disarms and
    * returns focus to the trigger. Omit it and the control disarms on confirm.
+   *
+   * It must be the in-flight state of THIS confirm's action (a mutation's
+   * `isPending`, narrowed to the row when one mutation serves many rows). The
+   * control disarms on the change from true to false, so a flag that never
+   * becomes true for the action, such as a constant `false`, leaves the pair
+   * armed after a confirm until the person backs out. Omit the prop instead of
+   * passing a flag that does not track the action.
    */
   pending?: boolean;
   /**
@@ -132,7 +139,16 @@ export function ConfirmDeleteButton(props: ConfirmDeleteButtonProps) {
           aria-busy={pending}
           className="min-h-10 rounded-full bg-destructive-solid px-3.5 text-[13px] font-semibold text-destructive-foreground transition-colors hover:brightness-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-danger)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         >
-          {pending ? '…' : confirmText}
+          {pending ? (
+            <>
+              {/* The ellipsis is the visible busy cue; the name stays the
+                  action, so assistive tech never hears an unnamed button. */}
+              <span aria-hidden="true">…</span>
+              <span className="sr-only">{confirmText}</span>
+            </>
+          ) : (
+            confirmText
+          )}
         </button>
         <button
           ref={keepRef}

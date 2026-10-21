@@ -120,11 +120,33 @@ describe('ConfirmDeleteButton keyboard and focus', () => {
     await user.click(screen.getByRole('button', { name: 'Withdraw offer' }));
     await user.click(screen.getByRole('button', { name: 'Withdraw offer' }));
 
-    const busy = screen.getByRole('button', { name: '…' });
+    // Busy, and still named for the action rather than for its ellipsis.
+    const busy = screen.getByRole('button', { name: 'Withdraw offer' });
     expect(busy).toBeDisabled();
     expect(busy).toHaveAttribute('aria-busy', 'true');
+    expect(busy).toHaveTextContent('…');
+    expect(screen.queryByRole('button', { name: '…' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'finish' }));
+
+    expect(screen.queryByRole('group')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Withdraw offer' })).toHaveFocus();
+  });
+
+  it('stays armed after a confirm when pending never becomes true, and can still back out', async () => {
+    // Pins the documented contract: the control disarms on pending's change
+    // from true to false, so a constant false never disarms it by itself.
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(<ConfirmDeleteButton label="Withdraw offer" pending={false} onConfirm={onConfirm} />);
+
+    await user.click(screen.getByRole('button', { name: 'Withdraw offer' }));
+    await user.click(screen.getByRole('button', { name: 'Withdraw offer' }));
+
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('group', { name: 'Confirm: Withdraw offer' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(screen.queryByRole('group')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Withdraw offer' })).toHaveFocus();

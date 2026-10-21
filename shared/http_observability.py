@@ -569,10 +569,42 @@ _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _EMAIL_IN_TEXT = _VALUE_PATTERNS[0]
 
-#: Shortest submitted value that is masked where a message quotes it back. One-
-#: to three-character inputs ("a", "no") are not secrets, and masking them would
-#: shred ordinary words in the sentence ("a" inside "a valid integer").
+#: Shortest free-text value that is masked where a message quotes it back. One-
+#: to three-character words ("a", "no", "and") are not secrets, and masking them
+#: would shred ordinary words in the sentence ("a" inside "a valid integer").
+#: Two kinds of value are masked when shorter, because short is exactly what
+#: they are: everything submitted under a secret-looking field name is
+#: masked at any length, and an all-digit value (a PIN or an OTP under a field
+#: name we did not foresee) from three digits. One- and two-digit numbers stay:
+#: they are the counts and limits a message legitimately states ("at least 1").
 _MIN_ECHO_MASK_CHARS = 4
+_MIN_ECHO_MASK_DIGITS = 3
+
+#: A field whose value is a secret whatever its length. Matched against the
+#: snake-cased field name one word at a time, so "pin" catches ``pin`` and
+#: ``login_pin`` but not ``shipping``.
+_SECRET_FIELD_WORDS = frozenset(
+    {
+        "password",
+        "passwd",
+        "passcode",
+        "passphrase",
+        "pwd",
+        "pin",
+        "otp",
+        "token",
+        "secret",
+        "apikey",
+        "credential",
+        "credentials",
+    }
+)
+
+#: A submitted value is a structure, not a scalar, when a model-level validator
+#: fails (``loc == ("body",)``, ``input`` is the whole body). Walking it is
+#: bounded so a hostile, deeply nested body cannot make the 422 path expensive.
+_ECHO_WALK_MAX_DEPTH = 8
+_ECHO_WALK_MAX_LEAVES = 500
 
 #: What replaces a submitted value that a message quoted back.
 _ECHO_PLACEHOLDER = "this value"
@@ -620,11 +652,79 @@ def humanise_field(loc: Sequence[object]) -> str | None:
     return " ".join(words)
 
 
-def _mask_echo(text: str, submitted: object) -> str:
-    """Remove a submitted value (and any e-mail address) from *text*."""
-    if isinstance(submitted, str | int | float) and not isinstance(submitted, bool):
-        value = str(submitted)
-        if len(value) >= _MIN_ECHO_MASK_CHARS and value in text:
+def _is_secret_field(name: object) -> bool:
+    """Whether a field name says its value is a secret (password, PIN, token)."""
+    if not isinstance(name, str):
+        return False
+    words = _CAMEL_BOUNDARY.sub("_", name).lower().replace("-", "_").split("_")
+    return any(w in _SECRET_FIELD_WORDS for w in words) or "api_key" in "_".join(words)
+
+
+def _loc_field_name(loc: object) -> str | None:
+    """The innermost named field in ``loc``, raw (not humanised)."""
+    if not isinstance(loc, list | tuple):
+        return None
+    names = [
+        part
+        for i, part in enumerate(loc)
+        if isinstance(part, str) and not (i == 0 and part in _LOC_SOURCES)
+    ]
+    while len(names) > 1 and names[-1].lower() in _LOC_TYPE_TAGS:
+        names.pop()
+    return names[-1] if names else None
+
+
+def _echo_values(submitted: object, field: str | None) -> list[tuple[str, bool]]:
+    """Every scalar inside *submitted*, as ``(text, is_secret)``.
+
+    A scalar is one value. A mapping or a list (a model-level validator's
+    ``input`` is the whole body) is walked, and each leaf is judged by the key it
+    sits under, so ``{"password": "1234"}`` marks ``"1234"`` as a secret.
+    """
+    found: list[tuple[str, bool]] = []
+
+    def walk(value: object, key: str | None, depth: int) -> None:
+        if len(found) >= _ECHO_WALK_MAX_LEAVES or depth > _ECHO_WALK_MAX_DEPTH:
+            return
+        if isinstance(value, bool) or value is None:
+            return
+        if isinstance(value, str | int | float):
+            found.append((str(value), _is_secret_field(key)))
+        elif isinstance(value, Mapping):
+            for k, v in value.items():
+                walk(v, k if isinstance(k, str) else key, depth + 1)
+        elif isinstance(value, list | tuple | set | frozenset):
+            for v in value:
+                walk(v, key, depth + 1)
+
+    walk(submitted, field, 0)
+    return found
+
+
+def _mask_echo(text: str, submitted: object, field: str | None = None) -> str:
+    """Remove the submitted value(s) (and any e-mail address) from *text*.
+
+    *field* is the raw field name the error is about; a secret-looking one masks
+    its value at any length. Longer values are replaced first so a short value
+    that is part of a longer one cannot leave half of the longer one behind.
+    """
+    values = sorted(set(_echo_values(submitted, field)), key=lambda v: -len(v[0]))
+    for value, secret in values:
+        if not value or value not in text:
+            continue
+        short_digits = value.isdigit() and len(value) >= _MIN_ECHO_MASK_DIGITS
+        if secret or short_digits:
+            # Short secrets are masked only where they stand alone, so PIN "12"
+            # does not eat the "12" inside "2012"; a long one is masked anywhere.
+            if len(value) >= _MIN_ECHO_MASK_CHARS:
+                text = text.replace(value, _ECHO_PLACEHOLDER)
+            else:
+                text = re.sub(
+                    rf"(?<![A-Za-z0-9]){re.escape(value)}(?![A-Za-z0-9])",
+                    _ECHO_PLACEHOLDER,
+                    text,
+                )
+        elif len(value) >= _MIN_ECHO_MASK_CHARS:
             text = text.replace(value, _ECHO_PLACEHOLDER)
     return _EMAIL_IN_TEXT.sub(_REDACTED, text)
 
@@ -702,10 +802,18 @@ def sanitise_validation_errors(errors: Sequence[Mapping[str, Any]]) -> list[dict
     clean: list[dict[str, Any]] = []
     for error in errors:
         submitted = error.get("input")
+        field = _loc_field_name(error.get("loc"))
         item: dict[str, Any] = {
             "type": str(error.get("type", "")),
-            "loc": [p if isinstance(p, str | int) else str(p) for p in error.get("loc", ())],
-            "msg": _mask_echo(str(error.get("msg", "")), submitted),
+            # ``loc`` keeps FastAPI's shape: callers index it. A ``dict[str, ...]``
+            # field puts the caller's own keys in it, so an e-mail used as a key
+            # is masked like one anywhere else.
+            "loc": [
+                p if isinstance(p, int) and not isinstance(p, bool)
+                else _EMAIL_IN_TEXT.sub(_REDACTED, str(p))
+                for p in error.get("loc", ())
+            ],
+            "msg": _mask_echo(str(error.get("msg", "")), submitted, field),
         }
         raw_ctx = error.get("ctx")
         if isinstance(raw_ctx, Mapping):
@@ -714,7 +822,7 @@ def sanitise_validation_errors(errors: Sequence[Mapping[str, Any]]) -> list[dict
                 if value is None or isinstance(value, bool | int | float):
                     ctx[str(key)] = value
                 else:
-                    ctx[str(key)] = _mask_echo(str(value), submitted)
+                    ctx[str(key)] = _mask_echo(str(value), submitted, field)
             item["ctx"] = ctx
         clean.append(item)
     return clean

@@ -18,7 +18,7 @@ from typing import Literal
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from shared.http_observability import (
     humanise_field,
@@ -47,9 +47,34 @@ class _Signup(BaseModel):
         return value
 
 
+_MODEL_SECRET = "Tr0ub4dor-and-3"
+
+
+class _Reset(BaseModel):
+    """A model-level validator: on failure ``input`` is the whole body."""
+
+    username: str
+    password: str
+    confirm: str
+
+    @model_validator(mode="after")
+    def _matches(self) -> _Reset:
+        if self.password != self.confirm:
+            # Quotes BOTH submitted secrets back, which no validator should do
+            # and a future one might.
+            raise ValueError(
+                f"{self.password} does not match {self.confirm} for {self.username}"
+            )
+        return self
+
+
 def _client() -> TestClient:
     app = FastAPI()
     install_validation_error_handler(app)
+
+    @app.post("/reset")
+    def reset(body: _Reset) -> dict[str, bool]:
+        return {"ok": True}
 
     @app.post("/signup")
     def signup(body: _Signup) -> dict[str, bool]:
@@ -189,3 +214,83 @@ def test_an_empty_error_list_still_gives_a_sentence() -> None:
     assert validation_error_message([]) == (
         "The request could not be read. Refresh the page and try again."
     )
+
+
+def test_a_model_validator_never_echoes_a_secret_from_the_body() -> None:
+    resp = _client().post(
+        "/reset",
+        json={"username": "asha.k", "password": _MODEL_SECRET, "confirm": "9142"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["detail"][0]["loc"] == ["body"]
+    text = resp.text
+    assert _MODEL_SECRET not in text
+    # Four characters under a secret-looking key, and a four-digit value.
+    assert "9142" not in text
+    assert "asha.k" not in text
+    assert resp.json()["message"] == (
+        "This value does not match this value for this value."
+    )
+
+
+@pytest.mark.parametrize(
+    ("loc", "value"),
+    [
+        (("body", "pin"), "42"),
+        (("body", "otp"), "907"),
+        (("body", "loginPin"), "7"),
+        (("body", "api_key"), "k9"),
+        (("body", "refresh_token"), "ab1"),
+    ],
+)
+def test_a_short_secret_is_masked_at_any_length(loc: tuple[str, ...], value: str) -> None:
+    raw = [{"type": "value_error", "loc": loc, "msg": f"Value error, {value} is wrong",
+            "input": value, "ctx": {"error": f"{value} is wrong"}}]
+    clean = sanitise_validation_errors(raw)[0]
+    assert clean["msg"] == "Value error, this value is wrong"
+    assert clean["ctx"]["error"] == "this value is wrong"
+
+
+def test_a_short_secret_is_masked_only_where_it_stands_alone() -> None:
+    raw = [{"type": "value_error", "loc": ("body", "pin"),
+            "msg": "PIN 12 was used in 2012", "input": "12"}]
+    assert sanitise_validation_errors(raw)[0]["msg"] == "PIN this value was used in 2012"
+
+
+def test_a_three_digit_value_is_masked_under_any_field_name() -> None:
+    raw = [{"type": "value_error", "loc": ("body", "code"),
+            "msg": "Value error, code 381 has expired", "input": "381"}]
+    assert sanitise_validation_errors(raw)[0]["msg"] == (
+        "Value error, code this value has expired"
+    )
+
+
+def test_small_counts_and_non_secret_short_words_are_kept() -> None:
+    raw = [{"type": "value_error", "loc": ("body", "seats"),
+            "msg": "Value error, 2 seats and no more", "input": 2},
+           {"type": "value_error", "loc": ("body", "answer"),
+            "msg": "Value error, and is not an answer", "input": "and"}]
+    clean = sanitise_validation_errors(raw)
+    assert clean[0]["msg"] == "Value error, 2 seats and no more"
+    assert clean[1]["msg"] == "Value error, and is not an answer"
+
+
+def test_a_field_merely_containing_a_secret_word_is_not_a_secret() -> None:
+    raw = [{"type": "value_error", "loc": ("body", "shipping"),
+            "msg": "Value error, no is not allowed", "input": "no"}]
+    assert sanitise_validation_errors(raw)[0]["msg"] == "Value error, no is not allowed"
+
+
+def test_an_email_used_as_a_dict_key_is_masked_in_loc() -> None:
+    raw = [{"type": "int_parsing", "loc": ("body", "scores", "ravi@example.com"),
+            "msg": "Input should be a valid integer", "input": "x"}]
+    assert sanitise_validation_errors(raw)[0]["loc"] == ["body", "scores", "[redacted]"]
+
+
+def test_a_hostile_nested_body_is_walked_within_bounds() -> None:
+    deep: object = "leaf-secret-value"
+    for _ in range(50):
+        deep = {"password": deep}
+    raw = [{"type": "value_error", "loc": ("body",), "msg": "bad", "input": deep}]
+    # Bounded: returns, and a message without the value is untouched.
+    assert sanitise_validation_errors(raw)[0]["msg"] == "bad"

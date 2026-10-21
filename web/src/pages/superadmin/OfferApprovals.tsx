@@ -37,6 +37,7 @@ import {
   rejectOffer,
   type OfferOut,
 } from '@/api/offers';
+import { formatMoney } from '@/lib/formatters';
 
 const REJECT_NOTE_MIN = 10;
 
@@ -46,8 +47,8 @@ function errText(e: unknown, fallback: string): string {
 
 function money(o: OfferOut): string {
   if (!o.base_salary) return '-';
-  const amount = Number(o.base_salary).toLocaleString();
-  return `${o.currency ?? ''} ${amount}${o.pay_period ? ` / ${o.pay_period}` : ''}`.trim();
+  const amount = formatMoney(o.base_salary, o.currency);
+  return `${amount}${o.pay_period ? ` / ${o.pay_period}` : ''}`;
 }
 
 /* ── The queue ──────────────────────────────────────────────────────────── */

@@ -14,6 +14,7 @@ import { offerNeeds } from '@/lib/offerTrack';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FileText } from '@/design/components/icons';
+import { formatDate } from '@/lib/formatters';
 
 const PAGE_SIZE = 25;
 
@@ -48,10 +49,6 @@ const FILTERS: { value: OfferListFilter | ''; label: string }[] = [
 
 function errText(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
-}
-
-function fmtDate(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleDateString() : '-';
 }
 
 export default function Offers() {
@@ -160,7 +157,7 @@ export default function Offers() {
                     <td className={cn(TD, 'text-[12.5px] text-muted-foreground')}>
                       <div className="flex flex-col gap-0.5">
                         {o.status === 'sent' && o.expires_at ? (
-                          <span>Expires {fmtDate(o.expires_at)}</span>
+                          <span>Expires {formatDate(o.expires_at)}</span>
                         ) : null}
                         {o.preboarding_completed_at ? <span>Preboarding complete</span> : null}
                         {o.documents.mandatory_total > 0 ? (

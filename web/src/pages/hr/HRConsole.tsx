@@ -32,6 +32,7 @@ import { Stat, StatGroup } from '@/design/components/stat-group';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import { Plus } from '@/design/components/icons';
+import { formatScore } from '@/lib/formatters';
 
 // Activity tone → tinted square + dot, all on status tokens so both modes hold.
 const ACTIVITY_TONE: Record<string, { bg: string; dot: string }> = {
@@ -145,14 +146,17 @@ export default function HRConsole() {
     {
       label: 'Applicants',
       value: f?.total_applicants,
-      note: weekDelta ?? (a?.avg_ats != null ? `avg ATS ${Math.round(a.avg_ats)}` : undefined),
+      note: weekDelta ?? (a?.avg_ats != null ? `avg ATS ${formatScore('resume', a.avg_ats)}` : undefined),
       to: '/hr/applicants',
     },
     { label: 'Shortlisted', value: f?.shortlisted, to: '/hr/applicants' },
     {
       label: 'Exam passed',
       value: f?.exam_passed,
-      note: a?.avg_exam_percent != null ? `${Math.round(a.avg_exam_percent)}% avg` : undefined,
+      note:
+        a?.avg_exam_percent != null
+          ? `${formatScore('exam', a.avg_exam_percent)} avg`
+          : undefined,
       to: '/hr/applicants',
     },
     {
@@ -160,7 +164,7 @@ export default function HRConsole() {
       value: f?.interview_completed,
       note:
         a?.avg_interview_composite != null
-          ? `${a.avg_interview_composite.toFixed(1)}/10 avg`
+          ? `${formatScore('interview', a.avg_interview_composite)} avg`
           : undefined,
       to: '/hr/interviews',
     },

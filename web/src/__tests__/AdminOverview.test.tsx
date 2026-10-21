@@ -155,11 +155,12 @@ describe('AdminOverview page', () => {
     });
   });
 
-  it('renders avg composite score formatted to 2 dp', async () => {
+  it('renders avg composite score to 1 dp, out of 10', async () => {
     renderOverview();
     // 6.74 → "6.74"
     await waitFor(() => {
-      expect(screen.getByText('6.74')).toBeInTheDocument();
+      // One decimal and the unit, like every other interview score (audit X13).
+      expect(screen.getByText('6.7/10')).toBeInTheDocument();
     });
   });
 

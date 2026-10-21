@@ -113,7 +113,7 @@ describe('AdminInterviewDetail page', () => {
       // The redesigned UI shows the composite score as "7.85 / 10" below the
       // ScoreRing, so match with a regex rather than exact text equality.
       await waitFor(() => {
-        expect(screen.getByText(/7\.85/)).toBeInTheDocument();
+        expect(screen.getAllByText('7.9/10').length).toBeGreaterThan(0);
       });
     });
 

@@ -28,6 +28,7 @@ import {
   ListChecks,
 } from '@/design/components/icons';
 import { ACTIVE_POLL_MS } from '../../lib/polling';
+import { formatDateTime } from '@/lib/formatters';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -47,18 +48,6 @@ function initialsOf(name: string): string {
     .join('');
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
-}
-
-function formatDuration(submittedAt: string | null): string {
-  if (!submittedAt) return '-';
-  return formatDate(submittedAt);
-}
-
 // ── Client-side CSV export ────────────────────────────────────────────────────
 function exportCsv(attempts: AttemptResult[], examTitle: string): void {
   const header = ['Candidate', 'Attempt #', 'Score %', 'Raw / Max', 'Status', 'Submitted At'];
@@ -71,7 +60,7 @@ function exportCsv(attempts: AttemptResult[], examTitle: string): void {
     a.score_percent,
     a.score_raw !== null && a.score_max !== null ? `${a.score_raw}/${a.score_max}` : '',
     a.status === 'in_progress' ? 'In Progress' : a.passed ? 'Passed' : 'Failed',
-    a.submitted_at ? formatDate(a.submitted_at) : '',
+    a.submitted_at ? formatDateTime(a.submitted_at) : '',
   ]);
   const csv = [csvRow(header), ...rows.map(csvRow)].join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -337,7 +326,7 @@ function AttemptRow({
 
       {/* Submitted */}
       <td className={cn(TD, 'font-mono text-[13px] text-muted-foreground')}>
-        {a.submitted_at ? formatDuration(a.submitted_at) : '-'}
+        {formatDateTime(a.submitted_at)}
       </td>
 
       {/* Status — a tinted pill that always carries its word. */}

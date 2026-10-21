@@ -163,8 +163,8 @@ describe('HRAnalytics - averages summary', () => {
   it('rounds the percentage averages and keeps the interview score to 1dp', async () => {
     renderWith(<HRAnalytics />);
 
-    expect(await screen.findByText('66')).toBeInTheDocument(); // 66.4 ATS
-    expect(screen.getByText('72%')).toBeInTheDocument(); // 71.8 exam
+    expect(await screen.findByText('66/100')).toBeInTheDocument(); // 66.4 ATS
+    expect(screen.getByText('72/100')).toBeInTheDocument(); // 71.8 exam
     expect(screen.getByText('7.4/10')).toBeInTheDocument(); // 7.42 interview
   });
 

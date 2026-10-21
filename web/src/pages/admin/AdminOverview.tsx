@@ -25,7 +25,7 @@ import {
 import { getOverview, getTrends, getScoreDistribution, getSystemHealth } from '@/api/admin';
 import type { TrendItem, ScoreBucket } from '@/api/admin';
 import { toast } from '@/lib/toast';
-import { formatDuration } from '@/lib/formatters';
+import { formatDuration, formatScore } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatCard, StatusTag } from '@/design/components/primitives';
@@ -62,11 +62,6 @@ const CHART_GRID = GRID_STROKE;
 const CHART_TICKS = { fill: AXIS_STYLE.stroke, fontSize: 12 } as const;
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-function fmtScore(v: number | null): string {
-  if (v === null) return '-';
-  return v.toFixed(2);
-}
 
 function fmtPct(fraction: number): string {
   return `${Math.round(fraction * 100)}%`;
@@ -286,8 +281,8 @@ export default function AdminOverview() {
               />
               <StatCard
                 label="Avg Composite Score"
-                value={fmtScore(overview?.avg_composite_score ?? null)}
-                delta="out of 10"
+                value={formatScore('interview', overview?.avg_composite_score ?? null)}
+                delta="interview average"
               />
               <StatCard
                 label="Avg Duration"
@@ -345,25 +340,25 @@ export default function AdminOverview() {
                 <span>
                   Communication:{' '}
                   <strong className="font-semibold text-foreground">
-                    {fmtScore(distData.avg_communication)}
+                    {formatScore('interview', distData.avg_communication)}
                   </strong>
                 </span>
                 <span>
                   Technical:{' '}
                   <strong className="font-semibold text-foreground">
-                    {fmtScore(distData.avg_technical)}
+                    {formatScore('interview', distData.avg_technical)}
                   </strong>
                 </span>
                 <span>
                   Problem Solving:{' '}
                   <strong className="font-semibold text-foreground">
-                    {fmtScore(distData.avg_problem_solving)}
+                    {formatScore('interview', distData.avg_problem_solving)}
                   </strong>
                 </span>
                 <span>
                   Confidence:{' '}
                   <strong className="font-semibold text-foreground">
-                    {fmtScore(distData.avg_confidence)}
+                    {formatScore('interview', distData.avg_confidence)}
                   </strong>
                 </span>
               </div>

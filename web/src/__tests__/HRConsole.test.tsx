@@ -200,8 +200,8 @@ describe('HRConsole - funnel strip', () => {
     renderConsole();
     await screen.findByRole('heading', { name: /welcome/i });
 
-    expect(screen.getByText('avg ATS 72')).toBeInTheDocument(); // 71.6 rounded
-    expect(screen.getByText('63% avg')).toBeInTheDocument(); // 63.2 rounded
+    expect(screen.getByText('avg ATS 72/100')).toBeInTheDocument(); // 71.6 rounded
+    expect(screen.getByText('63/100 avg')).toBeInTheDocument(); // 63.2 rounded
     expect(screen.getByText('7.4/10 avg')).toBeInTheDocument(); // 7.42 to 1dp
   });
 
@@ -502,7 +502,7 @@ describe('HRConsole - openings in setup', () => {
 describe('HRConsole - pipeline stat group', () => {
   it('makes every cell a link to its list', async () => {
     renderConsole();
-    await screen.findByText('avg ATS 72');
+    await screen.findByText('avg ATS 72/100');
 
     const group = screen.getByRole('region', { name: /pipeline at a glance/i });
     const hrefOf = (name: RegExp) => within(group).getByRole('link', { name }).getAttribute('href');

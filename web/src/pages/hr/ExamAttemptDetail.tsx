@@ -23,6 +23,7 @@ import { CheckCircle2, XCircle, Clock, Code2, Loader2 } from '@/design/component
 import { cn } from '@/lib/utils';
 import { PageHeader, Breadcrumbs, Page } from '@/design/components/page';
 import AttemptProctoringSummary from '@/components/hr/AttemptProctoringSummary';
+import { formatDateTime } from '@/lib/formatters';
 
 // Code-split: the evidence tab pulls in the read-only CodeEditor (Prism +
 // language grammars), which most HR sessions on this page never open.
@@ -36,10 +37,6 @@ function initialsOf(name: string): string {
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase() ?? '')
     .join('');
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 /**
@@ -135,7 +132,7 @@ export default function ExamAttemptDetail() {
           <span className="font-mono text-[13px]">
             {exam?.title ?? 'Exam'}
             {attempt ? ` · attempt #${attempt.attempt_no}` : ''}
-            {attempt?.submitted_at ? ` · ${formatDate(attempt.submitted_at)}` : ''}
+            {attempt?.submitted_at ? ` · ${formatDateTime(attempt.submitted_at)}` : ''}
           </span>
         }
         actions={

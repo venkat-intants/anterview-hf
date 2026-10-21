@@ -248,7 +248,8 @@ describe('the per-opening dashboard (E1)', () => {
     expect(within(timing).getByText('Reached Technical Test')).toBeTruthy();
     expect(within(timing).getByText('nobody yet')).toBeTruthy();
     expect(within(timing).getByText('71/100')).toBeTruthy();
-    expect(within(timing).getByText('64%')).toBeTruthy();
+    // An assessed-round average is out of 100 like every other percent score.
+    expect(within(timing).getByText('64/100')).toBeTruthy();
   });
 
   it('links to the workflow editor and the decision queue, and drops the status list', async () => {

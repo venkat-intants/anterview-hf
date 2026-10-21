@@ -44,7 +44,7 @@ import type {
   TranscriptTurn,
 } from '@/api/admin';
 import { toast } from '@/lib/toast';
-import { formatDate, formatDuration, statusProps, languageLabel } from '@/lib/formatters';
+import { formatDate, formatDuration, statusProps, languageLabel, formatScore } from '@/lib/formatters';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
@@ -60,11 +60,6 @@ import {
 } from '@/design/components/page';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
-
-function fmtScore(v: number | null): string {
-  if (v === null) return '-';
-  return v.toFixed(2);
-}
 
 // Design scoreColor works on 0–100; live scores are 0–10 → multiply by 10
 function scoreColor(score: number): string {
@@ -240,7 +235,7 @@ function ScoreBarRow({
           className="font-mono text-[13px] font-semibold tabular-nums"
           style={{ color: scoreColor(score) }}
         >
-          {fmtScore(score)}
+          {formatScore('interview', score)}
         </span>
       </button>
 
@@ -256,7 +251,7 @@ function ScoreBarRow({
           aria-valuenow={score}
           aria-valuemin={0}
           aria-valuemax={10}
-          aria-label={`${label}: ${fmtScore(score)} out of 10`}
+          aria-label={`${label}: ${formatScore('interview', score, { unit: false })} out of 10`}
         />
       </div>
 
@@ -612,7 +607,7 @@ export default function AdminInterviewDetail() {
             <GlassCard className="flex flex-col items-center justify-center gap-3 py-7 text-center">
               <ScoreRing score={ringScore} size={140} label="overall" />
               <p className="text-[13px] text-muted-foreground">
-                {sc.composite_score != null ? `${fmtScore(sc.composite_score)} / 10` : 'Not scored'}
+                {sc.composite_score != null ? formatScore('interview', sc.composite_score) : 'Not scored'}
               </p>
             </GlassCard>
 

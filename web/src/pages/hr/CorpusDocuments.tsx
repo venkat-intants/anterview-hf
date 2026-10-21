@@ -68,6 +68,7 @@ import {
   type CorpusDocument,
   type CorpusVersionStatus,
 } from '@/api/corpus';
+import { formatDate } from '@/lib/formatters';
 
 const ACCEPT =
   '.pdf,.docx,.txt,.md,application/pdf,' +
@@ -105,10 +106,6 @@ const CONTENT_TYPE_LABEL: Record<string, string> = {
 
 function fileTypeLabel(contentType: string | null): string {
   return contentType ? (CONTENT_TYPE_LABEL[contentType] ?? contentType) : '-';
-}
-
-function fmtDate(iso: string | null): string {
-  return iso ? new Date(iso).toLocaleDateString() : '-';
 }
 
 const DELETE_CONFIRM_TEXT =
@@ -558,7 +555,7 @@ export default function CorpusDocuments(): JSX.Element {
                             ) : null}
                           </td>
                           <td className="py-2.5 pr-3 text-muted-foreground">
-                            {fmtDate(d.updated_at)}
+                            {formatDate(d.updated_at)}
                           </td>
                           <td className="py-2.5 pr-3 text-muted-foreground">
                             {d.uploaded_by_name ?? '-'}

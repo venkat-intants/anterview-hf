@@ -28,6 +28,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { StatusTag } from '@/design/components/primitives';
 import { Building2, Check, ExternalLink } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
+import { formatMoney, uiLocale } from '@/lib/formatters';
 
 const EMPLOYMENT_KEYS: Record<string, string> = {
   full_time: 'jobs.empFullTime',
@@ -56,11 +57,11 @@ function experienceLine(role: OpenRole, t: TFunction): string | null {
   return lo != null ? t('jobs.expMin', { n: lo }) : t('jobs.expMax', { n: hi });
 }
 
-function salaryLine(role: OpenRole, t: TFunction): string | null {
+function salaryLine(role: OpenRole, t: TFunction, locale: string): string | null {
   const { salary_min: lo, salary_max: hi } = role;
   if (lo == null && hi == null) return null;
-  const currency = role.salary_currency ?? '';
-  const money = (n: number) => `${currency} ${n.toLocaleString()}`.trim();
+  // In the visitor's own locale, not the browser default (audit X18).
+  const money = (n: number) => formatMoney(n, role.salary_currency, locale);
   if (lo != null && hi != null) return `${money(lo)} - ${money(hi)}`;
   return lo != null
     ? t('jobs.salaryFrom', { amount: money(lo) })
@@ -71,10 +72,10 @@ const CHIP =
   'inline-flex items-center rounded-full bg-[var(--ui-inset-strong)] px-2.5 py-1 text-[12px] font-medium text-[var(--ui-soft)]';
 
 function RoleCard({ role }: { role: OpenRole }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const meta = metaLine(role, t);
   const experience = experienceLine(role, t);
-  const salary = salaryLine(role, t);
+  const salary = salaryLine(role, t, uiLocale(i18n.language));
 
   return (
     <article className="rounded-card border border-border bg-card p-5 shadow-card transition-[box-shadow,border-color] hover:border-[var(--ui-line-strong)] hover:shadow-elevated">

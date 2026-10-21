@@ -73,10 +73,10 @@ import {
 import RediscoveryWhyPanel from '@/components/hr/RediscoveryWhyPanel';
 import {
   FRESHNESS_TONE,
-  fmtDate,
   freshnessChipLabel,
   ineligibleReasonLabel,
 } from '@/components/hr/rediscoveryDisplay';
+import { formatDate } from '@/lib/formatters';
 
 /** Debounce a fast-changing value (search box) — same shape as
  *  `Applicants.tsx`'s own local `useDebouncedValue`, kept local here too
@@ -384,7 +384,7 @@ function PoolsList(): JSX.Element {
                       <td className="py-2.5 pr-3 text-muted-foreground">
                         {p.created_by_name ?? '-'}
                       </td>
-                      <td className="py-2.5 pr-3 text-muted-foreground">{fmtDate(p.updated_at)}</td>
+                      <td className="py-2.5 pr-3 text-muted-foreground">{formatDate(p.updated_at)}</td>
                       <td className="py-2.5 pr-3">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <button
@@ -700,7 +700,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
           ) : null}
         </td>
         <td className="py-2.5 pr-3 text-muted-foreground">
-          {fmtDate(m.added_at)}
+          {formatDate(m.added_at)}
           {m.added_by_name ? ` · ${m.added_by_name}` : ''}
         </td>
         <td className="py-2.5 pr-3">
@@ -718,7 +718,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
           )}
           <p className="mt-1 text-[12px] text-muted-foreground">
             {m.evidence_reviewed_at
-              ? `Evidence re-checked${m.evidence_reviewed_by_name ? ` by ${m.evidence_reviewed_by_name}` : ''} on ${fmtDate(m.evidence_reviewed_at)}`
+              ? `Evidence re-checked${m.evidence_reviewed_by_name ? ` by ${m.evidence_reviewed_by_name}` : ''} on ${formatDate(m.evidence_reviewed_at)}`
               : 'Evidence not re-checked'}
           </p>
           {hasSnapshot ? (
@@ -739,7 +739,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
         <td className="py-2.5 pr-3">
           {m.eligible ? (
             <StatusTag tone="forest">
-              {m.expires_at ? `Opted in until ${fmtDate(m.expires_at)}` : 'Opted in'}
+              {m.expires_at ? `Opted in until ${formatDate(m.expires_at)}` : 'Opted in'}
             </StatusTag>
           ) : (
             <StatusTag tone="ember">{ineligibleReasonLabel(m.ineligible_reason)}</StatusTag>
@@ -833,7 +833,7 @@ function MemberRow(props: MemberRowProps): JSX.Element {
         <tr className="border-b border-border bg-[var(--ui-inset-soft)]">
           <td colSpan={6} className="p-3">
             <p className="mb-2 text-[12px] text-muted-foreground">
-              Added from a rediscovery search on {fmtDate(m.match_reason.frozen_at)}. This is a
+              Added from a rediscovery search on {formatDate(m.match_reason.frozen_at)}. This is a
               snapshot from that search and is not recalculated.
             </p>
             <RediscoveryWhyPanel items={m.match_reason.why} />

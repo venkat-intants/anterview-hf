@@ -329,7 +329,7 @@ async def _bank_summary(db: AsyncSession, *, company_id: uuid.UUID, bank: Questi
     ).tuples().all()
     usage = await db.scalar(
         text(
-            "SELECT count(DISTINCT exam_id) FROM ("
+            "SELECT count(DISTINCT exam_id) FROM ("  # nosec B608: _USAGE_SQL and its filter are module constants, values bound
             + _USAGE_SQL.format(bank_filter="q.bank_id = :b")
             + ") x"
         ),
@@ -421,7 +421,7 @@ async def list_banks(db: AsyncSession, *, company_id: uuid.UUID) -> list[dict[st
     usage_rows = (
         await db.execute(
             text(
-                "SELECT bank_id, count(DISTINCT exam_id) FROM ("
+                "SELECT bank_id, count(DISTINCT exam_id) FROM ("  # nosec B608: _USAGE_SQL and its filter are module constants, values bound
                 + _USAGE_SQL.format(bank_filter="q.bank_id IN :ids")
                 + ") x GROUP BY bank_id"
             ).bindparams(bindparam("ids", expanding=True)),

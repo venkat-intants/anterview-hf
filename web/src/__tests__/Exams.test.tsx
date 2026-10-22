@@ -137,6 +137,45 @@ describe('Exams - list', () => {
   });
 });
 
+describe('Exams - closed and returned-to-draft exams (audit E17)', () => {
+  it('shows a closed exam as closed with its attempts, and keeps Results', async () => {
+    listExams.mockResolvedValue([{ ...PUBLISHED, status: 'closed', attempt_count: 5 }]);
+    renderExams();
+
+    expect(await screen.findByText('Closed · 5 attempts')).toBeInTheDocument();
+    expect(screen.queryByText(/not published yet/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /view results for exam python fundamentals/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps Results on a draft exam that has already been sat', async () => {
+    listExams.mockResolvedValue([{ ...DRAFT, attempt_count: 2 }]);
+    renderExams();
+
+    expect(await screen.findByText('2 attempts')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /view results for exam react deep dive/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('sends a pass threshold of 0 as 0 (audit E16)', async () => {
+    const user = userEvent.setup();
+    renderExams();
+
+    await screen.findByText('React Deep Dive');
+    await user.click(screen.getByRole('button', { name: /create new exam/i }));
+    await user.type(screen.getByLabelText(/exam title/i), 'Warm-up');
+    await user.clear(screen.getByLabelText(/pass threshold percent/i));
+    await user.type(screen.getByLabelText(/pass threshold percent/i), '0');
+    await user.click(screen.getByRole('button', { name: /^create exam$/i }));
+
+    await waitFor(() =>
+      expect(createExam).toHaveBeenCalledWith(expect.objectContaining({ pass_threshold: 0 })),
+    );
+  });
+});
+
 describe('Exams - create form', () => {
   it('stays hidden until the create tile is pressed', async () => {
     const user = userEvent.setup();

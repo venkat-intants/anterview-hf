@@ -1,17 +1,19 @@
 // LockBanner — PH4-D1. Shown on a round whose content is fixed: published, or
 // taken. Two ways forward, never a dead end: Unpublish (only while nobody has
-// taken it — the server is the judge; a refusal here shows its own sentence,
-// same as anywhere else) and Duplicate round (always available while locked).
+// taken it; the caller knows from the round's attempt count, and a refusal
+// still shows the server's own sentence) and Duplicate round (always available
+// while locked).
 
 import { Copy, Loader2, Lock } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
 
 interface LockBannerProps {
   /** The exact sentence to show — PUBLISHED_REASON or TAKEN_REASON from
    *  '@/lib/examLocks', or a 409's own text when the lock was only found out
    *  about reactively (see the module comment in lib/examLocks.ts). */
   reason: string;
-  /** Hide Unpublish for a round that is not currently published (a round
-   *  locked only because it was taken has no "unpublish" to offer). */
+  /** Hide Unpublish for a round that cannot be unpublished: not published,
+   *  or already taken (the server refuses that, audit E2). */
   canUnpublish: boolean;
   onUnpublish?: () => void;
   unpublishing?: boolean;
@@ -36,31 +38,31 @@ export function LockBanner({
       <p className="flex-1 min-w-[220px]">{reason}</p>
       <div className="flex items-center gap-2">
         {canUnpublish ? (
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={onUnpublish}
             disabled={unpublishing}
-            className="inline-flex items-center gap-1.5 rounded-[9px] border border-border px-3 py-1.5 text-[12px] font-medium text-foreground transition-colors hover:border-[var(--ui-line-strong)] disabled:opacity-50"
+            aria-busy={unpublishing}
           >
-            {unpublishing ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            ) : null}
+            {unpublishing ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
             Unpublish
-          </button>
+          </Button>
         ) : null}
-        <button
+        <Button
           type="button"
+          variant="highlight"
           onClick={onDuplicate}
           disabled={duplicating}
-          className="inline-flex items-center gap-1.5 rounded-[9px] border border-[rgba(var(--accent-rgb),0.4)] bg-[rgba(var(--accent-rgb),0.1)] px-3 py-1.5 text-[12px] font-medium text-[var(--ui-info)] transition-colors hover:bg-[rgba(var(--accent-rgb),0.16)] disabled:opacity-50"
+          aria-busy={duplicating}
         >
           {duplicating ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            <Loader2 className="animate-spin" aria-hidden="true" />
           ) : (
-            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+            <Copy aria-hidden="true" />
           )}
           Duplicate round
-        </button>
+        </Button>
       </div>
     </div>
   );

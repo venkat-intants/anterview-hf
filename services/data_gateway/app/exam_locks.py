@@ -31,9 +31,19 @@ PUBLISHED_REASON = (
 )
 TAKEN_REASON = "This round has been taken - its content is fixed."
 RACE_REASON = "This changed while you were working. Reload and try again."
+# Unpublishing a taken round is refused by the trigger too, but that refusal
+# reaches the user as RACE_REASON ("reload and try again"), which reloading
+# never fixes. Checked up front so the sentence names the real reason and the
+# one way forward.
+UNPUBLISH_TAKEN_REASON = (
+    "This round has been taken, so it cannot be unpublished. Duplicate it to make changes."
+)
 
 
-async def _attempt_count(db: AsyncSession, company_id: uuid.UUID, round_id: uuid.UUID) -> int:
+async def round_attempt_count(
+    db: AsyncSession, company_id: uuid.UUID, round_id: uuid.UUID
+) -> int:
+    """Live attempts on one round, scoped to the company."""
     n = await db.scalar(
         select(func.count()).select_from(ExamAttempt).where(
             ExamAttempt.round_id == round_id,
@@ -53,7 +63,7 @@ async def round_lock_reason(db: AsyncSession, company_id: uuid.UUID, rnd: ExamRo
     """
     if rnd.status == "published":
         return PUBLISHED_REASON
-    if await _attempt_count(db, company_id, rnd.id) > 0:
+    if await round_attempt_count(db, company_id, rnd.id) > 0:
         return TAKEN_REASON
     return None
 

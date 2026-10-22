@@ -22,6 +22,7 @@ import { RowList, Row, Section, Well } from '@/design/components/rows';
 import { Button } from '@/components/ui/button';
 import type { UnsavedGuard } from '@/components/bank/useUnsavedGuard';
 import { BankQuestionBrowser } from '@/components/hr/bank/BankQuestionBrowser';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { kindTally, questionBrief, type BankFacts } from '@/lib/bankFlow';
 import {
@@ -30,10 +31,6 @@ import {
   type BankQuestion,
   type BulkReviewResult,
 } from '@/api/questionBanks';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 function plural(count: number, one: string): string {
   return `${count} ${one}${count === 1 ? '' : 's'}`;
@@ -143,7 +140,7 @@ export function SendPanel({
         toast.warning('Nothing was sent for review');
       }
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not submit these for review')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not submit these for review.')),
   });
 
   const approveMut = useMutation({
@@ -160,7 +157,7 @@ export function SendPanel({
         toast.warning('Nothing could be approved by you - another reviewer must');
       }
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not approve these')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not approve these.')),
   });
 
   const mcq = drafts.filter((d) => d.kind === 'mcq').length;

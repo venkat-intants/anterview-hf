@@ -329,18 +329,34 @@ async def _bank_summary(db: AsyncSession, *, company_id: uuid.UUID, bank: Questi
     ).tuples().all()
     usage = await db.scalar(
         text(
-            "SELECT count(*) FROM ("
-            " SELECT 1 FROM exam_questions e JOIN bank_questions q ON q.id = e.source_bank_question_id"
-            "  WHERE q.bank_id = :b AND e.deleted_at IS NULL"
-            " UNION ALL"
-            " SELECT 1 FROM coding_questions c JOIN bank_questions q"
-            "   ON q.id = c.source_bank_question_id"
-            "  WHERE q.bank_id = :b AND c.deleted_at IS NULL"
-            ") x"
+            "SELECT count(DISTINCT exam_id) FROM ("  # nosec B608: _USAGE_SQL and its filter are module constants, values bound
+            + _USAGE_SQL.format(bank_filter="q.bank_id = :b")
+            + ") x"
         ),
-        {"b": bank.id},
+        {"b": bank.id, "c": company_id},
     )
     return _summary_payload(bank, [(str(st), str(k), int(n)) for st, k, n in grouped], usage)
+
+
+# "Used in N exams" is a count of distinct LIVE exams. It used to count copied
+# question rows, so ten questions copied into one exam read "Used in 10 exams",
+# and copies in a deleted exam, round or section still counted (audit E15).
+# A question whose section was soft-deleted is not in the exam any more.
+_USAGE_SQL = (
+    " SELECT q.bank_id, e.exam_id FROM exam_questions e"
+    "  JOIN bank_questions q ON q.id = e.source_bank_question_id"
+    "  JOIN exams x ON x.id = e.exam_id AND x.deleted_at IS NULL"
+    "  LEFT JOIN exam_sections s ON s.id = e.section_id"
+    "  WHERE {bank_filter} AND q.company_id = :c AND e.deleted_at IS NULL"
+    "    AND s.deleted_at IS NULL"
+    " UNION ALL"
+    " SELECT q.bank_id, c.exam_id FROM coding_questions c"
+    "  JOIN bank_questions q ON q.id = c.source_bank_question_id"
+    "  JOIN exams x ON x.id = c.exam_id AND x.deleted_at IS NULL"
+    "  LEFT JOIN exam_sections s ON s.id = c.section_id"
+    "  WHERE {bank_filter} AND q.company_id = :c AND c.deleted_at IS NULL"
+    "    AND s.deleted_at IS NULL"
+)
 
 
 def _summary_payload(
@@ -405,15 +421,9 @@ async def list_banks(db: AsyncSession, *, company_id: uuid.UUID) -> list[dict[st
     usage_rows = (
         await db.execute(
             text(
-                "SELECT bank_id, count(*) FROM ("
-                " SELECT q.bank_id FROM exam_questions e"
-                "  JOIN bank_questions q ON q.id = e.source_bank_question_id"
-                "  WHERE q.bank_id IN :ids AND q.company_id = :c AND e.deleted_at IS NULL"
-                " UNION ALL"
-                " SELECT q.bank_id FROM coding_questions c"
-                "  JOIN bank_questions q ON q.id = c.source_bank_question_id"
-                "  WHERE q.bank_id IN :ids AND q.company_id = :c AND c.deleted_at IS NULL"
-                ") x GROUP BY bank_id"
+                "SELECT bank_id, count(DISTINCT exam_id) FROM ("  # nosec B608: _USAGE_SQL and its filter are module constants, values bound
+                + _USAGE_SQL.format(bank_filter="q.bank_id IN :ids")
+                + ") x GROUP BY bank_id"
             ).bindparams(bindparam("ids", expanding=True)),
             {"ids": ids, "c": company_id},
         )

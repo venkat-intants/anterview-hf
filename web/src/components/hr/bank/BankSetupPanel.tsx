@@ -14,6 +14,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import type { UnsavedGuard } from '@/components/bank/useUnsavedGuard';
 import { bankSetupSchema, type BankSetupValues } from './bankSetupSchema';
@@ -22,10 +23,6 @@ import { createQuestionBank, updateQuestionBank, type BankOut } from '@/api/ques
 const FIELD =
   'w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 aria-[invalid=true]:border-[var(--ui-danger)]';
 const LABEL = 'mb-1.5 block text-[13px] font-semibold text-foreground';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 interface Props {
   /** Present when the bank exists; absent while it is being created. */
@@ -76,7 +73,7 @@ export function BankSetupPanel({ bank, guard, onCreated }: Props): JSX.Element {
       }
     },
     onError: (e: unknown) =>
-      toast.error(errText(e, bank ? 'Could not save this bank' : 'Could not create this bank')),
+      toast.error(errorMessage(e, bank ? 'Could not save this bank.' : 'Could not create this bank.')),
   });
 
   return (

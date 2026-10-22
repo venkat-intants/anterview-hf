@@ -594,11 +594,21 @@ _NOT_ELIGIBLE: dict[str, Any] = {
 def _member_out(row: Any, elig: dict[str, Any], *, now: datetime) -> dict[str, Any]:
     """One member on the wire.
 
-    AN INELIGIBLE MEMBER CARRIES NO EVIDENCE (audit PL-F1, design §7 row 4):
-    once consent is withdrawn or expired, or erasure is requested, the row is
-    a name, a reason and Remove. So the match snapshot, the freshness band and
-    the review stamp are withheld HERE, not merely hidden by the screen: a
-    client that ignores ``eligible`` still has nothing to render.
+    AN INELIGIBLE MEMBER CARRIES NO EVIDENCE (audit PL-F1, design §7 row 4).
+    Two tiers, both enforced HERE rather than merely hidden by the screen:
+
+    * Not eligible for any reason (including never opted in): the match
+      snapshot, the freshness band and the review stamp are withheld. A
+      never-opted-in manual add keeps its title, company and HR note, because
+      HR holds that person under the application consent (design §4.3).
+    * Consent withdrawn or expired, or erasure requested (``ineligible_reason``
+      set): the row is also reduced to a name, a reason and Remove, so
+      ``current_title``, ``current_company`` and the free-text ``note`` (which
+      may describe the person) are withheld as well.
+
+    What stays on every row is the pool's own provenance: ``added_at``,
+    ``added_by_name`` (a colleague, not the candidate) and ``source``. A
+    client that ignores ``eligible`` still has nothing more to render.
 
     ``match_reason.frozen_at`` falls back to ``added_at`` for a snapshot
     written before the add path stamped it (PL-F2): the snapshot is frozen by
@@ -611,12 +621,16 @@ def _member_out(row: Any, elig: dict[str, Any], *, now: datetime) -> dict[str, A
         if not match_reason.get("frozen_at"):
             match_reason["frozen_at"] = _iso(row["added_at"])
     reviewed_at = row["evidence_reviewed_at"] if eligible else None
+    # A withdrawal, expiry or erasure request reduces the row to a name.
+    profile_shown = eligible or elig["ineligible_reason"] is None
     return {
         "member_id": str(row["member_id"]), "applicant_id": str(row["applicant_id"]),
-        "full_name": row["full_name"], "current_title": row["current_title"],
-        "current_company": row["current_company"], "source": row["source"],
+        "full_name": row["full_name"],
+        "current_title": row["current_title"] if profile_shown else None,
+        "current_company": row["current_company"] if profile_shown else None,
+        "source": row["source"],
         "added_at": _iso(row["added_at"]), "added_by_name": row["added_by_name"],
-        "note": row["note"], "match_reason": match_reason,
+        "note": row["note"] if profile_shown else None, "match_reason": match_reason,
         "evidence_freshness": row["evidence_freshness"] if eligible else None,
         "evidence_reviewed_at": _iso(reviewed_at),
         "evidence_reviewed_by_name": row["evidence_reviewed_by_name"] if eligible else None,

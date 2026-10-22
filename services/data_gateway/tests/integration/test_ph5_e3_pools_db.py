@@ -953,7 +953,8 @@ async def test_erasure_request_makes_a_member_ineligible_immediately(db: AsyncSe
     pool_id = await _create_pool(db, f)
     await pools.add_members(
         db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
-        applicant_ids=[f.applicant1], source="manual", note=None, match_reason=None, meta=META,
+        applicant_ids=[f.applicant1], source="manual", note="Strong fault diagnosis",
+        match_reason=None, meta=META,
     )
     await db.execute(
         text(
@@ -968,6 +969,11 @@ async def test_erasure_request_makes_a_member_ineligible_immediately(db: AsyncSe
     member = fetched["members"][0]
     assert member["eligible"] is False
     assert member["ineligible_reason"] == "erasure_requested"
+    # PL-F1: an erasing member is a name, a reason and Remove; the free-text
+    # note (which may describe the person) and the profile are withheld too.
+    assert member["note"] is None
+    assert member["current_title"] is None
+    assert member["current_company"] is None
 
 
 @pytest.mark.asyncio

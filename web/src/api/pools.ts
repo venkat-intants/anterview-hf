@@ -105,7 +105,9 @@ export type PoolIneligibleReason = 'consent_withdrawn' | 'consent_expired' | 'er
  * HR already holds this person under the APPLICATION consent, a separate
  * purpose from rediscovery (design §4.3). Only `Remove` is ever offered on an
  * ineligible row, and the server withholds `match_reason`, the freshness band
- * and the review stamp for it, so the screen has nothing to leak either.
+ * and the review stamp for it, so the screen has nothing to leak either. When
+ * `ineligible_reason` is set (withdrawn, expired or erasure requested) it also
+ * withholds `current_title`, `current_company` and `note`.
  */
 export interface PoolMemberOut {
   member_id: string;

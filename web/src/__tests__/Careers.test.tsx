@@ -87,13 +87,13 @@ describe('Careers board', () => {
   it('names the company and counts the roles', async () => {
     renderBoard();
     expect(await screen.findByText('Acme Test Co')).toBeInTheDocument();
-    expect(screen.getByText('1 open position')).toBeInTheDocument();
+    expect(screen.getByText('1 open job')).toBeInTheDocument();
   });
 
   it('pluralises the count', async () => {
     getCareersBoard.mockResolvedValue(board({ total: 4, items: [job(), job({ requisition_id: 'r2' })] }));
     renderBoard();
-    expect(await screen.findByText('4 open positions')).toBeInTheDocument();
+    expect(await screen.findByText('4 open jobs')).toBeInTheDocument();
   });
 
   it('shows what a card needs and links to the application', async () => {

@@ -184,6 +184,8 @@ const en = {
     },
     // Dashboard
     dashboard: {
+      readinessDesc_other: 'Based on {{count}} attempts across your sessions',
+      readinessDesc_one: 'Based on {{count}} attempt across your sessions',
       welcome: 'Welcome, {{name}}',
       signedInAs: 'Signed in as',
       // Readiness sub-headline
@@ -194,7 +196,6 @@ const en = {
       // and two different numbers under one word is worse than either alone.
       avgScoreRingLabel: 'avg',
       avgScoreTitle: 'Average interview score',
-      readinessDesc: 'Based on {{count}} attempt(s) across your sessions',
       readinessDescNoData: 'Complete your first interview to see your score',
       seeBreakdown: 'See breakdown',
       improveResume: 'Improve resume',
@@ -335,7 +336,7 @@ const en = {
       noResumeLink: 'uploading your resume',
       noResumeDesc: 'makes the interview more personalised.',
       step1Title: 'Role details',
-      step1Desc: 'Define the position you want to practice for.',
+      step1Desc: 'Describe the job you want to practise for.',
       jobTitleLabel: 'Job title',
       jobTitleRequired: 'Job title is required.',
       jobTitlePlaceholder: 'e.g. Software Engineer',
@@ -1407,8 +1408,8 @@ const en = {
       mostRelevant: 'Most relevant',
       clearFilters: 'Clear filters',
       loadingRoles: 'Loading roles…',
-      positions_one: '{{count}} open position',
-      positions_other: '{{count}} open positions',
+      positions_one: '{{count}} open job',
+      positions_other: '{{count}} open jobs',
       noMatchTitle: 'No roles match those filters',
       noMatchDesc: 'Try widening your search - clearing a filter usually brings more back.',
       noRolesTitle: 'No open roles right now',
@@ -1766,6 +1767,10 @@ const en = {
     // ── PH4-D4: the public task page (job simulation / portfolio, magic
     // link, no login) ──────────────────────────────────────────────────
     task: {
+      removeConfirm: 'Remove {{name}}?',
+      keep: 'Keep',
+      notReadyArtifacts_other: 'Add at least {{count}} items to your portfolio before submitting.',
+      notReadyArtifacts_one: 'Add at least {{count}} item to your portfolio before submitting.',
       savingAnswers: 'Saving your answers…',
       timeUp: 'Time is up for this task, so answers can no longer be changed or sent. Contact the hiring team if you need more time.',
       invalidTitle: "This task link isn't valid",
@@ -1869,7 +1874,6 @@ const en = {
       confirmYes: 'Yes, submit',
       cancel: 'Cancel',
       notReadyRequired: 'Answer every required item before submitting.',
-      notReadyArtifacts: 'Add at least {{count}} item(s) to your portfolio before submitting.',
     },
     profile: {
       title: 'Your profile',
@@ -2153,13 +2157,14 @@ const hi = {
       trustNote: 'हायरिंग टीमों के लिए बनाया गया',
     },
     dashboard: {
+      readinessDesc_other: '{{count}} प्रयासों के आधार पर',
+      readinessDesc_one: '{{count}} प्रयास के आधार पर',
       welcome: 'स्वागत है, {{name}}',
       signedInAs: 'इस रूप में साइन इन किया गया',
       readinessSub: 'आप {{score}}% interview-ready हैं। स्कोर बढ़ाने के लिए अभ्यास जारी रखें।',
       readinessSubNoData: 'अभी तक कोई इंटरव्यू नहीं - readiness score देखने के लिए पहला शुरू करें।',
       avgScoreRingLabel: 'औसत',
       avgScoreTitle: 'औसत इंटरव्यू स्कोर',
-      readinessDesc: '{{count}} प्रयासों के आधार पर',
       readinessDescNoData: 'अपना पहला इंटरव्यू पूरा करें और स्कोर देखें',
       seeBreakdown: 'विवरण देखें',
       improveResume: 'रेज़्यूमे बेहतर करें',
@@ -2294,7 +2299,7 @@ const hi = {
       noResumeLink: 'resume अपलोड करने से',
       noResumeDesc: 'इंटरव्यू और personalized होता है।',
       step1Title: 'पद की जानकारी',
-      step1Desc: 'वह पद define करें जिसके लिए आप practice करना चाहते हैं।',
+      step1Desc: 'वह नौकरी बताइए जिसके लिए आप अभ्यास करना चाहते हैं।',
       jobTitleLabel: 'पद का नाम',
       jobTitleRequired: 'पद का नाम आवश्यक है।',
       jobTitlePlaceholder: 'जैसे: Software Engineer',
@@ -3322,8 +3327,8 @@ const hi = {
       mostRelevant: 'सबसे प्रासंगिक',
       clearFilters: 'फ़िल्टर हटाएँ',
       loadingRoles: 'भूमिकाएँ लोड हो रही हैं…',
-      positions_one: '{{count}} खुला पद',
-      positions_other: '{{count}} खुले पद',
+      positions_one: '{{count}} खुली नौकरी',
+      positions_other: '{{count}} खुली नौकरियाँ',
       noMatchTitle: 'इन फ़िल्टरों से कोई भूमिका मेल नहीं खाती',
       noMatchDesc: 'अपनी खोज को व्यापक करें - कोई फ़िल्टर हटाने से आमतौर पर और परिणाम मिलते हैं।',
       noRolesTitle: 'अभी कोई खुली भूमिका नहीं है',
@@ -3650,6 +3655,10 @@ const hi = {
       },
     },
     task: {
+      removeConfirm: '{{name}} हटाएँ?',
+      keep: 'रहने दें',
+      notReadyArtifacts_other: 'सबमिट करने से पहले अपने पोर्टफोलियो में कम से कम {{count}} आइटम जोड़ें।',
+      notReadyArtifacts_one: 'सबमिट करने से पहले अपने पोर्टफोलियो में कम से कम {{count}} आइटम जोड़ें।',
       savingAnswers: 'आपके उत्तर सहेजे जा रहे हैं…',
       timeUp: 'इस टास्क का समय समाप्त हो गया है, इसलिए उत्तर अब बदले या भेजे नहीं जा सकते। अधिक समय चाहिए तो भर्ती टीम से संपर्क करें।',
       invalidTitle: 'यह टास्क लिंक मान्य नहीं है',
@@ -3731,7 +3740,6 @@ const hi = {
       confirmYes: 'हां, सबमिट करें',
       cancel: 'रद्द करें',
       notReadyRequired: 'सबमिट करने से पहले हर आवश्यक आइटम का उत्तर दें।',
-      notReadyArtifacts: 'सबमिट करने से पहले अपने पोर्टफोलियो में कम से कम {{count}} आइटम जोड़ें।',
     },
     profile: {
       title: 'आपकी प्रोफ़ाइल',
@@ -4015,6 +4023,8 @@ const te = {
       trustNote: 'హైరింగ్ టీమ్‌ల కోసం రూపొందించబడింది',
     },
     dashboard: {
+      readinessDesc_other: '{{count}} ప్రయత్నాల ఆధారంగా',
+      readinessDesc_one: '{{count}} ప్రయత్నం ఆధారంగా',
       welcome: 'స్వాగతం, {{name}}',
       signedInAs: 'ఈ పేరుతో సైన్ ఇన్ అయ్యారు',
       readinessSub:
@@ -4023,7 +4033,6 @@ const te = {
         'ఇంకా ఇంటర్వ్యూలు లేవు - readiness స్కోరు చూడటానికి మొదటిది మొదలుపెట్టండి.',
       avgScoreRingLabel: 'సగటు',
       avgScoreTitle: 'సగటు ఇంటర్వ్యూ స్కోరు',
-      readinessDesc: '{{count}} ప్రయత్నాల ఆధారంగా',
       readinessDescNoData: 'మీ స్కోరు చూడటానికి మొదటి ఇంటర్వ్యూ పూర్తి చేయండి',
       seeBreakdown: 'వివరాలు చూడండి',
       improveResume: 'రెజ్యూమే మెరుగుపరచండి',
@@ -4159,7 +4168,7 @@ const te = {
       noResumeLink: 'రెజ్యూమే అప్‌లోడ్ చేయడం',
       noResumeDesc: 'ఇంటర్వ్యూను మరింత personalized చేస్తుంది.',
       step1Title: 'పదవి వివరాలు',
-      step1Desc: 'మీరు practice చేయాలనుకుంటున్న పదవిని నిర్వచించండి.',
+      step1Desc: 'మీరు సాధన చేయాలనుకుంటున్న ఉద్యోగాన్ని వివరించండి.',
       jobTitleLabel: 'పదవి పేరు',
       jobTitleRequired: 'పదవి పేరు అవసరం.',
       jobTitlePlaceholder: 'ఉదా: Software Engineer',
@@ -5192,8 +5201,8 @@ const te = {
       mostRelevant: 'అత్యంత సంబంధితమైనవి',
       clearFilters: 'ఫిల్టర్లను తొలగించు',
       loadingRoles: 'ఉద్యోగాలు లోడ్ అవుతున్నాయి…',
-      positions_one: '{{count}} ఖాళీ',
-      positions_other: '{{count}} ఖాళీలు',
+      positions_one: '{{count}} ఖాళీ ఉద్యోగం',
+      positions_other: '{{count}} ఖాళీ ఉద్యోగాలు',
       noMatchTitle: 'ఈ ఫిల్టర్లకు సరిపోయే ఉద్యోగాలు లేవు',
       noMatchDesc:
         'మీ శోధనను విస్తృతం చేయండి - ఒక ఫిల్టర్ తొలగిస్తే సాధారణంగా మరిన్ని కనిపిస్తాయి.',
@@ -5524,6 +5533,10 @@ const te = {
       },
     },
     task: {
+      removeConfirm: '{{name}} తొలగించాలా?',
+      keep: 'ఉంచండి',
+      notReadyArtifacts_other: 'సమర్పించే ముందు మీ పోర్ట్‌ఫోలియోకు కనీసం {{count}} ఐటెమ్‌లు జోడించండి.',
+      notReadyArtifacts_one: 'సమర్పించే ముందు మీ పోర్ట్‌ఫోలియోకు కనీసం {{count}} ఐటెమ్ జోడించండి.',
       savingAnswers: 'మీ సమాధానాలను సేవ్ చేస్తున్నాం…',
       timeUp: 'ఈ టాస్క్ సమయం ముగిసింది, కాబట్టి సమాధానాలను ఇక మార్చలేరు లేదా పంపలేరు. మరింత సమయం కావాలంటే నియామక బృందాన్ని సంప్రదించండి.',
       invalidTitle: 'ఈ టాస్క్ లింక్ చెల్లదు',
@@ -5606,7 +5619,6 @@ const te = {
       confirmYes: 'అవును, సమర్పించండి',
       cancel: 'రద్దు చేయండి',
       notReadyRequired: 'సమర్పించే ముందు ప్రతి తప్పనిసరి ఐటెమ్‌కు సమాధానం ఇవ్వండి.',
-      notReadyArtifacts: 'సమర్పించే ముందు మీ పోర్ట్‌ఫోలియోకు కనీసం {{count}} ఐటెమ్‌లు జోడించండి.',
     },
     profile: {
       title: 'మీ ప్రొఫైల్',

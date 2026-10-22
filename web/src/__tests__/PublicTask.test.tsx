@@ -370,9 +370,25 @@ describe('PublicTask - a file item', () => {
     expect(screen.getByRole('button', { name: /^submit$/i })).toBeEnabled();
 
     await user.click(screen.getByRole('button', { name: /remove plan\.pdf/i }));
+    // A single tap no longer deletes it (audit B3): it asks, naming the file.
+    expect(removeTaskArtifact).not.toHaveBeenCalled();
+    const ask = screen.getByRole('group', { name: 'Remove plan.pdf?' });
+    expect(within(ask).getByRole('button', { name: 'Keep' })).toHaveFocus();
+    await user.click(within(ask).getByRole('button', { name: 'Remove' }));
     await waitFor(() =>
       expect(removeTaskArtifact).toHaveBeenCalledWith('task_tok_123456', 'r-file'),
     );
+  });
+
+  it('keeps the uploaded file when the candidate backs out', async () => {
+    const user = userEvent.setup();
+    viewTask.mockResolvedValue({ ...WITH_FILE_ITEM, responses: [UPLOADED] });
+    renderPage();
+    await screen.findByText('plan.pdf');
+    await user.click(screen.getByRole('button', { name: /remove plan\.pdf/i }));
+    await user.click(screen.getByRole('button', { name: 'Keep' }));
+    expect(removeTaskArtifact).not.toHaveBeenCalled();
+    expect(screen.getByText('plan.pdf')).toBeInTheDocument();
   });
 
   it('refuses a file type the server would refuse, without uploading it', async () => {

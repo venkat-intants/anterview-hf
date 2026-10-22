@@ -301,6 +301,70 @@ function MaterialRow({
   );
 }
 
+/* ── Removing something already uploaded ─────────────────────────────────── */
+
+/** "Remove", then "Remove <name>? [Remove] [Keep]". One stray tap used to
+ *  delete an uploaded file (audit B3); the second step names what goes. */
+function RemoveWithConfirm({
+  name,
+  disabled,
+  pending,
+  onConfirm,
+}: {
+  name: string;
+  disabled: boolean;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const { t } = useTranslation();
+  const [asking, setAsking] = useState(false);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (asking) keepRef.current?.focus();
+  }, [asking]);
+  if (!asking) {
+    return (
+      <button
+        type="button"
+        onClick={() => setAsking(true)}
+        disabled={disabled}
+        aria-label={`${t('task.remove')} ${name}`}
+        className={DANGER_BUTTON}
+      >
+        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+        {t('task.remove')}
+      </button>
+    );
+  }
+  return (
+    <div
+      role="group"
+      aria-label={t('task.removeConfirm', { name })}
+      className="flex flex-wrap items-center gap-2"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') setAsking(false);
+      }}
+    >
+      <span className="text-[12.5px] text-foreground">{t('task.removeConfirm', { name })}</span>
+      <button
+        type="button"
+        onClick={() => {
+          setAsking(false);
+          onConfirm();
+        }}
+        disabled={pending}
+        className={DANGER_BUTTON}
+      >
+        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+        {t('task.remove')}
+      </button>
+      <button ref={keepRef} type="button" onClick={() => setAsking(false)} className={CHIP_BUTTON}>
+        {t('task.keep')}
+      </button>
+    </div>
+  );
+}
+
 /* ── One item's answer ────────────────────────────────────────────────────── */
 
 /** Save `value` once typing pauses. Answers used to save only on blur, so
@@ -530,16 +594,12 @@ function FileItemField({
           <span className="min-w-0 truncate text-[13px] text-foreground">
             {current.original_name}
           </span>
-          <button
-            type="button"
-            onClick={() => removeMut.mutate(current.id)}
+          <RemoveWithConfirm
+            name={current.original_name ?? ''}
             disabled={busy}
-            aria-label={`${t('task.remove')} ${current.original_name ?? ''}`}
-            className={DANGER_BUTTON}
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('task.remove')}
-          </button>
+            pending={removeMut.isPending}
+            onConfirm={() => removeMut.mutate(current.id)}
+          />
         </div>
       ) : null}
       {!disabled ? (
@@ -672,16 +732,12 @@ function ArtifactRow({
             ID scan instead of a portfolio PDF) any time before submitting —
             security review, PH4-D4. */}
         {!disabled ? (
-          <button
-            type="button"
-            onClick={() => removeMut.mutate()}
+          <RemoveWithConfirm
+            name={artifact.title || artifact.original_name || artifact.link_url || ''}
             disabled={removeMut.isPending}
-            aria-label={`${t('task.remove')} ${artifact.title || artifact.original_name || artifact.link_url || ''}`}
-            className={DANGER_BUTTON}
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('task.remove')}
-          </button>
+            pending={removeMut.isPending}
+            onConfirm={() => removeMut.mutate()}
+          />
         ) : null}
       </div>
       {error ? <p className="mt-1.5 text-[12.5px] text-[var(--ui-danger)]">{error}</p> : null}

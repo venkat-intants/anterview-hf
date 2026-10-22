@@ -17,12 +17,13 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/design/components/primitives';
-import { KeyRound } from '@/design/components/icons';
+import { AlertTriangle, KeyRound } from '@/design/components/icons';
+import { errorMessage } from '@/lib/errorMessage';
 
 /** The text to show for a failed create, or null while there is no failure. */
-function errorText(error: unknown): string | null {
+function errorText(error: unknown, fallback = 'Could not create the account.'): string | null {
   if (error == null) return null;
-  return error instanceof Error ? error.message : 'Something went wrong. Please try again.';
+  return errorMessage(error, fallback);
 }
 
 interface ShellProps {
@@ -78,8 +79,8 @@ function FormFooter({
   );
 }
 
-function ServerError({ error }: { error: unknown }) {
-  const message = errorText(error);
+function ServerError({ error, fallback }: { error: unknown; fallback?: string }) {
+  const message = errorText(error, fallback);
   if (!message) return null;
   return (
     <p
@@ -235,7 +236,7 @@ function CompanyForm({
         disabled={pending}
         error={touched && !name.trim() ? 'Company name is required.' : undefined}
       />
-      <ServerError error={error} />
+      <ServerError error={error} fallback="Could not create the company." />
       <FormFooter pending={pending} submitLabel="Create company" onCancel={onCancel} />
     </form>
   );
@@ -263,5 +264,103 @@ export function CompanyDialog({
         onCancel={() => onOpenChange(false)}
       />
     </DialogShell>
+  );
+}
+
+/* ─────────────────────────────  Delete company  ───────────────────────────── */
+
+interface DeleteCompanyDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  companyName: string;
+  /** Logins the delete removes that the console knows about, for the warning. */
+  memberSummary: string;
+  pending: boolean;
+  onConfirm: () => void;
+}
+
+/**
+ * Deleting a tenant removes every login in it, revokes their sessions and makes
+ * all of its hiring data unreachable (audit AD-F13). That is the heaviest action
+ * in the product, so it is a dialog that states the consequences and only arms
+ * once the company's name is typed, not the inline "Sure?" used for one row.
+ */
+export function DeleteCompanyDialog({
+  open,
+  onOpenChange,
+  companyName,
+  memberSummary,
+  pending,
+  onConfirm,
+}: DeleteCompanyDialogProps) {
+  return (
+    <DialogShell
+      open={open}
+      onOpenChange={onOpenChange}
+      pending={pending}
+      title={`Delete ${companyName}?`}
+      description="This cannot be undone from the console."
+    >
+      <DeleteCompanyForm
+        companyName={companyName}
+        memberSummary={memberSummary}
+        pending={pending}
+        onConfirm={onConfirm}
+        onCancel={() => onOpenChange(false)}
+      />
+    </DialogShell>
+  );
+}
+
+function DeleteCompanyForm({
+  companyName,
+  memberSummary,
+  pending,
+  onConfirm,
+  onCancel,
+}: Omit<DeleteCompanyDialogProps, 'open' | 'onOpenChange'> & { onCancel: () => void }) {
+  const [typed, setTyped] = useState('');
+  const matches = typed.trim() === companyName.trim();
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    if (matches && !pending) onConfirm();
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="flex items-start gap-2.5 rounded-[12px] border border-[var(--ui-danger)]/35 bg-[var(--ui-danger-wash)] p-3 text-[13px] leading-relaxed text-foreground">
+        <AlertTriangle
+          className="mt-0.5 h-4 w-4 flex-none text-[var(--ui-danger)]"
+          aria-hidden="true"
+        />
+        <ul className="list-disc space-y-1 pl-4">
+          <li>Every login in this company is removed ({memberSummary}).</li>
+          <li>Everyone signed in to it is signed out straight away.</li>
+          <li>Its openings, applicants, exams and interviews can no longer be opened.</li>
+        </ul>
+      </div>
+      <Field
+        id="delete-company-confirm"
+        label={`Type ${companyName} to confirm`}
+        value={typed}
+        onChange={(e) => setTyped(e.target.value)}
+        autoComplete="off"
+        disabled={pending}
+      />
+      <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
+        <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button
+          type="submit"
+          variant="destructive"
+          disabled={!matches || pending}
+          aria-busy={pending}
+        >
+          {pending ? 'Deleting…' : 'Delete company'}
+        </Button>
+      </div>
+    </form>
   );
 }

@@ -114,6 +114,7 @@ const api = {
   listFeatureFlags: vi.fn(),
   setFeatureFlag: vi.fn(),
   listAuditLog: vi.fn(),
+  resendCompanyAdminInvite: vi.fn(),
 };
 
 vi.mock('../api/hr', () => ({
@@ -128,15 +129,18 @@ vi.mock('../api/hr', () => ({
   listFeatureFlags: (...a: unknown[]) => api.listFeatureFlags(...a) as unknown,
   setFeatureFlag: (...a: unknown[]) => api.setFeatureFlag(...a) as unknown,
   listAuditLog: (...a: unknown[]) => api.listAuditLog(...a) as unknown,
+  resendCompanyAdminInvite: (...a: unknown[]) => api.resendCompanyAdminInvite(...a) as unknown,
 }));
 
 const toastError = vi.fn();
+const toastSuccess = vi.fn();
+const toastWarning = vi.fn();
 vi.mock('../lib/toast', () => ({
   toast: {
     error: (...a: unknown[]) => toastError(...a) as unknown,
-    success: vi.fn(),
+    success: (...a: unknown[]) => toastSuccess(...a) as unknown,
     info: vi.fn(),
-    warning: vi.fn(),
+    warning: (...a: unknown[]) => toastWarning(...a) as unknown,
   },
 }));
 
@@ -146,6 +150,7 @@ vi.mock('../context/AuthContext', () => ({
 }));
 
 import PlatformOwnerConsole from '../pages/superadmin/PlatformOwnerConsole';
+import { ApiError } from '../api/client';
 import PlatformOwnerRoute from '../components/PlatformOwnerRoute';
 import { homePathFor } from '../components/layout/navSections';
 
@@ -208,6 +213,7 @@ beforeEach(() => {
   api.deleteCompany.mockResolvedValue(undefined);
   api.deleteCompanyAdmin.mockResolvedValue(undefined);
   api.setFeatureFlag.mockResolvedValue({ ...FLAGS[0], enabled: true });
+  api.resendCompanyAdminInvite.mockResolvedValue({ email_queued: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -236,7 +242,7 @@ describe('PlatformOwnerConsole - tenant list', () => {
     // and setup.ts stubs as a no-op, so the digits never leave their first
     // render. The sub-text is plain interpolation of the same response and is
     // what actually distinguishes live data from a placeholder.
-    expect(screen.getByText(/31 in last 30 days/i)).toBeInTheDocument();
+    expect(screen.getByText(/31 in the last 30 days/i)).toBeInTheDocument();
     expect(screen.getByText(/1 with a super admin/i)).toBeInTheDocument();
     // 2 companies, 1 super admin ⇒ exactly one tenant is unprotected.
     expect(screen.getByText(/1 company without one/i)).toBeInTheDocument();
@@ -341,7 +347,9 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
   it('creates the super admin against the SELECTED company only', async () => {
     // The tenant boundary is the whole safety property here: creating Nova's
     // super admin must not send Acme's id.
-    api.getCompanyAdmin.mockRejectedValue(new Error('404 no admin'));
+    api.getCompanyAdmin.mockRejectedValue(
+      new ApiError('This company has no super admin yet.', 404),
+    );
     api.listCompanyHrManagers.mockResolvedValue([]);
     const user = userEvent.setup();
     renderConsole();
@@ -362,7 +370,9 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
   });
 
   it('never sends a password - the server emails a set-password link', async () => {
-    api.getCompanyAdmin.mockRejectedValue(new Error('404 no admin'));
+    api.getCompanyAdmin.mockRejectedValue(
+      new ApiError('This company has no super admin yet.', 404),
+    );
     api.listCompanyHrManagers.mockResolvedValue([]);
     const user = userEvent.setup();
     renderConsole();
@@ -405,20 +415,32 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
     expect(within(list).queryByRole('button')).not.toBeInTheDocument();
   });
 
-  it('requires a second click before deleting a tenant', async () => {
+  it('deletes a tenant only after the consequences are shown and its name is typed (AD-F13)', async () => {
     const user = userEvent.setup();
     renderConsole();
 
     await user.click(await screen.findByRole('button', { name: /select acme/i }));
     await user.click(await screen.findByRole('button', { name: /delete company/i }));
 
-    // Armed, not fired.
-    expect(api.deleteCompany).not.toHaveBeenCalled();
-    await user.click(
-      within(screen.getByRole('group', { name: 'Confirm: Delete company' })).getByRole('button', {
-        name: 'Delete company',
-      }),
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/every login in this company is removed/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/signed out straight away/i)).toBeInTheDocument();
+    const confirm = within(dialog).getByRole('button', { name: 'Delete company' });
+    expect(confirm).toBeDisabled();
+
+    await user.type(
+      within(dialog).getByLabelText(/type acme skills university to confirm/i),
+      'Acme',
     );
+    expect(confirm).toBeDisabled();
+    expect(api.deleteCompany).not.toHaveBeenCalled();
+
+    await user.type(
+      within(dialog).getByLabelText(/type acme skills university to confirm/i),
+      ' Skills University',
+    );
+    expect(confirm).toBeEnabled();
+    await user.click(confirm);
     await waitFor(() => expect(api.deleteCompany).toHaveBeenCalledWith('c-acme'));
   });
 });
@@ -435,18 +457,39 @@ describe('PlatformOwnerConsole - feature flags tab', () => {
     await user.click(await screen.findByRole('tab', { name: /feature flags/i }));
     await user.click(await screen.findByRole('switch', { name: /toggle coding round/i }));
 
-    await waitFor(() =>
-      expect(api.setFeatureFlag).toHaveBeenCalledWith('coding_round', true),
-    );
+    await waitFor(() => expect(api.setFeatureFlag).toHaveBeenCalledWith('coding_round', true));
   });
 
-  it('names the missing migration when the flags table does not exist', async () => {
-    api.listFeatureFlags.mockRejectedValue(new Error('relation does not exist'));
+  it('says the flags could not load, with a retry, instead of blaming a migration (AD-F19)', async () => {
+    api.listFeatureFlags.mockRejectedValue(
+      new ApiError('You do not have permission to do that.', 403),
+    );
     const user = userEvent.setup();
     renderConsole();
 
     await user.click(await screen.findByRole('tab', { name: /feature flags/i }));
-    expect(await screen.findByText(/run the latest migration/i)).toBeInTheDocument();
+    expect(await screen.findByText('Could not load the feature flags.')).toBeInTheDocument();
+    expect(screen.queryByText(/run the latest migration/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('locks a flag while its update is in flight so clicks cannot race (AD-F19)', async () => {
+    let finish: (v: FeatureFlag) => void = () => undefined;
+    api.setFeatureFlag.mockImplementation(
+      () => new Promise<FeatureFlag>((resolve) => (finish = resolve)),
+    );
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('tab', { name: /feature flags/i }));
+    const toggle = await screen.findByRole('switch', { name: /toggle coding round/i });
+    await user.click(toggle);
+    await waitFor(() => expect(toggle).toBeDisabled());
+    await user.click(toggle);
+    expect(api.setFeatureFlag).toHaveBeenCalledTimes(1);
+
+    finish({ ...FLAGS[0], enabled: true });
+    await waitFor(() => expect(toggle).toBeEnabled());
   });
 });
 
@@ -457,9 +500,48 @@ describe('PlatformOwnerConsole - DPDP audit tab', () => {
 
     await user.click(await screen.findByRole('tab', { name: /audit log/i }));
 
-    expect(await screen.findByText(/withdrew interview_voice_recording consent/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/withdrew interview_voice_recording consent/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/consent revoked/i)).toBeInTheDocument();
     expect(screen.getByText(/candidate@example\.com/)).toBeInTheDocument();
+  });
+
+  it('shows a failed load as an error with a retry, never "No audit events yet" (AD-F4)', async () => {
+    api.listAuditLog.mockRejectedValue(new ApiError('Server error', 500, undefined, false));
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('tab', { name: /audit log/i }));
+    expect(await screen.findByText('Could not load the audit log.')).toBeInTheDocument();
+    expect(screen.queryByText(/no audit events yet/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('shows admin actions as sentences with the person who acted (AD-F3)', async () => {
+    api.listAuditLog.mockResolvedValue([
+      {
+        ts: '2026-08-07T09:00:00.000Z',
+        kind: 'admin_action',
+        action: 'create_hr_manager',
+        actor: 'Asha Rao',
+        summary: 'Added HR manager Hema HR',
+      },
+      {
+        ts: '2026-08-07T08:00:00.000Z',
+        kind: 'consent_granted',
+        actor: 'candidate',
+        summary: 'interview',
+      },
+    ]);
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('tab', { name: /audit log/i }));
+    expect(await screen.findByText('Added HR manager Hema HR')).toBeInTheDocument();
+    expect(screen.getByText(/Asha Rao/)).toBeInTheDocument();
+    expect(screen.getByText(/· Candidate/)).toBeInTheDocument();
+    expect(screen.queryByText('create_hr_manager')).not.toBeInTheDocument();
   });
 
   it('says so explicitly when there is nothing to audit', async () => {
@@ -500,9 +582,104 @@ describe('PlatformOwnerConsole - a wrong-role user sees nothing', () => {
   it('lets a platform_owner through to the console', async () => {
     renderGuarded(['platform_owner', 'admin']);
 
-    expect(
-      await screen.findByRole('heading', { name: /platform owner/i }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /platform owner/i })).toBeInTheDocument();
     await waitFor(() => expect(api.listCompanies).toHaveBeenCalled());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit fixes AD-F5, AD-F8, AD-F24
+// ---------------------------------------------------------------------------
+
+describe('PlatformOwnerConsole - only a 404 means "no super admin" (AD-F5)', () => {
+  it('shows an error with a retry, not the Add button, when the lookup fails', async () => {
+    api.getCompanyAdmin.mockRejectedValue(new ApiError('Server error', 500, undefined, false));
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('button', { name: /select acme/i }));
+    expect(
+      await screen.findByText("Could not load this company's super admin."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /add super admin/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/has no super admin yet/i)).not.toBeInTheDocument();
+
+    api.getCompanyAdmin.mockResolvedValue(ACME_ADMIN);
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Asha Rao')).toBeInTheDocument();
+  });
+
+  it('offers to add one when the server says there is none', async () => {
+    api.getCompanyAdmin.mockRejectedValue(
+      new ApiError('This company has no super admin yet.', 404),
+    );
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('button', { name: /select nova polytechnic/i }));
+    expect(await screen.findByRole('button', { name: /^add super admin$/i })).toBeInTheDocument();
+  });
+});
+
+describe('PlatformOwnerConsole - the set-password email (AD-F8)', () => {
+  it('warns when the new super admin was created but the email was not queued', async () => {
+    api.getCompanyAdmin.mockRejectedValue(
+      new ApiError('This company has no super admin yet.', 404),
+    );
+    api.createCompanyAdmin.mockResolvedValue({ ...ACME_ADMIN, email_queued: false });
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('button', { name: /select nova polytechnic/i }));
+    await user.click(await screen.findByRole('button', { name: /^add super admin$/i }));
+    await user.type(await screen.findByLabelText(/^email$/i), 'boss@nova.edu');
+    await user.type(screen.getByLabelText(/full name/i), 'Nova Boss');
+    await user.click(screen.getByRole('button', { name: /create super admin/i }));
+
+    await waitFor(() => expect(toastWarning).toHaveBeenCalled());
+    expect(String(toastWarning.mock.calls[0]?.[0])).toMatch(/could not be sent/i);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it('re-sends the link to a super admin who has not signed in yet', async () => {
+    api.getCompanyAdmin.mockResolvedValue({ ...ACME_ADMIN, must_change_password: true });
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('button', { name: /select acme/i }));
+    await user.click(
+      await screen.findByRole('button', { name: /resend the set-password link to asha rao/i }),
+    );
+    await waitFor(() => expect(api.resendCompanyAdminInvite).toHaveBeenCalledWith('c-acme'));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+
+  it('offers no resend once the super admin is active', async () => {
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('button', { name: /select acme/i }));
+    await screen.findByText('Asha Rao');
+    expect(
+      screen.queryByRole('button', { name: /resend the set-password link/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('PlatformOwnerConsole - stat tiles never fake a number (AD-F24)', () => {
+  it('shows the counts as unavailable, not 0 and "all covered", when the stats fail', async () => {
+    api.getPlatformStats.mockRejectedValue(new ApiError('Server error', 500, undefined, false));
+    renderConsole();
+
+    await screen.findByText('Acme Skills University');
+    expect((await screen.findAllByText('Count unavailable')).length).toBe(4);
+    expect(screen.queryByText(/all companies covered/i)).not.toBeInTheDocument();
+  });
+
+  it('pluralises the companies without a super admin', async () => {
+    api.getPlatformStats.mockResolvedValue({ ...STATS, companies: 4, super_admins: 2 });
+    renderConsole();
+
+    expect(await screen.findByText('2 companies without one')).toBeInTheDocument();
   });
 });

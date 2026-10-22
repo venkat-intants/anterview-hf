@@ -28,6 +28,8 @@ export interface CompanyAdmin {
   company_id: string;
   must_change_password: boolean;
   created_at: string;
+  /** Create responses only: whether the set-password email was queued. */
+  email_queued?: boolean | null;
 }
 
 export interface HrManager {
@@ -37,6 +39,13 @@ export interface HrManager {
   company_id: string;
   must_change_password: boolean;
   created_at: string;
+  /** Create responses only: whether the set-password email was queued. */
+  email_queued?: boolean | null;
+}
+
+/** Result of re-sending a set-password link to an account not yet signed in. */
+export interface ResendInviteResult {
+  email_queued: boolean;
 }
 
 // ── Platform owner — real dashboard stats ───────────────────────────────────
@@ -87,6 +96,14 @@ export function deleteCompanyAdmin(companyId: string): Promise<void> {
   return apiDelete<void>(`/admin/companies/${pathId(companyId)}/admin`);
 }
 
+/** Re-send the set-password link to a company super admin who has not signed in. */
+export function resendCompanyAdminInvite(companyId: string): Promise<ResendInviteResult> {
+  return apiPost<ResendInviteResult>(
+    `/admin/companies/${pathId(companyId)}/admin/resend-invite`,
+    {},
+  );
+}
+
 /** Platform-owner read-only view of a company's HR managers. */
 export function listCompanyHrManagers(companyId: string): Promise<HrManager[]> {
   return apiGet<HrManager[]>(`/admin/companies/${pathId(companyId)}/hr-managers`);
@@ -98,10 +115,17 @@ export function listMyHrManagers(): Promise<HrManager[]> {
   return apiGet<HrManager[]>('/admin/hr-managers');
 }
 
-export function createMyHrManager(
-  body: { email: string; full_name: string; password?: string },
-): Promise<HrManager> {
+export function createMyHrManager(body: {
+  email: string;
+  full_name: string;
+  password?: string;
+}): Promise<HrManager> {
   return apiPost<HrManager>('/admin/hr-managers', body);
+}
+
+/** Re-send the set-password link to an HR manager who has not signed in. */
+export function resendMyHrManagerInvite(userId: string): Promise<ResendInviteResult> {
+  return apiPost<ResendInviteResult>(`/admin/hr-managers/${pathId(userId)}/resend-invite`, {});
 }
 
 /** Soft-delete an HR manager in the caller's own company. */
@@ -119,10 +143,16 @@ export function listMyInterviewers(): Promise<HrManager[]> {
   return apiGet<HrManager[]>('/admin/interviewers');
 }
 
-export function createMyInterviewer(
-  body: { email: string; full_name: string },
-): Promise<HrManager> {
+export function createMyInterviewer(body: {
+  email: string;
+  full_name: string;
+}): Promise<HrManager> {
   return apiPost<HrManager>('/admin/interviewers', body);
+}
+
+/** Re-send the set-password link to an interviewer who has not signed in. */
+export function resendMyInterviewerInvite(userId: string): Promise<ResendInviteResult> {
+  return apiPost<ResendInviteResult>(`/admin/interviewers/${pathId(userId)}/resend-invite`, {});
 }
 
 /** Also withdraws this interviewer's unsubmitted scorecard assignments. */
@@ -164,8 +194,12 @@ export function updateDecisionReason(
 export interface AuditEvent {
   ts: string;
   kind: string; // admin_action | consent_granted | consent_denied | consent_revoked
+  /** A readable sentence for admin actions; the purpose for consent events. */
   summary: string;
+  /** The staff member's name for admin actions, else "candidate" or "system". */
   actor: string;
+  /** The raw action code, admin actions only. */
+  action?: string | null;
 }
 
 export function listAuditLog(limit = 100): Promise<AuditEvent[]> {

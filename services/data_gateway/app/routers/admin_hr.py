@@ -7,6 +7,7 @@ Two privileged tiers manage the tenant identity graph:
     GET    /admin/companies                           — list companies
     POST   /admin/companies/{company_id}/admin        — create the ONE company super admin
     GET    /admin/companies/{company_id}/admin         — get the company super admin
+    POST   /admin/companies/{company_id}/admin/resend-invite — re-send its set-password link
     GET    /admin/companies/{company_id}/hr-managers   — read-only view of a company's HRs
     GET/PUT /admin/feature-flags[...]                  — platform feature flags
     GET    /admin/audit-log                            — DPDP audit feed
@@ -14,6 +15,10 @@ Two privileged tiers manage the tenant identity graph:
   COMPANY SUPER ADMIN ("super admin" — one per company, company-scoped):
     GET    /admin/hr-managers                          — list HRs in the caller's company
     POST   /admin/hr-managers                          — create an HR in the caller's company
+    POST   /admin/{hr-managers|interviewers}/{id}/resend-invite — re-send a set-password link
+
+Every mutation here writes an audit_log row (create, delete, resend, flag
+toggle), which the platform owner reads as the DPDP audit feed.
 
 Accounts created with a (default) password get ``must_change_password=true`` so
 they are forced to reset it on first login. A company has AT MOST ONE super admin.
@@ -136,6 +141,11 @@ class CompanyAdminResponse(BaseModel):
     company_id: str
     must_change_password: bool
     created_at: str
+    # Set only on the create response: whether the set-password email was
+    # queued. Sending is best-effort (a mail failure never fails account
+    # creation), so the console must not claim "a link was emailed" when it was
+    # not (audit AD-F8). None on reads, where it does not apply.
+    email_queued: bool | None = None
 
 
 class HrManagerResponse(BaseModel):
@@ -145,6 +155,13 @@ class HrManagerResponse(BaseModel):
     company_id: str
     must_change_password: bool
     created_at: str
+    email_queued: bool | None = None
+
+
+class ResendInviteResponse(BaseModel):
+    """Result of re-sending a set-password link to a pending account."""
+
+    email_queued: bool
 
 
 # ---------------------------------------------------------------------------
@@ -177,11 +194,19 @@ async def _company_or_404(db: AsyncSession, company_id: uuid.UUID) -> None:
 
 
 async def _create_company_user(
-    db: AsyncSession, *, company_id: uuid.UUID, body: CreateUserBody, role: str
-) -> tuple[uuid.UUID, datetime]:
+    db: AsyncSession,
+    *,
+    company_id: uuid.UUID,
+    body: CreateUserBody,
+    role: str,
+    actor_id: uuid.UUID,
+) -> tuple[uuid.UUID, datetime, bool]:
     """Insert a company-scoped user with the given role + must_change_password.
 
-    Returns (user_id, created_at). Raises 409 on duplicate email.
+    The audit row is written in the SAME transaction as the account (audit
+    AD-F3): an account can never exist without the record of who created it.
+
+    Returns (user_id, created_at, email_queued). Raises 409 on duplicate email.
     """
     # Resolve the role id up front so a missing role surfaces as a clear 500
     # rather than a NOT-NULL IntegrityError mislabelled as an email conflict.
@@ -216,6 +241,10 @@ async def _create_company_user(
             ),
             {"uid": user_id, "rid": role_id, "now": now},
         )
+        await _audit(
+            db, actor_id=actor_id, action=_CREATE_ACTIONS.get(role, f"create_{role}"),
+            resource_type="user", resource_id=user_id,
+        )
         await db.commit()
     except IntegrityError as exc:
         await db.rollback()
@@ -228,12 +257,19 @@ async def _create_company_user(
     # transaction so a mail hiccup never fails account creation). We email a
     # password-set link rather than the bootstrap password — the user sets their
     # own password (which also verifies their email).
-    await _send_credentials_email(
+    queued = await _send_credentials_email(
         db, user_id=user_id, email=str(body.email), full_name=body.full_name,
         role=role, company_id=company_id,
     )
-    return user_id, now
+    return user_id, now, queued
 
+
+# The audit action recorded when an account of each role is created.
+_CREATE_ACTIONS = {
+    "super_admin": "create_company_admin",
+    "hr_manager": "create_hr_manager",
+    "interviewer": "create_interviewer",
+}
 
 # Human-readable role labels for the account-created email.
 _ROLE_LABELS = {
@@ -251,8 +287,11 @@ async def _send_credentials_email(
     full_name: str,
     role: str,
     company_id: uuid.UUID,
-) -> None:
-    """Mint a password-set link + enqueue the credentials email (best-effort)."""
+) -> bool:
+    """Mint a password-set link + enqueue the credentials email (best-effort).
+
+    Returns True when the email was queued, False when it failed (logged).
+    """
     try:
         now = datetime.now(tz=UTC)
         raw = mint_token()
@@ -272,7 +311,7 @@ async def _send_credentials_email(
         company_name = await db.scalar(
             text("SELECT name FROM companies WHERE id = :cid"), {"cid": company_id}
         )
-        await enqueue_email(
+        event = await enqueue_email(
             db,
             to=email,
             template="hr_credentials",
@@ -292,6 +331,60 @@ async def _send_credentials_email(
     except Exception:  # noqa: BLE001 — credential email must never fail account creation
         await db.rollback()
         log.warning("admin_hr.credentials_email_failed", user_id=str(user_id))
+        return False
+    # enqueue_email returns None when it skips the send (an address it will
+    # not mail); that is "not queued" too, not a success.
+    return event is not None
+
+
+async def _resend_invite(
+    db: AsyncSession,
+    *,
+    actor_id: uuid.UUID,
+    company_id: uuid.UUID,
+    user_id: uuid.UUID,
+    role: str,
+) -> ResendInviteResponse:
+    """Send a fresh set-password link to an account that has not signed in yet.
+
+    Tenant-scoped like the deletes: the target must hold ``role`` in
+    ``company_id``, which the caller derived from its own session, else 404.
+    Only a pending account (must_change_password still true) gets one: an
+    active account recovers through forgot-password like everybody else, so
+    this cannot be used to push reset links at people who already chose a
+    password.
+    """
+    row = (
+        await db.execute(
+            text(
+                "SELECT u.email, u.full_name, u.must_change_password FROM users u "
+                "JOIN user_roles ur ON ur.user_id = u.id "
+                "JOIN roles r ON r.id = ur.role_id AND r.name = :role "
+                "WHERE u.id = :uid AND u.company_id = :cid AND u.deleted_at IS NULL"
+            ),
+            {"uid": user_id, "cid": company_id, "role": role},
+        )
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found.")
+    if not row[2]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This person has already set a password. They can use forgot password.",
+        )
+    # The audit row commits first and on its own: a resend is recorded even
+    # when the mail itself then fails.
+    await _audit(
+        db, actor_id=actor_id, action="resend_set_password_link",
+        resource_type="user", resource_id=user_id, details={"role": role},
+    )
+    await db.commit()
+    queued = await _send_credentials_email(
+        db, user_id=user_id, email=row[0], full_name=row[1] or "", role=role,
+        company_id=company_id,
+    )
+    log.info("admin_hr.invite_resent", user_id=str(user_id), queued=queued)
+    return ResendInviteResponse(email_queued=queued)
 
 
 async def _soft_delete_user(db: AsyncSession, user_id: uuid.UUID) -> None:
@@ -317,7 +410,7 @@ async def _audit(
     actor_id: uuid.UUID,
     action: str,
     resource_type: str,
-    resource_id: uuid.UUID,
+    resource_id: uuid.UUID | None,
     details: dict[str, object] | None = None,
 ) -> None:
     """Append an admin action to the (append-only) DPDP audit_log.
@@ -365,6 +458,11 @@ async def create_company(
                 "uid": uuid.UUID(current_user.user_id),
                 "now": now,
             },
+        )
+        await _audit(
+            db, actor_id=uuid.UUID(current_user.user_id), action="create_company",
+            resource_type="company", resource_id=company_id,
+            details={"name": body.name, "slug": slug},
         )
         await db.commit()
     except IntegrityError as exc:
@@ -655,13 +753,45 @@ async def create_company_admin(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"This company already has a super admin ({existing}).",
         )
-    user_id, now = await _create_company_user(
-        db, company_id=company_id, body=body, role="super_admin"
+    user_id, now, queued = await _create_company_user(
+        db, company_id=company_id, body=body, role="super_admin",
+        actor_id=uuid.UUID(current_user.user_id),
     )
     log.info("admin_hr.company_admin_created", user_id=str(user_id), company_id=str(company_id))
     return CompanyAdminResponse(
         user_id=str(user_id), email=str(body.email), full_name=body.full_name,
         company_id=str(company_id), must_change_password=True, created_at=now.isoformat(),
+        email_queued=queued,
+    )
+
+
+@router.post(
+    "/companies/{company_id}/admin/resend-invite", response_model=ResendInviteResponse
+)
+async def resend_company_admin_invite(
+    company_id: uuid.UUID, current_user: PlatformOwnerDep, db: DbSessionDep
+) -> ResendInviteResponse:
+    """Re-send the set-password link to a company's super admin who has not
+    signed in yet (platform_owner only)."""
+    await _company_or_404(db, company_id)
+    uid = await db.scalar(
+        text(
+            "SELECT u.id FROM users u "
+            "JOIN user_roles ur ON ur.user_id = u.id "
+            "JOIN roles r ON r.id = ur.role_id AND r.name = 'super_admin' "
+            "WHERE u.company_id = :cid AND u.deleted_at IS NULL "
+            "ORDER BY u.created_at ASC LIMIT 1"
+        ),
+        {"cid": company_id},
+    )
+    if uid is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This company has no super admin yet.",
+        )
+    return await _resend_invite(
+        db, actor_id=uuid.UUID(current_user.user_id), company_id=company_id,
+        user_id=uid, role="super_admin",
     )
 
 
@@ -812,14 +942,27 @@ async def create_my_hr_manager(
     must_change_password=true; a "set your password" link is emailed, so the
     bootstrap value is never used or disclosed.
     """
-    _, company_id = ctx
-    user_id, now = await _create_company_user(
-        db, company_id=company_id, body=body, role="hr_manager"
+    caller_uid, company_id = ctx
+    user_id, now, queued = await _create_company_user(
+        db, company_id=company_id, body=body, role="hr_manager", actor_id=caller_uid,
     )
     log.info("admin_hr.hr_created", user_id=str(user_id), company_id=str(company_id))
     return HrManagerResponse(
         user_id=str(user_id), email=str(body.email), full_name=body.full_name,
         company_id=str(company_id), must_change_password=True, created_at=now.isoformat(),
+        email_queued=queued,
+    )
+
+
+@router.post("/hr-managers/{user_id}/resend-invite", response_model=ResendInviteResponse)
+async def resend_my_hr_manager_invite(
+    user_id: uuid.UUID, ctx: CompanyAdminCtxDep, db: DbSessionDep
+) -> ResendInviteResponse:
+    """Re-send the set-password link to an HR manager in the caller's own
+    company who has not signed in yet (super_admin only)."""
+    caller_uid, company_id = ctx
+    return await _resend_invite(
+        db, actor_id=caller_uid, company_id=company_id, user_id=user_id, role="hr_manager"
     )
 
 
@@ -939,18 +1082,26 @@ async def create_my_interviewer(
 ) -> InterviewerResponse:
     """Create an interviewer in the caller's own company (super_admin only)."""
     caller_uid, company_id = ctx
-    user_id, now = await _create_company_user(
-        db, company_id=company_id, body=body, role="interviewer"
+    user_id, now, queued = await _create_company_user(
+        db, company_id=company_id, body=body, role="interviewer", actor_id=caller_uid,
     )
-    await _audit(
-        db, actor_id=caller_uid, action="create_interviewer",
-        resource_type="user", resource_id=user_id,
-    )
-    await db.commit()
     log.info("admin_hr.interviewer_created", user_id=str(user_id), company_id=str(company_id))
     return InterviewerResponse(
         user_id=str(user_id), email=str(body.email), full_name=body.full_name,
         company_id=str(company_id), must_change_password=True, created_at=now.isoformat(),
+        email_queued=queued,
+    )
+
+
+@router.post("/interviewers/{user_id}/resend-invite", response_model=ResendInviteResponse)
+async def resend_my_interviewer_invite(
+    user_id: uuid.UUID, ctx: CompanyAdminCtxDep, db: DbSessionDep
+) -> ResendInviteResponse:
+    """Re-send the set-password link to an interviewer in the caller's own
+    company who has not signed in yet (super_admin only)."""
+    caller_uid, company_id = ctx
+    return await _resend_invite(
+        db, actor_id=caller_uid, company_id=company_id, user_id=user_id, role="interviewer"
     )
 
 
@@ -1019,6 +1170,46 @@ class AuditEvent(BaseModel):
     kind: str  # admin_action | consent_granted | consent_denied | consent_revoked
     summary: str
     actor: str
+    # The raw action code for admin rows (e.g. "delete_hr_manager"), so a
+    # reader can still filter on it; ``summary`` is the sentence to show.
+    action: str | None = None
+
+
+# What each admin action reads as, given the name of what it acted on.
+_AUDIT_PHRASES: dict[str, str] = {
+    "create_company": "Created company {target}",
+    "delete_company": "Deleted company {target}",
+    "create_company_admin": "Added super admin {target}",
+    "delete_company_admin": "Removed super admin {target}",
+    "create_hr_manager": "Added HR manager {target}",
+    "delete_hr_manager": "Removed HR manager {target}",
+    "create_interviewer": "Added interviewer {target}",
+    "delete_interviewer": "Removed interviewer {target}",
+    "resend_set_password_link": "Re-sent the set-password link to {target}",
+}
+
+
+def _audit_summary(action: str, details: dict[str, Any] | None, target: str | None) -> str:
+    """One readable sentence for an audit_log row (audit AD-F3).
+
+    The feed used to show the raw code ("delete_hr_manager"). Unknown codes are
+    humanised rather than hidden, so a new action is never dropped from view.
+    """
+    details = details or {}
+    if action == "toggle_feature_flag":
+        state = "on" if details.get("enabled") else "off"
+        return f"Turned feature flag {details.get('key', '')} {state}".replace("  ", " ")
+    phrase = _AUDIT_PHRASES.get(action)
+    if phrase is None:
+        words = re.sub(r"[._]+", " ", action).strip()
+        return words[:1].upper() + words[1:] if words else "Admin action"
+    name = target or details.get("name") or "a removed account"
+    text_out = phrase.format(target=name)
+    withdrawn = details.get("assignments_withdrawn")
+    if isinstance(withdrawn, int) and withdrawn > 0:
+        noun = "interview" if withdrawn == 1 else "interviews"
+        text_out += f" ({withdrawn} open {noun} withdrawn)"
+    return text_out
 
 
 @router.get("/audit-log", response_model=list[AuditEvent])
@@ -1027,32 +1218,58 @@ async def audit_log(
     db: DbSessionDep,
     limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> list[AuditEvent]:
-    """Merged DPDP audit feed: append-only admin actions + consent ledger events."""
+    """Merged DPDP audit feed: append-only admin actions + consent ledger events.
+
+    Admin rows name the staff member who acted and what they acted on. A
+    candidate actor stays the word "candidate": this feed is for the platform
+    owner, and naming candidates here would widen who sees their identity.
+    """
     rows = (
         await db.execute(
             text(
-                "SELECT ts, kind, summary, actor FROM ("
-                "  SELECT event_ts AS ts, 'admin_action' AS kind, "
-                "         COALESCE(action,'') AS summary, COALESCE(actor_type,'system') AS actor "
-                "  FROM audit_log WHERE event_ts IS NOT NULL "
+                "SELECT ts, kind, summary, actor, details, target FROM ("
+                "  SELECT a.event_ts AS ts, 'admin_action' AS kind, "
+                "         COALESCE(a.action,'') AS summary, "
+                "         CASE WHEN a.actor_type = 'admin' "
+                "              THEN COALESCE(NULLIF(au.full_name, ''), 'admin') "
+                "              ELSE COALESCE(a.actor_type,'system') END AS actor, "
+                "         a.details AS details, "
+                "         CASE WHEN a.resource_type = 'user' THEN NULLIF(tu.full_name, '') "
+                "              WHEN a.resource_type = 'company' THEN tc.name END AS target "
+                "  FROM audit_log a "
+                "  LEFT JOIN users au ON a.actor_type = 'admin' AND au.id = a.actor_id "
+                "  LEFT JOIN users tu ON a.resource_type = 'user' AND tu.id = a.resource_id "
+                "  LEFT JOIN companies tc ON a.resource_type = 'company' "
+                "         AND tc.id = a.resource_id "
+                "  WHERE a.event_ts IS NOT NULL "
                 "  UNION ALL "
                 "  SELECT granted_at AS ts, "
                 "         CASE WHEN granted THEN 'consent_granted' ELSE 'consent_denied' END AS kind, "
-                "         COALESCE(purpose, consent_type) AS summary, 'candidate' AS actor "
+                "         COALESCE(purpose, consent_type) AS summary, 'candidate' AS actor, "
+                "         NULL::jsonb AS details, NULL AS target "
                 "  FROM dpdp_consent_ledger "
                 "  UNION ALL "
                 "  SELECT revoked_at AS ts, 'consent_revoked' AS kind, "
-                "         COALESCE(purpose, consent_type) AS summary, 'candidate' AS actor "
+                "         COALESCE(purpose, consent_type) AS summary, 'candidate' AS actor, "
+                "         NULL::jsonb AS details, NULL AS target "
                 "  FROM dpdp_consent_ledger WHERE revoked_at IS NOT NULL "
                 ") e ORDER BY ts DESC LIMIT :lim"
             ),
             {"lim": limit},
         )
     ).fetchall()
-    return [
-        AuditEvent(ts=r[0].isoformat(), kind=r[1], summary=r[2] or "", actor=r[3])
-        for r in rows
-    ]
+    events: list[AuditEvent] = []
+    for r in rows:
+        if r[1] == "admin_action":
+            details = r[4] if isinstance(r[4], dict) else None
+            events.append(AuditEvent(
+                ts=r[0].isoformat(), kind=r[1], actor=r[3], action=r[2] or None,
+                summary=_audit_summary(r[2] or "", details, r[5]),
+            ))
+        else:
+            events.append(AuditEvent(ts=r[0].isoformat(), kind=r[1], summary=r[2] or "",
+                                     actor=r[3]))
+    return events
 
 
 # ===========================================================================
@@ -1114,6 +1331,11 @@ async def toggle_feature_flag(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Feature flag not found."
         )
+    await _audit(
+        db, actor_id=uuid.UUID(current_user.user_id), action="toggle_feature_flag",
+        resource_type="feature_flag", resource_id=None,
+        details={"key": row[0], "enabled": bool(row[3])},
+    )
     await db.commit()
     return FeatureFlagOut(
         key=row[0], label=row[1], description=row[2], enabled=row[3],

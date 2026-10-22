@@ -30,6 +30,8 @@ import {
   AlertTriangle,
   ClipboardList,
   UserMinus,
+  Send,
+  Trash2,
 } from '@/design/components/icons';
 import {
   listCompanies,
@@ -43,16 +45,24 @@ import {
   listFeatureFlags,
   setFeatureFlag,
   listAuditLog,
+  resendCompanyAdminInvite,
   type Company,
   type FeatureFlag,
   type AuditEvent,
 } from '@/api/hr';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { errorMessage } from '@/lib/errorMessage';
+import { ApiError } from '@/api/client';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { CompanyDialog, AccountDialog } from '@/components/superadmin/CreateDialogs';
+import {
+  CompanyDialog,
+  AccountDialog,
+  DeleteCompanyDialog,
+} from '@/components/superadmin/CreateDialogs';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import {
   GlassCard,
@@ -63,7 +73,7 @@ import {
   StatusTag,
   type TagTone,
 } from '@/design/components/primitives';
-import { EmptyState, PageHeader, SectionCard, Toolbar } from '@/design/components/page';
+import { EmptyState, Page, PageHeader, SectionCard, Toolbar } from '@/design/components/page';
 import { ProgressiveList } from '@/design/components/collapsible';
 import { gradientFor, initialsOf } from '@/design/data/shared';
 
@@ -88,14 +98,25 @@ const STATUS_TONE: Record<string, TagTone> = {
 function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted: () => void }) {
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
-  // getCompanyAdmin 404s when none exists yet — treat any error as "no admin".
-  const { data: admin, isLoading } = useQuery({
+  // getCompanyAdmin 404s when none exists yet. Only that 404 means "no super
+  // admin": any other failure is an error with a retry (AD-F5), because
+  // offering "Add super admin" on a 500 leads straight to a 409.
+  const adminQuery = useQuery({
     queryKey: ['company-admin', company.id],
-    queryFn: () => getCompanyAdmin(company.id),
+    queryFn: async () => {
+      try {
+        return await getCompanyAdmin(company.id);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     retry: false,
     throwOnError: false,
   });
+  const admin = adminQuery.data ?? null;
 
   // Read-only view of the company's HR managers (created by its super admin).
   const { data: hrs } = useQuery({
@@ -113,62 +134,105 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
         email: v.email.trim(),
         full_name: v.fullName.trim(),
       }),
-    onSuccess: (_created, v) => {
-      toast.success(
-        `Super admin ${v.email} created for ${company.name} - a set-password link was emailed.`,
-      );
+    onSuccess: (created, v) => {
+      // Sending is best-effort; say so when it did not go (AD-F8).
+      if (created.email_queued === false) {
+        toast.warning(
+          `Super admin ${v.email} was created for ${company.name}, but the set-password email could not be sent. Use Resend link.`,
+        );
+      } else {
+        toast.success(
+          `Super admin ${v.email} created for ${company.name}. A set-password link is on its way`,
+        );
+      }
       setCreateOpen(false);
       void qc.invalidateQueries({ queryKey: ['company-admin', company.id] });
       void qc.invalidateQueries({ queryKey: ['companies'] });
       void qc.invalidateQueries({ queryKey: ['platform-stats'] });
     },
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not create the super admin.')),
+  });
+
+  const resendMut = useMutation({
+    mutationFn: () => resendCompanyAdminInvite(company.id),
+    onSuccess: (res) => {
+      if (res.email_queued) toast.success('Set-password link sent again');
+      else toast.warning('Could not send the set-password email. Try again later.');
+    },
     onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : 'Could not create super admin.'),
+      toast.error(errorMessage(err, 'Could not resend the set-password link.')),
   });
 
   const removeAdminMut = useMutation({
     mutationFn: () => deleteCompanyAdmin(company.id),
     onSuccess: () => {
-      toast.success('Super admin removed.');
+      toast.success('Super admin removed');
       void qc.invalidateQueries({ queryKey: ['company-admin', company.id] });
       void qc.invalidateQueries({ queryKey: ['companies'] });
       void qc.invalidateQueries({ queryKey: ['platform-stats'] });
     },
-    onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : 'Could not remove super admin.'),
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not remove the super admin.')),
   });
 
   const deleteCompanyMut = useMutation({
     mutationFn: () => deleteCompany(company.id),
     onSuccess: () => {
-      toast.success(`Company "${company.name}" deleted.`);
+      toast.success(`Company "${company.name}" deleted`);
+      setDeleteOpen(false);
       void qc.invalidateQueries({ queryKey: ['companies'] });
       void qc.invalidateQueries({ queryKey: ['platform-stats'] });
+      void qc.invalidateQueries({ queryKey: ['audit-log'] });
       onDeleted();
     },
-    onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : 'Could not delete company.'),
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not delete the company.')),
   });
 
-  const hasAdmin = !!admin;
+  const hasAdmin = admin !== null;
+  const memberSummary = [
+    company.has_admin ? '1 super admin' : null,
+    `${company.hr_count} HR ${company.hr_count === 1 ? 'manager' : 'managers'}`,
+    'and every interviewer',
+  ]
+    .filter(Boolean)
+    .join(', ');
 
   return (
     <SectionCard
       title={`Super admin - ${company.name}`}
       icon={ShieldCheck}
-      description="One super admin per company. They log in, reset the password, then create HR managers."
+      description="One super admin per company. They log in, set a password, then create HR managers and interviewers."
       action={
-        /* Delete the whole company (and all its member logins) */
-        <ConfirmDeleteButton
-          label="Delete company"
-          pending={deleteCompanyMut.isPending}
-          onConfirm={() => deleteCompanyMut.mutate()}
-        />
+        /* Delete the whole company (and all its member logins): a dialog that
+           states the consequences and asks for the name (AD-F13). */
+        <Button
+          type="button"
+          variant="outline"
+          className="gap-1.5 text-[var(--ui-danger)]"
+          onClick={() => setDeleteOpen(true)}
+        >
+          <Trash2 className="h-4 w-4" aria-hidden="true" />
+          Delete company
+        </Button>
       }
       className="space-y-4"
     >
-      {isLoading ? (
+      <DeleteCompanyDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        companyName={company.name}
+        memberSummary={memberSummary}
+        pending={deleteCompanyMut.isPending}
+        onConfirm={() => deleteCompanyMut.mutate()}
+      />
+      {adminQuery.isLoading ? (
         <Skeleton className="h-16 w-full rounded-[14px]" />
+      ) : adminQuery.isError ? (
+        <QueryErrorPanel
+          title="Could not load this company's super admin."
+          error={adminQuery.error}
+          onRetry={() => void adminQuery.refetch()}
+          retrying={adminQuery.isFetching}
+        />
       ) : hasAdmin ? (
         /* Existing super admin — read-only card */
         <div
@@ -188,13 +252,27 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
           </div>
           <div className="flex shrink-0 items-center gap-2">
             {admin.must_change_password ? (
-              <Badge variant="outline" className="text-xs">
-                pending first login
-              </Badge>
+              <>
+                <Badge variant="outline" className="text-xs">
+                  Pending first login
+                </Badge>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="gap-1"
+                  aria-label={`Resend the set-password link to ${admin.full_name}`}
+                  disabled={resendMut.isPending}
+                  onClick={() => resendMut.mutate()}
+                >
+                  <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                  Resend link
+                </Button>
+              </>
             ) : (
               <Badge variant="success" className="gap-1 text-xs">
                 <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-                active
+                Active
               </Badge>
             )}
             <ConfirmDeleteButton
@@ -211,7 +289,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
           <EmptyState
             icon={UserPlus}
             title="This company has no super admin yet"
-            description="They will manage the company's HR managers."
+            description="They will manage the company's HR managers and interviewers."
             action={
               <Button type="button" onClick={() => setCreateOpen(true)} className="gap-1.5">
                 <UserPlus className="h-4 w-4" aria-hidden="true" />
@@ -236,7 +314,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
         }}
         idPrefix="sa"
         title={`Add a super admin for ${company.name}`}
-        description="One per company. They create the company's HR managers."
+        description="One per company. They create the company's HR managers and interviewers."
         submitLabel="Create super admin"
         emailPlaceholder="admin@company.com"
         namePlaceholder="Company Super Admin"
@@ -270,11 +348,11 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
                 </div>
                 {hr.must_change_password ? (
                   <Badge variant="outline" className="shrink-0 text-xs">
-                    pending
+                    Pending first login
                   </Badge>
                 ) : (
                   <Badge variant="success" className="shrink-0 text-xs">
-                    active
+                    Active
                   </Badge>
                 )}
               </div>
@@ -291,26 +369,23 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
 function FeatureFlagsTab(): JSX.Element {
   const qc = useQueryClient();
 
-  const {
-    data: flags,
-    isLoading,
-    isError,
-  } = useQuery<FeatureFlag[]>({
+  const flagsQuery = useQuery<FeatureFlag[]>({
     queryKey: ['feature-flags'],
     queryFn: listFeatureFlags,
     retry: false,
     throwOnError: false,
   });
+  const { data: flags, isLoading, isError } = flagsQuery;
 
   const toggleMut = useMutation({
     mutationFn: ({ key, enabled }: { key: string; enabled: boolean }) =>
       setFeatureFlag(key, enabled),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['feature-flags'] });
-      toast.success('Feature flag updated.');
+      void qc.invalidateQueries({ queryKey: ['audit-log'] });
+      toast.success('Feature flag updated');
     },
-    onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : 'Could not update flag.'),
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not update the feature flag.')),
   });
 
   return (
@@ -330,27 +405,15 @@ function FeatureFlagsTab(): JSX.Element {
         </div>
       )}
 
+      {/* Any failure, said as it is (AD-F19): the old copy blamed a missing
+          migration for every error, including a 403 or a dropped connection. */}
       {!isLoading && isError && (
-        <GlassCard className="p-6">
-          <div className="flex items-start gap-3">
-            <AlertTriangle
-              className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ui-warn)]"
-              aria-hidden="true"
-            />
-            <div>
-              <p className="text-[14px] font-semibold text-foreground">
-                Feature flags unavailable - run the latest migration.
-              </p>
-              <p className="mt-1 text-[12.5px] text-muted-foreground">
-                The{' '}
-                <code className="rounded bg-[var(--ui-inset)] px-1 py-0.5 font-mono text-[12px] text-foreground">
-                  feature_flags
-                </code>{' '}
-                table does not exist yet. Apply the pending schema migration and reload.
-              </p>
-            </div>
-          </div>
-        </GlassCard>
+        <QueryErrorPanel
+          title="Could not load the feature flags."
+          error={flagsQuery.error}
+          onRetry={() => void flagsQuery.refetch()}
+          retrying={flagsQuery.isFetching}
+        />
       )}
 
       {!isLoading && !isError && flags && flags.length === 0 && (
@@ -380,9 +443,12 @@ function FeatureFlagsTab(): JSX.Element {
                 )}
                 <p className="mt-0.5 font-mono text-[12px] text-[var(--ui-faint)]">{flag.key}</p>
               </div>
+              {/* Locked while its own update is in flight, so rapid clicks
+                  cannot race each other to the server (AD-F19). */}
               <ToggleSwitch
                 checked={flag.enabled}
                 label={`Toggle ${flag.label}`}
+                disabled={toggleMut.isPending && toggleMut.variables?.key === flag.key}
                 onChange={(next) => toggleMut.mutate({ key: flag.key, enabled: next })}
               />
             </GlassCard>
@@ -419,6 +485,13 @@ function labelForKind(kind: string): string {
   return (KIND_LABEL as Record<string, string>)[kind] ?? kind;
 }
 
+/** Who acted, as a reader expects it: staff by name, others by what they are. */
+function actorLabel(actor: string): string {
+  if (actor === 'candidate') return 'Candidate';
+  if (actor === 'system') return 'System';
+  return actor;
+}
+
 function relativeTs(isoTs: string): string {
   const diff = Date.now() - new Date(isoTs).getTime();
   if (diff < 0) return 'just now';
@@ -436,18 +509,21 @@ function relativeTs(isoTs: string): string {
 // ── Audit log tab — live ──────────────────────────────────────────────────────
 
 function AuditLogTab(): JSX.Element {
-  const { data: events, isLoading } = useQuery<AuditEvent[]>({
+  const auditQuery = useQuery<AuditEvent[]>({
     queryKey: ['audit-log'],
     queryFn: () => listAuditLog(100),
     retry: false,
     throwOnError: false,
   });
+  const { data: events, isLoading, isError } = auditQuery;
 
   return (
     <GlassCard className="mt-5 p-5">
       <h2 className="text-[17px] font-bold tracking-[-0.2px] text-foreground">DPDP audit log</h2>
       <p className="mb-4 mt-1 text-[13.5px] text-muted-foreground">
-        The most recent 100 admin actions and consent changes across the platform.
+        The most recent 100 events across the platform: companies, super admins, HR managers and
+        interviewers added or removed, set-password links re-sent, feature flags switched, and
+        candidate consent changes.
       </p>
 
       {isLoading && (
@@ -458,7 +534,18 @@ function AuditLogTab(): JSX.Element {
         </div>
       )}
 
-      {!isLoading && (!events || events.length === 0) && (
+      {/* A failed load is never "No audit events yet" (AD-F4): an empty
+          compliance log is a claim someone may act on. */}
+      {!isLoading && isError && !events && (
+        <QueryErrorPanel
+          title="Could not load the audit log."
+          error={auditQuery.error}
+          onRetry={() => void auditQuery.refetch()}
+          retrying={auditQuery.isFetching}
+        />
+      )}
+
+      {!isLoading && !isError && (!events || events.length === 0) && (
         <EmptyState icon={ClipboardList} title="No audit events yet." />
       )}
 
@@ -480,7 +567,7 @@ function AuditLogTab(): JSX.Element {
               </StatusTag>
               <div className="min-w-0 flex-1 break-words text-[13px] max-sm:order-last max-sm:basis-full">
                 <span className="text-foreground">{ev.summary}</span>{' '}
-                <span className="text-[var(--ui-faint)]">· {ev.actor}</span>
+                <span className="text-[var(--ui-faint)]">· {actorLabel(ev.actor)}</span>
               </div>
               <time
                 dateTime={ev.ts}
@@ -519,7 +606,7 @@ export default function PlatformOwnerConsole() {
   });
 
   // Real platform-wide counts for the stat tiles (no dummy data).
-  const { data: stats } = useQuery({
+  const { data: stats, isError: statsError } = useQuery({
     queryKey: ['platform-stats'],
     queryFn: getPlatformStats,
   });
@@ -527,14 +614,13 @@ export default function PlatformOwnerConsole() {
   const createMut = useMutation({
     mutationFn: (name: string) => createCompany(name.trim()),
     onSuccess: (c) => {
-      toast.success(`Company "${c.name}" created.`);
+      toast.success(`Company "${c.name}" created`);
       setCompanyDialogOpen(false);
       setSelectedId(c.id);
       void qc.invalidateQueries({ queryKey: ['companies'] });
       void qc.invalidateQueries({ queryKey: ['platform-stats'] });
     },
-    onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : 'Could not create company.'),
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not create the company.')),
   });
 
   const openCompanyDialog = () => {
@@ -553,7 +639,12 @@ export default function PlatformOwnerConsole() {
       (c.admin_email ?? '').toLowerCase().includes(filterNeedle),
   );
 
-  const pendingAdmins = Math.max(0, (stats?.companies ?? 0) - (stats?.super_admins ?? 0));
+  // A count that is loading or failed is unknown, never 0 (AD-F24): "0
+  // companies, all covered" is the good news, so it must not be the fallback.
+  const known = stats !== undefined;
+  const unknownDelta = statsError ? 'Count unavailable' : 'Loading';
+  const n = (v: number | undefined): string => (v === undefined ? '-' : String(v));
+  const pendingAdmins = known ? Math.max(0, stats.companies - stats.super_admins) : 0;
   const statTiles: {
     label: string;
     value: string;
@@ -562,36 +653,39 @@ export default function PlatformOwnerConsole() {
   }[] = [
     {
       label: 'Companies',
-      value: String(stats?.companies ?? 0),
-      delta: `${stats?.super_admins ?? 0} with a super admin`,
+      value: n(stats?.companies),
+      delta: known ? `${stats.super_admins} with a super admin` : unknownDelta,
       trend: 'flat',
     },
     {
       label: 'Super admins',
-      value: String(stats?.super_admins ?? 0),
-      delta: pendingAdmins > 0 ? `${pendingAdmins} company without one` : 'all companies covered',
-      trend: pendingAdmins > 0 ? 'down' : 'flat',
+      value: n(stats?.super_admins),
+      delta: !known
+        ? unknownDelta
+        : pendingAdmins > 0
+          ? `${pendingAdmins} ${pendingAdmins === 1 ? 'company' : 'companies'} without one`
+          : 'All companies covered',
+      trend: known && pendingAdmins > 0 ? 'down' : 'flat',
     },
     {
       label: 'HR managers',
-      value: String(stats?.hr_managers ?? 0),
-      delta: 'across all tenants',
+      value: n(stats?.hr_managers),
+      delta: known ? 'Across all companies' : unknownDelta,
       trend: 'flat',
     },
     {
       label: 'Interviews',
-      value: String(stats?.interviews_total ?? 0),
-      delta: `${stats?.interviews_30d ?? 0} in last 30 days`,
-      trend: (stats?.interviews_30d ?? 0) > 0 ? 'up' : 'flat',
+      value: n(stats?.interviews_total),
+      delta: known ? `${stats.interviews_30d} in the last 30 days` : unknownDelta,
+      trend: known && stats.interviews_30d > 0 ? 'up' : 'flat',
     },
   ];
 
   return (
-    <div className="mx-auto max-w-[1280px] space-y-6 px-0 py-2">
+    <Page width="default">
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <PageHeader
-        className="mb-0"
-        title={<span data-testid="page-title">Platform Owner</span>}
+        title={<span data-testid="page-title">Platform owner</span>}
         description="Tenants, company super admins and platform governance."
         actions={
           <Button type="button" onClick={openCompanyDialog}>
@@ -796,6 +890,6 @@ export default function PlatformOwnerConsole() {
 
       {view === 'flags' && <FeatureFlagsTab />}
       {view === 'audit' && <AuditLogTab />}
-    </div>
+    </Page>
   );
 }

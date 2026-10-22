@@ -17,15 +17,20 @@
 // control exists and is wired to the round update", which no rendered object
 // exposes cheaply for a component this size.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
 
-const editor = readFileSync(
-  resolve(__dirname, '../pages/hr/ExamEditor.tsx'),
-  'utf-8',
-);
+// The editor page plus the panels it is composed of (components/hr/exam/).
+const panelDir = resolve(__dirname, '../components/hr/exam');
+const editor = [
+  readFileSync(resolve(__dirname, '../pages/hr/ExamEditor.tsx'), 'utf-8'),
+  ...readdirSync(panelDir)
+    .filter((f) => /\.tsx?$/.test(f))
+    .sort()
+    .map((f) => readFileSync(resolve(panelDir, f), 'utf-8')),
+].join('\n');
 const api = readFileSync(resolve(__dirname, '../api/exams.ts'), 'utf-8');
 
 describe('camera proctoring is reachable from the HR exam editor', () => {
@@ -46,7 +51,8 @@ describe('camera proctoring is reachable from the HR exam editor', () => {
     // start without consent, and nothing is recorded — belong next to the
     // control, not in documentation nobody opens.
     expect(editor).toMatch(/camera access/i);
-    expect(editor).toMatch(/no video or\s+image is recorded/i);
+    // JSX collapses the line breaks prettier puts in this sentence.
+    expect(editor).toMatch(/no video or\s+image is\s+recorded/i);
   });
 
   it('models the field in both the Round type and the update input', () => {

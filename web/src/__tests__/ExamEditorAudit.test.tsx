@@ -55,7 +55,8 @@ const api = vi.hoisted(() => ({
 vi.mock('../api/exams', () => {
   const out: Record<string, unknown> = { CODING_LANGUAGES: ['python'] };
   for (const name of Object.keys(api)) {
-    out[name] = (...a: unknown[]) => (api as Record<string, (...x: unknown[]) => unknown>)[name](...a);
+    out[name] = (...a: unknown[]) =>
+      (api as Record<string, (...x: unknown[]) => unknown>)[name](...a);
   }
   return out;
 });
@@ -81,7 +82,10 @@ vi.mock('../lib/toast', () => ({
   },
 }));
 
-import ExamEditor, { McqSection, RoundPanel, RoundAssignPanel } from '../pages/hr/ExamEditor';
+import ExamEditor from '../pages/hr/ExamEditor';
+import { McqSection } from '../components/hr/exam/McqSection';
+import { RoundPanel } from '../components/hr/exam/RoundPanel';
+import { RoundAssignPanel } from '../components/hr/exam/RoundAssignPanel';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -346,6 +350,31 @@ describe('round panel', () => {
     );
   });
 
+  it('adds a coding section with its title and time limit, then closes the form', async () => {
+    api.createSection.mockResolvedValue({ id: 's-9' });
+    const user = userEvent.setup();
+    roundPanel(round());
+
+    await user.click(screen.getByRole('button', { name: /add section/i }));
+    const form = screen.getByRole('form', { name: 'New section' });
+    await user.click(within(form).getByRole('button', { name: 'Coding' }));
+    await user.type(within(form).getByLabelText('Section title'), 'Algorithms');
+    await user.type(within(form).getByLabelText('Section time limit in minutes'), '15');
+    await user.click(within(form).getByRole('button', { name: /add section/i }));
+
+    await waitFor(() =>
+      expect(api.createSection).toHaveBeenCalledWith('e-1', 'r-1', {
+        title: 'Algorithms',
+        kind: 'coding',
+        time_limit_seconds: 900,
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('form', { name: 'New section' })).not.toBeInTheDocument(),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith('Section added');
+  });
+
   it('names the icon-only cancel in the rename form (H1)', async () => {
     const user = userEvent.setup();
     roundPanel(round());
@@ -424,7 +453,10 @@ describe('assign panel', () => {
       limit: 200,
       offset: 0,
     });
-    api.listAssignments.mockResolvedValue([LIVE, { ...LIVE, assignment_id: 'as-x', round_id: 'r-2' }]);
+    api.listAssignments.mockResolvedValue([
+      LIVE,
+      { ...LIVE, assignment_id: 'as-x', round_id: 'r-2' },
+    ]);
     const user = userEvent.setup();
     wrap(<RoundAssignPanel examId="e-1" roundId="r-1" isPublished isFirstRound />);
 
@@ -527,7 +559,10 @@ describe('exam editor page', () => {
   });
 
   it('changes exam settings and closes the exam behind a confirm (E11)', async () => {
-    api.getStructure.mockResolvedValue({ exam_id: 'e-1', rounds: [round({ status: 'published' })] });
+    api.getStructure.mockResolvedValue({
+      exam_id: 'e-1',
+      rounds: [round({ status: 'published' })],
+    });
     api.updateExam.mockResolvedValue({ ...EXAM, status: 'closed' });
     const user = userEvent.setup();
     wrap(<ExamEditor />);

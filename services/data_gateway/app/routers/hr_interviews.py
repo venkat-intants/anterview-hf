@@ -19,8 +19,9 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import or_, select, text
+from sqlalchemy import column, exists, or_, select, table, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app import accommodations
 from app.config import settings
@@ -30,6 +31,7 @@ from app.email_time import format_email_datetime
 from app.interview_link import hash_interview_token, mint_interview_token
 from app.mailer import enqueue_email
 from app.models import Applicant, AuditLog, InterviewInvite, Job, Scorecard
+from app.models import Session as SessionModel
 from app.notifications_util import create_notification
 from app.reminders import rearm_interview_reminders
 from app.requisitions import ApplicationChoice, choose_application
@@ -166,6 +168,94 @@ async def _get_owned_invite(
     return await get_owned(db, InterviewInvite, company_id, invite_id, noun="Invite")
 
 
+async def _lock_applicant_invites(
+    db: AsyncSession, company_id: uuid.UUID, applicant_id: uuid.UUID
+) -> None:
+    """Serialise every invite decision for one person at one company.
+
+    Creating, replacing and rescheduling all read "which links does this person
+    already hold" and then act on the answer. Without a lock two concurrent
+    requests (a double submit, the case the duplicate window exists for) both
+    read "none", both mint a Job and both insert, and because their jobs differ
+    the (applicant_id, job_id) unique index does not stop the second live link.
+    The lock is transaction-scoped, so it is released by the commit or rollback
+    that ends the request. Keyed on the person rather than the application:
+    coarser, never wrong, and an invite recorded against no application
+    competes with every application anyway.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:k, 0))"),
+        {"k": f"interview_invite:{company_id}:{applicant_id}"},
+    )
+
+
+#: A later invite for the same application that is live or finished. Once one
+#: exists the older link must stay dead: reviving it would hand the candidate a
+#: second working link next to the new one (IV-H2 through the back door).
+_newer = aliased(InterviewInvite)
+_SUPERSEDED = exists().where(
+    _newer.applicant_id == InterviewInvite.applicant_id,
+    _newer.company_id == InterviewInvite.company_id,
+    _newer.id != InterviewInvite.id,
+    _newer.created_at > InterviewInvite.created_at,
+    _newer.deleted_at.is_(None),
+    _newer.status.in_(("invited", "consumed", "completed")),
+    or_(
+        _newer.enrolment_id == InterviewInvite.enrolment_id,
+        _newer.enrolment_id.is_(None),
+        InterviewInvite.enrolment_id.is_(None),
+    ),
+)
+
+#: The application the invite is for is still open: the person is not erased,
+#: the application is not withdrawn (a withdrawn enrolment is soft deleted and
+#: leaves the view) and it has not been decided. Narrower than the create gate
+#: on purpose: an application that moved on to 'interviewed' or 'held' may
+#: still need its AI interview moved.
+_progress = table(
+    "application_progress",
+    column("company_id"), column("applicant_id"), column("enrolment_id"),
+    column("stored_status"),
+)
+_APPLICATION_OPEN = exists().where(
+    _progress.c.company_id == InterviewInvite.company_id,
+    _progress.c.applicant_id == InterviewInvite.applicant_id,
+    or_(InterviewInvite.enrolment_id.is_(None),
+        _progress.c.enrolment_id == InterviewInvite.enrolment_id),
+    _progress.c.stored_status.not_in(("hired", "rejected")),
+)
+
+
+async def _interview_finished(db: AsyncSession, inv: InterviewInvite) -> bool:
+    """The started interview is over: scored, or the worker has marked its
+    session completed (scoring may still be running). The same test
+    interview_take uses to refuse re-entry. 'abandoned' is NOT over: a dropped
+    call stays reconnectable."""
+    if inv.session_id is None:
+        return False
+    if await db.scalar(
+        select(Scorecard.scorecard_id).where(Scorecard.session_id == inv.session_id)
+    ) is not None:
+        return True
+    session_status = await db.scalar(
+        text("SELECT status FROM sessions WHERE id = :sid"), {"sid": inv.session_id}
+    )
+    return bool(session_status == "completed")
+
+
+async def _reschedule_blockers(db: AsyncSession, inv: InterviewInvite) -> tuple[bool, bool]:
+    """(superseded, application_open) for one invite, from the same expressions
+    the list uses, so the button and the PATCH can never disagree."""
+    row = (
+        await db.execute(
+            select(_SUPERSEDED.label("superseded"), _APPLICATION_OPEN.label("open"))
+            .select_from(InterviewInvite)
+            .where(InterviewInvite.id == inv.id)
+        )
+    ).one()
+    return bool(row.superseded), bool(row.open)
+
+
 #: How long a scheduled link stays alive after its join window closes. First
 #: start is gated to ``scheduled_at .. scheduled_at + join window``
 #: (interview_take.redeem_invite), but a candidate who starts late in the window
@@ -234,6 +324,8 @@ def _invite_out(
     scorecard_id: Any = None,
     composite: Any = None,
     now: datetime | None = None,
+    superseded: bool = False,
+    application_open: bool = True,
 ) -> InviteOut:
     now = now or datetime.now(tz=UTC)
     return InviteOut(
@@ -247,8 +339,13 @@ def _invite_out(
         missed_slot=_missed_slot(inv, now),
         # Reschedule is for an interview nobody has started. Allowed on an
         # expired-but-unstarted link too: moving the slot re-extends it, which
-        # is the recovery for a missed slot.
-        can_reschedule=inv.status == "invited" and inv.deleted_at is None,
+        # is the recovery for a missed slot. Never once a later invite exists
+        # for the application, or the application is decided or withdrawn
+        # (see reschedule_invite).
+        can_reschedule=(
+            inv.status == "invited" and inv.deleted_at is None
+            and not superseded and application_open
+        ),
     )
 
 
@@ -430,6 +527,9 @@ async def advance_applicant_to_interview(
         role = await choose_application(
             db, applicant_id=applicant.id, company_id=company_id, enrolment_id=enrolment_id
         )
+    # Same lock as create_invite: the check below and the insert after it must
+    # not interleave with a hand-made invite for the same person.
+    await _lock_applicant_invites(db, company_id, applicant.id)
     # Idempotent: don't create a second invite if one is already active — for
     # this application (or one recorded against no application at all).
     active = select(InterviewInvite).where(
@@ -634,12 +734,17 @@ async def create_invite(
     # job-keyed lookup never found the old invite. Both links then stayed live
     # and the candidate could sit the AI interview twice (IV-H2). An invite
     # recorded against no application counts too, as in the workflow path.
+    #
+    # Expired links are read as well. Nothing sweeps an 'invited' row to
+    # 'expired', so a link past its expiry is still 'invited' on disk, and a
+    # reschedule extends a link again. Left alone it could be revived next to
+    # the new one; it is retired below instead.
+    await _lock_applicant_invites(db, company_id, applicant.id)
     prior_q = select(InterviewInvite).where(
         InterviewInvite.applicant_id == applicant.id,
         InterviewInvite.company_id == company_id,
         InterviewInvite.status.in_(("invited", "consumed")),
         InterviewInvite.deleted_at.is_(None),
-        InterviewInvite.expires_at > now,
     )
     if app_.enrolment_id is not None:
         prior_q = prior_q.where(
@@ -651,24 +756,27 @@ async def create_invite(
     priors = list((await db.scalars(prior_q.order_by(InterviewInvite.created_at.desc()))).all())
 
     for prior in priors:
-        if prior.status != "consumed":
+        if prior.status != "consumed" or prior.expires_at <= now:
+            # An expired started link redeems nothing (interview_take checks the
+            # expiry), so it cannot be a second way in and does not block.
             continue
-        # A consumed invite with a scorecard is a finished interview, not a live
-        # one; it is left as it is and does not block a new invite.
-        if prior.session_id is not None and await db.scalar(
-            select(Scorecard.scorecard_id).where(Scorecard.session_id == prior.session_id)
-        ) is not None:
+        # A consumed invite whose interview has finished (scored, or the worker
+        # has marked the session completed) is not a live one; it is left as it
+        # is and does not block a new invite.
+        if await _interview_finished(db, prior):
             continue
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"{applicant.full_name} has already started this interview, so the link "
-                "cannot be replaced. Wait for it to finish."
+                "cannot be replaced. If they dropped out and will not return, end the "
+                "started interview first, then send a new link."
             ),
         )
-    live = [p for p in priors if p.status == "invited"]
+    live = [p for p in priors if p.status == "invited" and p.expires_at > now]
+    stale = [p for p in priors if p.status == "invited" and p.expires_at <= now]
 
-    if live:
+    if live and not body.replace_existing:
         newest = live[0]
         identical = (
             newest.language == body.language
@@ -679,7 +787,10 @@ async def create_invite(
         if identical:
             # A repeat of the request that made this invite (double submit,
             # re-fired proposal, retried network call). Answer with what it
-            # already made: no second link, no second email.
+            # already made: no second link, no second email. Only for a request
+            # that did not ask to replace: a confirmed replacement is HR saying
+            # "the candidate needs a new link" (a lost email, say), and that is
+            # honoured even moments after the last one.
             response.status_code = status.HTTP_200_OK
             title = await db.scalar(select(Job.title).where(Job.id == newest.job_id))
             log.info("hr.interview.invite_deduplicated", invite_id=str(newest.id),
@@ -691,25 +802,39 @@ async def create_invite(
                 scheduled_at=newest.scheduled_at.isoformat() if newest.scheduled_at else None,
                 status=newest.status, reused=True,
             )
-        if not body.replace_existing:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"{applicant.full_name} already has an active interview link for this "
-                    "opening. Confirm the replacement to revoke it and send a new one."
-                ),
-            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{applicant.full_name} already has an active interview link for this "
+                "opening. Confirm the replacement to revoke it and send a new one."
+            ),
+        )
 
     job = await _resolve_job(db, hr_uid, company_id, applicant, body, role=app_)
+    # Only reachable with an explicit job_id: a started link on that same job
+    # still occupies the one-active-invite-per-(applicant, job) index, and the
+    # insert would fail with a 500 rather than say why.
+    if any(p.status == "consumed" and p.job_id == job.id for p in priors):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{applicant.full_name} already has a started interview on record for "
+                "that job. End it first, or send the invite without choosing a job."
+            ),
+        )
 
-    for prior in live:
+    # Replaced links (HR confirmed) and dead ones nobody swept (no confirmation
+    # needed: the candidate cannot use them) are both retired, so exactly one
+    # 'invited' row is left and no reschedule can bring an old one back.
+    for prior, reason in [*((p, "replaced") for p in live),
+                          *((p, "superseded") for p in stale)]:
         prior.status = "revoked"
         prior.updated_at = now
         _audit_invite(db, request, actor=hr_uid, action="interview_invite.revoked",
                       invite_id=prior.id,
                       details={"company_id": str(company_id), "previous_status": "invited",
-                               "reason": "replaced"})
-    if live:
+                               "reason": reason})
+    if live or stale:
         await db.flush()
 
     ttl_hours = body.ttl_hours or settings.interview_link_ttl_hours
@@ -827,6 +952,10 @@ async def reschedule_invite(
     so the response carries no raw token."""
     hr_uid, company_id = ctx
     inv = await _get_owned_invite(db, company_id, invite_id)
+    # Locked like create_invite, and re-read under the lock, so a new invite
+    # cannot land between the checks below and the commit.
+    await _lock_applicant_invites(db, company_id, inv.applicant_id)
+    await db.refresh(inv)
     if inv.status != "invited":
         raise HTTPException(
             status_code=409,
@@ -834,6 +963,26 @@ async def reschedule_invite(
                 "Only an interview the candidate has not started can be rescheduled."
                 if inv.status == "consumed"
                 else f"This interview is {inv.status}, so it cannot be rescheduled."
+            ),
+        )
+    # Moving the slot re-extends the link, so it must not resurrect a link that
+    # a later invite replaced, or email a candidate whose application has since
+    # been decided or withdrawn.
+    superseded, application_open = await _reschedule_blockers(db, inv)
+    if superseded:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "A newer interview invite exists for this application, so this older "
+                "link cannot be rescheduled. Reschedule the newer one instead."
+            ),
+        )
+    if not application_open:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This application has been decided or withdrawn, so the interview "
+                "cannot be rescheduled."
             ),
         )
     previous = inv.scheduled_at
@@ -890,6 +1039,7 @@ async def list_invites(
         select(
             InterviewInvite, Applicant.full_name, Job.title,
             Scorecard.scorecard_id, Scorecard.composite_score,
+            _SUPERSEDED.label("superseded"), _APPLICATION_OPEN.label("application_open"),
         )
         .join(Applicant, Applicant.id == InterviewInvite.applicant_id)
         .join(Job, Job.id == InterviewInvite.job_id)
@@ -917,12 +1067,12 @@ async def list_invites(
     # happened. HR is told in-app; the candidate gets the results_ready email.
     now = datetime.now(tz=UTC)
     out: list[InviteOut] = []
-    for inv, name, title, scorecard_id, composite in rows:
+    for inv, name, title, scorecard_id, composite, superseded, application_open in rows:
         # Effective status for DISPLAY only (see _effective_status): HR sees the
         # truth immediately while the durable transition stays single-owner.
         out.append(_invite_out(
             inv, name=name, title=title, scorecard_id=scorecard_id, composite=composite,
-            now=now,
+            now=now, superseded=bool(superseded), application_open=bool(application_open),
         ))
     return out
 
@@ -945,37 +1095,103 @@ async def get_invite(invite_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep) -> I
         ).first()
         if row is not None:
             sc, composite = row
-    return _invite_out(inv, name=name, title=title, scorecard_id=sc, composite=composite)
+    superseded, application_open = await _reschedule_blockers(db, inv)
+    return _invite_out(
+        inv, name=name, title=title, scorecard_id=sc, composite=composite,
+        superseded=superseded, application_open=application_open,
+    )
+
+
+class InviteRevokeIn(BaseModel):
+    # Ending an interview the candidate has STARTED is a separate, deliberate
+    # act: without ``force`` a started link is refused, so a stale tab or a
+    # re-fired request cannot cut a candidate off mid-interview.
+    force: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        v = v.strip()
+        return v or None
 
 
 @router.post("/interviews/{invite_id}/revoke", response_model=InviteOut)
 async def revoke_invite(
-    invite_id: uuid.UUID, request: Request, ctx: HrCtxDep, db: DbSessionDep
+    invite_id: uuid.UUID, request: Request, ctx: HrCtxDep, db: DbSessionDep,
+    body: InviteRevokeIn | None = None,
 ) -> InviteOut:
+    """Kill an invite's link.
+
+    An unused ('invited') link is revoked as it always was. A started
+    ('consumed') one is refused by default: the candidate may be mid-interview
+    and reconnecting after a dropped call. With ``force`` and a reason it is
+    ended anyway. That is the way out for an interview the candidate abandoned
+    (otherwise nothing can be re-sent until the link expires, days later) and
+    the kill switch for a link that was forwarded or leaked. The interview's
+    session is marked abandoned and the act is audited as
+    'revoked_in_progress'. A finished interview has nothing left to end.
+    """
     hr_uid, company_id = ctx
+    body = body or InviteRevokeIn()
     inv = await _get_owned_invite(db, company_id, invite_id)
-    # Only a link nobody has used yet. A 'consumed' invite is an interview in
-    # progress (the list polls, so HR can see "Invited" seconds after the
-    # candidate started): revoking it would block their reconnect mid-interview.
-    # A completed, expired or already-revoked one has nothing left to revoke.
-    if inv.status != "invited":
+    await _lock_applicant_invites(db, company_id, inv.applicant_id)
+    await db.refresh(inv)
+    now = datetime.now(tz=UTC)
+    in_progress = False
+    if inv.status == "consumed":
+        if await _interview_finished(db, inv):
+            raise HTTPException(
+                status_code=409,
+                detail="This interview has finished, so there is nothing left to end.",
+            )
+        if not body.force:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "The candidate has already started this interview, so the link cannot "
+                    "be revoked. End the started interview instead if they will not "
+                    "return."
+                ),
+            )
+        if body.reason is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Give a reason for ending an interview the candidate has started.",
+            )
+        in_progress = True
+    elif inv.status != "invited":
+        # A completed, expired or already-revoked one has nothing left to revoke.
         raise HTTPException(
             status_code=409,
-            detail=(
-                "The candidate has already started this interview, so the link cannot "
-                "be revoked."
-                if inv.status == "consumed"
-                else f"This interview is {inv.status}, so there is no link to revoke."
-            ),
+            detail=f"This interview is {inv.status}, so there is no link to revoke.",
         )
+    details: dict[str, Any] = {"company_id": str(company_id), "previous_status": inv.status}
+    if in_progress:
+        details["reason"] = "revoked_in_progress"
+        details["note"] = body.reason
+        details["session_id"] = str(inv.session_id) if inv.session_id else None
     _audit_invite(db, request, actor=hr_uid, action="interview_invite.revoked",
-                  invite_id=inv.id,
-                  details={"company_id": str(company_id), "previous_status": inv.status})
-    # Kills the link + future redeems immediately. Cannot claw back an already-issued
-    # in-flight guest JWT (no jti denylist) — mitigated by the short TTL + single-use.
+                  invite_id=inv.id, details=details)
+    if in_progress and inv.session_id is not None:
+        # The session ends here as far as the platform is concerned. Only a
+        # session still open is touched; a terminal one keeps what it records.
+        await db.execute(
+            update(SessionModel)
+            .where(SessionModel.id == inv.session_id,
+                   SessionModel.status.in_(("created", "in_progress")))
+            .values(status="abandoned", updated_at=now)
+        )
+    # Kills the link and every later redeem or reconnect at once (both require
+    # 'invited' or 'consumed'). Cannot claw back a guest JWT already issued (no
+    # jti denylist); its short TTL bounds that.
     inv.status = "revoked"
-    inv.updated_at = datetime.now(tz=UTC)
+    inv.updated_at = now
     await db.commit()
+    log.info("hr.interview.revoked", invite_id=str(inv.id), company_id=str(company_id),
+             in_progress=in_progress)
     name = await db.scalar(select(Applicant.full_name).where(Applicant.id == inv.applicant_id))
     title = await db.scalar(select(Job.title).where(Job.id == inv.job_id))
     return _invite_out(inv, name=name, title=title)
@@ -1042,7 +1258,10 @@ async def set_invite_avatar_mode(
         )
     name = await db.scalar(select(Applicant.full_name).where(Applicant.id == inv.applicant_id))
     title = await db.scalar(select(Job.title).where(Job.id == inv.job_id))
-    return _invite_out(inv, name=name, title=title)
+    superseded, application_open = await _reschedule_blockers(db, inv)
+    return _invite_out(
+        inv, name=name, title=title, superseded=superseded, application_open=application_open,
+    )
 
 
 @router.get("/interviews/{invite_id}/result", response_model=InterviewOutcome)

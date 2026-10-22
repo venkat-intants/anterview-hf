@@ -12,6 +12,7 @@ actually revokes the first.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
@@ -91,6 +92,11 @@ async def seed(committed_db: AsyncSession) -> AsyncIterator[dict[str, uuid.UUID]
         await committed_db.execute(
             text("DELETE FROM interview_invites WHERE company_id = :c"), {"c": ids["company"]}
         )
+        # Sessions a test provisioned reference the minted jobs (ON DELETE
+        # RESTRICT), so they go first.
+        await committed_db.execute(
+            text("DELETE FROM sessions WHERE user_id = :u"), {"u": ids["hr"]}
+        )
         # Each invite mints a Job owned by the HR user. Deleting the user would
         # only NULL its owner (ON DELETE SET NULL), and a job with no owner is a
         # PUBLIC catalogue job: test_jobs_endpoints then counts it.
@@ -159,8 +165,7 @@ async def test_a_repeated_identical_request_mints_no_second_link_or_email(
     client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
 ) -> None:
     h = _auth(seed["hr"])
-    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"]),
-            "replace_existing": True}
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
     r1 = await client.post("/hr/interviews", json=body, headers=h)
     r2 = await client.post("/hr/interviews", json=body, headers=h)
     assert r1.status_code == 201, r1.text
@@ -172,6 +177,62 @@ async def test_a_repeated_identical_request_mints_no_second_link_or_email(
     assert await _emails(committed_db, [i for i, _s in rows]) == 1
 
 
+async def test_a_confirmed_replacement_is_honoured_even_inside_the_duplicate_window(
+    client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
+) -> None:
+    # HR confirms "Replace interview link" with the same settings minutes after
+    # the first (the candidate lost the email). That is a request for a new
+    # link, not a double submit: the old one is revoked and a new one is sent.
+    h = _auth(seed["hr"])
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
+    r1 = await client.post("/hr/interviews", json=body, headers=h)
+    r2 = await client.post("/hr/interviews", json={**body, "replace_existing": True}, headers=h)
+    assert r1.status_code == 201, r1.text
+    assert r2.status_code == 201, r2.text
+    assert r2.json()["reused"] is False and r2.json()["magic_link"]
+    first, second = uuid.UUID(r1.json()["invite_id"]), uuid.UUID(r2.json()["invite_id"])
+    committed_db.expire_all()
+    assert await _invites(committed_db, seed["a1"]) == [(first, "revoked"), (second, "invited")]
+    assert await _emails(committed_db, [first, second]) == 2
+
+
+async def test_two_concurrent_requests_leave_one_live_link(
+    client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
+) -> None:
+    # A true double submit: both requests in flight at once. Without the
+    # per-person lock both read "no live link", both mint a Job and both insert.
+    h = _auth(seed["hr"])
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
+    r1, r2 = await asyncio.gather(
+        client.post("/hr/interviews", json=body, headers=h),
+        client.post("/hr/interviews", json=body, headers=h),
+    )
+    assert sorted([r1.status_code, r2.status_code]) == [200, 201], (r1.text, r2.text)
+    committed_db.expire_all()
+    rows = await _invites(committed_db, seed["a1"])
+    assert [s for _i, s in rows] == ["invited"]
+    assert await _emails(committed_db, [i for i, _s in rows]) == 1
+
+
+async def _start(
+    db: AsyncSession, invite: str, user: uuid.UUID, session_status: str = "in_progress",
+) -> uuid.UUID:
+    """Mark an invite started, with the session interview_take would provision."""
+    sid = uuid.uuid4()
+    await db.execute(text(
+        "INSERT INTO sessions (id, user_id, job_id, language, status, started_at, metadata,"
+        " created_at, updated_at)"
+        " SELECT :s, :u, job_id, 'en', :st, now(), '{}'::jsonb, now(), now()"
+        "   FROM interview_invites WHERE id = :i"
+    ), {"s": sid, "u": user, "st": session_status, "i": invite})
+    await db.execute(text(
+        "UPDATE interview_invites SET status = 'consumed', session_id = :s,"
+        " consumed_at = now() WHERE id = :i"
+    ), {"s": sid, "i": invite})
+    await db.commit()
+    return sid
+
+
 async def test_a_started_interview_is_neither_replaced_revoked_nor_moved(
     client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
 ) -> None:
@@ -179,10 +240,7 @@ async def test_a_started_interview_is_neither_replaced_revoked_nor_moved(
     body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
     r = await client.post("/hr/interviews", json=body, headers=h)
     invite = r.json()["invite_id"]
-    await committed_db.execute(
-        text("UPDATE interview_invites SET status = 'consumed' WHERE id = :i"), {"i": invite}
-    )
-    await committed_db.commit()
+    await _start(committed_db, invite, seed["hr"])
 
     r = await client.post("/hr/interviews", json={**body, "replace_existing": True}, headers=h)
     assert r.status_code == 409 and "already started" in r.json()["detail"], r.text
@@ -193,6 +251,146 @@ async def test_a_started_interview_is_neither_replaced_revoked_nor_moved(
     assert r.status_code == 409, r.text
     committed_db.expire_all()
     assert await _invites(committed_db, seed["a1"]) == [(uuid.UUID(invite), "consumed")]
+
+
+async def test_an_abandoned_started_interview_can_be_ended_and_reinvited(
+    client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
+) -> None:
+    # The candidate opened the link and dropped out. Without a way to end it HR
+    # could neither revoke, move nor replace it until the link expired, days on.
+    h = _auth(seed["hr"])
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
+    invite = (await client.post("/hr/interviews", json=body, headers=h)).json()["invite_id"]
+    sid = await _start(committed_db, invite, seed["hr"])
+
+    # Ending it is deliberate: it needs force AND a reason.
+    r = await client.post(f"/hr/interviews/{invite}/revoke", json={"force": True}, headers=h)
+    assert r.status_code == 422, r.text
+    r = await client.post(
+        f"/hr/interviews/{invite}/revoke",
+        json={"force": True, "reason": "Candidate dropped out and will not return"}, headers=h,
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "revoked"
+    committed_db.expire_all()
+    assert await committed_db.scalar(
+        text("SELECT status FROM sessions WHERE id = :s"), {"s": sid}
+    ) == "abandoned"
+    audit = (await committed_db.execute(text(
+        "SELECT details->>'reason', details->>'note' FROM audit_log WHERE resource_id = :i"
+        " AND action = 'interview_invite.revoked'"), {"i": invite})).one()
+    assert audit[0] == "revoked_in_progress"
+    assert audit[1] == "Candidate dropped out and will not return"
+
+    # The ended link no longer redeems, and a new invite goes through.
+    r = await client.post("/hr/interviews", json=body, headers=h)
+    assert r.status_code == 201, r.text
+
+
+async def test_a_finished_interview_cannot_be_ended_and_does_not_block_a_new_invite(
+    client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
+) -> None:
+    h = _auth(seed["hr"])
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
+    invite = (await client.post("/hr/interviews", json=body, headers=h)).json()["invite_id"]
+    await _start(committed_db, invite, seed["hr"], session_status="completed")
+
+    r = await client.post(
+        f"/hr/interviews/{invite}/revoke", json={"force": True, "reason": "x"}, headers=h,
+    )
+    assert r.status_code == 409 and "finished" in r.json()["detail"], r.text
+    r = await client.post("/hr/interviews", json=body, headers=h)
+    assert r.status_code == 201, r.text
+    committed_db.expire_all()
+    assert [s for _i, s in await _invites(committed_db, seed["a1"])] == ["consumed", "invited"]
+
+
+async def test_an_expired_link_is_retired_by_the_next_invite_and_cannot_be_revived(
+    client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
+) -> None:
+    h = _auth(seed["hr"])
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
+    old = (await client.post("/hr/interviews", json=body, headers=h)).json()["invite_id"]
+    await committed_db.execute(text(
+        "UPDATE interview_invites SET expires_at = now() - interval '1 hour',"
+        " created_at = now() - interval '3 days' WHERE id = :i"
+    ), {"i": old})
+    await committed_db.commit()
+
+    # A dead link needs no confirmation to be replaced; it is retired, audited.
+    r = await client.post("/hr/interviews", json=body, headers=h)
+    assert r.status_code == 201, r.text
+    new = r.json()["invite_id"]
+    committed_db.expire_all()
+    assert await _invites(committed_db, seed["a1"]) == [
+        (uuid.UUID(old), "revoked"), (uuid.UUID(new), "invited"),
+    ]
+    reason = await committed_db.scalar(text(
+        "SELECT details->>'reason' FROM audit_log WHERE resource_id = :i"
+        " AND action = 'interview_invite.revoked'"), {"i": old})
+    assert reason == "superseded"
+
+    # Even a row left 'invited' by older code (nothing swept it) cannot be
+    # brought back by a reschedule once a newer invite exists: moving the slot
+    # would re-extend it next to the new link.
+    await committed_db.execute(
+        text("UPDATE interview_invites SET status = 'invited' WHERE id = :i"), {"i": old}
+    )
+    await committed_db.commit()
+    later = (datetime.now(tz=UTC) + timedelta(days=1)).isoformat()
+    r = await client.patch(f"/hr/interviews/{old}", json={"scheduled_at": later}, headers=h)
+    assert r.status_code == 409 and "newer interview invite" in r.json()["detail"], r.text
+    rows = {x["invite_id"]: x for x in (await client.get("/hr/interviews", headers=h)).json()}
+    assert rows[old]["can_reschedule"] is False
+    assert rows[new]["can_reschedule"] is True
+    committed_db.expire_all()
+    still = await committed_db.scalar(
+        text("SELECT expires_at < now() FROM interview_invites WHERE id = :i"), {"i": old}
+    )
+    assert still is True
+
+
+async def test_a_decided_or_withdrawn_application_cannot_be_rescheduled(
+    client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
+) -> None:
+    h = _auth(seed["hr"])
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
+    invite = (await client.post("/hr/interviews", json=body, headers=h)).json()["invite_id"]
+    later = (datetime.now(tz=UTC) + timedelta(days=1)).isoformat()
+
+    for sql in (
+        "UPDATE enrolments SET status = 'rejected' WHERE id = :e",
+        # Withdrawn: the application is soft deleted.
+        "UPDATE enrolments SET status = 'shortlisted', deleted_at = now() WHERE id = :e",
+    ):
+        await committed_db.execute(text(sql), {"e": seed["e1"]})
+        await committed_db.commit()
+        r = await client.patch(
+            f"/hr/interviews/{invite}", json={"scheduled_at": later}, headers=h,
+        )
+        assert r.status_code == 409 and "decided or withdrawn" in r.json()["detail"], r.text
+        r = await client.get(f"/hr/interviews/{invite}", headers=h)
+        assert r.json()["can_reschedule"] is False
+    emails = await _emails(committed_db, [uuid.UUID(invite)])
+    assert emails == 1  # only the original invite, never a "rescheduled" one
+
+
+async def test_an_explicit_job_with_a_started_interview_is_a_clean_conflict(
+    client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
+) -> None:
+    h = _auth(seed["hr"])
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
+    invite = (await client.post("/hr/interviews", json=body, headers=h)).json()["invite_id"]
+    await _start(committed_db, invite, seed["hr"])
+    await committed_db.execute(text(
+        "UPDATE interview_invites SET expires_at = now() - interval '1 hour' WHERE id = :i"
+    ), {"i": invite})
+    await committed_db.commit()
+    job = await committed_db.scalar(
+        text("SELECT job_id FROM interview_invites WHERE id = :i"), {"i": invite}
+    )
+    r = await client.post("/hr/interviews", json={**body, "job_id": str(job)}, headers=h)
+    assert r.status_code == 409 and "started interview on record" in r.json()["detail"], r.text
 
 
 async def test_a_link_scheduled_past_the_ttl_still_works_at_the_slot(

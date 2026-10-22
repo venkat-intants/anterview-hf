@@ -27,6 +27,7 @@ import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import type { RoundKind } from '@/api/workflows';
 import { ROUND_KIND_META } from './roundKinds';
+import { errorMessage } from '@/lib/errorMessage';
 
 /** One round as it appears inside a proposal's commit body. */
 interface DraftedRound {
@@ -143,7 +144,7 @@ export default function ProposalPreview({
       // Stay failed rather than resetting: the user needs to read why before
       // clicking again, and a silent reset invites an identical second failure.
       setState('failed');
-      setError(err instanceof Error ? err.message : 'Could not apply that');
+      setError(errorMessage(err, 'Could not apply that.'));
     }
   }
 

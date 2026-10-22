@@ -54,6 +54,7 @@ import { codeEvidenceLabel, hasCodeEvidence } from '@/lib/codeEvidenceLabel';
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
 import { formatDateTime } from '@/lib/formatters';
+import { statusLabel } from '@/lib/statusLabel';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
@@ -453,7 +454,7 @@ function DecisionPanel({
           <h2 className="text-[17px] font-bold text-foreground">{row.full_name}</h2>
           {row.held ? (
             <StatusTag tone="amber" dot>
-              held
+              {statusLabel('held', 'candidate')}
             </StatusTag>
           ) : row.awaiting_review ? (
             <StatusTag tone="amber" dot>

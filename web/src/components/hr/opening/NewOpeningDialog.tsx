@@ -52,6 +52,7 @@ import {
   toCreatePayload,
   type NewOpeningValues,
 } from './newOpeningSchema';
+import { errorMessage } from '@/lib/errorMessage';
 
 type StepKey = 'basics' | 'budget' | 'review';
 
@@ -77,7 +78,7 @@ function budgetEchoed(created: Requisition, sent: Partial<RequisitionInput>): bo
 }
 
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, fallback.endsWith('.') ? fallback : `${fallback}.`);
 }
 
 interface Props {

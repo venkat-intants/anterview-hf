@@ -36,13 +36,14 @@ import { Plus, Trash2, Upload } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { errorMessage } from '@/lib/errorMessage';
 
 const MAX_ITEMS = 20;
 const ITEM_KEY_RE = /^[a-z0-9_]{1,80}$/;
 const MAX_MATERIAL_BYTES = 10 * 1024 * 1024;
 
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, fallback.endsWith('.') ? fallback : `${fallback}.`);
 }
 
 function blankItem(n: number): TaskItem {

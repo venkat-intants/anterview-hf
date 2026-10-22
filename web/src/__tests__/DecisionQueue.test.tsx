@@ -213,6 +213,13 @@ describe('DecisionQueue - the list', () => {
     expect(screen.getByText('Scores rank and explain. They never decide.')).toBeTruthy();
   });
 
+  it('labels the held pill in words, not the raw status value (audit HR-L5)', async () => {
+    renderQueue();
+    await ready('Asha Rao');
+    expect(within(panel()).getByText('Held')).toBeTruthy();
+    expect(within(panel()).queryByText('held')).toBeNull();
+  });
+
   it('selecting another person swaps the panel, marks them current and updates the position', async () => {
     renderQueue();
     await ready('Asha Rao');

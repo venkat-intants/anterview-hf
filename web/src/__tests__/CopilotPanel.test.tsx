@@ -362,6 +362,24 @@ describe('CopilotPanel - dialog behaviour', () => {
     expect(screen.getByLabelText('Message')).toHaveFocus();
   });
 
+  it('leaves focus where the user moved it while waiting for the answer', async () => {
+    let answer: (reply: AgentChatResponse) => void = () => undefined;
+    askAgent.mockReturnValue(
+      new Promise<AgentChatResponse>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderPanel();
+    await ask('hello');
+    // Any control the user tabbed to inside the dialog while the answer was on
+    // its way: a proposal button, a source chip, here the close button.
+    const elsewhere = screen.getByRole('button', { name: 'Close assistant' });
+    elsewhere.focus();
+    answer(UNSOURCED_REPLY);
+    await screen.findByText(UNSOURCED_REPLY.reply);
+    expect(elsewhere).toHaveFocus();
+  });
+
   it('locks the page scroll while open and restores it on close', () => {
     document.body.style.overflow = 'auto';
     const { setOpen } = renderToggleablePanel();

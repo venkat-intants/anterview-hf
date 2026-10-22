@@ -169,6 +169,7 @@ export default function CopilotPanel({
   const conversation = useRef(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   // The latest conversation, for reading after an await: a proposal approved
   // while the next answer was on its way must still count as approved.
   const latest = useRef({ turns, outcomes });
@@ -199,8 +200,14 @@ export default function CopilotPanel({
   useEffect(() => {
     // Back to the composer once an answer lands. Sending from a suggestion
     // button removes that button, and sending from "Ask" disables it, and
-    // either way focus would otherwise fall to <body> (audit CP-F6).
-    if (open && !busy) inputRef.current?.focus();
+    // either way focus would otherwise fall to <body> (audit CP-F6). Only
+    // when focus is lost or still in the composer, though: a user who tabbed
+    // to a proposal button or a source chip while waiting keeps their place.
+    if (!open || busy) return;
+    const active = document.activeElement;
+    if (!active || active === document.body || formRef.current?.contains(active)) {
+      inputRef.current?.focus();
+    }
   }, [busy, open]);
 
   function recordOutcome(proposalId: string, outcome: CommitOutcome): void {
@@ -462,6 +469,7 @@ export default function CopilotPanel({
       </div>
 
       <form
+        ref={formRef}
         className="border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
         onSubmit={(e) => {
           e.preventDefault();

@@ -33,6 +33,7 @@ import {
   rescheduleInvite,
   type InterviewInvite,
   type AvatarMode,
+  type EndInterviewReason,
 } from '@/api/interviewInvites';
 import { applicationKey } from '@/lib/applicationKey';
 import { useDeepLinkedRow } from '@/hooks/useDeepLinkedRow';
@@ -138,7 +139,9 @@ function StatusFilter({
             onClick={() => onChange(f.key)}
             className={cn(
               'whitespace-nowrap rounded-pill px-3.5 py-1.5 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-              on ? 'bg-card text-foreground shadow-card' : 'text-muted-foreground hover:text-foreground',
+              on
+                ? 'bg-card text-foreground shadow-card'
+                : 'text-muted-foreground hover:text-foreground',
             )}
           >
             {f.label}
@@ -233,9 +236,7 @@ function InterviewResult({ inviteId, name }: { inviteId: string; name: string })
             ) : null}
             {r.improvements && r.improvements.length > 0 ? (
               <div>
-                <p className="text-[12px] font-semibold text-muted-foreground">
-                  Areas to improve
-                </p>
+                <p className="text-[12px] font-semibold text-muted-foreground">Areas to improve</p>
                 <ul className="ml-4 list-disc text-foreground">
                   {r.improvements.map((item, i) => (
                     <li key={i}>{improvementText(item)}</li>
@@ -257,6 +258,15 @@ function rowDomId(inviteId: string): string {
   return `interview-${inviteId}`;
 }
 
+/** Why HR ends a started interview. Fixed choices: the reason is audited, and
+ *  free text about a candidate would outlive their erasure there. */
+const END_REASONS: { value: EndInterviewReason; label: string }[] = [
+  { value: 'candidate_left', label: 'The candidate dropped out and will not return' },
+  { value: 'link_shared', label: 'The link was shared or someone else is using it' },
+  { value: 'technical_problem', label: 'A technical problem stopped the interview' },
+  { value: 'other', label: 'Another reason' },
+];
+
 function InviteRow({
   inv,
   onRevoke,
@@ -273,7 +283,7 @@ function InviteRow({
   onRevoke: (id: string) => void;
   /** True while THIS row's revoke is in flight. */
   revoking: boolean;
-  onEnd: (id: string, reason: string, done: () => void) => void;
+  onEnd: (id: string, reason: EndInterviewReason, done: () => void) => void;
   /** True while THIS row's end-interview request is in flight. */
   ending: boolean;
   onReschedule: (id: string, iso: string, done: () => void) => void;
@@ -289,8 +299,8 @@ function InviteRow({
   const initials = initialsOf(inv.applicant_name);
   const [editingSched, setEditingSched] = useState(false);
   const [endingOpen, setEndingOpen] = useState(false);
-  const [endReason, setEndReason] = useState('');
-  const endInputRef = useRef<HTMLInputElement>(null);
+  const [endReason, setEndReason] = useState<EndInterviewReason | ''>('');
+  const endInputRef = useRef<HTMLSelectElement>(null);
   const endId = useId();
   const [showResult, setShowResult] = useState(false);
   // toLocalInputValue reads the LOCAL wall-clock fields, unlike
@@ -473,26 +483,28 @@ function InviteRow({
             Why are you ending this interview?
           </label>
           <div className="flex flex-wrap items-center gap-2">
-            <input
+            <select
               id={endId}
               ref={endInputRef}
-              type="text"
-              maxLength={500}
               value={endReason}
-              onChange={(e) => setEndReason(e.target.value)}
-              placeholder="For example, the candidate dropped out and will not return"
+              onChange={(e) => setEndReason(e.target.value as EndInterviewReason | '')}
               className="h-10 min-w-[18rem] flex-1 rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
               aria-describedby={`${endId}-hint`}
-            />
-            {endReason.trim() ? (
+            >
+              <option value="">Choose a reason</option>
+              {END_REASONS.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+            {endReason ? (
               <ConfirmDeleteButton
                 label="End interview"
                 confirmGroupLabel={`Confirm: end the started interview for ${inv.applicant_name}. Their link stops working and they cannot reconnect.`}
                 icon={XCircle}
                 pending={ending}
-                onConfirm={() =>
-                  onEnd(inv.invite_id, endReason.trim(), () => setEndingOpen(false))
-                }
+                onConfirm={() => onEnd(inv.invite_id, endReason, () => setEndingOpen(false))}
               />
             ) : null}
             <button
@@ -505,8 +517,8 @@ function InviteRow({
             </button>
           </div>
           <p id={`${endId}-hint`} className="text-[12px] text-muted-foreground">
-            Their link stops working at once, so they cannot reconnect. The reason is kept in
-            the audit log. You can then send a new link.
+            Their link stops working at once, so they cannot reconnect. The reason is kept in the
+            audit log. You can then send a new link.
           </p>
         </div>
       )}
@@ -558,8 +570,8 @@ function InviteRow({
             </button>
           </div>
           <p id={`${schedId}-hint`} className="text-[12px] text-muted-foreground">
-            The candidate can start within {JOIN_WINDOW_MINUTES} minutes of this time. We email
-            them the new time.
+            The candidate can start within {JOIN_WINDOW_MINUTES} minutes of this time. We email them
+            the new time.
           </p>
         </div>
       )}
@@ -652,7 +664,7 @@ export default function HRInterviews() {
   });
 
   const endMut = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+    mutationFn: ({ id, reason }: { id: string; reason: EndInterviewReason }) =>
       endStartedInterview(id, reason),
     onSuccess: (inv) => {
       toast.success(`Interview ended for ${inv.applicant_name}. You can now send a new link.`);
@@ -662,8 +674,7 @@ export default function HRInterviews() {
   });
 
   const modeMut = useMutation({
-    mutationFn: ({ id, mode }: { id: string; mode: AvatarMode }) =>
-      setInviteAvatarMode(id, mode),
+    mutationFn: ({ id, mode }: { id: string; mode: AvatarMode }) => setInviteAvatarMode(id, mode),
     onSuccess: (inv) => {
       toast.success(
         inv.avatar_mode === 'audio'
@@ -810,10 +821,9 @@ export default function HRInterviews() {
           ) : null}
 
           <p className="text-[12.5px] leading-relaxed text-muted-foreground">
-            <strong className="font-semibold text-foreground">Audio only</strong> drops the
-            video avatar and runs the interview as voice. It costs less per minute and holds
-            up better on a weak connection. The questions, scoring and scorecard are
-            identical either way.
+            <strong className="font-semibold text-foreground">Audio only</strong> drops the video
+            avatar and runs the interview as voice. It costs less per minute and holds up better on
+            a weak connection. The questions, scoring and scorecard are identical either way.
           </p>
 
           <div>
@@ -830,16 +840,16 @@ export default function HRInterviews() {
               aria-describedby={`${formId}-when-hint`}
             />
             <p id={`${formId}-when-hint`} className="mt-1 text-[12px] text-muted-foreground">
-              With a time set, the candidate can start within {JOIN_WINDOW_MINUTES} minutes of
-              it. Leave it empty to let them start any time before the link expires.
+              With a time set, the candidate can start within {JOIN_WINDOW_MINUTES} minutes of it.
+              Leave it empty to let them start any time before the link expires.
             </p>
           </div>
 
           {chosen?.has_active_invite ? (
             <div className="space-y-2">
               <p className="text-[13px] text-[var(--ui-warn)]" role="status">
-                {chosen.full_name} already has an active interview link for this opening. A new
-                link replaces it, and the old one stops working.
+                {chosen.full_name} already has an active interview link for this opening. A new link
+                replaces it, and the old one stops working.
               </p>
               <ConfirmDeleteButton
                 label="Replace interview link"
@@ -872,8 +882,8 @@ export default function HRInterviews() {
               role="alert"
             >
               <p className="text-[13px] font-semibold text-[var(--ui-ok)]">
-                We have emailed this link to the candidate (when they have an email address)
-                and added it to their applications page. Here is a copy, shown once:
+                We have emailed this link to the candidate (when they have an email address) and
+                added it to their applications page. Here is a copy, shown once:
               </p>
               <div className="flex items-center gap-2">
                 <input

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
@@ -254,6 +254,10 @@ async def _reschedule_blockers(db: AsyncSession, inv: InterviewInvite) -> tuple[
         )
     ).one()
     return bool(row.superseded), bool(row.open)
+
+
+#: Why HR ended an interview the candidate had started (revoke with force).
+EndReason = Literal["candidate_left", "link_shared", "technical_problem", "other"]
 
 
 #: How long a scheduled link stays alive after its join window closes. First
@@ -1107,15 +1111,11 @@ class InviteRevokeIn(BaseModel):
     # act: without ``force`` a started link is refused, so a stale tab or a
     # re-fired request cannot cut a candidate off mid-interview.
     force: bool = False
-    reason: str | None = Field(default=None, max_length=500)
-
-    @field_validator("reason")
-    @classmethod
-    def _reason(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
-        v = v.strip()
-        return v or None
+    # Why, as a fixed code, never free text. The reason lands in audit_log,
+    # which is append-only and whose erasure redaction (admin_ops
+    # erasure_executor step 5l, AR-5) covers only named decision shapes: prose
+    # typed here about a candidate would outlive their erasure.
+    reason: EndReason | None = None
 
 
 @router.post("/interviews/{invite_id}/revoke", response_model=InviteOut)
@@ -1171,7 +1171,7 @@ async def revoke_invite(
     details: dict[str, Any] = {"company_id": str(company_id), "previous_status": inv.status}
     if in_progress:
         details["reason"] = "revoked_in_progress"
-        details["note"] = body.reason
+        details["end_reason"] = body.reason
         details["session_id"] = str(inv.session_id) if inv.session_id else None
     _audit_invite(db, request, actor=hr_uid, action="interview_invite.revoked",
                   invite_id=inv.id, details=details)

@@ -266,9 +266,16 @@ async def test_an_abandoned_started_interview_can_be_ended_and_reinvited(
     # Ending it is deliberate: it needs force AND a reason.
     r = await client.post(f"/hr/interviews/{invite}/revoke", json={"force": True}, headers=h)
     assert r.status_code == 422, r.text
+    # The reason is a fixed code: free text would land in the append-only
+    # audit log, which erasure does not redact for this action.
     r = await client.post(
         f"/hr/interviews/{invite}/revoke",
-        json={"force": True, "reason": "Candidate dropped out and will not return"}, headers=h,
+        json={"force": True, "reason": "Asha said she has a family emergency"}, headers=h,
+    )
+    assert r.status_code == 422, r.text
+    r = await client.post(
+        f"/hr/interviews/{invite}/revoke",
+        json={"force": True, "reason": "candidate_left"}, headers=h,
     )
     assert r.status_code == 200, r.text
     assert r.json()["status"] == "revoked"
@@ -277,10 +284,10 @@ async def test_an_abandoned_started_interview_can_be_ended_and_reinvited(
         text("SELECT status FROM sessions WHERE id = :s"), {"s": sid}
     ) == "abandoned"
     audit = (await committed_db.execute(text(
-        "SELECT details->>'reason', details->>'note' FROM audit_log WHERE resource_id = :i"
+        "SELECT details->>'reason', details->>'end_reason' FROM audit_log WHERE resource_id = :i"
         " AND action = 'interview_invite.revoked'"), {"i": invite})).one()
     assert audit[0] == "revoked_in_progress"
-    assert audit[1] == "Candidate dropped out and will not return"
+    assert audit[1] == "candidate_left"
 
     # The ended link no longer redeems, and a new invite goes through.
     r = await client.post("/hr/interviews", json=body, headers=h)
@@ -296,7 +303,7 @@ async def test_a_finished_interview_cannot_be_ended_and_does_not_block_a_new_inv
     await _start(committed_db, invite, seed["hr"], session_status="completed")
 
     r = await client.post(
-        f"/hr/interviews/{invite}/revoke", json={"force": True, "reason": "x"}, headers=h,
+        f"/hr/interviews/{invite}/revoke", json={"force": True, "reason": "other"}, headers=h,
     )
     assert r.status_code == 409 and "finished" in r.json()["detail"], r.text
     r = await client.post("/hr/interviews", json=body, headers=h)

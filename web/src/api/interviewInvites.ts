@@ -120,11 +120,18 @@ export function revokeInvite(inviteId: string): Promise<InterviewInvite> {
   return apiPost<InterviewInvite>(`/hr/interviews/${pathId(inviteId)}/revoke`, {});
 }
 
+/** Why HR ended a started interview. A fixed code, never free text: it is
+ *  kept in the append-only audit log, which erasure does not redact for it. */
+export type EndInterviewReason = 'candidate_left' | 'link_shared' | 'technical_problem' | 'other';
+
 /** End an interview the candidate has started but will not finish (they
  *  dropped out, or the link was forwarded). The server refuses a started link
  *  without `force`, requires a reason, audits it and marks the session
  *  abandoned. A new link can then be sent. */
-export function endStartedInterview(inviteId: string, reason: string): Promise<InterviewInvite> {
+export function endStartedInterview(
+  inviteId: string,
+  reason: EndInterviewReason,
+): Promise<InterviewInvite> {
   return apiPost<InterviewInvite>(`/hr/interviews/${pathId(inviteId)}/revoke`, {
     force: true,
     reason,
@@ -135,11 +142,10 @@ export function getInviteResult(inviteId: string): Promise<InterviewOutcome> {
   return apiGet<InterviewOutcome>(`/hr/interviews/${pathId(inviteId)}/result`);
 }
 
-export function rescheduleInvite(
-  inviteId: string,
-  scheduledAt: string,
-): Promise<InviteResult> {
-  return apiPatch<InviteResult>(`/hr/interviews/${pathId(inviteId)}`, { scheduled_at: scheduledAt });
+export function rescheduleInvite(inviteId: string, scheduledAt: string): Promise<InviteResult> {
+  return apiPatch<InviteResult>(`/hr/interviews/${pathId(inviteId)}`, {
+    scheduled_at: scheduledAt,
+  });
 }
 
 /** Switch one interview between the avatar and audio-only.

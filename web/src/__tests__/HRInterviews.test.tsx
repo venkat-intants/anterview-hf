@@ -10,11 +10,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type {
-  EligibleApplicant,
-  InterviewInvite,
-  InviteResult,
-} from '../api/interviewInvites';
+import type { EligibleApplicant, InterviewInvite, InviteResult } from '../api/interviewInvites';
 import { toLocalInputValue } from '../lib/localDatetime';
 
 const ELIGIBLE: EligibleApplicant[] = [
@@ -196,7 +192,9 @@ describe('HRInterviews - invite form', () => {
     const select = screen.getByLabelText('Applicant');
     // Inviting someone twice mints a second paid session — say so in the list.
     expect(
-      within(select).getByRole('option', { name: /chetan iyer - shortlisted \(already invited\)/i }),
+      within(select).getByRole('option', {
+        name: /chetan iyer - shortlisted \(already invited\)/i,
+      }),
     ).toBeInTheDocument();
   });
 
@@ -387,7 +385,9 @@ describe('HRInterviews - invite list', () => {
     renderPage();
 
     await screen.findByText('Bhavya Nair');
-    await user.click(screen.getByRole('button', { name: /revoke interview link for bhavya nair/i }));
+    await user.click(
+      screen.getByRole('button', { name: /revoke interview link for bhavya nair/i }),
+    );
     // One click only arms it: the link stops working for good.
     expect(revokeInvite).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Revoke link' }));
@@ -482,9 +482,7 @@ describe('HRInterviews - interview citation deep link', () => {
     await user.click(screen.getByRole('button', { name: /generate interview link/i }));
 
     await waitFor(() =>
-      expect(createInvite).toHaveBeenCalledWith(
-        expect.objectContaining({ avatar_mode: 'audio' }),
-      ),
+      expect(createInvite).toHaveBeenCalledWith(expect.objectContaining({ avatar_mode: 'audio' })),
     );
   });
 
@@ -525,7 +523,9 @@ describe('HRInterviews - interview citation deep link', () => {
 
   it("surfaces the server's refusal rather than a generic failure", async () => {
     setInviteAvatarMode.mockRejectedValue(
-      new Error('This interview is already consumed - the mode is fixed once the candidate starts.'),
+      new Error(
+        'This interview is already consumed - the mode is fixed once the candidate starts.',
+      ),
     );
     const user = userEvent.setup();
     renderPage();
@@ -554,7 +554,9 @@ describe('HRInterviews - replacing a live link (IV-H2)', () => {
 
     await screen.findByRole('option', { name: /chetan iyer/i });
     await user.selectOptions(screen.getByLabelText('Applicant'), 'en-2');
-    expect(screen.queryByRole('button', { name: /generate interview link/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /generate interview link/i }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/already has an active interview link/i)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Replace interview link' }));
@@ -563,7 +565,11 @@ describe('HRInterviews - replacing a live link (IV-H2)', () => {
 
     await waitFor(() =>
       expect(createInvite).toHaveBeenCalledWith(
-        expect.objectContaining({ applicant_id: 'ap-2', enrolment_id: 'en-2', replace_existing: true }),
+        expect.objectContaining({
+          applicant_id: 'ap-2',
+          enrolment_id: 'en-2',
+          replace_existing: true,
+        }),
       ),
     );
   });
@@ -686,7 +692,7 @@ describe('HRInterviews - time, window and expiry (IV-H1, IV-M1, IV-M10)', () => 
     // No reason, no way to confirm: the server requires one too.
     expect(screen.queryByRole('button', { name: 'End interview' })).not.toBeInTheDocument();
 
-    await user.type(reason, '  Dropped out, will not return  ');
+    await user.selectOptions(reason, 'candidate_left');
     await user.click(screen.getByRole('button', { name: 'End interview' }));
     // One click only arms it.
     expect(endStartedInterview).not.toHaveBeenCalled();
@@ -694,7 +700,7 @@ describe('HRInterviews - time, window and expiry (IV-H1, IV-M1, IV-M10)', () => 
     await user.click(within(group).getByRole('button', { name: 'End interview' }));
 
     await waitFor(() =>
-      expect(endStartedInterview).toHaveBeenCalledWith('inv-1', 'Dropped out, will not return'),
+      expect(endStartedInterview).toHaveBeenCalledWith('inv-1', 'candidate_left'),
     );
     expect(revokeInvite).not.toHaveBeenCalled();
     await waitFor(() =>
@@ -724,7 +730,10 @@ describe('HRInterviews - time, window and expiry (IV-H1, IV-M1, IV-M10)', () => 
     await user.click(
       await screen.findByRole('button', { name: /end started interview for bhavya nair/i }),
     );
-    await user.type(screen.getByLabelText('Why are you ending this interview?'), 'Stuck');
+    await user.selectOptions(
+      screen.getByLabelText('Why are you ending this interview?'),
+      'technical_problem',
+    );
     await user.click(screen.getByRole('button', { name: 'End interview' }));
     const group = screen.getByRole('group', { name: /end the started interview/i });
     await user.click(within(group).getByRole('button', { name: 'End interview' }));
@@ -733,7 +742,9 @@ describe('HRInterviews - time, window and expiry (IV-H1, IV-M1, IV-M10)', () => 
       expect(toastError).toHaveBeenCalledWith(expect.stringMatching(/finished/i)),
     );
     // The form stays open with what HR typed.
-    expect(screen.getByLabelText('Why are you ending this interview?')).toHaveValue('Stuck');
+    expect(screen.getByLabelText('Why are you ending this interview?')).toHaveValue(
+      'technical_problem',
+    );
   });
 });
 

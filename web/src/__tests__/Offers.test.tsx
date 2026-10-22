@@ -3,7 +3,7 @@
 // the synthetic "preboarding" filter.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -37,7 +37,7 @@ const RESPONSE: OfferListResponse = {
       job_title: 'Backend Engineer',
       candidate_name: 'Kiran Rao',
       sent_at: '2026-09-05T00:00:00.000Z',
-      expires_at: '2026-09-15T00:00:00.000Z',
+      expires_at: '2099-09-15T00:00:00.000Z',
       responded_at: '2026-09-07T00:00:00.000Z',
       preboarding_completed_at: null,
       updated_at: '2026-09-07T00:00:00.000Z',
@@ -86,7 +86,7 @@ describe('Offers - the list', () => {
     renderPage();
     await screen.findByText('Kiran Rao');
     expect(screen.getByText('Backend Engineer')).toBeInTheDocument();
-    expect(screen.getByText('accepted')).toBeInTheDocument();
+    expect(within(screen.getByRole('table')).getByText('Accepted')).toBeInTheDocument();
     expect(screen.getByText(/Documents 1\/2/)).toBeInTheDocument();
     expect(screen.getByText(/1 awaiting review/)).toBeInTheDocument();
     const link = screen.getByRole('link', { name: /Kiran Rao/ });
@@ -99,10 +99,40 @@ describe('Offers - the list', () => {
     expect(await screen.findByText('No offers here.')).toBeInTheDocument();
   });
 
-  it('shows an error state', async () => {
-    listCompanyOffers.mockRejectedValue(new Error('Could not load offers.'));
+  it('shows an error state with a retry, never an empty list', async () => {
+    const user = userEvent.setup();
+    listCompanyOffers.mockRejectedValue(new Error('down'));
     renderPage();
     expect(await screen.findByText('Could not load offers.')).toBeInTheDocument();
+    expect(screen.queryByText('No offers here.')).not.toBeInTheDocument();
+
+    listCompanyOffers.mockResolvedValue(RESPONSE);
+    await user.click(screen.getByRole('button', { name: /try again/i }));
+    expect(await screen.findByText('Kiran Rao')).toBeInTheDocument();
+  });
+
+  it('reads a sent offer past its deadline as expired (audit OF-F4)', async () => {
+    listCompanyOffers.mockResolvedValue(
+      rowOf({
+        status: 'sent',
+        expires_at: '2020-01-01T00:00:00.000Z',
+        documents: { mandatory_total: 0, mandatory_verified: 0, awaiting_review: 0 },
+      }),
+    );
+    renderPage();
+    expect(await screen.findByTestId('offer-needs')).toHaveTextContent('Closed');
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('Expired')).toBeInTheDocument();
+    expect(within(table).getByText(/^Expired \d/)).toBeInTheDocument();
+    expect(within(table).queryByText('Sent')).not.toBeInTheDocument();
+  });
+
+  it('filters with the same words the pills use', async () => {
+    renderPage();
+    await screen.findByText('Kiran Rao');
+    const filter = screen.getByLabelText('Status');
+    expect(within(filter).getByRole('option', { name: 'Awaiting approval' })).toBeInTheDocument();
+    expect(within(filter).getByRole('option', { name: 'Sent back' })).toBeInTheDocument();
   });
 
   it('filters by status, including the preboarding filter', async () => {

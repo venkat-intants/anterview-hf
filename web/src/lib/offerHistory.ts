@@ -25,3 +25,19 @@ const WORDS: Record<string, string> = {
 export function offerActionWord(action: string): string {
   return WORDS[action] ?? action.replace(/_/g, ' ');
 }
+
+/**
+ * One history entry in words. Same as offerActionWord, except that a candidate
+ * opening their offer from the portal (recorded as `resent`, because it rotates
+ * the link, with `details.by = 'candidate_portal'`) does not read as HR
+ * re-sending it with the candidate's name as the sender (audit OF-L3).
+ */
+export function offerEntryWord(entry: {
+  action: string;
+  details?: Record<string, unknown> | null;
+}): string {
+  if (entry.action === 'resent' && entry.details?.by === 'candidate_portal') {
+    return 'Candidate opened a fresh link from their portal';
+  }
+  return offerActionWord(entry.action);
+}

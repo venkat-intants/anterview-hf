@@ -2,7 +2,7 @@
 // starting points. Compensation is never part of a template.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { OfferTemplate } from '../api/offers';
 
@@ -103,5 +103,85 @@ describe('OfferTemplates', () => {
     listOfferTemplates.mockRejectedValue(new Error('down'));
     renderPage();
     expect(await screen.findByText('Could not load templates.')).toBeInTheDocument();
+  });
+});
+
+/* ── Audit wave 2 (offers) ───────────────────────────────────────────────── */
+
+describe('OfferTemplates - clearing a field clears it (OF-F3, M9)', () => {
+  it('sends null for cleared optional fields, so the old value does not come back', async () => {
+    const user = userEvent.setup();
+    updateOfferTemplate.mockResolvedValue({ ...TEMPLATE, benefits: null, probation_months: null });
+    renderPage();
+    await screen.findByText('Standard engineer');
+
+    await user.click(screen.getByRole('button', { name: 'Edit Standard engineer' }));
+    await user.clear(screen.getByLabelText('Benefits'));
+    await user.clear(screen.getByLabelText('Probation (months)'));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(updateOfferTemplate).toHaveBeenCalledWith(
+        'tpl-1',
+        expect.objectContaining({ benefits: null, probation_months: null, terms: null }),
+      ),
+    );
+  });
+
+  it('offers no empty choice for employment type or pay period', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Standard engineer');
+    await user.click(screen.getByRole('button', { name: 'New template' }));
+    expect(screen.getByLabelText('Employment type')).toHaveValue('full_time');
+    expect(screen.getByLabelText('Pay period')).toHaveValue('annual');
+    expect(
+      within(screen.getByLabelText('Employment type')).queryByRole('option', { name: '-' }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('OfferTemplates - limits are caught before saving (OF-L15)', () => {
+  it('a two-letter currency keeps Save off and says why', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Standard engineer');
+    await user.click(screen.getByRole('button', { name: 'New template' }));
+    await user.type(screen.getByLabelText('Name'), 'Contractors');
+    await user.clear(screen.getByLabelText('Currency'));
+    await user.type(screen.getByLabelText('Currency'), 'US');
+
+    expect(screen.getByRole('button', { name: 'Create template' })).toBeDisabled();
+    expect(screen.getByText('Currency is a three-letter code, such as INR.')).toBeInTheDocument();
+    expect(createOfferTemplate).not.toHaveBeenCalled();
+  });
+
+  it('a cleared offer window keeps Save off', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Standard engineer');
+    await user.click(screen.getByRole('button', { name: 'New template' }));
+    await user.type(screen.getByLabelText('Name'), 'Contractors');
+    await user.clear(screen.getByLabelText('Valid for (days)'));
+    expect(screen.getByRole('button', { name: 'Create template' })).toBeDisabled();
+    expect(screen.getByText('An offer stays open for 1 to 60 days.')).toBeInTheDocument();
+  });
+});
+
+describe('OfferTemplates - accessible names (OF-L14)', () => {
+  it('each Edit button names its template', async () => {
+    renderPage();
+    await screen.findByText('Standard engineer');
+    const edit = screen.getByRole('button', { name: 'Edit Standard engineer' });
+    expect(edit).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('a failed load offers a retry', async () => {
+    const user = userEvent.setup();
+    listOfferTemplates.mockRejectedValueOnce(new Error('down'));
+    renderPage();
+    await screen.findByText('Could not load templates.');
+    await user.click(screen.getByRole('button', { name: /try again/i }));
+    expect(await screen.findByText('Standard engineer')).toBeInTheDocument();
   });
 });

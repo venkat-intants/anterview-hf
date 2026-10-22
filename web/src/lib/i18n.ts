@@ -1625,6 +1625,8 @@ const en = {
     // ── PH4-D4: the public task page (job simulation / portfolio, magic
     // link, no login) ──────────────────────────────────────────────────
     task: {
+      savingAnswers: 'Saving your answers…',
+      timeUp: 'Time is up for this task, so answers can no longer be changed or sent. Contact the hiring team if you need more time.',
       invalidTitle: "This task link isn't valid",
       invalidDesc:
         'It may have expired, been withdrawn, or already been submitted. Please ask the hiring team for a fresh link.',
@@ -3365,6 +3367,8 @@ const hi = {
       },
     },
     task: {
+      savingAnswers: 'आपके उत्तर सहेजे जा रहे हैं…',
+      timeUp: 'इस टास्क का समय समाप्त हो गया है, इसलिए उत्तर अब बदले या भेजे नहीं जा सकते। अधिक समय चाहिए तो भर्ती टीम से संपर्क करें।',
       invalidTitle: 'यह टास्क लिंक मान्य नहीं है',
       invalidDesc:
         'यह समाप्त हो गया हो, वापस ले लिया गया हो, या पहले ही सबमिट किया जा चुका हो। कृपया भर्ती टीम से नया लिंक मांगें।',
@@ -5095,6 +5099,8 @@ const te = {
       },
     },
     task: {
+      savingAnswers: 'మీ సమాధానాలను సేవ్ చేస్తున్నాం…',
+      timeUp: 'ఈ టాస్క్ సమయం ముగిసింది, కాబట్టి సమాధానాలను ఇక మార్చలేరు లేదా పంపలేరు. మరింత సమయం కావాలంటే నియామక బృందాన్ని సంప్రదించండి.',
       invalidTitle: 'ఈ టాస్క్ లింక్ చెల్లదు',
       invalidDesc:
         'ఇది గడువు ముగిసి ఉండవచ్చు, ఉపసంహరించుకుని ఉండవచ్చు, లేదా ఇప్పటికే సమర్పించి ఉండవచ్చు. దయచేసి నియామక బృందాన్ని కొత్త లింక్ కోసం అడగండి.',

@@ -36,8 +36,9 @@
 // nothing either, but the hiring team can no longer see the work and it
 // cannot be used to pass the round.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, isTransientApiError } from '@/api/client';
 import {
@@ -88,12 +89,13 @@ const LINK_KINDS: TaskLinkKind[] = [
   'other',
 ];
 
-/** The server's own sentence, shown exactly as written — see PublicOffer.tsx
- *  for why: a candidate reading it and calling the hiring team should
- *  describe precisely what they saw. */
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+// Errors go through useCandidateError (audit CA-M21): on an English page the
+// server's own sentence is shown as written, so a candidate calling the hiring
+// team can describe exactly what they saw; on a Hindi or Telugu page it gives
+// way to the page's own sentence.
+
+/** How long typing pauses before an answer saves itself (audit CA-M23). */
+const AUTOSAVE_MS = 800;
 
 function fmtDuration(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -195,6 +197,7 @@ function PreStart({
   onStarted: (next: PublicTaskShape) => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -256,6 +259,7 @@ function MaterialRow({
   material: PublicTaskShape['materials'][number];
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [error, setError] = useState<string | null>(null);
 
   const downloadMut = useMutation({
@@ -299,34 +303,59 @@ function MaterialRow({
 
 /* ── One item's answer ────────────────────────────────────────────────────── */
 
+/** Save `value` once typing pauses. Answers used to save only on blur, so
+ *  the last one typed stayed unsaved, and Submit disabled, until the
+ *  candidate clicked somewhere else (audit CA-M23). */
+function useAutosave(
+  value: string,
+  savedValue: string,
+  disabled: boolean,
+  save: (v: string) => void,
+): void {
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    if (disabled || value === savedValue) return;
+    const id = window.setTimeout(() => saveRef.current(value), AUTOSAVE_MS);
+    return () => window.clearTimeout(id);
+  }, [value, savedValue, disabled]);
+}
+
 function TextItemField({
   token,
   item,
   response,
   disabled,
   onSaved,
+  onDraft,
 }: {
   token: string;
   item: TaskItem;
   response: TaskResponseOut | undefined;
   disabled: boolean;
   onSaved: () => void;
+  onDraft: (key: string, unsaved: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [value, setValue] = useState(response?.text_value ?? '');
   const [savedValue, setSavedValue] = useState(response?.text_value ?? '');
   const [error, setError] = useState<string | null>(null);
   const limit = item.max_chars ?? 20000;
 
   const saveMut = useMutation({
-    mutationFn: () => saveTaskResponse(token, item.key, { text_value: value }),
-    onSuccess: () => {
-      setSavedValue(value);
+    mutationFn: (v: string) => saveTaskResponse(token, item.key, { text_value: v }),
+    onSuccess: (_res, v) => {
+      setSavedValue(v);
       setError(null);
       onSaved();
     },
     onError: (e: unknown) => setError(errText(e, t('task.saveError'))),
   });
+  useAutosave(value, savedValue, disabled, (v) => saveMut.mutate(v));
+  useEffect(() => {
+    onDraft(item.key, value === savedValue ? null : value);
+  }, [item.key, value, savedValue, onDraft]);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -337,7 +366,7 @@ function TextItemField({
         maxLength={limit}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => {
-          if (value !== savedValue) saveMut.mutate();
+          if (value !== savedValue) saveMut.mutate(value);
         }}
         rows={5}
         placeholder={t('task.textPlaceholder')}
@@ -366,6 +395,7 @@ function LinkItemField({
   allowedDomains,
   disabled,
   onSaved,
+  onDraft,
 }: {
   token: string;
   item: TaskItem;
@@ -373,21 +403,27 @@ function LinkItemField({
   allowedDomains: string[];
   disabled: boolean;
   onSaved: () => void;
+  onDraft: (key: string, unsaved: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [value, setValue] = useState(response?.link_url ?? '');
   const [savedValue, setSavedValue] = useState(response?.link_url ?? '');
   const [error, setError] = useState<string | null>(null);
 
   const saveMut = useMutation({
-    mutationFn: () => saveTaskResponse(token, item.key, { link_url: value }),
-    onSuccess: () => {
-      setSavedValue(value);
+    mutationFn: (v: string) => saveTaskResponse(token, item.key, { link_url: v }),
+    onSuccess: (_res, v) => {
+      setSavedValue(v);
       setError(null);
       onSaved();
     },
     onError: (e: unknown) => setError(errText(e, t('task.saveError'))),
   });
+  useAutosave(value, savedValue, disabled, (v) => saveMut.mutate(v));
+  useEffect(() => {
+    onDraft(item.key, value === savedValue ? null : value);
+  }, [item.key, value, savedValue, onDraft]);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -401,7 +437,7 @@ function LinkItemField({
         disabled={disabled}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => {
-          if (value !== savedValue) saveMut.mutate();
+          if (value !== savedValue) saveMut.mutate(value);
         }}
         placeholder={t('task.linkPlaceholder')}
         className={`w-full ${INPUT}`}
@@ -445,6 +481,7 @@ function FileItemField({
   onSaved: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [error, setError] = useState<string | null>(null);
   const current = response?.response_type === 'file' ? response : undefined;
 
@@ -539,6 +576,7 @@ function ItemCard({
   allowedDomains,
   disabled,
   onSaved,
+  onDraft,
 }: {
   token: string;
   item: TaskItem;
@@ -546,6 +584,7 @@ function ItemCard({
   allowedDomains: string[];
   disabled: boolean;
   onSaved: () => void;
+  onDraft: (key: string, unsaved: string | null) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -564,6 +603,7 @@ function ItemCard({
             response={response}
             disabled={disabled}
             onSaved={onSaved}
+            onDraft={onDraft}
           />
         ) : item.response_type === 'link' ? (
           <LinkItemField
@@ -573,6 +613,7 @@ function ItemCard({
             allowedDomains={allowedDomains}
             disabled={disabled}
             onSaved={onSaved}
+            onDraft={onDraft}
           />
         ) : (
           <FileItemField
@@ -602,6 +643,7 @@ function ArtifactRow({
   onRemoved: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [error, setError] = useState<string | null>(null);
 
   const removeMut = useMutation({
@@ -659,6 +701,7 @@ function AddArtifactForm({
   onAdded: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [mode, setMode] = useState<'file' | 'link' | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkKind, setLinkKind] = useState<TaskLinkKind>('other');
@@ -824,6 +867,7 @@ function TaskWorkspace({
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [confirming, setConfirming] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -852,6 +896,32 @@ function TaskWorkspace({
     onError: (e: unknown) => setWithdrawError(errText(e, t('task.errorGeneric'))),
   });
 
+  // What has been typed but not saved yet, per item. Readiness counts it, a
+  // reload asks first while any is left, and Submit waits for it to save.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const onDraft = useCallback((key: string, unsaved: string | null) => {
+    setDrafts((prev) => {
+      if (unsaved === null) {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return prev[key] === unsaved ? prev : { ...prev, [key]: unsaved };
+    });
+  }, []);
+  const unsaved = Object.keys(drafts).length > 0;
+  useEffect(() => {
+    if (!unsaved) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Older browsers need returnValue set to show their prompt.
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [unsaved]);
+
   const responsesByItem = new Map(
     data.responses.filter((r) => r.item_key).map((r) => [r.item_key as string, r]),
   );
@@ -861,8 +931,9 @@ function TaskWorkspace({
   const requiredUnmet = data.items.filter((i) => {
     if (!i.required) return false;
     const r = responsesByItem.get(i.key);
-    if (i.response_type === 'text') return !r?.text_value;
-    if (i.response_type === 'link') return !r?.link_url;
+    const typed = drafts[i.key];
+    if (i.response_type === 'text') return typed !== undefined ? !typed.trim() : !r?.text_value;
+    if (i.response_type === 'link') return typed !== undefined ? !typed.trim() : !r?.link_url;
     return r?.response_type !== 'file';
   });
   const minArtifactsUnmet =
@@ -896,12 +967,23 @@ function TaskWorkspace({
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [deadlineMs]);
+  // The server stops accepting answers at the limit; say so instead of a
+  // silent 00:00 (audit CA-M23).
+  const timeUp = deadlineMs !== null && now >= deadlineMs;
 
   return (
     <>
       <TaskHeader data={data} />
 
-      {deadlineMs !== null ? (
+      {timeUp ? (
+        <p
+          role="alert"
+          data-testid="task-time-up"
+          className="w-full rounded-[12px] bg-[var(--ui-warn-wash)] px-4 py-3 text-[13px] text-foreground"
+        >
+          {t('task.timeUp')}
+        </p>
+      ) : deadlineMs !== null ? (
         <p className="w-full text-right text-[12.5px] text-muted-foreground">
           {t('task.timeRemaining', { time: fmtDuration((deadlineMs - now) / 1000) })}
         </p>
@@ -927,8 +1009,9 @@ function TaskWorkspace({
           item={item}
           response={responsesByItem.get(item.key)}
           allowedDomains={allowedDomains}
-          disabled={withdrawn}
+          disabled={withdrawn || timeUp}
           onSaved={onChanged}
+          onDraft={onDraft}
         />
       ))}
 
@@ -977,6 +1060,11 @@ function TaskWorkspace({
           <p className="text-[12.5px] text-muted-foreground">{t('task.withdrawConsentDone')}</p>
         ) : (
           <>
+            {ready && unsaved ? (
+              <p className="text-[12px] text-muted-foreground" aria-live="polite">
+                {t('task.savingAnswers')}
+              </p>
+            ) : null}
             {!ready ? (
               <p className="text-[12px] text-[var(--ui-warn)]">
                 {requiredUnmet.length > 0 ? t('task.notReadyRequired') : null}
@@ -998,7 +1086,7 @@ function TaskWorkspace({
                   <button
                     type="button"
                     onClick={() => submitMut.mutate()}
-                    disabled={submitMut.isPending}
+                    disabled={submitMut.isPending || unsaved || timeUp}
                     className="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 text-[14px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 disabled:opacity-50"
                   >
                     {submitMut.isPending ? t('task.submitting') : t('task.confirmYes')}
@@ -1015,7 +1103,7 @@ function TaskWorkspace({
             ) : (
               <Button
                 className="mt-1 h-12 w-full sm:w-auto"
-                disabled={!ready}
+                disabled={!ready || unsaved || timeUp}
                 onClick={() => {
                   setSubmitError(null);
                   setConfirming(true);
@@ -1093,6 +1181,7 @@ function SubmittedScreen({
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [withdrawAsking, setWithdrawAsking] = useState(false);
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
 

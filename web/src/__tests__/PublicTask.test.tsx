@@ -98,10 +98,13 @@ const ASSIGNED: PublicTaskShape = {
   responses: [],
 };
 
+// Started a minute ago, so the 30-minute limit is still running: the page now
+// closes the task at the limit (audit CA-M23), and a fixed past date would be
+// past it.
 const IN_PROGRESS: PublicTaskShape = {
   ...ASSIGNED,
   status: 'in_progress',
-  started_at: '2026-09-21T10:00:00.000Z',
+  started_at: new Date(Date.now() - 60_000).toISOString(),
 };
 
 const SUBMITTED: PublicTaskShape = {
@@ -553,5 +556,49 @@ describe('PublicTask - after submitting', () => {
     expect(
       screen.queryByRole('button', { name: /withdraw my consent/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// Audit CA-M23: answers save while typing pauses, Submit follows what was
+// typed, a reload with unsaved work asks first, and time-up is said.
+describe('PublicTask - typing, unsaved work and the time limit', () => {
+  it('saves a text answer once typing pauses, without a blur', async () => {
+    const user = userEvent.setup();
+    saveTaskResponse.mockResolvedValue({ item_key: 'design_doc', saved: true });
+    viewTask.mockResolvedValue(IN_PROGRESS);
+    renderPage();
+    const textarea = await screen.findByPlaceholderText(/write your answer/i);
+    await user.type(textarea, 'Draft');
+    await waitFor(
+      () =>
+        expect(saveTaskResponse).toHaveBeenCalledWith('task_tok_123456', 'design_doc', {
+          text_value: 'Draft',
+        }),
+      { timeout: 2500 },
+    );
+  });
+
+  it('asks before a reload while an answer is unsaved', async () => {
+    const user = userEvent.setup();
+    saveTaskResponse.mockImplementation(() => new Promise(() => undefined));
+    viewTask.mockResolvedValue(IN_PROGRESS);
+    renderPage();
+    const textarea = await screen.findByPlaceholderText(/write your answer/i);
+    await user.type(textarea, 'Unsaved');
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(screen.getByRole('button', { name: /^submit$/i })).toBeDisabled();
+  });
+
+  it('says time is up at the limit and closes the answers', async () => {
+    viewTask.mockResolvedValue({
+      ...IN_PROGRESS,
+      started_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+    });
+    renderPage();
+    expect(await screen.findByTestId('task-time-up')).toHaveTextContent(/time is up/i);
+    expect(screen.getByPlaceholderText(/write your answer/i)).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^submit$/i })).toBeDisabled();
   });
 });

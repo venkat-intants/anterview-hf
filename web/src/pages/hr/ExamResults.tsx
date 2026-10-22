@@ -18,7 +18,8 @@ import { QueryErrorPanel, QueryState } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { csvRow } from '@/lib/csv';
-import { GlassCard, StatCard, StatusTag, Avatar, Pill } from '@/design/components/primitives';
+import { GlassCard, StatCard, StatusTag, Avatar } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
 import {
   Download,
   Eye,
@@ -48,18 +49,49 @@ function initialsOf(name: string): string {
     .join('');
 }
 
+/** Still being sat: never read as a fail. */
+function isInProgress(a: AttemptResult): boolean {
+  return a.status === 'in_progress' || a.submitted_at === null;
+}
+
+/** The outcome in words. An attempt with no verdict yet is "Not graded", not
+ *  "Failed" (audit E9: the CSV called every such attempt a fail). */
+function outcomeLabel(a: AttemptResult): string {
+  if (isInProgress(a)) return 'In progress';
+  if (a.passed === true) return 'Passed';
+  if (a.passed === false) return 'Failed';
+  return 'Not graded';
+}
+
+/** "Round 2 · Coding" for an attempt that sat a round; '-' for a legacy one. */
+function roundLabel(a: AttemptResult): string {
+  if (a.round_number == null) return '-';
+  return a.round_title ? `Round ${a.round_number} · ${a.round_title}` : `Round ${a.round_number}`;
+}
+
 // ── Client-side CSV export ────────────────────────────────────────────────────
 function exportCsv(attempts: AttemptResult[], examTitle: string): void {
-  const header = ['Candidate', 'Attempt #', 'Score %', 'Raw / Max', 'Status', 'Submitted At'];
+  const header = [
+    'Candidate',
+    'Round',
+    'Attempt #',
+    'Score %',
+    'Raw / Max',
+    'Pass mark %',
+    'Status',
+    'Submitted at',
+  ];
   // csvRow, not hand-quoting: the name comes from the unauthenticated apply
   // form, and quoting alone does not stop a spreadsheet evaluating a cell that
   // starts with = + - @ (see lib/csv.ts).
   const rows = attempts.map((a) => [
     a.applicant_name,
+    a.round_number == null ? '' : roundLabel(a),
     a.attempt_no,
     a.score_percent,
     a.score_raw !== null && a.score_max !== null ? `${a.score_raw}/${a.score_max}` : '',
-    a.status === 'in_progress' ? 'In Progress' : a.passed ? 'Passed' : 'Failed',
+    a.round_pass_threshold ?? '',
+    outcomeLabel(a),
     a.submitted_at ? formatDateTime(a.submitted_at) : '',
   ]);
   const csv = [csvRow(header), ...rows.map(csvRow)].join('\n');
@@ -111,6 +143,14 @@ export default function ExamResults() {
   const list = attempts ?? [];
   const completedList = list.filter((a) => a.score_percent !== null);
   const passedCount = list.filter((a) => a.passed).length;
+  // Pass rate over GRADED attempts only: counting the ones still being sat as
+  // not-passed understated it (audit E9).
+  const gradedList = list.filter((a) => !isInProgress(a) && a.passed !== null);
+  // Each attempt is judged by its own round's pass mark (audit E8), so the
+  // page shows a single mark only when every attempt shares it.
+  const marks = new Set(list.map((a) => a.round_pass_threshold ?? exam?.pass_threshold));
+  const sharedMark = marks.size === 1 ? [...marks][0] : undefined;
+  const showRound = list.some((a) => a.round_number != null);
   const avgScore =
     completedList.length > 0
       ? Math.round(
@@ -134,21 +174,24 @@ export default function ExamResults() {
         }
         title={`${exam?.title ?? 'Exam'} · Results`}
         description={
-          <span className="break-words font-mono text-[13px]">
-            exam #{examId} · {list.length} attempt{list.length !== 1 ? 's' : ''} · {passedCount}{' '}
-            passed · pass ≥ {exam?.pass_threshold ?? '-'}%
+          <span className="break-words text-[13px]">
+            {list.length} attempt{list.length !== 1 ? 's' : ''} · {passedCount} passed
+            {sharedMark !== undefined
+              ? ` · pass mark ${sharedMark}%`
+              : list.length > 0
+                ? ' · each round has its own pass mark'
+                : ''}
           </span>
         }
         actions={
           list.length > 0 ? (
-            <Pill
+            <Button
               variant="outline"
-              className="px-4 py-2.5"
               onClick={() => exportCsv(list, exam?.title ?? 'exam')}
               aria-label="Export results as CSV"
             >
-              <Download size={15} aria-hidden="true" /> Export CSV
-            </Pill>
+              <Download aria-hidden="true" /> Export CSV
+            </Button>
           ) : undefined
         }
       />
@@ -177,8 +220,12 @@ export default function ExamResults() {
           <StatCard label="Top score" value={`${topScore}%`} delta="best attempt" trend="flat" />
           <StatCard
             label="Pass rate"
-            value={list.length > 0 ? `${Math.round((passedCount / list.length) * 100)}%` : '-'}
-            delta={`≥ ${exam?.pass_threshold ?? '-'}% threshold`}
+            value={
+              gradedList.length > 0
+                ? `${Math.round((passedCount / gradedList.length) * 100)}%`
+                : '-'
+            }
+            delta={`of ${gradedList.length} graded`}
             trend={passedCount > 0 ? 'up' : 'flat'}
           />
         </div>
@@ -205,7 +252,7 @@ export default function ExamResults() {
         query={attemptsQuery}
         errorTitle="Could not load the attempts for this exam."
         loading={
-          <ResultsTable showSimilarity={showSimilarity} busy>
+          <ResultsTable showSimilarity={showSimilarity} showRound={false} busy>
             {[0, 1, 2].map((i) => (
               <tr key={i} aria-hidden="true">
                 <td colSpan={showSimilarity ? 6 : 5} className="border-b border-border p-0">
@@ -225,12 +272,13 @@ export default function ExamResults() {
         }
       >
         {(rows) => (
-          <ResultsTable showSimilarity={showSimilarity}>
+          <ResultsTable showSimilarity={showSimilarity} showRound={showRound}>
             {rows.map((a) => (
               <AttemptRow
                 key={a.attempt_id}
                 a={a}
                 examId={examId}
+                showRound={showRound}
                 showSimilarity={showSimilarity}
                 similarityCount={similarityByAttempt.get(a.attempt_id) ?? 0}
               />
@@ -247,10 +295,12 @@ const TH = 'sticky top-0 z-[1] whitespace-nowrap border-b border-border bg-card 
 // ── Results table frame ───────────────────────────────────────────────────────
 function ResultsTable({
   showSimilarity,
+  showRound,
   busy = false,
   children,
 }: {
   showSimilarity: boolean;
+  showRound: boolean;
   busy?: boolean;
   children: ReactNode;
 }) {
@@ -267,6 +317,11 @@ function ResultsTable({
               <th scope="col" className={TH}>
                 Candidate
               </th>
+              {showRound && (
+                <th scope="col" className={TH}>
+                  Round
+                </th>
+              )}
               <th scope="col" className={cn(TH, 'text-right')}>
                 Score
               </th>
@@ -298,15 +353,17 @@ const TD = 'border-b border-border px-6 py-3.5 align-middle group-last:border-0'
 function AttemptRow({
   a,
   examId,
+  showRound,
   showSimilarity,
   similarityCount,
 }: {
   a: AttemptResult;
   examId: string;
+  showRound: boolean;
   showSimilarity: boolean;
   similarityCount: number;
 }) {
-  const inProgress = a.status === 'in_progress' || a.submitted_at === null;
+  const inProgress = isInProgress(a);
 
   return (
     <tr className="group transition-colors hover:bg-[var(--ui-inset-soft)]">
@@ -315,6 +372,18 @@ function AttemptRow({
         <Avatar initials={initialsOf(a.applicant_name)} size={34} className="mr-3 align-middle" />
         <span className="align-middle text-[13.5px] font-medium">{a.applicant_name}</span>
       </td>
+
+      {/* Round, with the pass mark this attempt was judged against. */}
+      {showRound && (
+        <td className={cn(TD, 'text-[13px]')}>
+          <span className="block">{roundLabel(a)}</span>
+          {a.round_pass_threshold != null ? (
+            <span className="block text-[12px] text-muted-foreground">
+              pass mark {a.round_pass_threshold}%
+            </span>
+          ) : null}
+        </td>
+      )}
 
       {/* Score — right-aligned and tabular so a column of percentages lines up. */}
       <td
@@ -335,14 +404,16 @@ function AttemptRow({
           <StatusTag tone="electric">
             <Clock size={11} aria-hidden="true" /> In progress
           </StatusTag>
-        ) : a.passed ? (
+        ) : a.passed === true ? (
           <StatusTag tone="forest" dot>
             <CheckCircle2 size={11} aria-hidden="true" /> Passed
           </StatusTag>
-        ) : (
+        ) : a.passed === false ? (
           <StatusTag tone="ember">
             <XCircle size={11} aria-hidden="true" /> Failed
           </StatusTag>
+        ) : (
+          <StatusTag tone="neutral">Not graded</StatusTag>
         )}
       </td>
 
@@ -361,11 +432,16 @@ function AttemptRow({
 
       {/* Action */}
       <td className={cn(TD, 'text-right')}>
-        <Link to={`/hr/exams/${examId}/attempts/${a.attempt_id}`}>
-          <Pill variant="ghost" className="py-1.5 text-[12px]">
-            <Eye size={13} aria-hidden="true" /> View
-          </Pill>
-        </Link>
+        {/* One control: a link styled as a button. A button nested in a
+            link is invalid and announced twice (audit E27). */}
+        <Button asChild variant="ghost" size="sm">
+          <Link
+            to={`/hr/exams/${examId}/attempts/${a.attempt_id}`}
+            aria-label={`View attempt by ${a.applicant_name}`}
+          >
+            <Eye aria-hidden="true" /> View
+          </Link>
+        </Button>
       </td>
     </tr>
   );

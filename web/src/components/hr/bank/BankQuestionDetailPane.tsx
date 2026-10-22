@@ -23,7 +23,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, Loader2, Pencil } from '@/design/components/icons';
+import { Archive, ArrowLeft, Check, Loader2, Pencil } from '@/design/components/icons';
 import { StatusTag } from '@/design/components/primitives';
 import { STATUS_TONE, STATUS_WORD } from './bankStatus';
 import { Well } from '@/design/components/rows';
@@ -34,6 +34,7 @@ import { QuestionBadges } from '@/components/bank/QuestionBadges';
 import type { UnsavedGuard } from '@/components/bank/useUnsavedGuard';
 import { BankCodingQuestionView } from '@/components/hr/bank/BankCodingQuestionView';
 import { useAuth } from '@/context/AuthContext';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -48,14 +49,8 @@ import {
   type BankQuestionInput,
 } from '@/api/questionBanks';
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
-
 const SECONDARY =
   'min-h-10 rounded-full border border-[var(--ui-line-strong)] px-5 py-1.5 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50';
-const QUIET_DANGER =
-  'min-h-10 rounded-full px-4 py-1.5 text-[13px] font-medium text-muted-foreground hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:bg-[var(--ui-danger-wash)] focus-visible:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50';
 
 /** An MCQ read the way a candidate sees it, with the right option named. */
 function McqReadView({ question }: { question: BankQuestion }): JSX.Element {
@@ -163,7 +158,7 @@ export function BankQuestionDetailPane({
       setEditing(false);
       invalidateAll();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not save this question')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not save this question.')),
   });
 
   const newVersionMut = useMutation({
@@ -175,7 +170,7 @@ export function BankQuestionDetailPane({
       invalidateAll();
       onSelectVersion(created.id);
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not create a new version')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not create a new version.')),
   });
 
   const deleteMut = useMutation({
@@ -185,7 +180,7 @@ export function BankQuestionDetailPane({
       invalidateAll();
       onGone();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not delete this question')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not delete this question.')),
   });
 
   const submitMut = useMutation({
@@ -194,7 +189,7 @@ export function BankQuestionDetailPane({
       toast.success('Submitted for review');
       invalidateAll();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not submit this question')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not submit this question.')),
   });
 
   const withdrawMut = useMutation({
@@ -203,16 +198,16 @@ export function BankQuestionDetailPane({
       toast.success('Withdrawn to draft');
       invalidateAll();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not withdraw this question')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not withdraw this question.')),
   });
 
   const retireMut = useMutation({
     mutationFn: () => retireBankQuestion(q.id),
     onSuccess: () => {
-      toast.success('Retired');
+      toast.success('Question retired');
       invalidateAll();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not retire this question')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not retire this question.')),
   });
 
   const isDraft = q.status === 'draft';
@@ -355,14 +350,17 @@ export function BankQuestionDetailPane({
             </button>
           ) : null}
           {q.status === 'approved' ? (
-            <button
-              type="button"
-              disabled={retireMut.isPending}
-              onClick={() => retireMut.mutate()}
-              className={cn(QUIET_DANGER, 'ml-auto')}
-            >
-              Retire
-            </button>
+            // Retiring takes the question out of every bank picker, so it
+            // asks first (audit E19).
+            <span className="ml-auto">
+              <ConfirmDeleteButton
+                label="Retire"
+                confirmText="Retire question"
+                icon={Archive}
+                pending={retireMut.isPending}
+                onConfirm={() => retireMut.mutate()}
+              />
+            </span>
           ) : null}
         </div>
       ) : null}

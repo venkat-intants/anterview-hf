@@ -246,9 +246,13 @@ describe('QuestionBanks - rename and archive', () => {
     await screen.findByRole('link', { name: 'Backend Core' });
 
     await user.click(screen.getByRole('button', { name: 'Archive' }));
-    // Archiving is confirmed with "Archive", not "Delete" (audit X5).
+    // Archiving is confirmed with "Archive bank", not "Delete" (audit X5), and
+    // says it cannot be undone from the app, which has no unarchive (E18).
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Archive' }));
+    expect(
+      screen.getByRole('group', { name: /cannot be restored from the app/i }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Archive bank' }));
 
     await waitFor(() => expect(archiveQuestionBank).toHaveBeenCalledWith('bank-1'));
   });

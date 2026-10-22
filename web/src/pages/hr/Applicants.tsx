@@ -1111,8 +1111,12 @@ export default function Applicants() {
   });
   const openings = openingsData ?? [];
 
-  // List state
-  const [filter, setFilter] = useState('all');
+  // List state. HR-L9: ?status= opens the list already filtered (the HR home's
+  // "Shortlisted" tile links here); an unknown value falls back to All.
+  const [filter, setFilter] = useState(() => {
+    const wanted = searchParams.get('status');
+    return STATUS_FILTERS.some((f) => f.key === wanted) ? (wanted as string) : 'all';
+  });
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 350);
   const trimmedQuery = debouncedQuery.trim();
@@ -1329,10 +1333,11 @@ export default function Applicants() {
 
   return (
     <Page width="workspace">
+      {/* HR-L8: the page title is the nav label it is reached from. */}
       <PageHeader
         className="mb-0"
-        title="Resume screening"
-        description="Drop in many resumes at once - each candidate's name & email are read straight from the resume, AI-scored against the role, then ranked."
+        title="Applicants"
+        description="Screen resumes in bulk. Drop in many resumes at once - each candidate's name & email are read straight from the resume, AI-scored against the role, then ranked."
       />
 
       {/* Upload panel */}

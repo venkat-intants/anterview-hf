@@ -689,7 +689,8 @@ export default function WorkflowBuilder(): JSX.Element {
       <EditorHeader
         breadcrumbs={[
           { label: 'Openings', to: '/hr/requisitions' },
-          { label: 'Opening', to: `/hr/requisitions/${requisitionId}` },
+          // HR-L8: name the opening, as the decision queue does.
+          { label: req.data?.title ?? 'Opening', to: `/hr/requisitions/${requisitionId}` },
           { label: 'Workflow' },
         ]}
         title={req.data?.title ?? 'Hiring workflow'}

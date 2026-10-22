@@ -136,11 +136,11 @@ vi.mock('../lib/toast', () => ({
 
 import HRPipeline from '../pages/hr/HRPipeline';
 
-function renderPipeline() {
+function renderPipeline(path = '/hr/pipeline') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[path]}>
         <HRPipeline />
       </MemoryRouter>
     </QueryClientProvider>,
@@ -382,5 +382,14 @@ describe('HRPipeline - list and board are the same data', () => {
     await screen.findByText('Bhavya Nair');
     await user.click(screen.getByRole('button', { name: 'board' }));
     expect(localStorage.getItem('intants:pipeline-view')).toBe('board');
+  });
+});
+
+describe('HRPipeline - deep links (HR-L9)', () => {
+  it('opens on the stage the link names', async () => {
+    renderPipeline('/hr/pipeline?stage=exam_passed');
+    await waitFor(() =>
+      expect(getPipeline).toHaveBeenCalledWith({ stage: 'exam_passed', limit: 50, offset: 0 }),
+    );
   });
 });

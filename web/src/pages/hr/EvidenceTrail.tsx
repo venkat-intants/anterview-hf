@@ -286,13 +286,14 @@ export default function EvidenceTrail(): JSX.Element {
           ) : (
             <>
               {decisions.length > 1 ? (
-                <div className="flex flex-wrap gap-2" role="tablist" aria-label="Decision">
+                // HR-L13: a group of toggle buttons, not a tablist: there is no
+                // tabpanel and no arrow-key navigation to back a tab role.
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Decision">
                   {decisions.map((d) => (
                     <button
                       key={d.id}
                       type="button"
-                      role="tab"
-                      aria-selected={d.id === selectedDecisionId}
+                      aria-pressed={d.id === selectedDecisionId}
                       onClick={() => setSearchParams({ decision: String(d.id) })}
                       className={`min-h-10 rounded-full border px-4 text-[13px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] ${
                         d.id === selectedDecisionId

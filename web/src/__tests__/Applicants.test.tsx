@@ -848,3 +848,18 @@ describe('Applicants - a failed load (HR-M5)', () => {
     expect(screen.queryByText('No applicants yet')).not.toBeInTheDocument();
   });
 });
+
+describe('Applicants - deep links (HR-L9)', () => {
+  it('opens already filtered when the link names a status', async () => {
+    renderPage('/hr/applicants?status=shortlisted');
+    await waitFor(() =>
+      expect(listApplicants).toHaveBeenCalledWith({ q: undefined, status: 'shortlisted' }),
+    );
+    expect(screen.getByRole('tab', { name: 'Shortlisted' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('ignores a status it does not know', async () => {
+    renderPage('/hr/applicants?status=bogus');
+    await waitFor(() => expect(listApplicants).toHaveBeenCalledWith({ q: undefined, status: undefined }));
+  });
+});

@@ -6,7 +6,7 @@
 // NOTE: design's drag-drop Kanban is NOT used — no stage-transition API endpoint exists.
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users,
@@ -476,7 +476,13 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
 /* ── Page ───────────────────────────────────────────────────────────────────── */
 
 export default function HRPipeline() {
-  const [stage, setStage] = useState<PipelineStage>('all');
+  // HR-L9: ?stage= opens a stage tab (the HR home's "Exam passed" tile links
+  // here); an unknown value falls back to All.
+  const [searchParams] = useSearchParams();
+  const [stage, setStage] = useState<PipelineStage>(() => {
+    const wanted = searchParams.get('stage');
+    return STAGE_TABS.find((t) => t.value === wanted)?.value ?? 'all';
+  });
   const [offset, setOffset] = useState(0);
   // Which candidate's drawer is open. Null is closed — one piece of state
   // rather than a boolean plus an id that can disagree with it.
@@ -526,7 +532,7 @@ export default function HRPipeline() {
   return (
     <Page width="workspace">
       <PageHeader
-        title="Hiring pipeline"
+        title="Pipeline"
         description="Every candidate, end to end - resume → exam → interview → decision."
       />
 

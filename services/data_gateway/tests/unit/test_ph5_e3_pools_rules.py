@@ -130,9 +130,34 @@ def test_sanitise_match_reason_bounds_why_items_and_query_terms() -> None:
 def test_sanitise_match_reason_drops_malformed_input_rather_than_raising() -> None:
     assert pools._sanitise_match_reason(None) is None
     assert pools._sanitise_match_reason({}) is None
-    assert pools._sanitise_match_reason({"why": "not a list"}) == {
+    assert pools._sanitise_match_reason({"why": "not a list"}, frozen_at=NOW) == {
+        "frozen_at": NOW.isoformat(),
         "breakdown": None, "why": [], "searched_at": None, "query_terms": [],
     }
+
+
+def test_sanitise_match_reason_stamps_frozen_at_from_the_server_not_the_body() -> None:
+    """Audit PL-F2: the snapshot's date is the server's, and a body that sends
+    its own ``frozen_at`` does not get to choose it."""
+    out = pools._sanitise_match_reason(
+        {"why": [], "frozen_at": "1999-01-01T00:00:00+00:00"}, frozen_at=NOW,
+    )
+    assert out is not None
+    assert out["frozen_at"] == NOW.isoformat()
+    defaulted = pools._sanitise_match_reason({"why": []})
+    assert defaulted is not None
+    assert datetime.fromisoformat(defaulted["frozen_at"]).tzinfo is not None
+
+
+def test_review_expiry_matches_the_gate_bound() -> None:
+    """`_evidence_review_expires_at` is the first moment
+    `_evidence_review_is_current` turns false, never a re-derived guess."""
+    reviewed = NOW
+    expires = pools._evidence_review_expires_at(reviewed)
+    assert expires is not None
+    assert pools._evidence_review_is_current(reviewed, now=expires - timedelta(seconds=1))
+    assert not pools._evidence_review_is_current(reviewed, now=expires)
+    assert pools._evidence_review_expires_at(None) is None
 
 
 # ---------------------------------------------------------------------------

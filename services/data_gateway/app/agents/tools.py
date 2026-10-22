@@ -1043,8 +1043,8 @@ async def _draft_shortlist(args: dict[str, Any], ctx: ToolContext) -> ToolOutput
                     # A shortlist is NOT a silent internal change: the PATCH
                     # handler calls email_applicant_decision on any real status
                     # transition, so committing this reaches the candidate's
-                    # inbox. Verified against hr_applicants.update_applicant_status
-                    # — worth re-checking if that handler's email behaviour ever
+                    # inbox. Verified against hr_applicants.update_applicant_status;
+                    # worth re-checking if that handler's email behaviour ever
                     # changes.
                     risk_note=(
                         "Emails the candidate that they have been shortlisted. "

@@ -322,7 +322,7 @@ export function runWatchersNow(): Promise<{
 
 export const SIGNAL_LABEL: Record<SignalName, string> = {
   resume: 'Resume / ATS',
-  exam: 'Written exam',
-  coding: 'Coding test',
+  exam: 'Exam',
+  coding: 'Coding round',
   interview: 'Interview',
 };

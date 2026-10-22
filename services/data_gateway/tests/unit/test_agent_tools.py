@@ -175,7 +175,7 @@ def _app_row(**overrides: Any) -> MagicMock:
 
 
 async def test_interview_invite_proposal_matches_the_real_endpoint() -> None:
-    """POST /hr/interviews with {applicant_id, enrolment_id, language} — see
+    """POST /hr/interviews with {applicant_id, enrolment_id, language}; see
     InviteCreateIn. The enrolment_id is what lets the endpoint attribute the
     interview to one application instead of answering "choose which one"."""
     db = _fake_db([_app_row()])

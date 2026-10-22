@@ -97,6 +97,15 @@ describe('CandidatePanel - citations', () => {
     expect(screen.getAllByRole('link')).toHaveLength(1);
   });
 
+  it('names the written round "Exam", the term the rest of the HR console uses', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Run assessment/ }));
+
+    expect(await screen.findByText('Exam')).toBeInTheDocument();
+    expect(screen.queryByText('Written exam')).not.toBeInTheDocument();
+  });
+
   // ---------------------------------------------------------------------
   // PH5-E1 criteria 4/5 — the per-signal citation-state banner. CandidatePanel
   // is one of the five surfaces required to carry it.

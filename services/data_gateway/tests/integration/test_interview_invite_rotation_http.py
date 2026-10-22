@@ -91,6 +91,12 @@ async def seed(committed_db: AsyncSession) -> AsyncIterator[dict[str, uuid.UUID]
         await committed_db.execute(
             text("DELETE FROM interview_invites WHERE company_id = :c"), {"c": ids["company"]}
         )
+        # Each invite mints a Job owned by the HR user. Deleting the user would
+        # only NULL its owner (ON DELETE SET NULL), and a job with no owner is a
+        # PUBLIC catalogue job: test_jobs_endpoints then counts it.
+        await committed_db.execute(
+            text("DELETE FROM jobs WHERE created_by_user_id = :u"), {"u": ids["hr"]}
+        )
         await committed_db.execute(
             text("DELETE FROM companies WHERE id = :c"), {"c": ids["company"]}
         )

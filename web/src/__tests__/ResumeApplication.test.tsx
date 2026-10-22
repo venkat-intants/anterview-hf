@@ -96,6 +96,8 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   window.location.hash = '';
+  // The page keeps its token in this tab's storage between reloads (CA-H3).
+  sessionStorage.clear();
   getDraft.mockResolvedValue(draft());
   saveDraft.mockImplementation((_t: string, f: object) =>
     Promise.resolve(draft(f as Partial<ApplicationDraft>)),
@@ -304,6 +306,141 @@ describe('saving', () => {
     getDraft.mockResolvedValue(draft({ has_resume: true, resume_filename: 'cv.pdf' }));
     renderPage();
     expect(await screen.findByText(/checking your details again/)).toBeInTheDocument();
+  });
+
+  // Audit CA-M22: a save used to say nothing either way.
+  it('says it saved', async () => {
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /Save and finish later/ }));
+    expect(await screen.findByText('Saved.')).toBeInTheDocument();
+  });
+
+  it('says when a save failed', async () => {
+    saveDraft.mockRejectedValue(new Error('We could not save your progress just now.'));
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /Save and finish later/ }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not save/i);
+  });
+});
+
+// ===========================================================================
+// Audit CA-M22: a confirmation vouches for particular values
+// ===========================================================================
+describe('editing after confirming', () => {
+  it('asks for the details to be confirmed again before submitting', async () => {
+    getDraft.mockResolvedValue(
+      draft({ has_resume: true, confirmed: true, full_name: 'Priya' }),
+    );
+    renderPage();
+    const submit = await screen.findByRole('button', { name: /Submit application/ });
+    await waitFor(() => expect(submit).toBeEnabled());
+
+    const name = screen.getByLabelText(/Full name/);
+    await userEvent.type(name, ' Sharma');
+    expect(screen.getByText(/changed these details since you confirmed them/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Submit application/ })).toBeDisabled();
+    expect(screen.getByText(/Details confirmed - still needed/)).toBeInTheDocument();
+  });
+});
+
+// ===========================================================================
+// Audit CA-H1: the opening's own questions are asked here too
+// ===========================================================================
+describe('screening questions', () => {
+  const QUESTION = {
+    id: 'q-1',
+    prompt: 'Can you work night shifts?',
+    kind: 'yes_no' as const,
+    help_text: null,
+    required: true,
+    options: [],
+  };
+
+  it('asks them, and holds submission until a required one is answered', async () => {
+    getDraft.mockResolvedValue(
+      draft({ has_resume: true, confirmed: true, full_name: 'Priya', questions: [QUESTION] }),
+    );
+    renderPage();
+    expect(await screen.findByText('Can you work night shifts?')).toBeInTheDocument();
+    expect(screen.getByText(/Required questions answered - still needed/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Submit application/ })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Yes' }));
+    expect(screen.getByRole('button', { name: /Submit application/ })).toBeEnabled();
+  });
+
+  it('saves the answers before submitting, so what is sent is what is on screen', async () => {
+    getDraft.mockResolvedValue(
+      draft({ has_resume: true, confirmed: true, full_name: 'Priya', questions: [QUESTION] }),
+    );
+    renderPage();
+    await userEvent.click(await screen.findByRole('radio', { name: 'Yes' }));
+    await userEvent.click(screen.getByRole('button', { name: /Submit application/ }));
+
+    await waitFor(() => expect(submitDraft).toHaveBeenCalled());
+    expect(saveDraft).toHaveBeenCalledWith('tok-123', { answers: { 'q-1': true } });
+    expect(saveDraft.mock.invocationCallOrder[0]).toBeLessThan(
+      submitDraft.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('saves answers with "Save and finish later"', async () => {
+    getDraft.mockResolvedValue(draft({ questions: [QUESTION] }));
+    renderPage();
+    await userEvent.click(await screen.findByRole('radio', { name: 'No' }));
+    await userEvent.click(screen.getByRole('button', { name: /Save and finish later/ }));
+    await waitFor(() =>
+      expect(saveDraft).toHaveBeenCalledWith(
+        'tok-123',
+        expect.objectContaining({ answers: { 'q-1': false } }),
+      ),
+    );
+  });
+});
+
+// ===========================================================================
+// Audit CA-H3: the page tells them this link is the only way back in
+// ===========================================================================
+describe('a reload', () => {
+  it('keeps the draft open after the address bar was scrubbed', async () => {
+    window.location.hash = '#tok-reload';
+    const first = renderPage();
+    await waitFor(() => expect(getDraft).toHaveBeenCalledWith('tok-reload'));
+    expect(window.location.hash).toBe('');
+    first.unmount();
+    getDraft.mockClear();
+
+    // A reload: same tab, no fragment any more. renderPage only sets a hash
+    // when none is present, so set the path explicitly without one.
+    window.history.replaceState(null, '', '/apply/draft');
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/apply/draft']}>
+          <ResumeApplication />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(getDraft).toHaveBeenCalledWith('tok-reload'));
+  });
+
+  it('forgets the token once the application is sent', async () => {
+    getDraft.mockResolvedValue(
+      draft({ has_resume: true, confirmed: true, full_name: 'Priya' }),
+    );
+    renderPage();
+    const submit = await screen.findByRole('button', { name: /Submit application/ });
+    await waitFor(() => expect(submit).toBeEnabled());
+    await userEvent.click(submit);
+    await screen.findByText(/your application is in/);
+    expect(sessionStorage.getItem('anthire.draft.token')).toBeNull();
+  });
+
+  it('does not tell them to ask for a new link nobody can issue', async () => {
+    getDraft.mockRejectedValue(new Error('Not found'));
+    renderPage();
+    await screen.findByText('This link no longer works');
+    expect(screen.queryByText(/ask the person who invited you/i)).toBeNull();
   });
 });
 

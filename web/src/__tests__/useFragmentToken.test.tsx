@@ -1,7 +1,7 @@
 import { StrictMode, type ReactNode } from 'react';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { useFragmentToken } from '../hooks/useFragmentToken';
+import { forgetFragmentToken, useFragmentToken } from '../hooks/useFragmentToken';
 
 function setUrl(url: string): void {
   window.history.replaceState({ idx: 3 }, '', url);
@@ -82,5 +82,62 @@ describe('useFragmentToken', () => {
     renderHook(() => useFragmentToken());
     const second = renderHook(() => useFragmentToken());
     expect(second.result.current).toBe('');
+  });
+});
+
+// Audit CA-H3: a page somebody works on must survive a reload. Same pattern as
+// /exam: this tab's sessionStorage, never localStorage or a cookie.
+describe('useFragmentToken(storageKey)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    setUrl('/');
+  });
+
+  it('a reload (a new mount with the fragment gone) still has the token', () => {
+    setUrl('/apply/draft#keep-me');
+    const first = renderHook(() => useFragmentToken('k.draft'));
+    expect(first.result.current).toBe('keep-me');
+    expect(window.location.hash).toBe('');
+    first.unmount();
+
+    const reloaded = renderHook(() => useFragmentToken('k.draft'));
+    expect(reloaded.result.current).toBe('keep-me');
+  });
+
+  it('keeps it in this tab only, never in localStorage or a cookie', () => {
+    setUrl('/task#tab-only');
+    renderHook(() => useFragmentToken('k.task'));
+    expect(sessionStorage.getItem('k.task')).toBe('tab-only');
+    expect(JSON.stringify({ ...localStorage })).not.toContain('tab-only');
+    expect(document.cookie).not.toContain('tab-only');
+  });
+
+  it('a freshly opened link wins over one an earlier link left behind', () => {
+    sessionStorage.setItem('k.offer', 'old-link');
+    setUrl('/offer#new-link');
+    const { result } = renderHook(() => useFragmentToken('k.offer'));
+    expect(result.current).toBe('new-link');
+    expect(sessionStorage.getItem('k.offer')).toBe('new-link');
+  });
+
+  it('forgetFragmentToken drops it, so a spent link does not linger', () => {
+    setUrl('/offer#spent');
+    renderHook(() => useFragmentToken('k.spent'));
+    forgetFragmentToken('k.spent');
+    const after = renderHook(() => useFragmentToken('k.spent'));
+    expect(after.result.current).toBe('');
+  });
+
+  it('still returns the token when storage is blocked', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('blocked');
+    });
+    setUrl('/offer#no-storage');
+    const { result } = renderHook(() => useFragmentToken('k.blocked'));
+    expect(result.current).toBe('no-storage');
   });
 });

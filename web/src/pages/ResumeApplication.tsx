@@ -15,6 +15,18 @@
 // person's email was stored, and the server refuses a draft without it. Asking
 // again would imply the first answer had not counted.
 //
+// THE TOKEN SURVIVES A RELOAD, IN THIS TAB ONLY
+// The copy tells the candidate this link is the only way back in, so the page
+// must not lose it the moment it scrubs the address bar: it is kept in this
+// tab's sessionStorage (useFragmentToken's per-tab mode, the /exam pattern) and
+// dropped once the draft is submitted, deleted or found dead.
+//
+// THE SCREENING QUESTIONS ARE ASKED HERE TOO
+// Submission validates the opening's required questions against the draft's
+// stored answers, so a draft page that never asked them made such a draft
+// impossible to finish (audit CA-H1). The server now sends the questions with
+// the draft, and answers are saved with it.
+//
 // THE CONFIRMATION STEP IS THE POINT OF THE PAGE
 // What the CV parser read is shown as editable values, not as a verdict. The
 // candidate's correction wins: a name read out of a PDF is a guess, and theirs
@@ -22,7 +34,7 @@
 // never blocks anything — the only thing required here is what the application
 // itself requires.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -32,22 +44,52 @@ import {
   saveDraft,
   submitDraft,
   uploadDraftResume,
+  type AnswerValue,
   type ApplicationDraft,
   type DraftFields,
 } from '@/api/publicApply';
+import { ApplyQuestionField } from '@/components/candidate/ApplyQuestionField';
+import { requiredAnswered } from '@/components/candidate/applyAnswers';
+import { formatDate, uiLocale } from '@/lib/formatters';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { PageHeader, SectionCard } from '@/design/components/page';
 import { AlertCircle, CheckCircle2, Loader2, Upload } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { PublicNext } from '@/components/PublicNext';
-import { useFragmentToken } from '@/hooks/useFragmentToken';
+import {
+  FRAGMENT_TOKEN_KEYS,
+  forgetFragmentToken,
+  useFragmentToken,
+} from '@/hooks/useFragmentToken';
 
 const LABEL = 'mb-1.5 block text-[13px] font-medium text-foreground';
 const MAX_BYTES = 5 * 1024 * 1024;
+/** Where this tab keeps the draft token between reloads. */
+const DRAFT_TOKEN_KEY = FRAGMENT_TOKEN_KEYS.draft;
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+const DETAIL_KEYS = [
+  'full_name',
+  'phone',
+  'years_experience',
+  'current_company',
+  'current_title',
+  'linkedin_url',
+  'github_url',
+] as const;
+
+/** A detail as the server stores it: trimmed, inner spaces collapsed, blank is null. */
+function norm(value: string | number | null | undefined): string | number | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'number') return value;
+  const cleaned = value.split(/\s+/).filter(Boolean).join(' ');
+  return cleaned === '' ? null : cleaned;
+}
+
+/** Whether the form holds a detail that differs from what the server has. */
+function detailsDiffer(form: DraftFields, draft: ApplicationDraft): boolean {
+  return DETAIL_KEYS.some((k) => norm(form[k]) !== norm(draft[k]));
 }
 
 /** Whether the parser actually produced anything worth showing. */
@@ -60,12 +102,17 @@ export default function ResumeApplication(): JSX.Element {
   // A fragment is never sent to a server, so the credential stays out of access
   // logs, edge logs and any cross-origin Referer. Same rule PublicExam and
   // InterviewInvite follow; read once so a later navigation cannot swap it.
-  const token = useFragmentToken();
-  const { t } = useTranslation();
+  const token = useFragmentToken(DRAFT_TOKEN_KEY);
+  const { t, i18n } = useTranslation();
+  const errorText = useCandidateError();
   const client = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState<DraftFields>({});
+  const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
+  // Set by a successful "Save and finish later", cleared by the next edit, so
+  // the "Saved" line never outlives the values it was about.
+  const [savedNote, setSavedNote] = useState(false);
   const [fileError, setFileError] = useState('');
   const [submitted, setSubmitted] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState(false);
@@ -113,6 +160,7 @@ export default function ResumeApplication(): JSX.Element {
       d.current_title,
       d.linkedin_url,
       d.github_url,
+      d.answers,
     ]);
     if (signature === seeded.current) return;
     seeded.current = signature;
@@ -127,19 +175,32 @@ export default function ResumeApplication(): JSX.Element {
       linkedin_url: d.linkedin_url ?? '',
       github_url: d.github_url ?? '',
     });
+    setAnswers(d.answers ?? {});
   }, [draft.data]);
 
   function refresh(): void {
     void client.invalidateQueries({ queryKey: ['apply', 'draft', token] });
   }
 
+  const answersChanged =
+    draft.data !== undefined &&
+    JSON.stringify(answers) !== JSON.stringify(draft.data.answers ?? {});
+
   const save = useMutation({
-    mutationFn: () => saveDraft(token, form),
-    onSuccess: () => refresh(),
+    mutationFn: () => saveDraft(token, { ...form, answers }),
+    onSuccess: () => {
+      setSavedNote(true);
+      refresh();
+    },
   });
 
+  // The server ignores answers on a confirmation, so unsaved answers ride on a
+  // save straight after it: pressing the confirm button never drops them.
   const confirm = useMutation({
-    mutationFn: () => confirmDraft(token, form),
+    mutationFn: async () => {
+      const confirmed = await confirmDraft(token, form);
+      return answersChanged ? saveDraft(token, { answers }) : confirmed;
+    },
     onSuccess: () => refresh(),
   });
 
@@ -149,12 +210,21 @@ export default function ResumeApplication(): JSX.Element {
       setFileError('');
       refresh();
     },
-    onError: (e: unknown) => setFileError(errText(e, t('resumeApply.errUpload'))),
+    onError: (e: unknown) => setFileError(errorText(e, t('resumeApply.errUpload'))),
   });
 
+  // Unsaved answers are saved first, so what is submitted is what is on screen.
+  // Unconfirmed detail edits cannot reach here: the button is disabled until
+  // they are confirmed, and the server clears a confirmation an edit undoes.
   const send = useMutation({
-    mutationFn: () => submitDraft(token),
-    onSuccess: (r) => setSubmitted(r.message),
+    mutationFn: async () => {
+      if (answersChanged) await saveDraft(token, { answers });
+      return submitDraft(token);
+    },
+    onSuccess: (r) => {
+      forgetFragmentToken(DRAFT_TOKEN_KEY);
+      setSubmitted(r.message);
+    },
   });
 
   // DPDP gives a data principal the right to ACT, not merely to be forgotten on
@@ -163,11 +233,28 @@ export default function ResumeApplication(): JSX.Element {
   // so there is nothing to sign in to and ask from.
   const discard = useMutation({
     mutationFn: () => deleteDraft(token),
-    onSuccess: () => setDiscarded(true),
+    onSuccess: () => {
+      forgetFragmentToken(DRAFT_TOKEN_KEY);
+      setDiscarded(true);
+    },
   });
 
+  const linkDead = draft.isError || (!draft.isLoading && !draft.data);
+  useEffect(() => {
+    // A dead link's token is spent: nothing it opens will ever come back.
+    if (linkDead) forgetFragmentToken(DRAFT_TOKEN_KEY);
+  }, [linkDead]);
+
+  const questions = useMemo(() => draft.data?.questions ?? [], [draft.data]);
+
   function set<K extends keyof DraftFields>(key: K, value: DraftFields[K]): void {
+    setSavedNote(false);
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  function answer(questionId: string, value: AnswerValue): void {
+    setSavedNote(false);
+    setAnswers((a) => ({ ...a, [questionId]: value }));
   }
 
   function pickFile(file: File | null): void {
@@ -204,10 +291,11 @@ export default function ResumeApplication(): JSX.Element {
     // them apart would be a free oracle on a page anyone can reach.
     return (
       <Shell>
+        {/* No "ask for a new link": nobody can issue one. A draft link is
+            minted once and only its hash is kept. */}
         <PublicNotice
           title={t('resumeApply.deadLinkTitle')}
           description={t('resumeApply.deadLinkDesc')}
-          hint={t('publicFrame.requestNew')}
         />
       </Shell>
     );
@@ -240,7 +328,13 @@ export default function ResumeApplication(): JSX.Element {
   }
 
   const d = draft.data;
-  const expires = new Date(d.expires_at);
+  const expiresOn = formatDate(d.expires_at, uiLocale(i18n.language));
+  // Edited after "these details are correct": what would be submitted is no
+  // longer what was confirmed, so it has to be confirmed again.
+  const detailsEdited = detailsDiffer(form, d);
+  const detailsConfirmed = d.confirmed && !detailsEdited;
+  const hasRequired = questions.some((q) => q.required);
+  const questionsDone = requiredAnswered(questions, answers);
   const optional = (
     <span className="font-normal text-[var(--ui-soft)]">{t('resumeApply.optional')}</span>
   );
@@ -254,9 +348,7 @@ export default function ResumeApplication(): JSX.Element {
       />
       <p className="mb-5 text-[13px] text-[var(--ui-soft)]">
         {t('resumeApply.progressSaved', {
-          date: Number.isNaN(expires.getTime())
-            ? t('resumeApply.itExpires')
-            : expires.toLocaleDateString(),
+          date: expiresOn === '-' ? t('resumeApply.itExpires') : expiresOn,
         })}
       </p>
 
@@ -402,6 +494,13 @@ export default function ResumeApplication(): JSX.Element {
             </div>
           </div>
 
+          {d.confirmed && detailsEdited ? (
+            <p role="status" className="mt-4 flex items-start gap-1.5 text-[13px] text-[var(--ui-warn)]">
+              <AlertCircle size={14} aria-hidden="true" className="mt-0.5 flex-none" />
+              {t('resumeApply.reconfirm')}
+            </p>
+          ) : null}
+
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <Button
               type="button"
@@ -420,35 +519,68 @@ export default function ResumeApplication(): JSX.Element {
             >
               {confirm.isPending
                 ? t('resumeApply.confirming')
-                : d.confirmed
+                : detailsConfirmed
                   ? t('resumeApply.confirmedUpdate')
                   : t('resumeApply.detailsCorrect')}
             </Button>
-            {d.confirmed ? (
+            {detailsConfirmed ? (
               <span className="flex items-center gap-1.5 text-[13px] font-medium text-[var(--ui-ok)]">
                 <CheckCircle2 size={14} aria-hidden="true" />
                 {t('resumeApply.confirmed')}
               </span>
             ) : null}
           </div>
+          {savedNote && !save.isPending ? (
+            <p role="status" className="mt-3 flex items-center gap-1.5 text-[13px] text-[var(--ui-ok)]">
+              <CheckCircle2 size={14} aria-hidden="true" />
+              {t('resumeApply.saved')}
+            </p>
+          ) : null}
+          {save.isError ? (
+            <p role="alert" className="mt-3 text-[13px] text-[var(--ui-danger)]">
+              {errorText(save.error, t('resumeApply.errSave'))}
+            </p>
+          ) : null}
           {confirm.isError ? (
             <p role="alert" className="mt-3 text-[13px] text-[var(--ui-danger)]">
-              {errText(confirm.error, t('resumeApply.errConfirm'))}
+              {errorText(confirm.error, t('resumeApply.errConfirm'))}
             </p>
           ) : null}
         </SectionCard>
+
+        {/* ── The opening's own questions ─────────────────────────────── */}
+        {questions.length > 0 ? (
+          <SectionCard title={t('resumeApply.questionsTitle')}>
+            <div className="flex flex-col gap-4">
+              {questions.map((q) => (
+                <ApplyQuestionField
+                  key={q.id}
+                  question={q}
+                  value={answers[q.id]}
+                  onChange={(next) => answer(q.id, next)}
+                />
+              ))}
+            </div>
+            <p className="mt-4 text-[12.5px] text-[var(--ui-soft)]">
+              {t('resumeApply.questionsSaveNote')}
+            </p>
+          </SectionCard>
+        ) : null}
 
         {/* ── Submit ─────────────────────────────────────────────────── */}
         <SectionCard title={t('resumeApply.sendTitle')}>
           <ul className="flex flex-col gap-2 text-[14px]">
             <Requirement met={d.has_resume} label={t('resumeApply.reqCv')} />
-            <Requirement met={d.confirmed} label={t('resumeApply.reqDetails')} />
+            <Requirement met={detailsConfirmed} label={t('resumeApply.reqDetails')} />
+            {hasRequired ? (
+              <Requirement met={questionsDone} label={t('resumeApply.reqQuestions')} />
+            ) : null}
           </ul>
           <div className="mt-4">
             <Button
               type="button"
               onClick={() => send.mutate()}
-              disabled={send.isPending || !d.has_resume || !d.confirmed}
+              disabled={send.isPending || !d.has_resume || !detailsConfirmed || !questionsDone}
               className="h-11 w-full px-6 sm:w-auto"
             >
               {send.isPending ? t('resumeApply.sending') : t('resumeApply.submit')}
@@ -457,7 +589,7 @@ export default function ResumeApplication(): JSX.Element {
           {send.isError ? (
             <p role="alert" className="mt-3 flex items-start gap-1.5 text-[13px] text-[var(--ui-danger)]">
               <AlertCircle size={14} aria-hidden="true" className="mt-0.5 shrink-0" />
-              {errText(send.error, t('resumeApply.errSend'))}
+              {errorText(send.error, t('resumeApply.errSend'))}
             </p>
           ) : null}
         </SectionCard>
@@ -487,7 +619,7 @@ export default function ResumeApplication(): JSX.Element {
           </div>
           {discard.isError ? (
             <p role="alert" className="mt-3 text-[13px] text-[var(--ui-danger)]">
-              {errText(discard.error, t('resumeApply.errDelete'))}
+              {errorText(discard.error, t('resumeApply.errDelete'))}
             </p>
           ) : null}
         </SectionCard>

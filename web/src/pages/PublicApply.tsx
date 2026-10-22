@@ -32,13 +32,21 @@ import {
 } from '@/design/components/icons';
 import {
   getPosting,
+  saveDraft,
   startDraft,
   submitApplication,
+  uploadDraftResume,
   type ApplicationResult,
   type AnswerValue,
+  type DraftFields,
   type Posting,
-  type PostingQuestion,
 } from '@/api/publicApply';
+import { isTransientApiError } from '@/api/client';
+import { ApplyQuestionField } from '@/components/candidate/ApplyQuestionField';
+import { requiredAnswered as allRequiredAnswered } from '@/components/candidate/applyAnswers';
+import { levelLabel, pageLanguage, useCandidateError } from '@/lib/candidateCopy';
+import { useAuth } from '@/context/AuthContext';
+import { isGuestOnly } from '@/lib/guest';
 import {
   filesFromDrop,
   isPdf,
@@ -65,10 +73,6 @@ interface SeedRow {
   file: File;
   status: 'waiting' | 'sending' | 'done' | 'duplicate' | 'failed';
   detail?: string;
-}
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
 }
 
 /* ── States ─────────────────────────────────────────────────────────────── */
@@ -99,13 +103,34 @@ function Panel({ children, className }: { children: React.ReactNode; className?:
 
 function Unavailable() {
   const { t } = useTranslation();
+  // No "ask the person who invited you": this is a public, shareable posting,
+  // and most people reach it from a job board, not an invitation.
   return (
     <Shell>
       <PublicNotice
         icon={<Briefcase size={22} aria-hidden="true" />}
         title={t('apply.unavailableTitle')}
         description={t('apply.unavailableDesc')}
-        hint={t('publicFrame.requestNew')}
+      />
+    </Shell>
+  );
+}
+
+/** The posting could not be loaded for a reason that may pass: offline, a 5xx,
+ *  a 429. Telling this person the opening is closed would lose them for good. */
+function LoadFailed({ onRetry, retrying }: { onRetry: () => void; retrying: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <Shell>
+      <PublicNotice
+        title={t('apply.loadFailedTitle')}
+        description={t('apply.loadFailedDesc')}
+        action={
+          <Button className="h-11 px-6" onClick={onRetry} disabled={retrying}>
+            {retrying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+            {t('apply.retry')}
+          </Button>
+        }
       />
     </Shell>
   );
@@ -333,175 +358,6 @@ function SkillTags({ heading, skills }: { heading: string; skills?: string[] }) 
 
 
 /**
- * One recruiter-defined question.
- *
- * Every kind is a plain form control rather than anything clever: this is the
- * one page a stranger fills in on a phone, and a custom widget is a thing that
- * can fail to work there. The server validates all of it again regardless.
- */
-function QuestionField({
-  question,
-  value,
-  onChange,
-}: {
-  question: PostingQuestion;
-  value: AnswerValue | undefined;
-  onChange: (next: AnswerValue) => void;
-}) {
-  const id = `q-${question.id}`;
-  const inputClass =
-    'flex min-h-11 w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-base text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm';
-
-  const label = (
-    <span className="mb-1.5 block text-[13px] font-medium text-foreground">
-      {question.prompt}
-      {question.required ? (
-        <span className="ml-1 text-[var(--ui-danger)]" aria-hidden="true">
-          *
-        </span>
-      ) : (
-        <span className="ml-1 font-normal text-[var(--ui-soft)]">(optional)</span>
-      )}
-    </span>
-  );
-
-  const help = question.help_text ? (
-    <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">{question.help_text}</p>
-  ) : null;
-
-  if (question.kind === 'yes_no') {
-    return (
-      <fieldset>
-        <legend className="mb-1.5 text-[13px] font-medium text-foreground">
-          {question.prompt}
-          {question.required ? null : (
-            <span className="ml-1 font-normal text-[var(--ui-soft)]">(optional)</span>
-          )}
-        </legend>
-        <div className="flex gap-2">
-          {[
-            { label: 'Yes', v: true },
-            { label: 'No', v: false },
-          ].map((opt) => (
-            <label
-              key={opt.label}
-              className={cn(
-                'cursor-pointer rounded-full border px-5 py-2.5 text-[14px] focus-within:ring-2 focus-within:ring-[var(--accent)]',
-                value === opt.v
-                  ? 'border-foreground bg-[var(--ui-inset)] font-medium text-foreground'
-                  : 'border-border text-[var(--ui-soft)]',
-              )}
-            >
-              <input
-                type="radio"
-                name={id}
-                className="sr-only"
-                checked={value === opt.v}
-                onChange={() => onChange(opt.v)}
-              />
-              {opt.label}
-            </label>
-          ))}
-        </div>
-        {help}
-      </fieldset>
-    );
-  }
-
-  if (question.kind === 'single_choice') {
-    return (
-      <div>
-        <label htmlFor={id}>{label}</label>
-        <select
-          id={id}
-          value={typeof value === 'string' ? value : ''}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputClass}
-        >
-          <option value="">Choose one…</option>
-          {question.options.map((o) => (
-            <option key={o} value={o}>
-              {o}
-            </option>
-          ))}
-        </select>
-        {help}
-      </div>
-    );
-  }
-
-  if (question.kind === 'multi_choice') {
-    const chosen = Array.isArray(value) ? value : [];
-    return (
-      <fieldset>
-        <legend className="mb-1.5 text-[13px] font-medium text-foreground">
-          {question.prompt}
-          {question.required ? null : (
-            <span className="ml-1 font-normal text-[var(--ui-soft)]">(optional)</span>
-          )}
-        </legend>
-        <div className="flex flex-wrap gap-2">
-          {question.options.map((o) => (
-            <label
-              key={o}
-              className={cn(
-                'cursor-pointer rounded-full border px-4 py-2 text-[13.5px] focus-within:ring-2 focus-within:ring-[var(--accent)]',
-                chosen.includes(o)
-                  ? 'border-foreground bg-[var(--ui-inset)] font-medium text-foreground'
-                  : 'border-border text-[var(--ui-soft)]',
-              )}
-            >
-              <input
-                type="checkbox"
-                className="sr-only"
-                checked={chosen.includes(o)}
-                onChange={() =>
-                  onChange(
-                    chosen.includes(o) ? chosen.filter((c) => c !== o) : [...chosen, o],
-                  )
-                }
-              />
-              {o}
-            </label>
-          ))}
-        </div>
-        {help}
-      </fieldset>
-    );
-  }
-
-  if (question.kind === 'long_text') {
-    return (
-      <div>
-        <label htmlFor={id}>{label}</label>
-        <textarea
-          id={id}
-          rows={4}
-          value={typeof value === 'string' ? value : ''}
-          onChange={(e) => onChange(e.target.value)}
-          className={inputClass}
-        />
-        {help}
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <label htmlFor={id}>{label}</label>
-      <input
-        id={id}
-        type={question.kind === 'number' ? 'number' : 'text'}
-        value={typeof value === 'string' ? value : ''}
-        onChange={(e) => onChange(e.target.value)}
-        className={inputClass}
-      />
-      {help}
-    </div>
-  );
-}
-
-/**
  * The steps, and why there are several rather than one long form.
  *
  * The single page this replaces asked for a name, an email and a CV — three
@@ -534,6 +390,7 @@ function stepsFor(t: TFunction, questionCount: number): string[] {
 }
 
 function Stepper({ current, steps }: { current: number; steps: string[] }) {
+  const { t } = useTranslation();
   return (
     <div className="mb-5">
       <p className="mb-2 text-[13px] font-medium text-foreground sm:hidden">
@@ -542,9 +399,9 @@ function Stepper({ current, steps }: { current: number; steps: string[] }) {
       <ProgressMeter
         className="mb-3 sm:hidden"
         value={((current + 1) / steps.length) * 100}
-        label="Application progress"
+        label={t('apply.progressAria')}
       />
-    <ol className="hidden items-center gap-2 sm:flex" aria-label="Application progress">
+    <ol className="hidden items-center gap-2 sm:flex" aria-label={t('apply.progressAria')}>
       {steps.map((label, i) => (
         <li key={label} className="flex flex-1 items-center gap-2">
           <span
@@ -598,8 +455,20 @@ function ReviewRow({ label, value }: { label: string; value: string | null }) {
   );
 }
 
+/** A plausible address: something@something.tld, no spaces. The server's
+ *  EmailStr is the real check; this only stops an obvious typo reaching it
+ *  three steps later, after the CV is chosen. */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 export default function PublicApply(): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const errorText = useCandidateError();
+  // A signed-in candidate applies as their account. Typing another address
+  // here would create a second, unlinked application and placeholder account
+  // that never shows up under My applications (audit CA-M12).
+  const { isAuthenticated, user } = useAuth();
+  const accountEmail =
+    isAuthenticated && user?.email && !isGuestOnly(user.roles) ? user.email : null;
   const { requisitionId = '' } = useParams();
   // The tracked link's campaign tag (PH3-B1). Read once, here, and then only
   // ever used through what the server echoes back: the vocabulary belongs to
@@ -608,7 +477,11 @@ export default function PublicApply(): JSX.Element {
   const [searchParams] = useSearchParams();
   const src = searchParams.get('src');
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
+  const [typedEmail, setEmail] = useState('');
+  // The account's address wins once the session is known, even if it arrives
+  // after the first render.
+  const email = accountEmail ?? typedEmail;
+  const [emailTouched, setEmailTouched] = useState(false);
   const [resume, setResume] = useState<File | null>(null);
   const [consent, setConsent] = useState(false);
   // PH5-E3 (D5-1) — a SECOND, INDEPENDENT opt-in, unticked by default. Never
@@ -618,7 +491,11 @@ export default function PublicApply(): JSX.Element {
   // defaulting it true) would be the worst outcome this screen could ship.
   const [rediscoveryConsent, setRediscoveryConsent] = useState(false);
   // The language of the emails this application sends — EN, HI or TE.
-  const [language, setLanguage] = useState<'en' | 'hi' | 'te'>('en');
+  // Defaults to the language the page is being read in: a Telugu reader who
+  // never scrolls to this control should not get English emails.
+  const [language, setLanguage] = useState<'en' | 'hi' | 'te'>(() =>
+    pageLanguage(i18n.language),
+  );
   // Step two. All optional — see STEPS below for why the step exists at all.
   const [phone, setPhone] = useState('');
   const [yearsExperience, setYearsExperience] = useState('');
@@ -646,7 +523,9 @@ export default function PublicApply(): JSX.Element {
     queryKey: ['public', 'posting', requisitionId, src],
     queryFn: () => getPosting(requisitionId, src),
     enabled: Boolean(requisitionId),
-    retry: false,
+    // A 404 is definitive (closed, or not public); a network blip or a 5xx is
+    // not, and is worth a quiet retry before the candidate sees anything.
+    retry: (failureCount, error) => isTransientApiError(error) && failureCount < 2,
   });
 
   const submit = useMutation({
@@ -678,16 +557,58 @@ export default function PublicApply(): JSX.Element {
   // ticked it and saved would have that choice silently discarded — and no
   // screen would ever say so. A dropped consent is worse than an absent
   // feature. Found in code review, 2026-09-26.
+  //
+  // Starting a draft stores only the email; the rest of what the candidate has
+  // typed by now (it is the last step) is saved onto it straight after, and the
+  // chosen CV uploaded. Before this the copy said their progress was stored
+  // while everything but the email was thrown away, and the link opened an
+  // empty draft (audit CA-H2). If a follow-up step fails the draft and its link
+  // still exist, so the link is shown and the copy says what is missing.
   const saveLater = useMutation({
-    mutationFn: () =>
-      startDraft(requisitionId, {
+    mutationFn: async () => {
+      const started = await startDraft(requisitionId, {
         email: email.trim(),
         consentGranted: consent,
         rediscoveryOptIn: rediscoveryConsent,
         language,
         src: posting.data?.source,
-      }),
+      });
+      let complete = true;
+      try {
+        await saveDraft(started.resume_token, typedFields());
+      } catch {
+        complete = false;
+      }
+      if (resume) {
+        try {
+          await uploadDraftResume(started.resume_token, resume);
+        } catch {
+          complete = false;
+        }
+      }
+      return { token: started.resume_token, complete };
+    },
   });
+
+  /** What the candidate has typed, in the draft's shape. Blank fields are left
+   *  out rather than sent empty, the same rule `submitApplication` follows. */
+  function typedFields(): DraftFields {
+    const out: DraftFields = {};
+    const text: [keyof DraftFields, string][] = [
+      ['full_name', fullName],
+      ['phone', phone],
+      ['current_company', currentCompany],
+      ['current_title', currentTitle],
+      ['linkedin_url', linkedinUrl],
+      ['github_url', githubUrl],
+    ];
+    for (const [key, value] of text) {
+      if (value.trim() !== '') (out as Record<string, string>)[key] = value.trim();
+    }
+    if (yearsExperience !== '') out.years_experience = Number(yearsExperience);
+    if (Object.keys(answers).length > 0) out.answers = answers;
+    return out;
+  }
 
   function pickFile(file: File | null): void {
     setFileError('');
@@ -758,7 +679,7 @@ export default function PublicApply(): JSX.Element {
           ),
         );
       } catch (err) {
-        const message = errText(err, 'failed');
+        const message = err instanceof Error && err.message ? err.message : 'failed';
         // A 429 is not a failure, it is the server pacing us. Wait out the
         // fixed one-minute window and retry the same file rather than
         // recording a loss the operator would have to chase.
@@ -790,6 +711,11 @@ export default function PublicApply(): JSX.Element {
       </Shell>
     );
   }
+  if (posting.isError && isTransientApiError(posting.error)) {
+    return (
+      <LoadFailed onRetry={() => void posting.refetch()} retrying={posting.isFetching} />
+    );
+  }
   if (posting.isError || !posting.data) return <Unavailable />;
   if (submit.isSuccess) {
     return (
@@ -804,8 +730,8 @@ export default function PublicApply(): JSX.Element {
   const job = posting.data;
   // `requiredAnswered` is folded in below rather than here, because it is
   // derived from the posting and this line runs before the posting is read.
-  const readyBase =
-    fullName.trim().length >= 2 && email.trim().length > 3 && resume && consent;
+  const emailValid = EMAIL_SHAPE.test(email.trim());
+  const readyBase = fullName.trim().length >= 2 && emailValid && resume && consent;
   // What each step needs before it will let you move on. Step 2 asks for
   // nothing, which is the whole point of it being skippable; the last step is
   // gated by `ready` on its own submit button, so consent is never a
@@ -814,20 +740,12 @@ export default function PublicApply(): JSX.Element {
   const steps = stepsFor(t, questions.length);
   const questionsStep = questions.length > 0 ? 3 : -1;
 
-  /** Whether a required question has an answer that is not blank. */
-  const answered = (q: PostingQuestion): boolean => {
-    const v = answers[q.id];
-    if (v === undefined || v === null) return false;
-    if (typeof v === 'string') return v.trim() !== '';
-    if (Array.isArray(v)) return v.length > 0;
-    return true;
-  };
-  const requiredAnswered = questions.filter((q) => q.required).every(answered);
+  const requiredAnswered = allRequiredAnswered(questions, answers);
   const ready = readyBase && requiredAnswered;
 
   const canContinue =
     step === 0
-      ? fullName.trim().length >= 2 && email.trim().length > 3
+      ? fullName.trim().length >= 2 && emailValid
       : step === 2
         ? Boolean(resume)
         : step === questionsStep
@@ -847,7 +765,7 @@ export default function PublicApply(): JSX.Element {
           <div className="mt-2 text-[15px] text-[var(--ui-soft)]">{metaLine(t, job)}</div>
         ) : null}
         <div className="mt-1 text-[13.5px] text-muted-foreground">
-          {t('careers.levelLine', { level: job.level })}
+          {levelLabel(t, job.level)}
           {experienceLine(t, job) ? ` · ${experienceLine(t, job)}` : ''}
           {job.closes_at
             ? ` · ${t('apply.closesOn', {
@@ -901,6 +819,7 @@ export default function PublicApply(): JSX.Element {
             // which is what a keyboard user expects and what stops a
             // half-filled application being sent by a stray keypress.
             if (step < steps.length - 1) {
+              if (step === 0) setEmailTouched(true);
               if (canContinue) setStep(step + 1);
               return;
             }
@@ -931,12 +850,22 @@ export default function PublicApply(): JSX.Element {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onBlur={() => setEmailTouched(true)}
               autoComplete="email"
-              className={field}
+              readOnly={accountEmail !== null}
+              aria-invalid={emailTouched && !emailValid ? true : undefined}
+              aria-describedby="email-hint"
+              className={cn(field, accountEmail !== null && 'bg-[var(--ui-inset)]')}
             />
-            <p className="mt-1 text-[12.5px] text-[var(--ui-soft)]">
-              {t('apply.emailHint')}
-            </p>
+            {emailTouched && !emailValid ? (
+              <p id="email-hint" role="alert" className="mt-1 text-[12.5px] text-[var(--ui-danger)]">
+                {t('apply.errEmail')}
+              </p>
+            ) : (
+              <p id="email-hint" className="mt-1 text-[12.5px] text-[var(--ui-soft)]">
+                {accountEmail !== null ? t('apply.emailAccountHint') : t('apply.emailHint')}
+              </p>
+            )}
           </div>
 
               <div>
@@ -1116,7 +1045,7 @@ export default function PublicApply(): JSX.Element {
           {questionsStep >= 0 && step === questionsStep ? (
             <div className="flex flex-col gap-4">
               {questions.map((q) => (
-                <QuestionField
+                <ApplyQuestionField
                   key={q.id}
                   question={q}
                   value={answers[q.id]}
@@ -1230,12 +1159,20 @@ export default function PublicApply(): JSX.Element {
                 <input
                   readOnly
                   aria-label={t('apply.resumeLinkAria')}
-                  value={`${window.location.origin}/apply/draft#${saveLater.data.resume_token}`}
+                  value={`${window.location.origin}/apply/draft#${saveLater.data.token}`}
                   onFocus={(e) => e.currentTarget.select()}
                   className="mt-2 w-full rounded-[12px] border border-border bg-transparent px-3 py-2.5 text-[13px] text-[var(--ui-soft)]"
                 />
-                <p className="mt-1.5 text-[12.5px] text-[var(--ui-soft)]">
-                  {t('apply.savedAgainst', { email: email.trim() })}
+                <p
+                  className={cn(
+                    'mt-1.5 text-[12.5px]',
+                    saveLater.data.complete ? 'text-[var(--ui-soft)]' : 'text-[var(--ui-warn)]',
+                  )}
+                  role={saveLater.data.complete ? undefined : 'alert'}
+                >
+                  {saveLater.data.complete
+                    ? t('apply.savedAgainst', { email: email.trim() })
+                    : t('apply.savedPartial', { email: email.trim() })}
                 </p>
               </>
             ) : (
@@ -1244,7 +1181,7 @@ export default function PublicApply(): JSX.Element {
                   type="button"
                   variant="outline"
                   onClick={() => saveLater.mutate()}
-                  disabled={!consent || email.trim().length < 4 || saveLater.isPending}
+                  disabled={!consent || !emailValid || saveLater.isPending}
                   className="h-11"
                 >
                   {saveLater.isPending ? t('apply.saving') : t('apply.saveLater')}
@@ -1254,7 +1191,7 @@ export default function PublicApply(): JSX.Element {
                 </p>
                 {saveLater.isError ? (
                   <p className="mt-1.5 text-[12.5px] text-[var(--ui-danger)]">
-                    {errText(saveLater.error, t('apply.errSave'))}
+                    {errorText(saveLater.error, t('apply.errSave'))}
                   </p>
                 ) : null}
               </>
@@ -1270,7 +1207,7 @@ export default function PublicApply(): JSX.Element {
                 className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-danger)]"
                 aria-hidden="true"
               />
-              {errText(submit.error, t('apply.errSubmit'))}
+              {errorText(submit.error, t('apply.errSubmit'))}
             </div>
           ) : null}
 

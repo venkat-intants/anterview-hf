@@ -51,10 +51,14 @@ const POSTING: Posting = {
 const getPosting = vi.fn();
 const submitApplication = vi.fn();
 const startDraft = vi.fn();
+const saveDraft = vi.fn();
+const uploadDraftResume = vi.fn();
 vi.mock('../api/publicApply', () => ({
   getPosting: (...a: unknown[]) => getPosting(...a) as unknown,
   submitApplication: (...a: unknown[]) => submitApplication(...a) as unknown,
   startDraft: (...a: unknown[]) => startDraft(...a) as unknown,
+  saveDraft: (...a: unknown[]) => saveDraft(...a) as unknown,
+  uploadDraftResume: (...a: unknown[]) => uploadDraftResume(...a) as unknown,
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -63,11 +67,20 @@ vi.mock('react-router-dom', async () => {
 });
 
 // The finish states read the session (to decide whether to offer a sign-in link).
+interface FakeAuth {
+  isAuthenticated: boolean;
+  isInitializing: boolean;
+  user: { email: string; roles: string[] } | null;
+}
+const SIGNED_OUT: FakeAuth = { isAuthenticated: false, isInitializing: false, user: null };
+let auth: FakeAuth = SIGNED_OUT;
 vi.mock('../context/AuthContext', () => ({
-  useAuth: () => ({ isAuthenticated: false, isInitializing: false, user: null }),
+  useAuth: () => auth,
 }));
 
 import PublicApply from '../pages/PublicApply';
+import { ApiError } from '../api/client';
+import i18n from '../lib/i18n';
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -139,9 +152,13 @@ const consentCheckbox = (): HTMLInputElement =>
 const rediscoveryCheckbox = (): HTMLInputElement =>
   screen.getByRole<HTMLInputElement>('checkbox', { name: /search my CV and this application/i });
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  auth = SIGNED_OUT;
+  await i18n.changeLanguage('en');
   getPosting.mockResolvedValue(POSTING);
+  saveDraft.mockResolvedValue({});
+  uploadDraftResume.mockResolvedValue({});
   submitApplication.mockResolvedValue({
     applicant_id: 'ap-1',
     enrolment_id: 'en-1',
@@ -172,7 +189,12 @@ describe('PublicApply - the posting', () => {
     // test compares the rendered output across causes rather than banning
     // words.
     const renders: string[] = [];
-    for (const err of [new Error('HTTP 404'), new Error('Not found'), new Error('')]) {
+    // Every definitive refusal is a 404 from the server; the messages differ.
+    for (const err of [
+      new ApiError('Not found', 404),
+      new ApiError('This opening is closed.', 404, undefined, true),
+      new ApiError('', 404),
+    ]) {
       getPosting.mockRejectedValue(err);
       const { unmount } = renderPage();
       const heading = await screen.findByText('This opening is not accepting applications');
@@ -470,5 +492,125 @@ describe('PublicApply - afterwards', () => {
       'textContent',
       expect.stringContaining('could not read that PDF'),
     );
+  });
+});
+
+// Audit CA-M11: a passing failure is not a closed opening.
+describe('PublicApply - a load that may pass', () => {
+  it('offers a retry for a network failure instead of saying the opening is closed', async () => {
+    const user = userEvent.setup();
+    getPosting.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    getPosting.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    getPosting.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    renderPage();
+
+    expect(await screen.findByText('We could not load this job', {}, { timeout: 8000 })).toBeTruthy();
+    expect(screen.queryByText('This opening is not accepting applications')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Backend Engineer')).toBeTruthy();
+  });
+
+  it('does not tell a job-board visitor to ask whoever invited them', async () => {
+    getPosting.mockRejectedValue(new ApiError('Not found', 404));
+    renderPage();
+    await screen.findByText('This opening is not accepting applications');
+    expect(screen.queryByText(/ask the person who invited you/i)).toBeNull();
+  });
+});
+
+// Audit CA-H2: "save and finish later" keeps what was typed, and the CV.
+describe('PublicApply - save and finish later keeps the work', () => {
+  it('saves the typed details and uploads the chosen CV onto the new draft', async () => {
+    const user = userEvent.setup();
+    const file = pdf();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user, file);
+    await user.click(consentCheckbox());
+    await user.click(screen.getByRole('button', { name: /save and finish later/i }));
+
+    await waitFor(() => expect(uploadDraftResume).toHaveBeenCalledWith('tok-1', file));
+    expect(saveDraft).toHaveBeenCalledWith(
+      'tok-1',
+      expect.objectContaining({ full_name: 'Priya Sharma' }),
+    );
+    expect(await screen.findByText(/stored your progress against priya@example.com/)).toBeTruthy();
+  });
+
+  it('says plainly when only part of it could be saved', async () => {
+    const user = userEvent.setup();
+    uploadDraftResume.mockRejectedValue(new ApiError('Upload failed', 503));
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await fillToReview(user);
+    await user.click(consentCheckbox());
+    await user.click(screen.getByRole('button', { name: /save and finish later/i }));
+
+    expect(await screen.findByText(/could not save everything you entered/)).toBeTruthy();
+    expect(screen.queryByText(/stored your progress against/)).toBeNull();
+  });
+});
+
+// Audit CA-L7: the email's shape is checked where it is typed.
+describe('PublicApply - email', () => {
+  it('will not leave step one with a malformed address, and says why', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    await user.type(screen.getByLabelText('Your name'), 'Priya Sharma');
+    await user.type(screen.getByLabelText('Email'), 'priya@example');
+    await user.tab();
+    expect(screen.getByText(/Enter a valid email address/)).toBeTruthy();
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Continue' }).disabled).toBe(true);
+  });
+});
+
+// Audit CA-M12: a signed-in candidate applies as their account.
+describe('PublicApply - signed in', () => {
+  it('fills and locks the account email', async () => {
+    auth = {
+      isAuthenticated: true,
+      isInitializing: false,
+      user: { email: 'me@account.example', roles: ['candidate'] },
+    };
+    renderPage();
+    await screen.findByText('Backend Engineer');
+
+    const email = screen.getByLabelText<HTMLInputElement>('Email');
+    expect(email.value).toBe('me@account.example');
+    expect(email.readOnly).toBe(true);
+  });
+
+  it('leaves the field open for an invited guest, who has no account email to use', async () => {
+    auth = {
+      isAuthenticated: true,
+      isInitializing: false,
+      user: { email: 'guest@invite.example', roles: ['guest_candidate'] },
+    };
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    const email = screen.getByLabelText<HTMLInputElement>('Email');
+    expect(email.value).toBe('');
+    expect(email.readOnly).toBe(false);
+  });
+});
+
+// Audit CA-M29: emails default to the language the page is read in.
+describe('PublicApply - email language', () => {
+  it('defaults to the UI language', async () => {
+    const user = userEvent.setup();
+    await i18n.changeLanguage('te');
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    // Back to English so the walk below can use English labels; the default
+    // was chosen on mount and must survive that.
+    await i18n.changeLanguage('en');
+    await fillToReview(user);
+    expect(
+      screen.getByLabelText<HTMLSelectElement>('Emails about this application in').value,
+    ).toBe('te');
   });
 });

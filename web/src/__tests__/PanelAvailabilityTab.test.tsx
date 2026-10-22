@@ -81,12 +81,14 @@ describe('AvailabilityTab (panel) - choosing an interviewer', () => {
     renderTab();
 
     await chooseInterviewer(user);
-    await waitFor(() =>
-      expect(schedulingApi.getInterviewerAvailability).toHaveBeenCalledWith(
-        'iv-1',
-        expect.objectContaining({ start: expect.any(String), end: expect.any(String) }),
-      ),
-    );
+    await waitFor(() => expect(schedulingApi.getInterviewerAvailability).toHaveBeenCalled());
+    const [who, range] = schedulingApi.getInterviewerAvailability.mock.calls[0] as [
+      string,
+      { start: string; end: string },
+    ];
+    expect(who).toBe('iv-1');
+    expect(Number.isNaN(Date.parse(range.start))).toBe(false);
+    expect(Number.isNaN(Date.parse(range.end))).toBe(false);
     // The empty state says which period it covers (IV-M14).
     expect(await screen.findByText('No windows set in the next 4 weeks.')).toBeInTheDocument();
   });

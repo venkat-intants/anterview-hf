@@ -34,7 +34,8 @@ import {
   withdrawScorecard,
   type EnrolmentScorecard,
 } from '@/api/scorecards';
-import { formatDate } from '@/lib/formatters';
+import { formatDate, formatDateTime } from '@/lib/formatters';
+import { errorMessage } from '@/lib/errorMessage';
 import { describeMove } from '@/lib/stageHistory';
 import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
@@ -49,7 +50,8 @@ import InterviewLoopsSection from '@/components/InterviewLoopsSection';
 import OfferSection from '@/components/OfferSection';
 import CheckinSection from '@/components/hr/CheckinSection';
 import { getMetricDefinitions, sourceLabel } from '@/api/metrics';
-import { AlertTriangle, ExternalLink, Info, XCircle } from '@/design/components/icons';
+import { AlertTriangle, ChevronRight, Info, XCircle } from '@/design/components/icons';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { DataList } from '@/design/components/page';
@@ -283,7 +285,7 @@ function AssignInterviewersForm({
       setSelected([]);
       onAssigned();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not assign interviewers'),
+    onError: (e) => toast.error(errorMessage(e, 'Could not assign interviewers.')),
   });
 
   return (
@@ -437,7 +439,7 @@ function HumanInterviewSection({
       invalidate();
     },
     onError: (e) =>
-      toast.error(e instanceof Error ? e.message : 'Could not withdraw this assignment'),
+      toast.error(errorMessage(e, 'Could not withdraw this assignment.')),
   });
 
   const rounds = scorecards.data?.rounds ?? [];
@@ -985,7 +987,17 @@ export default function CandidateDrawer({
                   {answers.isLoading ? (
                     <p className="text-[12.5px] text-muted-foreground">Loading…</p>
                   ) : null}
-                  {!answers.isLoading && (answers.data?.length ?? 0) === 0 ? (
+                  {/* HR-M5: a failed load is not "no questions". */}
+                  {answers.isError && answers.data === undefined ? (
+                    <QueryErrorPanel
+                      title="Could not load the application answers."
+                      error={answers.error}
+                      onRetry={() => void answers.refetch()}
+                      retrying={answers.isFetching}
+                      className="py-4"
+                    />
+                  ) : null}
+                  {!answers.isLoading && !answers.isError && (answers.data?.length ?? 0) === 0 ? (
                     <p className="text-[12.5px] text-muted-foreground">
                       This opening did not ask any questions.
                     </p>
@@ -1025,7 +1037,7 @@ export default function CandidateDrawer({
                     noun="move"
                     latest={
                       newestMove
-                        ? `${describeMove(newestMove)}, ${new Date(newestMove.occurred_at).toLocaleDateString()}`
+                        ? `${describeMove(newestMove)}, ${formatDate(newestMove.occurred_at)}`
                         : undefined
                     }
                     persistKey={historyKey}
@@ -1039,8 +1051,10 @@ export default function CandidateDrawer({
                         to={`/hr/enrolments/${enrolmentId}/evidence`}
                         className="inline-flex min-h-10 items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                       >
-                        <ExternalLink size={11} aria-hidden="true" />
+                        {/* HR-L13: an in-app page, so a chevron, not the
+                            external-link icon. */}
                         Evidence trail
+                        <ChevronRight size={12} aria-hidden="true" />
                       </Link>
                     }
                   >
@@ -1078,7 +1092,7 @@ export default function CandidateDrawer({
                               ) : null}
                             </p>
                             <p className="text-[12px] text-muted-foreground">
-                              {new Date(h.occurred_at).toLocaleString()}
+                              {formatDateTime(h.occurred_at)}
                               {/* O4: the structured reason label, when this move recorded
                                   one, alongside the free-text reason. Historical rows
                                   have neither and render exactly as before. */}

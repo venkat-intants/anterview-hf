@@ -11,14 +11,19 @@ import type { AgentChatResponse, Proposal } from '../api/agent';
 
 const askAgent = vi.fn();
 const getAgentStatus = vi.fn();
+const commitProposal = vi.fn();
 vi.mock('../api/agent', async () => {
   const actual = await vi.importActual<typeof import('../api/agent')>('../api/agent');
   return {
     ...actual,
     askAgent: (...a: unknown[]) => askAgent(...a) as unknown,
     getAgentStatus: (...a: unknown[]) => getAgentStatus(...a) as unknown,
+    commitProposal: (...a: unknown[]) => commitProposal(...a) as unknown,
   };
 });
+vi.mock('../lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
 
 import CopilotPanel from '../components/agent/CopilotPanel';
 
@@ -186,20 +191,200 @@ describe('CopilotPanel - citations (PH5-E1)', () => {
     await ask('who should I invite next?');
 
     await screen.findByText('Interview invite - Asha Rao');
-    const cautions = await screen.findAllByText(
-      /Records were read for this answer, but no claim in it is tied/,
-    );
-    // One above the reply, one inside the proposal card.
-    expect(cautions).toHaveLength(2);
+    // The full sentence once, above the reply; the card carries the compact
+    // form of the same state rather than repeating it word for word.
+    expect(
+      screen.getAllByText(/Records were read for this answer, but no claim in it is tied/),
+    ).toHaveLength(1);
+    expect(screen.getByText(/Drafted after reading records, but not tied/)).toBeInTheDocument();
   });
 
   it('does not show an evidence banner for the plain error message on a failed request', async () => {
-    askAgent.mockRejectedValue(new Error('network down'));
+    askAgent.mockRejectedValue(new TypeError('Failed to fetch'));
     renderPanel();
     await ask('anything');
 
-    expect(await screen.findByText(/Something went wrong/)).toBeInTheDocument();
+    // Once in the conversation and once in the screen-reader announcement.
+    expect(await screen.findAllByText(/Could not reach the server/)).toHaveLength(2);
+    expect(screen.queryByText(/Failed to fetch/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Answered from your records/)).not.toBeInTheDocument();
     expect(screen.queryByText(/No records were read/)).not.toBeInTheDocument();
+  });
+});
+
+const COMPLETED_REPLY_WITH_PROPOSAL: AgentChatResponse = {
+  ...EVIDENCED_REPLY,
+  reply: 'Asha is ready for an interview.',
+  proposals: [A_PROPOSAL],
+};
+
+function renderToggleablePanel(onClose = vi.fn()) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const view = (open: boolean) => (
+    <QueryClientProvider client={client}>
+      <MemoryRouter>
+        <CopilotPanel open={open} onClose={onClose} />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+  const utils = render(view(true));
+  return { ...utils, setOpen: (open: boolean) => utils.rerender(view(open)), onClose };
+}
+
+describe('CopilotPanel - conversation state', () => {
+  it('keeps an approved proposal approved after the panel is closed and reopened', async () => {
+    // Audit CP-F1: the card used to remount as "Needs your approval" with a
+    // live "Send invite", and a second click revoked the candidate's link.
+    askAgent.mockResolvedValue(COMPLETED_REPLY_WITH_PROPOSAL);
+    commitProposal.mockResolvedValue({});
+    const user = userEvent.setup();
+    const { setOpen } = renderToggleablePanel();
+    await ask('who should I invite?');
+    await user.click(await screen.findByRole('button', { name: 'Send invite' }));
+    await screen.findByText('Completed');
+
+    setOpen(false);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    setOpen(true);
+
+    expect(await screen.findByText('Completed')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send invite' })).not.toBeInTheDocument();
+    expect(commitProposal).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the model what was already approved, and drops a re-draft of it', async () => {
+    // Audit CP-F4: without this a follow-up re-drafted the same invite as a
+    // fresh card with a live button.
+    askAgent.mockResolvedValue(COMPLETED_REPLY_WITH_PROPOSAL);
+    commitProposal.mockResolvedValue({});
+    const user = userEvent.setup();
+    renderPanel();
+    await ask('who should I invite?');
+    await user.click(await screen.findByRole('button', { name: 'Send invite' }));
+    await screen.findByText('Completed');
+
+    askAgent.mockResolvedValue({
+      ...COMPLETED_REPLY_WITH_PROPOSAL,
+      reply: 'Asha again.',
+      proposals: [{ ...A_PROPOSAL, id: 'p-2' }],
+    });
+    await ask('who else?');
+
+    const history = askAgent.mock.calls[1][1] as { role: string; text: string }[];
+    expect(history[1].text).toContain(
+      '[Already approved by the user in this conversation: Interview invite - Asha Rao]',
+    );
+    expect(await screen.findByText(/Already approved earlier in this chat/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Send invite' })).not.toBeInTheDocument();
+  });
+
+  it('keeps a failed exchange out of the history it replays', async () => {
+    // Audit CP-F2: a message the server refused once was resent, and refused,
+    // with every later message.
+    askAgent.mockRejectedValueOnce(new Error('Message must be 2000 characters or fewer.'));
+    askAgent.mockResolvedValueOnce(UNSOURCED_REPLY);
+    renderPanel();
+    await ask('first try');
+    expect(await screen.findByText(/It will not be included as context/)).toBeInTheDocument();
+
+    await ask('second try');
+    await screen.findByText(UNSOURCED_REPLY.reply);
+    expect(askAgent.mock.calls[1][1]).toEqual([]);
+  });
+
+  it('caps a long assistant reply in the history it replays', async () => {
+    askAgent.mockResolvedValueOnce({ ...UNSOURCED_REPLY, reply: 'x'.repeat(5000) });
+    askAgent.mockResolvedValueOnce(UNSOURCED_REPLY);
+    renderPanel();
+    await ask('summarise everything');
+    await screen.findByText(/No records were read/);
+    await ask('and then?');
+
+    const history = askAgent.mock.calls[1][1] as { role: string; text: string }[];
+    expect(history[1].text).toHaveLength(2000);
+  });
+
+  it('stops the composer at the server cap', () => {
+    renderPanel();
+    expect(screen.getByLabelText('Message')).toHaveAttribute('maxlength', '2000');
+  });
+
+  it('starts a new chat that forgets the old turns', async () => {
+    askAgent.mockResolvedValue(UNSOURCED_REPLY);
+    const user = userEvent.setup();
+    renderPanel();
+    await ask('hello');
+    await screen.findByText(UNSOURCED_REPLY.reply);
+
+    await user.click(screen.getByRole('button', { name: 'New chat' }));
+    expect(screen.queryByText(UNSOURCED_REPLY.reply)).not.toBeInTheDocument();
+    expect(screen.getByText('How can I help?')).toBeInTheDocument();
+
+    await ask('again');
+    expect(askAgent.mock.calls[1][1]).toEqual([]);
+  });
+
+  it('does not repeat the explanation already in an llm_error reply', async () => {
+    askAgent.mockResolvedValue({
+      ...UNSOURCED_REPLY,
+      reply: 'The language model did not answer. It may be busy, so try again in a minute.',
+      stop_reason: 'llm_error',
+    });
+    renderPanel();
+    await ask('anything');
+    await screen.findByText(/did not answer/);
+    expect(screen.queryByText(/unreachable/)).not.toBeInTheDocument();
+  });
+});
+
+describe('CopilotPanel - dialog behaviour', () => {
+  it('announces an answer to screen readers when it arrives', async () => {
+    askAgent.mockResolvedValue(UNSOURCED_REPLY);
+    renderPanel();
+    await ask('hello');
+    expect(await screen.findByText('Assistant replied.')).toBeInTheDocument();
+    expect(screen.getByText('Assistant replied.')).toHaveAttribute('role', 'status');
+  });
+
+  it('closes on Escape even when focus has left the dialog', async () => {
+    const { onClose } = renderToggleablePanel();
+    (document.activeElement as HTMLElement | null)?.blur();
+    await userEvent.setup().keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('gives focus back to the composer once an answer lands', async () => {
+    askAgent.mockResolvedValue(UNSOURCED_REPLY);
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Who should I interview next/ }));
+    await screen.findByText(UNSOURCED_REPLY.reply);
+    expect(screen.getByLabelText('Message')).toHaveFocus();
+  });
+
+  it('leaves focus where the user moved it while waiting for the answer', async () => {
+    let answer: (reply: AgentChatResponse) => void = () => undefined;
+    askAgent.mockReturnValue(
+      new Promise<AgentChatResponse>((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderPanel();
+    await ask('hello');
+    // Any control the user tabbed to inside the dialog while the answer was on
+    // its way: a proposal button, a source chip, here the close button.
+    const elsewhere = screen.getByRole('button', { name: 'Close assistant' });
+    elsewhere.focus();
+    answer(UNSOURCED_REPLY);
+    await screen.findByText(UNSOURCED_REPLY.reply);
+    expect(elsewhere).toHaveFocus();
+  });
+
+  it('locks the page scroll while open and restores it on close', () => {
+    document.body.style.overflow = 'auto';
+    const { setOpen } = renderToggleablePanel();
+    expect(document.body.style.overflow).toBe('hidden');
+    setOpen(false);
+    expect(document.body.style.overflow).toBe('auto');
   });
 });

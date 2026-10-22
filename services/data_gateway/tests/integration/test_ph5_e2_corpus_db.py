@@ -494,11 +494,11 @@ async def test_chunk_quota_excludes_superseded_history(
     # current) — would blow the cap if superseded versions counted.
     await svc.add_version(
         db, company_id=f.company_a, actor=f.hr_a, actor_role="hr_manager", document_id=document_id,
-        data=(_HANDBOOK_TXT + " v2").encode(), filename="v2.txt", meta=_META,
+        data=(_HANDBOOK_TXT + " v2").encode(), filename="v2.txt", meta=_META, attested=True,
     )
     await svc.add_version(
         db, company_id=f.company_a, actor=f.hr_a, actor_role="hr_manager", document_id=document_id,
-        data=(_HANDBOOK_TXT + " v3").encode(), filename="v3.txt", meta=_META,
+        data=(_HANDBOOK_TXT + " v3").encode(), filename="v3.txt", meta=_META, attested=True,
     )
 
     # And a brand-new, unrelated document still fits under the same cap.
@@ -527,7 +527,7 @@ async def test_replace_supersedes_v1_keeps_its_chunks_and_citation_still_resolve
     document_id = uuid.UUID(v1["id"])
     v2 = await svc.add_version(
         db, company_id=f.company_a, actor=f.hr_a, actor_role="hr_manager", document_id=document_id,
-        data=(_HANDBOOK_TXT + " Updated once.").encode(), filename="v2.txt", meta=_META,
+        data=(_HANDBOOK_TXT + " Updated once.").encode(), filename="v2.txt", meta=_META, attested=True,
     )
     assert v2["version"] == 2
 
@@ -737,10 +737,17 @@ async def test_purge_corpus_dry_run_counts_without_touching_anything(
     f = await _build(db)
     out = await svc.ingest_document(
         db, company_id=f.company_a, actor=f.hr_a, actor_role="hr_manager", title="Expiring",
-        audience="all_staff", doc_kind="policy", expires_on=datetime.now(tz=UTC).date() - timedelta(days=1),
+        audience="all_staff", doc_kind="policy", expires_on=datetime.now(tz=UTC).date(),
         attested=True, data=_HANDBOOK_TXT.encode(), filename="exp.txt", meta=_META,
     )
     document_id = uuid.UUID(out["id"])
+    # A past expiry can no longer be SET (audit PL-F8, `expiry_in_past`), so
+    # the date passes the way it does in real life: it was valid when set and
+    # time moved on. Backdated directly, as the clock would.
+    await db.execute(
+        text("UPDATE corpus_documents SET expires_on = :e WHERE id = :d"),
+        {"e": datetime.now(tz=UTC).date() - timedelta(days=1), "d": document_id},
+    )
     count = await svc.purge_corpus(db, superseded_days=180, dry_run=True)
     assert count >= 1
     assert fake.objects  # dry-run touches nothing
@@ -758,10 +765,17 @@ async def test_purge_corpus_live_expires_a_document_past_its_date(
     f = await _build(db)
     out = await svc.ingest_document(
         db, company_id=f.company_a, actor=f.hr_a, actor_role="hr_manager", title="Expiring",
-        audience="all_staff", doc_kind="policy", expires_on=datetime.now(tz=UTC).date() - timedelta(days=1),
+        audience="all_staff", doc_kind="policy", expires_on=datetime.now(tz=UTC).date(),
         attested=True, data=_HANDBOOK_TXT.encode(), filename="exp.txt", meta=_META,
     )
     document_id = uuid.UUID(out["id"])
+    # A past expiry can no longer be SET (audit PL-F8, `expiry_in_past`), so
+    # the date passes the way it does in real life: it was valid when set and
+    # time moved on. Backdated directly, as the clock would.
+    await db.execute(
+        text("UPDATE corpus_documents SET expires_on = :e WHERE id = :d"),
+        {"e": datetime.now(tz=UTC).date() - timedelta(days=1), "d": document_id},
+    )
     await svc.purge_corpus(db, superseded_days=180, dry_run=False)
 
     assert not fake.objects
@@ -789,7 +803,7 @@ async def test_purge_corpus_redacts_a_superseded_version_after_the_window(
     document_id = uuid.UUID(v1["id"])
     await svc.add_version(
         db, company_id=f.company_a, actor=f.hr_a, actor_role="hr_manager", document_id=document_id,
-        data=(_HANDBOOK_TXT + " v2").encode(), filename="v2.txt", meta=_META,
+        data=(_HANDBOOK_TXT + " v2").encode(), filename="v2.txt", meta=_META, attested=True,
     )
     # Back-date v1's supersession past the retention window.
     await db.execute(
@@ -903,7 +917,7 @@ async def test_reconciler_indexes_a_document_and_reembeds_only_changed_chunks(
                     db, company_id=company_id, actor=hr_id, actor_role="hr_manager",
                     document_id=document_id,
                     data=(_HANDBOOK_TXT + "\n\nOne brand-new paragraph just added.").encode(),
-                    filename="h2.txt", meta=_META,
+                    filename="h2.txt", meta=_META, attested=True,
                 )
                 await db.commit()
 
@@ -1006,7 +1020,7 @@ async def test_replacing_a_document_before_it_indexes_does_not_wedge_the_pass(
                     db, company_id=company_id, actor=hr_id, actor_role="hr_manager",
                     document_id=document_id,
                     data=(_HANDBOOK_TXT + "\n\nA genuinely new paragraph.").encode(),
-                    filename="v2.txt", meta=_META,
+                    filename="v2.txt", meta=_META, attested=True,
                 )
                 await db.commit()
 
@@ -1142,7 +1156,7 @@ async def test_reconciler_indexes_a_100_percent_duplicate_reupload(
                 await corpus_module.add_version(
                     db, company_id=company_id, actor=hr_id, actor_role="hr_manager",
                     document_id=document_id, data=_HANDBOOK_TXT.encode(),
-                    filename="v1-again.txt", meta=_META,
+                    filename="v1-again.txt", meta=_META, attested=True,
                 )
                 await db.commit()
 

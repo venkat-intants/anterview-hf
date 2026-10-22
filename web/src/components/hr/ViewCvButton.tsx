@@ -9,6 +9,7 @@ import { FileText, Loader2 } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { openApplicantCv } from '@/api/applicants';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
 
 export default function ViewCvButton({
   applicantId,
@@ -34,7 +35,7 @@ export default function ViewCvButton({
         setBusy(true);
         openApplicantCv(applicantId, enrolmentId)
           .catch((e: unknown) =>
-            toast.error(e instanceof Error && e.message ? e.message : 'The CV could not be opened.'),
+            toast.error(errorMessage(e, 'Could not open the CV.')),
           )
           .finally(() => setBusy(false));
       }}

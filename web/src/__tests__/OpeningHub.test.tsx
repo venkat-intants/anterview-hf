@@ -660,7 +660,8 @@ describe('the read-only view', () => {
     renderHub('?tab=setup', true);
     const rail = await screen.findByRole('navigation', { name: 'Opening setup' });
     expect(within(rail).getByText(/Waiting for your company admin/)).toBeTruthy();
-    expect(screen.getByRole('link', { name: /Hiring board/ }).getAttribute('href')).toBe('/superadmin/board');
+    // Still awaiting approval, so not on the hiring board: back to Approvals (AD-F17).
+    expect(screen.getByRole('link', { name: /Approvals/ }).getAttribute('href')).toBe('/superadmin/approvals');
     expect(screen.getByText('Read-only')).toBeTruthy();
     expect(screen.queryByRole('switch')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Submit for approval' })).toBeNull();
@@ -670,7 +671,7 @@ describe('the read-only view', () => {
   it('shows the approval pill too', async () => {
     useData(dash({ approval_status: 'rejected' }));
     renderHub('', true);
-    expect((await screen.findByTestId('approval-state')).textContent).toBe('Changes requested');
+    expect((await screen.findByTestId('approval-state')).textContent).toBe('Sent back');
   });
 });
 
@@ -679,7 +680,7 @@ describe('approval statuses are all worded', () => {
     ['draft', 'Not submitted'],
     ['pending_approval', 'Awaiting approval'],
     ['approved', 'Approved'],
-    ['rejected', 'Changes requested'],
+    ['rejected', 'Sent back'],
   ];
   it.each(words)('%s', async (status, word) => {
     useData(dash({ approval_status: status }));

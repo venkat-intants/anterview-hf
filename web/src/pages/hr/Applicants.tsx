@@ -34,6 +34,7 @@ import {
   getReindexStatus,
   reindexApplicants,
   type Applicant,
+  type ApplicantListStatus,
   type ApplicantStatus,
 } from '@/api/applicants';
 import { listRequisitions, type Requisition } from '@/api/requisitions';
@@ -47,6 +48,9 @@ import { StatusTag, Avatar, SegTabs, type TagTone } from '@/design/components/pr
 import { PageHeader, SectionCard, EmptyState, Toolbar, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { errorMessage } from '@/lib/errorMessage';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import {
   Dialog,
   DialogContent,
@@ -76,6 +80,10 @@ const STATUS_FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'new', label: 'New' },
   { key: 'shortlisted', label: 'Shortlisted' },
+  // HR-L6: every status the list shows can be filtered on.
+  { key: 'held', label: 'Held' },
+  { key: 'interviewed', label: 'Interviewed' },
+  { key: 'hired', label: 'Hired' },
   { key: 'rejected', label: 'Rejected' },
 ];
 
@@ -157,6 +165,84 @@ const inputCls =
   'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] transition-colors ' +
   'focus-visible:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
+// ── Shortlist, gated on where the application stands (HR-M4) ────────────────
+//
+// Shortlisting is not a neutral click everywhere. On a rejected application it
+// reopens the candidacy: the server emails them a "shortlisted" decision and
+// starts round 1. On a hired one the server refuses (a hire is undone only by a
+// recorded rejection), so offering the button there only earns an error.
+function ShortlistAction({
+  status,
+  onConfirm,
+  disabled,
+  ariaLabel = 'Shortlist',
+  size,
+}: {
+  /** The application's stored status. */
+  status: string;
+  /** Resolves true once the shortlist is recorded. */
+  onConfirm: () => Promise<boolean>;
+  disabled?: boolean;
+  ariaLabel?: string;
+  size?: 'sm';
+}) {
+  const [confirming, setConfirming] = useState(false);
+  if (status === 'hired') {
+    return (
+      <span className="text-[12px] text-muted-foreground">
+        Hired. Use Reject to undo a hire.
+      </span>
+    );
+  }
+  if (confirming) {
+    return (
+      <div
+        role="group"
+        aria-label="Confirm: reopen and shortlist"
+        className="w-full space-y-2 rounded-[12px] border border-border bg-[var(--ui-inset)] p-3"
+      >
+        <p className="text-[13px] text-foreground">
+          This reopens a rejected application. They are emailed that they are shortlisted, and
+          their first round starts.
+        </p>
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            size="sm"
+            disabled={disabled}
+            onClick={() => {
+              void onConfirm().then((ok) => {
+                if (ok) setConfirming(false);
+              });
+            }}
+          >
+            Reopen and shortlist
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Button
+      type="button"
+      variant="secondary"
+      size={size}
+      onClick={() => {
+        if (status === 'rejected') setConfirming(true);
+        else void onConfirm();
+      }}
+      disabled={disabled || status === 'shortlisted'}
+      aria-label={ariaLabel}
+    >
+      {size ? null : <CheckCircle2 aria-hidden="true" />}
+      Shortlist
+    </Button>
+  );
+}
+
 // ── Reject, with a required structured reason (O4) ──────────────────────────
 //
 // Rejecting is a terminal decision — the server now refuses a reject with
@@ -172,7 +258,8 @@ function RejectAction({
 }: {
   /** Makes every id/label on the page unique when several rows render this. */
   idSuffix: string;
-  onConfirm: (reasonCode: string, reason: string) => void;
+  /** Resolves true once the rejection is recorded. */
+  onConfirm: (reasonCode: string, reason: string) => Promise<boolean>;
   disabled?: boolean;
   ariaLabel?: string;
 }) {
@@ -235,18 +322,22 @@ function RejectAction({
           type="button"
           variant="destructive"
           size="sm"
-          disabled={!canConfirm}
+          disabled={!canConfirm || disabled}
           onClick={() => {
-            onConfirm(reasonCode, reason.trim());
-            setOpen(false);
-            setReasonCode('');
-            setReason('');
+            // HR-L4: the form stays open until the rejection is recorded, so a
+            // refusal does not throw away the reason that was typed.
+            void onConfirm(reasonCode, reason.trim()).then((ok) => {
+              if (!ok) return;
+              setOpen(false);
+              setReasonCode('');
+              setReason('');
+            });
           }}
           aria-label={`Confirm ${ariaLabel.toLowerCase()}`}
         >
           Confirm reject
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => setOpen(false)}>
+        <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
           Cancel
         </Button>
       </div>
@@ -259,8 +350,9 @@ function RejectAction({
 interface DrawerProps {
   applicant: Applicant | null;
   onClose: () => void;
-  /** `enrolmentId` names the application (B5); always sent when known. */
-  onShortlist: (id: string, enrolmentId?: string | null) => void;
+  /** `enrolmentId` names the application (B5); always sent when known.
+   *  Resolves true once recorded. */
+  onShortlist: (id: string, enrolmentId?: string | null) => Promise<boolean>;
   /** Rejecting is terminal (O4) — always carries the chosen reason code and
    *  the free-text reason behind it. */
   onReject: (
@@ -268,7 +360,7 @@ interface DrawerProps {
     enrolmentId: string | null | undefined,
     reasonCode: string,
     reason: string,
-  ) => void;
+  ) => Promise<boolean>;
   onRescore: (id: string) => void;
   statusPending: boolean;
   rescorePending: boolean;
@@ -495,16 +587,13 @@ function ApplicantDrawer({
                               ariaLabel={`View the CV sent for ${app.opening_title ?? 'this opening'}`}
                             />
                           ) : null}
-                          <Button
-                            type="button"
-                            variant="secondary"
+                          <ShortlistAction
+                            status={app.stored_status}
                             size="sm"
-                            onClick={() => onShortlist(a.id, app.enrolment_id)}
-                            disabled={statusPending || app.stored_status === 'shortlisted'}
-                            aria-label={`Shortlist for ${app.opening_title ?? 'this opening'}`}
-                          >
-                            Shortlist
-                          </Button>
+                            onConfirm={() => onShortlist(a.id, app.enrolment_id)}
+                            disabled={statusPending}
+                            ariaLabel={`Shortlist for ${app.opening_title ?? 'this opening'}`}
+                          />
                           <RejectAction
                             idSuffix={app.enrolment_id}
                             ariaLabel={`Reject for ${app.opening_title ?? 'this opening'}`}
@@ -577,16 +666,11 @@ function ApplicantDrawer({
           {/* With several applications the actions live on each one above. */}
           {!several && (
             <>
-              <Button
-                type="button"
-                variant="secondary"
-                onClick={() => onShortlist(a.id, only?.enrolment_id)}
-                disabled={statusPending || a.status === 'shortlisted'}
-                aria-label="Shortlist"
-              >
-                <CheckCircle2 aria-hidden="true" />
-                Shortlist
-              </Button>
+              <ShortlistAction
+                status={a.status}
+                onConfirm={() => onShortlist(a.id, only?.enrolment_id)}
+                disabled={statusPending}
+              />
               <RejectAction
                 idSuffix={only?.enrolment_id ?? a.id}
                 disabled={statusPending || a.status === 'rejected'}
@@ -1027,14 +1111,18 @@ export default function Applicants() {
   });
   const openings = openingsData ?? [];
 
-  // List state
-  const [filter, setFilter] = useState('all');
+  // List state. HR-L9: ?status= opens the list already filtered (the HR home's
+  // "Shortlisted" tile links here); an unknown value falls back to All.
+  const [filter, setFilter] = useState(() => {
+    const wanted = searchParams.get('status');
+    return STATUS_FILTERS.some((f) => f.key === wanted) ? (wanted as string) : 'all';
+  });
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 350);
   const trimmedQuery = debouncedQuery.trim();
   const searching = trimmedQuery.length > 0;
-  const statusParam: ApplicantStatus | undefined =
-    filter === 'all' ? undefined : (filter as ApplicantStatus);
+  const statusParam: ApplicantListStatus | undefined =
+    filter === 'all' ? undefined : (filter as ApplicantListStatus);
 
   // Drawer state. The open applicant is ALSO kept in the URL (?view=<id>), so
   // leaving the modal for "View full profile" and pressing Back reopens it
@@ -1066,17 +1154,14 @@ export default function Applicants() {
   // Server-side hybrid search: q + status go to data_gateway, which runs the
   // pgvector + full-text ranking. Previous results stay on screen while the next
   // query resolves (no flicker between keystrokes).
-  const {
-    data: applicants,
-    isLoading,
-    isFetching,
-  } = useQuery({
+  const applicantsQuery = useQuery({
     queryKey: ['hr', 'applicants', 'list', trimmedQuery, statusParam ?? 'all'],
     // A5: new applicants arrive from bulk upload and, later, self-apply.
     refetchInterval: LIVE_POLL_MS,
     queryFn: () => listApplicants({ q: trimmedQuery || undefined, status: statusParam }),
     placeholderData: (prev) => prev,
   });
+  const { data: applicants, isLoading, isFetching } = applicantsQuery;
 
   // How many existing applicants still need a search embedding (one-click backfill).
   const { data: reindexStatus } = useQuery({
@@ -1098,7 +1183,7 @@ export default function Applicants() {
         toast.success('All resumes are now searchable.');
       }
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Indexing failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not index the resumes.')),
   });
 
   // ── Mutations ─────────────────────────────────────────────────────────────
@@ -1125,7 +1210,7 @@ export default function Applicants() {
       setFiles([]);
       void qc.invalidateQueries({ queryKey: ['hr', 'applicants'] });
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Upload failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not upload the resumes.')),
   });
 
   const statusMut = useMutation({
@@ -1147,13 +1232,24 @@ export default function Applicants() {
       reason !== undefined || reasonCode !== undefined
         ? updateApplicantStatus(id, status, enrolmentId, reason, reasonCode)
         : updateApplicantStatus(id, status, enrolmentId),
-    onSuccess: (updated) => {
+    onSuccess: (updated, { status }) => {
+      // HR-L4: say it happened; the status tile alone was easy to miss.
+      toast.success(
+        status === 'shortlisted' ? `${updated.full_name} shortlisted` : `${updated.full_name} rejected`,
+      );
       setSelected((prev) => (prev?.id === updated.id ? updated : prev));
-      void qc.invalidateQueries({ queryKey: ['hr', 'applicants'] });
-      void qc.invalidateQueries({ queryKey: ['hr', 'applicant', updated.id, 'applications'] });
+      void invalidateAfterHrMutation(qc);
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Update failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not update this applicant.')),
   });
+
+  /** Runs a status change; true once recorded (errors are toasted above). */
+  function changeStatus(vars: Parameters<typeof statusMut.mutate>[0]): Promise<boolean> {
+    return statusMut.mutateAsync(vars).then(
+      () => true,
+      () => false,
+    );
+  }
 
   const rescoreMut = useMutation({
     mutationFn: (id: string) => rescoreApplicant(id),
@@ -1162,7 +1258,7 @@ export default function Applicants() {
       setSelected((prev) => (prev?.id === updated.id ? updated : prev));
       void qc.invalidateQueries({ queryKey: ['hr', 'applicants'] });
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Rescore failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not re-score this applicant.')),
   });
 
   // ── File helpers ─────────────────────────────────────────────────────────
@@ -1237,10 +1333,11 @@ export default function Applicants() {
 
   return (
     <Page width="workspace">
+      {/* HR-L8: the page title is the nav label it is reached from. */}
       <PageHeader
         className="mb-0"
-        title="Resume screening"
-        description="Drop in many resumes at once - each candidate's name & email are read straight from the resume, AI-scored against the role, then ranked."
+        title="Applicants"
+        description="Screen resumes in bulk. Drop in many resumes at once - each candidate's name & email are read straight from the resume, AI-scored against the role, then ranked."
       />
 
       {/* Upload panel */}
@@ -1332,7 +1429,15 @@ export default function Applicants() {
         </Toolbar>
 
         {/* Table */}
-        {isLoading ? (
+        {applicantsQuery.isError && applicants === undefined ? (
+          // HR-M5: a failed load is not "No applicants yet".
+          <QueryErrorPanel
+            title="Could not load applicants."
+            error={applicantsQuery.error}
+            onRetry={() => void applicantsQuery.refetch()}
+            retrying={isFetching}
+          />
+        ) : isLoading ? (
           <div className="space-y-2" role="status" aria-label="Loading applicants" aria-busy="true">
             {Array.from({ length: 4 }).map((_, i) => (
               <Skeleton key={i} className="h-16 w-full rounded-card" />
@@ -1411,10 +1516,10 @@ export default function Applicants() {
           applicant={selected}
           onClose={closeApplicant}
           onShortlist={(id, enrolmentId) =>
-            statusMut.mutate({ id, status: 'shortlisted', enrolmentId })
+            changeStatus({ id, status: 'shortlisted', enrolmentId })
           }
           onReject={(id, enrolmentId, reasonCode, reason) =>
-            statusMut.mutate({ id, status: 'rejected', enrolmentId, reason, reasonCode })
+            changeStatus({ id, status: 'rejected', enrolmentId, reason, reasonCode })
           }
           onRescore={(id) => rescoreMut.mutate(id)}
           statusPending={statusMut.isPending}

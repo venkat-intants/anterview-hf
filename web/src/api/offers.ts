@@ -124,6 +124,8 @@ export interface OfferTemplate {
   valid_days: number | null;
 }
 
+/** null clears a field that may be empty (probation, notice, benefits, terms).
+ *  The others always hold a value; the server refuses null for them in words. */
 export interface TemplateInput {
   name?: string;
   employment_type?: EmploymentType;
@@ -131,8 +133,8 @@ export interface TemplateInput {
   pay_period?: PayPeriod;
   probation_months?: number | null;
   notice_period_days?: number | null;
-  benefits?: string;
-  terms?: string;
+  benefits?: string | null;
+  terms?: string | null;
   valid_days?: number;
 }
 

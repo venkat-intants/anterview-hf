@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { isInSetup, nextSetupStage, setupBadge } from '../lib/hrHome';
 import type { ApprovalStatus, RequisitionStatus } from '../api/requisitions';
+import { APPROVAL_LABEL } from '../lib/openingSetup';
 
 const STATUSES: RequisitionStatus[] = ['open', 'paused', 'closed'];
 const APPROVALS: ApprovalStatus[] = ['draft', 'pending_approval', 'approved', 'rejected'];
@@ -67,5 +68,20 @@ describe('setupBadge', () => {
     ['approved', true, 'Live'],
   ] as [ApprovalStatus, boolean, string][])('%s, live=%s -> %s', (approval_status, live, word) => {
     expect(setupBadge({ approval_status, public_apply_enabled: live })).toBe(word);
+  });
+});
+
+describe('one word per approval state (HR-L3)', () => {
+  it.each(['draft', 'pending_approval', 'rejected'] as const)(
+    'the home badge and the openings list agree on %s',
+    (approval) => {
+      expect(
+        setupBadge({ approval_status: approval, public_apply_enabled: false }),
+      ).toBe(APPROVAL_LABEL[approval]);
+    },
+  );
+
+  it('calls a returned opening "Sent back" everywhere', () => {
+    expect(APPROVAL_LABEL.rejected).toBe('Sent back');
   });
 });

@@ -33,6 +33,7 @@ import { SectionCard } from '@/design/components/page';
 import { AlertCircle, Plus, X } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { errorMessage } from '@/lib/errorMessage';
 
 // Native <select> in the same look as the shared Input.
 const SELECT =
@@ -170,7 +171,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
       toast.success('Posting updated.');
     },
     onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : 'Could not save the posting.'),
+      toast.error(errorMessage(err, 'Could not save the posting.')),
   });
 
   const num = (v: string): number | null => (v === '' ? null : Number(v));

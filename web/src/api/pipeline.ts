@@ -48,6 +48,13 @@ export interface PipelineRow {
   updated_at: string;
   /** PH4-A3 — how the offer ended, beside the decision; never the decision itself. */
   offer_outcome?: OfferOutcome | null;
+  /**
+   * HR-H1 — the server would record a hire on this application now: it has
+   * reached a person (held, finished every round, on a human review round) or
+   * is on no workflow and shortlisted. Read this rather than guessing from
+   * `status`, so the board offers Hire exactly when the server accepts it.
+   */
+  can_hire: boolean;
 }
 
 export type OfferOutcome = 'offer_accepted' | 'offer_declined' | 'offer_expired' | 'offer_withdrawn';

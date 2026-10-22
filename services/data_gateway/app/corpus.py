@@ -70,6 +70,7 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
 
 import structlog
+from botocore.exceptions import BotoCoreError, ClientError
 from defusedxml import ElementTree as defused_ET  # type: ignore[import-untyped]
 from defusedxml.common import DefusedXmlException
 from pypdf import PdfReader
@@ -130,15 +131,45 @@ FAILURE_SENTENCES: dict[str, str] = {
     "too_long": "This document is longer than we index (about 400,000 characters). Split it.",
     "too_many_chunks": "This document is longer than we index (about 400,000 characters). Split it.",
     "quota_exceeded": "Your library is full (200 documents). Delete one first.",
+    # Written only onto a version the reconciler has PARKED: nothing picks it
+    # up again without Retry (``reindex_document``), so the sentence must not
+    # promise it will be indexed "automatically" (audit PL-F9). It sits next
+    # to the Retry button on the library screen.
     "embedding_unavailable": (
-        "Search indexing is unavailable. The document is stored and will be indexed "
-        "automatically."
+        "Indexing failed because search was unavailable. The file is stored; "
+        "press Retry to index it."
     ),
 }
 # A validation failure that is NOT a parsing failure_code (design "MY DECISIONS"
 # Q3) — kept out of FAILURE_CODES/the migration CHECK, which is closed to what
 # the PARSER can produce, not every 422 this module can raise.
 _HR_ONLY_REQUIRES_HR_MANAGER = "hr_only_requires_hr_manager"
+
+# Refusals raised at upload time that are not parsing outcomes either, so they
+# stay out of FAILURE_CODES (and the version-row CHECK) for the same reason:
+#  * the CHUNK quota used to share ``quota_exceeded`` with the 200-document
+#    quota, so a company with a handful of long documents was told it had 200
+#    (audit F13);
+#  * an empty file used to come back as ``unsupported_type`` ("We take PDF,
+#    Word ...") although its type was never the problem (audit F14);
+#  * a storage outage used to escape as a bare 500 (audit PL-F10);
+#  * an expiry already in the past would have the nightly purge delete the
+#    document permanently the same night (audit PL-F8).
+_CHUNK_QUOTA_EXCEEDED = "chunk_quota_exceeded"
+_CHUNK_QUOTA_SENTENCE = (
+    "Your library holds as much text as it can. Delete a document you no longer need first."
+)
+_EMPTY_FILE = "empty_file"
+_EMPTY_FILE_SENTENCE = "This file is empty. Check you chose the right file."
+_STORAGE_UNAVAILABLE = "storage_unavailable"
+_STORAGE_UNAVAILABLE_SENTENCE = (
+    "Document storage is unavailable right now. Nothing was saved; try again in a moment."
+)
+_EXPIRY_IN_PAST = "expiry_in_past"
+_EXPIRY_IN_PAST_SENTENCE = (
+    "Choose an expiry date from today onwards. A document is deleted automatically after "
+    "its expiry date."
+)
 
 # Q5 — see the module docstring. Literal frozensets, not a reuse of
 # shared.agents.schema.DATA_CLASS_ROLES["candidate_pii"]; the subset tests live
@@ -210,6 +241,27 @@ class CorpusError(Exception):
 
 def _corpus_error(code: str, *, status_code: int = 422) -> CorpusError:
     return CorpusError(status_code, code, FAILURE_SENTENCES.get(code, "This document was refused."))
+
+
+def _refuse_past_expiry(expires_on: date | None) -> None:
+    """The nightly purge deletes a document once ``expires_on < CURRENT_DATE``
+    (``purge_corpus``), and retrieval drops it the moment that holds. A date
+    already behind us would therefore delete the document permanently
+    tonight, which nobody picking a date means to do (audit PL-F8). Compared
+    with the UTC calendar day, the same clock the database's ``CURRENT_DATE``
+    reads in this deployment, so "today" is always accepted."""
+    if expires_on is not None and expires_on < datetime.now(tz=UTC).date():
+        raise CorpusError(422, _EXPIRY_IN_PAST, _EXPIRY_IN_PAST_SENTENCE)
+
+
+async def _store_object(key: str, data: bytes, content_type: str) -> None:
+    """``store.store`` with its outage turned into a refusal a person can read:
+    a 503 whose sentence says nothing was saved. The router's ``_fail`` rolls
+    the rows back, so no row is left naming an object that is not there."""
+    try:
+        await store.store(settings, key, data, content_type)
+    except store.StorageUnavailableError as exc:
+        raise CorpusError(503, _STORAGE_UNAVAILABLE, _STORAGE_UNAVAILABLE_SENTENCE) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -729,7 +781,7 @@ async def _check_chunk_quota(db: AsyncSession, company_id: uuid.UUID, incoming: 
         {"c": company_id},
     )
     if int(existing or 0) + incoming > settings.corpus_max_chunks_per_company:
-        raise _corpus_error("quota_exceeded")
+        raise CorpusError(422, _CHUNK_QUOTA_EXCEEDED, _CHUNK_QUOTA_SENTENCE)
 
 
 # ---------------------------------------------------------------------------
@@ -738,6 +790,8 @@ async def _check_chunk_quota(db: AsyncSession, company_id: uuid.UUID, incoming: 
 
 
 async def _sniff_and_extract(data: bytes, filename: str | None) -> tuple[str, str, ExtractedDocument]:
+    if not data:
+        raise CorpusError(422, _EMPTY_FILE, _EMPTY_FILE_SENTENCE)
     if len(data) > settings.corpus_document_max_bytes:
         raise _corpus_error("too_large")
     try:
@@ -750,6 +804,13 @@ async def _sniff_and_extract(data: bytes, filename: str | None) -> tuple[str, st
     if len(extracted.text) > settings.corpus_max_chars_per_document:
         raise _corpus_error("too_long")
     return checked.content_type, checked.safe_name, extracted
+
+
+def _attestation_required() -> CorpusError:
+    return CorpusError(
+        422, "attestation_required",
+        "Confirm this is a company document, not a record about a candidate.",
+    )
 
 
 async def ingest_document(
@@ -776,10 +837,8 @@ async def ingest_document(
         raise CorpusError(422, _HR_ONLY_REQUIRES_HR_MANAGER,
                           "HR-only documents are created by HR managers.")
     if not attested:
-        raise CorpusError(
-            422, "attestation_required",
-            "Confirm this is a company document, not a record about a candidate.",
-        )
+        raise _attestation_required()
+    _refuse_past_expiry(expires_on)
 
     await _check_document_quota(db, company_id)
     content_type, safe_name, extracted = await _sniff_and_extract(data, filename)
@@ -829,7 +888,7 @@ async def ingest_document(
         text("UPDATE corpus_documents SET current_version_id = :v WHERE id = :i"),
         {"v": version_id, "i": document_id},
     )
-    await store.store(settings, key, data, content_type)
+    await _store_object(key, data, content_type)
 
     await _event(db, company_id=company_id, document_id=document_id, version_id=version_id,
                 action="uploaded", actor_type="user", actor=actor)
@@ -854,14 +913,24 @@ async def ingest_document(
 async def add_version(
     db: AsyncSession, *, company_id: uuid.UUID, actor: uuid.UUID, actor_role: str,
     document_id: uuid.UUID, data: bytes, filename: str | None, meta: RequestMeta,
+    attested: bool = False,
 ) -> dict[str, Any]:
-    """Replace-upload: a NEW version row, never an overwrite. Caller commits."""
+    """Replace-upload: a NEW version row, never an overwrite. Caller commits.
+
+    A new version is a new file, so it carries the same "company document,
+    not a record about a candidate" attestation as the first upload (design
+    §4.5, audit PL-F7). It used to need none, which let any file into the
+    corpus through Replace that Upload would have stopped. Checked after the
+    audience refusal (so a super_admin learns nothing new about an hr_only
+    document) and before anything is parsed or written."""
     doc = await _document_row(db, company_id=company_id, document_id=document_id)
     if doc is None:
         raise CorpusError(404, "not_found", "Document not found.")
     if doc["audience"] == "hr_only" and actor_role not in CORPUS_AUDIENCE_ROLES["hr_only"]:
         raise CorpusError(422, _HR_ONLY_REQUIRES_HR_MANAGER,
                           "HR-only documents are created by HR managers.")
+    if not attested:
+        raise _attestation_required()
 
     content_type, safe_name, extracted = await _sniff_and_extract(data, filename)
     chunks = chunk_document(extracted, max_chunks=settings.corpus_max_chunks_per_document)
@@ -916,7 +985,7 @@ async def add_version(
         text("UPDATE corpus_documents SET current_version_id = :v, updated_at = :now WHERE id = :i"),
         {"v": version_id, "now": now, "i": document_id},
     )
-    await store.store(settings, key, data, content_type)
+    await _store_object(key, data, content_type)
 
     await _event(db, company_id=company_id, document_id=document_id, version_id=version_id,
                 action="uploaded", actor_type="user", actor=actor,
@@ -928,7 +997,7 @@ async def add_version(
         db, actor=actor, action="corpus.document.replaced", resource_id=document_id,
         details={"company_id": str(company_id), "version_id": str(version_id),
                  "version": next_version, "content_type": content_type, "size_bytes": len(data),
-                 "chunk_count": len(chunks)},
+                 "chunk_count": len(chunks), "attested": attested},
         meta=meta,
     )
 
@@ -962,6 +1031,11 @@ async def update_document(
     if audience == "hr_only" and actor_role not in CORPUS_AUDIENCE_ROLES["hr_only"]:
         raise CorpusError(422, _HR_ONLY_REQUIRES_HR_MANAGER,
                           "HR-only documents are created by HR managers.")
+
+    # Only a CHANGED expiry is checked: an unchanged past date (the purge has
+    # not run yet tonight) must not block an audience edit.
+    if expires_on != doc["expires_on"]:
+        _refuse_past_expiry(expires_on)
 
     new_audience = audience
     new_expires = expires_on
@@ -1299,7 +1373,13 @@ async def download_url(
         raise CorpusError(404, "not_found", "Document not found.")
     if not row["storage_key"]:
         raise CorpusError(410, "gone", "This version's file has been removed under retention.")
-    url = await store.signed_download(settings, row["storage_key"], row["original_name"] or "document")
+    try:
+        url = await store.signed_download(
+            settings, row["storage_key"], row["original_name"] or "document",
+        )
+    except (BotoCoreError, ClientError) as exc:
+        # The same readable 503 as an upload, not a bare 500 (audit PL-F10).
+        raise CorpusError(503, _STORAGE_UNAVAILABLE, _STORAGE_UNAVAILABLE_SENTENCE) from exc
     _audit(
         db, actor=actor, action="corpus.document.downloaded", resource_id=document_id,
         details={"company_id": str(company_id), "version": row["version"]}, meta=meta,

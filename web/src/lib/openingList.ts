@@ -151,7 +151,13 @@ export function nextAction(r: Requisition): NextAction | null {
       ? { text: `Next: decide on ${r.awaiting_decision}`, to: `${base}/decisions` }
       : null;
   }
-  if (r.status === 'paused') return { text: 'Paused: reopen or close', to: base };
+  if (r.status === 'paused') {
+    // HR-M8: the server refuses to reopen while the closing date has passed,
+    // so "reopen" would send HR to a button that only earns a 409.
+    return closingDatePassed(r)
+      ? { text: 'Paused: set a new closing date to reopen, or close it', to: `${base}?tab=setup` }
+      : { text: 'Paused: reopen or close', to: base };
+  }
   // Setup runs JD -> hiring process -> approval -> go live. Only a stage the
   // server SAYS is missing is named; an absent field is never read as missing.
   // Approval can be submitted while these are still open, so when it is already

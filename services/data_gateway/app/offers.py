@@ -225,7 +225,9 @@ def clean_fields(fields: dict[str, Any], *, partial: bool) -> dict[str, Any]:
                 raise OfferError(422, "The notice period is 0 to 365 days.")
             out[key] = None if value is None else int(value)
         elif key == "valid_days":
-            if not 1 <= int(value) <= 60:
+            # Not clearable: the column has no "unset". A cleared field arrives as
+            # null and is refused in words, never as a 500 from int(None).
+            if value is None or not 1 <= int(value) <= 60:
                 raise OfferError(422, "An offer stays open for 1 to 60 days.")
             out[key] = int(value)
     if not partial and "base_salary" not in out:
@@ -345,8 +347,49 @@ async def _load(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
     return dict(row)
 
 
+def _past_expiry(offer: dict[str, Any]) -> bool:
+    """A sent offer whose deadline has passed: expired in fact, whether or not
+    the hourly sweep has got to it yet (audit OF-F4)."""
+    expires = offer.get("expires_at")
+    return offer["status"] == "sent" and expires is not None and expires <= datetime.now(tz=UTC)
+
+
 async def get_offer(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID) -> dict[str, Any]:
-    return offer_out(await _load(db, company_id=company_id, offer_id=offer_id, lock=False))
+    """One offer for staff. A sent offer past its deadline is expired here, on
+    read, as the candidate's view already does: the sweep runs hourly and may be
+    switched off, and until it ran HR saw "sent", with Re-send and Withdraw
+    offered, for an offer the candidate could no longer answer. Caller commits."""
+    offer = await _load(db, company_id=company_id, offer_id=offer_id, lock=False)
+    if _past_expiry(offer):
+        await _expire(db, offer)
+        offer = await _load(db, company_id=company_id, offer_id=offer_id, lock=False)
+    return offer_out(offer)
+
+
+_COMPANY_DUE_SQL = """
+SELECT o.*, a.full_name AS candidate_name, a.email AS candidate_email,
+       a.user_id AS candidate_user_id, co.name AS company_name
+  FROM offers o
+  JOIN applicants a ON a.id = o.applicant_id
+  JOIN companies co ON co.id = o.company_id
+ WHERE o.company_id = :c AND o.status = 'sent' AND o.expires_at <= now()
+   AND (CAST(:e AS uuid) IS NULL OR o.enrolment_id = CAST(:e AS uuid))
+ ORDER BY o.expires_at
+ LIMIT 200
+ FOR UPDATE OF o SKIP LOCKED
+"""
+
+
+async def expire_due_for_company(db: AsyncSession, *, company_id: uuid.UUID,
+                                 enrolment_id: uuid.UUID | None = None) -> int:
+    """The expiry sweep for one company (or one of its applications), run before
+    a list is read so no list shows a lapsed offer as "sent". Caller commits."""
+    rows = (
+        await db.execute(text(_COMPANY_DUE_SQL), {"c": company_id, "e": enrolment_id})
+    ).mappings().all()
+    for r in rows:
+        await _expire(db, dict(r))
+    return len(rows)
 
 
 # The company's offers in one list — where HR's notifications point, and where
@@ -387,6 +430,7 @@ async def list_offers(db: AsyncSession, *, company_id: uuid.UUID, status: str | 
     if status is not None and status not in LIST_FILTERS:
         raise OfferError(422, "Filter by one of: " + ", ".join(LIST_FILTERS) + ".")
     limit, offset = max(1, min(int(limit), 200)), max(0, int(offset))
+    await expire_due_for_company(db, company_id=company_id)
     rows = (
         await db.execute(text(_LIST_SQL), {"c": company_id, "s": status, "lim": limit,
                                            "off": offset})
@@ -409,6 +453,7 @@ async def list_offers(db: AsyncSession, *, company_id: uuid.UUID, status: str | 
 
 async def offers_for_enrolment(db: AsyncSession, *, company_id: uuid.UUID,
                                enrolment_id: uuid.UUID) -> list[dict[str, Any]]:
+    await expire_due_for_company(db, company_id=company_id, enrolment_id=enrolment_id)
     rows = (
         await db.execute(
             text("SELECT o.*, a.full_name AS candidate_name FROM offers o"
@@ -636,7 +681,7 @@ async def decide(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID
         await create_notification(
             db, user_id=who, kind="offer_review",
             title=f"Offer {'approved' if approve else 'sent back'}: {offer['job_title']}",
-            body=offer["candidate_name"] or "", link="/hr/offers",
+            body=offer["candidate_name"] or "", link=f"/hr/offers/{offer_id}",
         )
     return offer_out(await _load(db, company_id=company_id, offer_id=offer_id))
 
@@ -697,6 +742,11 @@ async def _tell_candidate(db: AsyncSession, offer: dict[str, Any], title: str,
         log.warning("offers.candidate_notification_failed", offer_id=str(offer.get("id")))
 
 
+def _expired_note(offer: dict[str, Any], what: str) -> str:
+    return (f"This offer expired on {format_email_date(offer['expires_at'])} with no answer, so "
+            f"it can no longer be {what}. Write a new offer if you still want to make one.")
+
+
 def offer_link(raw_token: str) -> str:
     return f"{settings.app_base_url.rstrip('/')}/offer#{raw_token}"
 
@@ -708,6 +758,12 @@ async def send(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
     offer = await _load(db, company_id=company_id, offer_id=offer_id)
     if not offer["candidate_email"]:
         raise OfferError(409, "This candidate has no email address to send the offer to.")
+    if _past_expiry(offer):
+        # A fresh link would carry a deadline already gone, and the candidate
+        # would open "This offer has expired". Record the expiry (keep=True:
+        # the router commits it) and say why nothing was sent.
+        await _expire(db, offer)
+        raise OfferError(409, _expired_note(offer, "re-sent"), keep=True)
     raw = mint_offer_token()
     now = datetime.now(tz=UTC)
     if again:
@@ -765,6 +821,12 @@ async def _set_outcome(db: AsyncSession, offer: dict[str, Any], outcome: str) ->
 async def withdraw(db: AsyncSession, *, company_id: uuid.UUID, offer_id: uuid.UUID,
                    reason: str | None, actor: uuid.UUID, meta: RequestMeta) -> dict[str, Any]:
     offer = await _load(db, company_id=company_id, offer_id=offer_id)
+    if _past_expiry(offer):
+        # Expired, not withdrawn: the outcome is offer_expired, and the
+        # candidate is not emailed that an offer they could no longer answer
+        # was taken back.
+        await _expire(db, offer)
+        raise OfferError(409, _expired_note(offer, "withdrawn"), keep=True)
     if offer["status"] not in BEFORE_ANSWER:
         raise OfferError(409, f"This offer is {offer['status']}; it can no longer be withdrawn.")
     why = (reason or "").strip() or None
@@ -1020,7 +1082,7 @@ async def _tell_hr(db: AsyncSession, offer: dict[str, Any], title: str) -> None:
     for who in {offer["created_by_user_id"], offer["sent_by_user_id"]} - {None}:
         await create_notification(db, user_id=who, kind="offer_update",
                                   title=f"{title}: {offer['candidate_name']}",
-                                  body=offer["job_title"], link="/hr/offers")
+                                  body=offer["job_title"], link=f"/hr/offers/{offer['id']}")
 
 
 async def answer(db: AsyncSession, *, raw: str | None, accept: bool, code: str,

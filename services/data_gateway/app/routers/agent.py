@@ -26,7 +26,7 @@ from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from shared.agents import (
     CROSS_TENANT_ROLES,
     AgentMessage,
@@ -63,6 +63,7 @@ from app.corpus import embeddings_available
 from app.database import get_db_session
 from app.dependencies import get_current_user, require_role_password_ok
 from app.models import AuditLog
+from app.rate_limit import rate_limit_actor
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 
 log = structlog.get_logger(__name__)
@@ -87,6 +88,22 @@ StaffUserDep = Annotated[
 # better served by the user restating what they want.
 MAX_HISTORY_TURNS: int = 12
 MAX_MESSAGE_CHARS: int = 2000
+# A history turn longer than MAX_MESSAGE_CHARS is TRUNCATED, not refused: the
+# assistant's own replies have no length cap, so one long answer (a pipeline
+# summary with a table) used to make every later message in that conversation
+# fail with a 422 until the page was reloaded (audit CP-F2). The cost bound is
+# unchanged, since what reaches the model is still at most MAX_MESSAGE_CHARS per
+# turn; this outer cap only refuses a payload no client of ours would send.
+MAX_HISTORY_TEXT_ACCEPTED: int = 20_000
+
+# Per-account request caps for the two routes that spend LLM budget. A chat
+# turn runs up to the agent's step budget in model calls and the panel runs
+# four specialists plus a synthesizer, so a held-down Enter or a scripted loop
+# would otherwise burn the provider quota every other user shares (the Gemini
+# free tier is about 10 requests a minute). Same fail-open posture as every
+# other per-actor limit (app/rate_limit.py).
+AGENT_CHAT_PER_MINUTE: int = 20
+AGENT_PANEL_PER_MINUTE: int = 4
 
 # Roles that live above the tenant boundary and therefore carry no company_id.
 # `admin` is the platform ANALYTICS role, not a tenant one — seed_admin.py and
@@ -112,7 +129,12 @@ _AGENT_DISABLED = HTTPException(
 
 class HistoryTurn(BaseModel):
     role: str = Field(pattern="^(user|assistant)$")
-    text: str = Field(max_length=MAX_MESSAGE_CHARS)
+    text: str = Field(max_length=MAX_HISTORY_TEXT_ACCEPTED)
+
+    @field_validator("text")
+    @classmethod
+    def _cap_text(cls, value: str) -> str:
+        return value[:MAX_MESSAGE_CHARS]
 
 
 class ChatIn(BaseModel):
@@ -480,7 +502,11 @@ async def _write_panel_audit(
     await db.commit()
 
 
-@router.post("/chat", response_model=ChatOut)
+@router.post(
+    "/chat",
+    response_model=ChatOut,
+    dependencies=[rate_limit_actor("agent_chat", AGENT_CHAT_PER_MINUTE)],
+)
 async def agent_chat(
     body: ChatIn, user: StaffUserDep, db: DbSessionDep, request: Request
 ) -> ChatOut:
@@ -572,7 +598,10 @@ async def run_watchers_now(user: StaffUserDep) -> dict[str, Any]:
     return totals
 
 
-@router.post("/panel/{applicant_id}")
+@router.post(
+    "/panel/{applicant_id}",
+    dependencies=[rate_limit_actor("agent_panel", AGENT_PANEL_PER_MINUTE)],
+)
 async def agent_panel(
     applicant_id: uuid.UUID, user: StaffUserDep, db: DbSessionDep, request: Request
 ) -> dict[str, Any]:

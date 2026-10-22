@@ -4,17 +4,44 @@
 // design, same as the console it lives on (CLAUDE.md).
 
 import { Button } from '@/components/ui/button';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Trash2 } from '@/design/components/icons';
+import { Loader2 } from '@/design/components/icons';
 import { GlassCard } from '@/design/components/primitives';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { addMyAvailability, getMyAvailability, removeMyAvailability } from '@/api/scheduling';
 import { localInputToIso } from '@/lib/localDatetime';
 import { formatDayTime, browserTimezone } from '@/lib/timezone';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+/** The furthest ahead the list can show: the server's maximum range (92 days). */
+const HORIZON_DAYS = 92;
+/** The server's limit on one window (interview_scheduling.add_availability). */
+const MAX_WINDOW_DAYS = 14;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Why this window cannot be added, or null when it can (audit AD-F11).
+ *
+ * The 14-day limit is the server's, said up front instead of learned from a
+ * 422. The horizon is this list's: a window further out than it can show used
+ * to save, toast "Availability added" and then never appear, so it could not be
+ * seen or removed.
+ */
+function windowProblem(startIso: string, endIso: string, now: number): string | null {
+  const start = Date.parse(startIso);
+  const end = Date.parse(endIso);
+  if (Number.isNaN(start) || Number.isNaN(end)) return 'Enter both times.';
+  if (end <= start) return 'The end must be after the start.';
+  if (end - start > MAX_WINDOW_DAYS * DAY_MS) {
+    return `A window can be at most ${MAX_WINDOW_DAYS} days. Add more than one for longer.`;
+  }
+  if (start > now + HORIZON_DAYS * DAY_MS) {
+    return `You can add windows up to ${HORIZON_DAYS} days ahead.`;
+  }
+  return null;
 }
 
 export default function MyAvailability(): JSX.Element {
@@ -22,9 +49,18 @@ export default function MyAvailability(): JSX.Element {
   const [startLocal, setStartLocal] = useState('');
   const [endLocal, setEndLocal] = useState('');
 
+  // The whole range the server allows, so every window that can be added is
+  // also listed (it used to fetch 28 days; later windows saved but vanished).
+  const range = useMemo(() => {
+    const now = Date.now();
+    return {
+      start: new Date(now).toISOString(),
+      end: new Date(now + HORIZON_DAYS * DAY_MS).toISOString(),
+    };
+  }, []);
   const windows = useQuery({
     queryKey: ['interviewer', 'availability'],
-    queryFn: () => getMyAvailability(),
+    queryFn: () => getMyAvailability(range),
   });
 
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['interviewer', 'availability'] });
@@ -41,26 +77,31 @@ export default function MyAvailability(): JSX.Element {
       setEndLocal('');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not add that window')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not add that window.')),
   });
 
   const removeMut = useMutation({
     mutationFn: (windowId: string) => removeMyAvailability(windowId),
     onSuccess: () => {
-      toast.success('Removed');
+      toast.success('Window deleted');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not remove that window')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not delete that window.')),
   });
 
   const rows = windows.data ?? [];
-  const ready = Boolean(startLocal) && Boolean(endLocal);
+  const problem =
+    startLocal && endLocal
+      ? windowProblem(localInputToIso(startLocal), localInputToIso(endLocal), Date.now())
+      : null;
+  const ready = Boolean(startLocal) && Boolean(endLocal) && problem === null;
 
   return (
     <section>
       <h2 className="text-[16px] font-semibold text-foreground">My availability</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        When HR can book you for an interview - in your own local time ({browserTimezone()}).
+        When HR can book you for an interview - in your own local time ({browserTimezone()}). Each
+        window is at most {MAX_WINDOW_DAYS} days; the list shows the next {HORIZON_DAYS} days.
       </p>
 
       <GlassCard className="mt-3 p-4">
@@ -101,10 +142,19 @@ export default function MyAvailability(): JSX.Element {
               className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none"
             />
           </div>
-          <Button type="submit" disabled={!ready || addMut.isPending}>
+          <Button
+            type="submit"
+            disabled={!ready || addMut.isPending}
+            aria-describedby={problem ? 'avail-problem' : undefined}
+          >
             {addMut.isPending ? 'Adding…' : 'Add window'}
           </Button>
         </form>
+        {problem ? (
+          <p id="avail-problem" role="alert" className="mt-2 text-[12.5px] text-[var(--ui-warn)]">
+            {problem}
+          </p>
+        ) : null}
 
         {windows.isLoading ? (
           <div className="mt-3 flex items-center gap-2 text-[13px] text-muted-foreground">
@@ -112,33 +162,40 @@ export default function MyAvailability(): JSX.Element {
             Loading…
           </div>
         ) : windows.isError ? (
-          <p className="mt-3 text-[13px] text-[var(--ui-danger)]">
-            {errText(windows.error, 'Could not load your availability')}
-          </p>
+          <QueryErrorPanel
+            className="mt-3"
+            title="Could not load your availability."
+            error={windows.error}
+            onRetry={() => void windows.refetch()}
+            retrying={windows.isFetching}
+          />
         ) : rows.length === 0 ? (
           <p className="mt-3 text-[13px] text-muted-foreground">No windows set yet.</p>
         ) : (
           <ul className="mt-3 flex flex-col gap-1.5">
-            {rows.map((w) => (
-              <li
-                key={w.id}
-                className="flex items-center justify-between gap-2 rounded-[9px] border border-border px-3 py-2 text-[12.5px] text-foreground"
-              >
-                <span>
-                  {formatDayTime(w.starts_at, browserTimezone())} &rarr;{' '}
-                  {formatDayTime(w.ends_at, browserTimezone())}
-                </span>
-                <button
-                  type="button"
-                  aria-label="Remove this window"
-                  disabled={removeMut.isPending}
-                  onClick={() => removeMut.mutate(w.id)}
-                  className="-my-1 -mr-2 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+            {rows.map((w) => {
+              const from = formatDayTime(w.starts_at, browserTimezone());
+              const to = formatDayTime(w.ends_at, browserTimezone());
+              return (
+                <li
+                  key={w.id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-[9px] border border-border px-3 py-2 text-[12.5px] text-foreground"
                 >
-                  <Trash2 size={14} aria-hidden="true" />
-                </button>
-              </li>
-            ))}
+                  <span>
+                    {from} &rarr; {to}
+                  </span>
+                  {/* Named for its window (AD-F33), and a confirm before it is
+                      deleted, like every other delete (consistency B3). */}
+                  <ConfirmDeleteButton
+                    title={`Delete the window ${from} to ${to}`}
+                    confirmText="Delete"
+                    confirmGroupLabel={`Delete the window ${from} to ${to}`}
+                    pending={removeMut.isPending && removeMut.variables === w.id}
+                    onConfirm={() => removeMut.mutate(w.id)}
+                  />
+                </li>
+              );
+            })}
           </ul>
         )}
       </GlassCard>

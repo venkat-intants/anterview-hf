@@ -52,6 +52,8 @@ import {
   toCreatePayload,
   type NewOpeningValues,
 } from './newOpeningSchema';
+import { errorMessage } from '@/lib/errorMessage';
+import { formatMoney } from '@/lib/formatters';
 
 type StepKey = 'basics' | 'budget' | 'review';
 
@@ -77,7 +79,7 @@ function budgetEchoed(created: Requisition, sent: Partial<RequisitionInput>): bo
 }
 
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, fallback.endsWith('.') ? fallback : `${fallback}.`);
 }
 
 interface Props {
@@ -429,7 +431,7 @@ function DialogBody({
                   label="Budget"
                   value={
                     hasBudget(v)
-                      ? `${v.budgetCurrency.trim().toUpperCase()} ${Number(v.budgetAmount).toLocaleString('en-IN')}, ${
+                      ? `${formatMoney(v.budgetAmount, v.budgetCurrency)}, ${
                           v.budgetBasis ? BASIS_WORD[v.budgetBasis].toLowerCase() : ''
                         }, ${v.budgetPeriod ? PERIOD_WORD[v.budgetPeriod].toLowerCase() : ''}`
                       : ''

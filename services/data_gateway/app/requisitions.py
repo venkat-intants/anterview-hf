@@ -52,8 +52,10 @@ VALID_STATUSES: frozenset[str] = frozenset(
 TERMINAL_STATUSES: frozenset[str] = frozenset({"hired", "rejected"})
 
 HIRE_UNDONE_ONLY_BY_REJECTION = (
-    "A hire is undone only by recording a rejection, with a reason - from the "
-    "decision queue. It cannot be moved back into the pipeline."
+    # HR-M4: this used to say "from the decision queue", which a hired person
+    # never appears in (enrolment_awaits_human), so it pointed at a dead end.
+    "A hire is undone only by recording a rejection, with a reason - use Reject "
+    "on their application. It cannot be moved back into the pipeline."
 )
 
 

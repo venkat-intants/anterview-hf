@@ -500,6 +500,15 @@ def test_a_hire_is_undone_only_by_a_rejection() -> None:
                                       automated=False))
 
 
+def test_the_hire_refusal_points_somewhere_a_hired_person_is() -> None:
+    """HR-M4: a hired person never appears in the decision queue
+    (enrolment_awaits_human), so the refusal must not send HR there."""
+    from app.requisitions import HIRE_UNDONE_ONLY_BY_REJECTION
+
+    assert "decision queue" not in HIRE_UNDONE_ONLY_BY_REJECTION
+    assert "Reject" in HIRE_UNDONE_ONLY_BY_REJECTION
+
+
 def test_a_guest_account_speaks_the_language_the_offer_was_accepted_in() -> None:
     """Found in the evidence pass: a guest made at acceptance was always 'en', so
     their activation email was always English."""

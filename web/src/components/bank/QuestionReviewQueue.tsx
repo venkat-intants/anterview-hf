@@ -18,6 +18,7 @@ import { QuestionBadges } from '@/components/bank/QuestionBadges';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { questionBrief } from '@/lib/bankFlow';
 import type { BankQuestion, ReviewQueueRow } from '@/api/questionBanks';
@@ -25,10 +26,6 @@ import type { BankQuestion, ReviewQueueRow } from '@/api/questionBanks';
 const CHANGES_NOTE_MIN = 5;
 /** Mirrors the server's own cap so a save never round-trips into a 422. */
 const NOTE_MAX_LENGTH = 1000;
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 interface RowProps {
   row: ReviewQueueRow;
@@ -90,7 +87,7 @@ function ReviewRow({ row, approve, requestChanges, invalidate, openContent }: Ro
       setNote('');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not approve this question')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not approve this question.')),
   });
 
   const changesMut = useMutation({
@@ -101,7 +98,7 @@ function ReviewRow({ row, approve, requestChanges, invalidate, openContent }: Ro
       setNote('');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not send this back')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not send this back.')),
   });
 
   const changesReady = note.trim().length >= CHANGES_NOTE_MIN;
@@ -214,7 +211,14 @@ export function QuestionReviewQueue({
 }: QuestionReviewQueueProps): JSX.Element {
   const qc = useQueryClient();
   const queue = useQuery({ queryKey, queryFn: fetchQueue });
-  const invalidate = () => void qc.invalidateQueries({ queryKey });
+  // The queue, and the bank views an approval or a send-back changes: a
+  // bank's status counts and its question list (audit E20). They are HR keys;
+  // on the super admin's console they are simply not mounted.
+  const invalidate = () => {
+    void qc.invalidateQueries({ queryKey });
+    void qc.invalidateQueries({ queryKey: ['hr', 'question-banks'] });
+    void qc.invalidateQueries({ queryKey: ['hr', 'bank-questions'] });
+  };
 
   if (queue.isLoading) {
     return (

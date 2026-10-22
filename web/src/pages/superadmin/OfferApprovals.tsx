@@ -8,7 +8,9 @@
 // submitted) is enforced server-side; a 403 here is shown exactly as worded.
 // Layout is the shared review pattern in components/superadmin/ReviewParts.
 
-import { offerActionWord } from '@/lib/offerHistory';
+import { offerEntryWord } from '@/lib/offerHistory';
+import { offerStatusWord } from '@/lib/offerStatus';
+import { errorMessage } from '@/lib/errorMessage';
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -37,13 +39,10 @@ import {
   rejectOffer,
   type OfferOut,
 } from '@/api/offers';
-import { formatMoney } from '@/lib/formatters';
+import { formatDate, formatDateTime, formatMoney } from '@/lib/formatters';
+import { ApiError } from '@/api/client';
 
 const REJECT_NOTE_MIN = 10;
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 function money(o: OfferOut): string {
   if (!o.base_salary) return '-';
@@ -94,14 +93,24 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
   const [mode, setMode] = useState<DecisionMode>(null);
   const historyKey = useScopedPersistKey('offer-approval-history');
 
+  // No refetch on window focus (audit AD-F1): the terms an approver is reading
+  // must not change under them when they come back to the tab.
   const detail = useQuery({
     queryKey: ['admin', 'offer-approvals', offerId],
     queryFn: () => getAdminOffer(offerId),
+    refetchOnWindowFocus: false,
   });
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['admin', 'offer-approvals', offerId] });
     void qc.invalidateQueries({ queryKey: ['admin', 'offer-approvals'] });
+  };
+
+  // A 409 means the offer moved on (withdrawn or decided elsewhere): refetch so
+  // the page stops offering a decision the server will refuse.
+  const onDecisionError = (e: unknown, fallback: string) => {
+    if (e instanceof ApiError && e.status === 409) invalidate();
+    toast.error(errorMessage(e, fallback));
   };
 
   const approveMut = useMutation({
@@ -112,7 +121,7 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
       invalidate();
       toast.success('Approved - HR can send it now');
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not approve this offer')),
+    onError: (e: unknown) => onDecisionError(e, 'Could not approve this offer.'),
   });
 
   const rejectMut = useMutation({
@@ -123,7 +132,7 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
       invalidate();
       toast.success('Sent back with your note');
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not send this back')),
+    onError: (e: unknown) => onDecisionError(e, 'Could not send this offer back.'),
   });
 
   const crumbs = (
@@ -226,7 +235,7 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
             nounPlural="entries"
             latest={
               newestEntry
-                ? `${offerActionWord(newestEntry.action)}${newestEntry.actor_name ? ` by ${newestEntry.actor_name}` : ''}, ${new Date(newestEntry.at).toLocaleDateString()}`
+                ? `${offerEntryWord(newestEntry)}${newestEntry.actor_name ? ` by ${newestEntry.actor_name}` : ''}, ${formatDate(newestEntry.at)}`
                 : undefined
             }
             persistKey={historyKey}
@@ -244,10 +253,10 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
                 className="flex flex-col gap-2 border-l border-border pl-4"
                 renderItem={(h) => (
                   <li className="text-[13.5px] text-foreground">
-                    {offerActionWord(h.action)}
+                    {offerEntryWord(h)}
                     {h.actor_name ? ` - ${h.actor_name}` : ''}
                     <span className="ml-2 text-[12.5px] text-muted-foreground">
-                      {new Date(h.at).toLocaleString()}
+                      {formatDateTime(h.at)}
                     </span>
                   </li>
                 )}
@@ -274,14 +283,13 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
           />
         ) : (
           <NothingToDecide>
-            This offer is {o.status.replace('_', ' ')} - nothing for you to decide right now.
+            This offer is {offerStatusWord(o.status)}. There is nothing for you to decide right now.
           </NothingToDecide>
         )
       }
     />
   );
 }
-
 
 /* ── Page ───────────────────────────────────────────────────────────────── */
 

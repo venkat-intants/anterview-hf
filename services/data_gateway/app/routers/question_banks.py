@@ -773,6 +773,8 @@ async def submit_all_bank_questions(
         result = await svc.submit_all(db, company_id=company_id, bank_id=bank_id, actor=uid)
     except svc.QuestionBankError as exc:
         raise await _fail(db, exc) from exc
+    await svc.notify_reviewers(db, company_id=company_id, bank_id=bank_id,
+                               count=int(result["submitted"]))
     await exam_locks.commit_or_conflict(db)
     return BulkReviewOut(acted=int(result["submitted"]), skipped=result["skipped"])
 
@@ -879,6 +881,7 @@ async def submit_bank_question(qid: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep) 
         q = await svc.submit(db, company_id=company_id, qid=qid, actor=uid)
     except svc.QuestionBankError as exc:
         raise await _fail(db, exc) from exc
+    await svc.notify_reviewers(db, company_id=company_id, bank_id=q.bank_id, count=1)
     await exam_locks.commit_or_conflict(db)
     return svc.question_out(q)
 

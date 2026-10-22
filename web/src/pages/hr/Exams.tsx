@@ -10,12 +10,16 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listExams, createExam, type ExamSummary } from '@/api/exams';
 import { errorMessage } from '@/lib/errorMessage';
+import { parseThreshold } from '@/lib/examEditor';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
+import { statusLabel } from '@/lib/statusLabel';
 import { toast } from '@/lib/toast';
 import { appPath } from '@/lib/safeUrl';
 import { cn } from '@/lib/utils';
 import { Reveal } from '@/design/components/Reveal';
 import { PageHeader, EmptyState, Toolbar, Page } from '@/design/components/page';
-import { GlassCard, Pill, StatusTag, Field, ToggleSwitch } from '@/design/components/primitives';
+import { GlassCard, StatusTag, Field, ToggleSwitch } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
 import { ArrowLeft, Plus, Pencil, BarChart3, Sparkles, Search } from '@/design/components/icons';
 import { QueryState } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -29,18 +33,16 @@ function statusTone(s: string): ToneKey {
   return 'amber';
 }
 
-function statusLabel(s: string): string {
-  if (s === 'published') return 'Live';
-  if (s === 'closed') return 'Closed';
-  return 'Draft';
-}
-
 // ── Exam card (design layout) ─────────────────────────────────────────────────
 function ExamCard({ e }: { e: ExamSummary }) {
   const navigate = useNavigate();
   const tone = statusTone(e.status);
-  const label = statusLabel(e.status);
+  const label = statusLabel(e.status, 'exam');
   const isPublished = e.status === 'published';
+  // A closed exam, or one taken back to draft after it was sat, still has
+  // results worth opening (audit E17).
+  const hasResults = isPublished || e.attempt_count > 0;
+  const attempts = `${e.attempt_count} attempt${e.attempt_count === 1 ? '' : 's'}`;
 
   return (
     <GlassCard hover className="flex h-full flex-col p-5">
@@ -58,41 +60,38 @@ function ExamCard({ e }: { e: ExamSummary }) {
       {/* Meta */}
       <div className="mt-1 text-[12.5px] text-[var(--ui-faint)]">pass ≥ {e.pass_threshold}%</div>
 
-      {/* Attempts / not-published */}
-      {isPublished ? (
+      {/* Attempts / closed / not-published */}
+      {e.status === 'closed' ? (
+        <div className="mt-4 text-[12.5px] text-muted-foreground">Closed · {attempts}</div>
+      ) : hasResults ? (
         <div className="mt-4 flex items-center gap-4 text-[12.5px] text-muted-foreground">
-          <span>{e.attempt_count} attempts</span>
+          <span>{attempts}</span>
         </div>
       ) : (
         <div className="mt-4 text-[12.5px] text-[var(--ui-faint)]">Not published yet</div>
       )}
 
-      {/* Actions.
-          Pill IS a <button>, so wrapping one in another <button> was invalid
-          HTML — React warns, and browsers resolve the nesting inconsistently:
-          the inner control can swallow the outer handler, and assistive tech
-          announces two overlapping controls. The handler and the label belong
-          on the Pill itself, which forwards every button prop. */}
+      {/* Actions. One control each (never a button inside a button). */}
       <div className="mt-auto flex gap-2 pt-4">
-        <Pill
-          variant="ghost"
+        <Button
+          variant="outline"
           type="button"
-          className="flex-1 py-2 text-[12.5px]"
+          className="flex-1"
           onClick={() => void navigate(`/hr/exams/${e.id}`)}
           aria-label={`Edit exam ${e.title}`}
         >
-          <Pencil size={14} aria-hidden="true" /> Edit
-        </Pill>
-        {isPublished && (
-          <Pill
-            variant="accent"
+          <Pencil aria-hidden="true" /> Edit
+        </Button>
+        {hasResults && (
+          <Button
+            variant="highlight"
             type="button"
-            className="flex-1 py-2 text-[12.5px]"
+            className="flex-1"
             onClick={() => void navigate(`/hr/exams/${e.id}/results`)}
             aria-label={`View results for exam ${e.title}`}
           >
-            <BarChart3 size={14} aria-hidden="true" /> Results
-          </Pill>
+            <BarChart3 aria-hidden="true" /> Results
+          </Button>
         )}
       </div>
     </GlassCard>
@@ -131,7 +130,8 @@ export default function Exams() {
     mutationFn: () =>
       createExam({
         title: title.trim(),
-        pass_threshold: Number(threshold) || 60,
+        // 0 is a real pass mark; `Number(x) || 60` turned it into 60 (audit E16).
+        pass_threshold: parseThreshold(threshold, 60),
         time_limit_seconds: minutes.trim() ? Math.max(1, Number(minutes)) * 60 : null,
         allow_retake: allowRetake,
         auto_advance_on_pass: autoAdvance,
@@ -146,7 +146,7 @@ export default function Exams() {
       setAutoAdvance(false);
       setKind('mcq');
       setShowForm(false);
-      void qc.invalidateQueries({ queryKey: ['hr', 'exams'] });
+      void invalidateAfterHrMutation(qc);
       void navigate(`/hr/exams/${e.id}`);
     },
     onError: (err: unknown) => toast.error(errorMessage(err, 'Could not create the exam.')),
@@ -296,23 +296,22 @@ export default function Exams() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <Pill
+                <Button
                   type="submit"
                   disabled={createMut.isPending}
                   aria-busy={createMut.isPending}
-                  className="gap-1.5"
                 >
-                  <Plus size={16} aria-hidden="true" />
+                  <Plus aria-hidden="true" />
                   {createMut.isPending ? 'Creating…' : 'Create exam'}
-                </Pill>
-                <Pill
+                </Button>
+                <Button
                   type="button"
                   variant="ghost"
                   onClick={() => setShowForm(false)}
                   disabled={createMut.isPending}
                 >
                   Cancel
-                </Pill>
+                </Button>
               </div>
             </form>
           </GlassCard>

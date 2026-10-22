@@ -9,6 +9,7 @@
 
 import type { ApprovalStep, ApprovalStepState } from '@/design/components/approval-track';
 import type { OfferHistoryEntry, OfferStatus } from '@/api/offers';
+import { formatDate } from '@/lib/formatters';
 
 /** The slice of an offer the track reads. */
 export interface TrackOffer {
@@ -42,12 +43,58 @@ export interface OfferTrackModel {
 }
 
 function dateOf(iso: string | null | undefined): string | undefined {
-  return iso ? new Date(iso).toLocaleDateString() : undefined;
+  return iso ? formatDate(iso) : undefined;
 }
 
-function lastEvent(history: OfferHistoryEntry[], ...actions: string[]): OfferHistoryEntry | undefined {
+/* ── A sent offer past its deadline ──────────────────────────────────────── */
+
+/** The slice of an offer that says whether it has lapsed. */
+export interface ExpiringOffer {
+  status: OfferStatus;
+  expires_at?: string | null;
+}
+
+/**
+ * True for a sent offer whose deadline has passed. The server expires such an
+ * offer the next time anyone reads it (audit OF-F4), but a page left open past
+ * the deadline still holds "sent", so the UI treats it as expired too: no
+ * Re-send, no Withdraw, no "Candidate responds".
+ */
+export function isLapsed(o: ExpiringOffer, now: number = Date.now()): boolean {
+  if (o.status !== 'sent' || !o.expires_at) return false;
+  const at = Date.parse(o.expires_at);
+  return !Number.isNaN(at) && at <= now;
+}
+
+/** The status to show and act on: `expired` for a lapsed sent offer. */
+export function effectiveOfferStatus(o: ExpiringOffer, now: number = Date.now()): OfferStatus {
+  return isLapsed(o, now) ? 'expired' : o.status;
+}
+
+/**
+ * A history entry that counts as HR sending the offer. A candidate who opens
+ * their offer from the portal gets a fresh link, which the server records as
+ * `resent` with `details.by = 'candidate_portal'`; that is not HR sending it
+ * (audit OF-L3).
+ */
+function isStaffSend(h: OfferHistoryEntry): boolean {
+  if (h.action === 'sent') return true;
+  return h.action === 'resent' && h.details?.by !== 'candidate_portal';
+}
+
+function lastEvent(
+  history: OfferHistoryEntry[],
+  ...actions: string[]
+): OfferHistoryEntry | undefined {
   for (let i = history.length - 1; i >= 0; i -= 1) {
     if (actions.includes(history[i].action)) return history[i];
+  }
+  return undefined;
+}
+
+function lastStaffSend(history: OfferHistoryEntry[]): OfferHistoryEntry | undefined {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (isStaffSend(history[i])) return history[i];
   }
   return undefined;
 }
@@ -91,13 +138,23 @@ function stepsDone(o: TrackOffer): number {
  * - a sent-back, declined, expired or withdrawn offer shows its reason inline
  *   on a `returned` step, in place of the step that did not happen.
  */
-export function offerTrack(o: TrackOffer): OfferTrackModel {
+export function offerTrack(record: TrackOffer, now: number = Date.now()): OfferTrackModel {
+  const o: TrackOffer = { ...record, status: effectiveOfferStatus(record, now) };
   const done = stepsDone(o);
   const events: Record<(typeof KEYS)[number], { actor?: string; at?: string }> = {
-    draft: { actor: lastEvent(o.history, 'created')?.actor_name ?? undefined, at: dateOf(o.created_at) },
-    submitted: { actor: lastEvent(o.history, 'submitted')?.actor_name ?? undefined, at: dateOf(o.submitted_at) },
-    approved: { actor: lastEvent(o.history, 'approved')?.actor_name ?? undefined, at: dateOf(o.decided_at) },
-    sent: { actor: lastEvent(o.history, 'sent', 'resent')?.actor_name ?? undefined, at: dateOf(o.sent_at) },
+    draft: {
+      actor: lastEvent(o.history, 'created')?.actor_name ?? undefined,
+      at: dateOf(o.created_at),
+    },
+    submitted: {
+      actor: lastEvent(o.history, 'submitted')?.actor_name ?? undefined,
+      at: dateOf(o.submitted_at),
+    },
+    approved: {
+      actor: lastEvent(o.history, 'approved')?.actor_name ?? undefined,
+      at: dateOf(o.decided_at),
+    },
+    sent: { actor: lastStaffSend(o.history)?.actor_name ?? undefined, at: dateOf(o.sent_at) },
     answered: { at: dateOf(o.responded_at) },
   };
 
@@ -123,7 +180,8 @@ export function offerTrack(o: TrackOffer): OfferTrackModel {
   if (who && done < steps.length) {
     steps[done].state = 'current';
     steps[done].actor = who;
-    if (o.status === 'sent' && o.first_viewed_at) steps[done].at = `Opened ${dateOf(o.first_viewed_at)}`;
+    if (o.status === 'sent' && o.first_viewed_at)
+      steps[done].at = `Opened ${dateOf(o.first_viewed_at)}`;
   }
 
   // The step that did not happen, with the reason it did not.
@@ -152,7 +210,9 @@ export function offerTrack(o: TrackOffer): OfferTrackModel {
       case 'withdrawn':
         return {
           index: Math.min(done, 4),
-          note: o.withdraw_reason ? `Withdraw reason: ${o.withdraw_reason}` : 'No reason was given.',
+          note: o.withdraw_reason
+            ? `Withdraw reason: ${o.withdraw_reason}`
+            : 'No reason was given.',
           actor: lastEvent(o.history, 'withdrawn')?.actor_name ?? undefined,
           at: dateOf(o.withdrawn_at),
         };
@@ -189,8 +249,11 @@ export type OfferPrimary = 'submit' | 'send' | 'complete_preboarding' | null;
  * (the approver, the candidate) or the offer is closed, there is no primary:
  * the track says who has to act, and only the quiet actions remain.
  */
-export function offerPrimary(o: Pick<TrackOffer, 'status' | 'preboarding_completed_at'>): OfferPrimary {
-  switch (o.status) {
+export function offerPrimary(
+  o: Pick<TrackOffer, 'status' | 'preboarding_completed_at'> & ExpiringOffer,
+  now: number = Date.now(),
+): OfferPrimary {
+  switch (effectiveOfferStatus(o, now)) {
     case 'draft':
     case 'rejected':
       return 'submit';
@@ -212,13 +275,15 @@ export interface OfferSecondary {
 
 /** The quieter actions the state machine allows alongside the primary. */
 export function offerSecondary(
-  o: Pick<TrackOffer, 'status' | 'preboarding_completed_at'>,
+  o: Pick<TrackOffer, 'status' | 'preboarding_completed_at'> & ExpiringOffer,
+  now: number = Date.now(),
 ): OfferSecondary {
+  const status = effectiveOfferStatus(o, now);
   return {
-    recall: o.status === 'pending_approval',
-    reopen: o.status === 'approved',
-    resend: (o.status === 'sent' || o.status === 'accepted') && !o.preboarding_completed_at,
-    withdraw: ['draft', 'pending_approval', 'approved', 'rejected', 'sent'].includes(o.status),
+    recall: status === 'pending_approval',
+    reopen: status === 'approved',
+    resend: (status === 'sent' || status === 'accepted') && !o.preboarding_completed_at,
+    withdraw: ['draft', 'pending_approval', 'approved', 'rejected', 'sent'].includes(status),
   };
 }
 
@@ -235,12 +300,16 @@ export interface OfferNeeds {
  * Where an offer stands, as the reader's to-do, from the list row's own status
  * and document counts. A closed offer needs nothing and says so.
  */
-export function offerNeeds(o: {
-  status: OfferStatus;
-  preboarding_completed_at: string | null;
-  documents: { mandatory_total: number; awaiting_review: number };
-}): OfferNeeds {
-  switch (o.status) {
+export function offerNeeds(
+  o: {
+    status: OfferStatus;
+    expires_at?: string | null;
+    preboarding_completed_at: string | null;
+    documents: { mandatory_total: number; awaiting_review: number };
+  },
+  now: number = Date.now(),
+): OfferNeeds {
+  switch (effectiveOfferStatus(o, now)) {
     case 'draft':
       return { text: 'Yours to submit', mine: true };
     case 'rejected':

@@ -222,7 +222,8 @@ describe('step 2 - budget, all four or none', () => {
     await user.selectOptions(screen.getByLabelText('Period'), 'annual');
     await user.click(continueBtn());
     const review = await screen.findByTestId('new-opening-step-review');
-    expect(review.textContent).toMatch(/INR 9,00,000, per hire, annual/);
+    // formatMoney: the same figure the opening's own pages show (audit F2).
+    expect(review.textContent).toMatch(/₹9,00,000, per hire, annual/);
   });
 });
 

@@ -766,3 +766,100 @@ describe('Applicants - View CV beside the score', () => {
     expect(within(dialog).queryByRole('button', { name: 'View CV' })).not.toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// HR-M4 / HR-L4 / HR-L6 / HR-M5
+// ---------------------------------------------------------------------------
+describe('Applicants - shortlist follows where the application stands (HR-M4)', () => {
+  it('asks before reopening a rejected application, and says what it sets off', async () => {
+    listApplicants.mockResolvedValue([{ ...SCORED, status: 'rejected' }]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
+    await user.click(await screen.findByRole('button', { name: /^shortlist$/i }));
+    expect(updateApplicantStatus).not.toHaveBeenCalled();
+    expect(screen.getByText(/emailed that they are shortlisted/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Reopen and shortlist' }));
+    await waitFor(() =>
+      expect(updateApplicantStatus).toHaveBeenCalledWith('ap-1', 'shortlisted', 'en-ap-1'),
+    );
+  });
+
+  it('offers no shortlist on a hire, and says how a hire is undone', async () => {
+    listApplicants.mockResolvedValue([{ ...SCORED, status: 'hired' as Applicant['status'] }]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
+    expect(await screen.findByText('Hired. Use Reject to undo a hire.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^shortlist$/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('Applicants - decision feedback (HR-L4)', () => {
+  it('confirms a shortlist with a toast', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
+    await user.click(await screen.findByRole('button', { name: /^shortlist$/i }));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Bhavya Nair shortlisted'));
+  });
+
+  it('keeps the reject form and its typed reason when the write fails', async () => {
+    updateApplicantStatus.mockRejectedValue(new Error('Applicant already decided'));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole('button', { name: /^bhavya nair$/i }));
+    await user.click(await screen.findByRole('button', { name: /^reject$/i }));
+    await user.selectOptions(await screen.findByLabelText('Reason'), 'weak-fit');
+    await user.type(screen.getByLabelText(/^why/i), 'Not a fit for this role.');
+    await user.click(screen.getByRole('button', { name: /confirm reject/i }));
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Applicant already decided'));
+    expect(screen.getByLabelText(/^why/i)).toHaveValue('Not a fit for this role.');
+    expect(screen.getByRole('button', { name: /confirm reject/i })).toBeInTheDocument();
+  });
+});
+
+describe('Applicants - every status can be filtered (HR-L6)', () => {
+  it.each([
+    ['Held', 'held'],
+    ['Interviewed', 'interviewed'],
+    ['Hired', 'hired'],
+  ])('offers %s', async (label, status) => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Bhavya Nair');
+    await user.click(screen.getByRole('tab', { name: label }));
+    await waitFor(() =>
+      expect(listApplicants).toHaveBeenLastCalledWith({ q: undefined, status }),
+    );
+  });
+});
+
+describe('Applicants - a failed load (HR-M5)', () => {
+  it('says the list could not load instead of "No applicants yet"', async () => {
+    listApplicants.mockRejectedValue(new Error('boom'));
+    renderPage();
+    expect(await screen.findByText('Could not load applicants.')).toBeInTheDocument();
+    expect(screen.queryByText('No applicants yet')).not.toBeInTheDocument();
+  });
+});
+
+describe('Applicants - deep links (HR-L9)', () => {
+  it('opens already filtered when the link names a status', async () => {
+    renderPage('/hr/applicants?status=shortlisted');
+    await waitFor(() =>
+      expect(listApplicants).toHaveBeenCalledWith({ q: undefined, status: 'shortlisted' }),
+    );
+    expect(screen.getByRole('tab', { name: 'Shortlisted' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('ignores a status it does not know', async () => {
+    renderPage('/hr/applicants?status=bogus');
+    await waitFor(() => expect(listApplicants).toHaveBeenCalledWith({ q: undefined, status: undefined }));
+  });
+});

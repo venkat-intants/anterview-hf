@@ -4,7 +4,7 @@
 // and the ai_involvement line.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -248,8 +248,14 @@ describe('EvidenceTrail - decision picker', () => {
     await screen.findByText('Available when this was decided');
     expect(getDecisionTrace).toHaveBeenCalledWith(1234); // most recent by default
 
-    const rejectedTab = await screen.findByRole('tab', { name: /Rejected/ });
-    await user.click(rejectedTab);
+    // HR-L13: toggle buttons in a group, not tabs (there is no tabpanel).
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    const group = screen.getByRole('group', { name: 'Decision' });
+    const hired = within(group).getByRole('button', { name: /Hired/ });
+    const rejected = within(group).getByRole('button', { name: /Rejected/ });
+    expect(hired).toHaveAttribute('aria-pressed', 'true');
+    expect(rejected).toHaveAttribute('aria-pressed', 'false');
+    await user.click(rejected);
 
     await waitFor(() => expect(getDecisionTrace).toHaveBeenCalledWith(1301));
   });
@@ -257,7 +263,7 @@ describe('EvidenceTrail - decision picker', () => {
   it('does not show a picker for a single decision', async () => {
     renderPage();
     await screen.findByText('Available when this was decided');
-    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Decision' })).not.toBeInTheDocument();
   });
 
   it('preselects the decision named in ?decision=', async () => {

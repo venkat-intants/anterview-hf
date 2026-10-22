@@ -9,6 +9,7 @@
 // the server does not yet hold.
 
 import type { Requisition } from '@/api/requisitions';
+import { statusLabel } from '@/lib/statusLabel';
 
 type SetupFields = Pick<Requisition, 'status' | 'approval_status' | 'public_apply_enabled'>;
 type SetupText = Pick<Requisition, 'approval_note' | 'submitted_by_name'>;
@@ -48,11 +49,10 @@ export function nextSetupStage(r: SetupFields & Partial<SetupText>): { stage: st
 export function setupBadge(r: Pick<Requisition, 'approval_status' | 'public_apply_enabled'>): string {
   switch (r.approval_status) {
     case 'rejected':
-      return 'Sent back';
     case 'pending_approval':
-      return 'Awaiting approval';
     case 'draft':
-      return 'Not submitted';
+      // HR-L3: the same words the openings list and the hub use.
+      return statusLabel(r.approval_status, 'approval');
     default:
       return r.public_apply_enabled ? 'Live' : 'Approved';
   }

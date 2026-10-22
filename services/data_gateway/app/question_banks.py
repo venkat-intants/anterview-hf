@@ -51,6 +51,7 @@ from app.models import (
     ExamSection,
     QuestionBank,
 )
+from app.notifications_util import company_super_admin_ids, create_notification
 from app.utils.sql_like import like_literal
 
 log = structlog.get_logger(__name__)
@@ -329,18 +330,34 @@ async def _bank_summary(db: AsyncSession, *, company_id: uuid.UUID, bank: Questi
     ).tuples().all()
     usage = await db.scalar(
         text(
-            "SELECT count(*) FROM ("
-            " SELECT 1 FROM exam_questions e JOIN bank_questions q ON q.id = e.source_bank_question_id"
-            "  WHERE q.bank_id = :b AND e.deleted_at IS NULL"
-            " UNION ALL"
-            " SELECT 1 FROM coding_questions c JOIN bank_questions q"
-            "   ON q.id = c.source_bank_question_id"
-            "  WHERE q.bank_id = :b AND c.deleted_at IS NULL"
-            ") x"
+            "SELECT count(DISTINCT exam_id) FROM ("  # nosec B608: _USAGE_SQL and its filter are module constants, values bound
+            + _USAGE_SQL.format(bank_filter="q.bank_id = :b")
+            + ") x"
         ),
-        {"b": bank.id},
+        {"b": bank.id, "c": company_id},
     )
     return _summary_payload(bank, [(str(st), str(k), int(n)) for st, k, n in grouped], usage)
+
+
+# "Used in N exams" is a count of distinct LIVE exams. It used to count copied
+# question rows, so ten questions copied into one exam read "Used in 10 exams",
+# and copies in a deleted exam, round or section still counted (audit E15).
+# A question whose section was soft-deleted is not in the exam any more.
+_USAGE_SQL = (
+    " SELECT q.bank_id, e.exam_id FROM exam_questions e"
+    "  JOIN bank_questions q ON q.id = e.source_bank_question_id"
+    "  JOIN exams x ON x.id = e.exam_id AND x.deleted_at IS NULL"
+    "  LEFT JOIN exam_sections s ON s.id = e.section_id"
+    "  WHERE {bank_filter} AND q.company_id = :c AND e.deleted_at IS NULL"
+    "    AND s.deleted_at IS NULL"
+    " UNION ALL"
+    " SELECT q.bank_id, c.exam_id FROM coding_questions c"
+    "  JOIN bank_questions q ON q.id = c.source_bank_question_id"
+    "  JOIN exams x ON x.id = c.exam_id AND x.deleted_at IS NULL"
+    "  LEFT JOIN exam_sections s ON s.id = c.section_id"
+    "  WHERE {bank_filter} AND q.company_id = :c AND c.deleted_at IS NULL"
+    "    AND s.deleted_at IS NULL"
+)
 
 
 def _summary_payload(
@@ -405,15 +422,9 @@ async def list_banks(db: AsyncSession, *, company_id: uuid.UUID) -> list[dict[st
     usage_rows = (
         await db.execute(
             text(
-                "SELECT bank_id, count(*) FROM ("
-                " SELECT q.bank_id FROM exam_questions e"
-                "  JOIN bank_questions q ON q.id = e.source_bank_question_id"
-                "  WHERE q.bank_id IN :ids AND q.company_id = :c AND e.deleted_at IS NULL"
-                " UNION ALL"
-                " SELECT q.bank_id FROM coding_questions c"
-                "  JOIN bank_questions q ON q.id = c.source_bank_question_id"
-                "  WHERE q.bank_id IN :ids AND q.company_id = :c AND c.deleted_at IS NULL"
-                ") x GROUP BY bank_id"
+                "SELECT bank_id, count(DISTINCT exam_id) FROM ("  # nosec B608: _USAGE_SQL and its filter are module constants, values bound
+                + _USAGE_SQL.format(bank_filter="q.bank_id IN :ids")
+                + ") x GROUP BY bank_id"
             ).bindparams(bindparam("ids", expanding=True)),
             {"ids": ids, "c": company_id},
         )
@@ -634,6 +645,43 @@ async def submit(db: AsyncSession, *, company_id: uuid.UUID, qid: uuid.UUID, act
     _audit(db, actor=actor, action="bank_question.submitted", resource_id=q.id,
           details={"company_id": str(company_id)})
     return q
+
+
+REVIEW_QUEUE_LINK = "/superadmin/question-reviews"
+
+
+async def notify_reviewers(
+    db: AsyncSession, *, company_id: uuid.UUID, bank_id: uuid.UUID, count: int,
+) -> int:
+    """Tell the company's super admins that ``count`` questions in ``bank_id``
+    now wait for review (audit AD-F18). Caller commits, so no submission means
+    no notification.
+
+    One notification per reviewer per submit action, not per question: a
+    500-row "submit all" is one event for the person who has to act on it.
+    Returns how many reviewers were told.
+    """
+    if count <= 0:
+        return 0
+    name = await db.scalar(
+        select(QuestionBank.name).where(
+            QuestionBank.id == bank_id, QuestionBank.company_id == company_id,
+        )
+    )
+    bank_label = name or "A question bank"
+    title = (
+        f"{bank_label}: a question needs review" if count == 1
+        else f"{bank_label}: {count} questions need review"
+    )
+    told = 0
+    for uid in await company_super_admin_ids(db, company_id=company_id):
+        if await create_notification(
+            db, user_id=uid, kind="bank_question_review_requested", title=title,
+            body="Questions must be approved by a second reviewer before they can be used in an exam.",
+            link=REVIEW_QUEUE_LINK,
+        ):
+            told += 1
+    return told
 
 
 async def withdraw(db: AsyncSession, *, company_id: uuid.UUID, qid: uuid.UUID, actor: uuid.UUID) -> BankQuestion:

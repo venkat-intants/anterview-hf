@@ -27,6 +27,8 @@ import {
   type ReviewState,
 } from '@/api/workflowReview';
 import type { ReviewStatus } from '@/api/workflows';
+import { errorMessage } from '@/lib/errorMessage';
+import { formatDate, formatDateTime } from '@/lib/formatters';
 
 const STATUS_META: Record<ReviewStatus, { label: string; tone: TagTone }> = {
   draft: { label: 'Draft', tone: 'neutral' },
@@ -44,7 +46,7 @@ const ACTION_WORDS: Record<ReviewAction, string> = {
 };
 
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, fallback.endsWith('.') ? fallback : `${fallback}.`);
 }
 
 interface Props {
@@ -280,7 +282,7 @@ export default function ReviewPanel({
           nounPlural="entries"
           latest={
             newestEntry
-              ? `${ACTION_WORDS[newestEntry.action]}${newestEntry.actor_name ? ` by ${newestEntry.actor_name}` : ''}, ${new Date(newestEntry.at).toLocaleDateString()}`
+              ? `${ACTION_WORDS[newestEntry.action]}${newestEntry.actor_name ? ` by ${newestEntry.actor_name}` : ''}, ${formatDate(newestEntry.at)}`
               : undefined
           }
           persistKey={historyKey}
@@ -298,7 +300,7 @@ export default function ReviewPanel({
                 {ACTION_WORDS[h.action]}
                 {h.actor_name ? ` - ${h.actor_name}` : ''}
                 <span className="ml-1.5 text-[12px] text-[var(--ui-faint)]">
-                  {new Date(h.at).toLocaleString()}
+                  {formatDateTime(h.at)}
                 </span>
                 {h.note ? (
                   <span className="block text-[12px] text-muted-foreground">{h.note}</span>

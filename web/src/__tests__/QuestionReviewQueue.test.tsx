@@ -90,6 +90,38 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe('QuestionReviewQueue - what an approval refreshes (audit E20)', () => {
+  it('refreshes the bank counts and question lists as well as the queue', async () => {
+    const user = userEvent.setup();
+    const fetchQueue = vi.fn().mockResolvedValue([row()]);
+    const approve = vi.fn().mockResolvedValue(row({ status: 'approved' }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    render(
+      <QueryClientProvider client={client}>
+        <QuestionReviewQueue
+          queryKey={['test', 'bank-review-queue']}
+          fetchQueue={fetchQueue}
+          approve={approve}
+          requestChanges={vi.fn()}
+          emptyHint="Nothing yet."
+        />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'Approve' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    await waitFor(() => expect(approve).toHaveBeenCalled());
+    await waitFor(() => {
+      const keys = spy.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+      expect(keys).toContain(JSON.stringify(['test', 'bank-review-queue']));
+      expect(keys).toContain(JSON.stringify(['hr', 'question-banks']));
+      expect(keys).toContain(JSON.stringify(['hr', 'bank-questions']));
+    });
+  });
+});
+
 describe('QuestionReviewQueue - a question you wrote or submitted', () => {
   it('is disabled, with the reason shown, instead of offering Approve', async () => {
     const fetchQueue = vi

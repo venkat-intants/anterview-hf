@@ -2,7 +2,14 @@
 // Calls data_gateway (VITE_API_BASE_URL) via the central client. Tenant-scoped
 // server-side by the HR's company — the frontend just consumes its own list.
 
-import { apiGet, apiPost, clientFetch, fetchBlobWithAuth, uploadWithProgress } from './client';
+import {
+  apiErrorFromResponse,
+  apiGet,
+  apiPost,
+  clientFetch,
+  fetchBlobWithAuth,
+  uploadWithProgress,
+} from './client';
 import { pathId } from './pathId';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -54,8 +61,12 @@ export interface Applicant {
   match_score?: number | null;
 }
 
+/** A status the list can be filtered on: any application status, including
+ *  the derived 'interviewed' (HR-L6). */
+export type ApplicantListStatus = ApplicantStatus | 'held' | 'interviewed' | 'hired';
+
 export interface ListApplicantsParams {
-  status?: ApplicantStatus;
+  status?: ApplicantListStatus;
   /** Hybrid semantic + exact-keyword search phrase. */
   q?: string;
   /** Filter by target job title (contains). */
@@ -318,14 +329,9 @@ export async function openApplicantCv(
       `${API_BASE}/hr/applicants/${pathId(applicantId)}/resume${query}`,
     );
     if (!res.ok) {
-      let detail = 'The CV could not be opened.';
-      try {
-        const body = (await res.json()) as { detail?: unknown };
-        if (typeof body.detail === 'string') detail = body.detail;
-      } catch {
-        // not JSON — keep the generic sentence
-      }
-      throw new Error(detail);
+      // An ApiError keeps the status, so errorMessage can tell the server's own
+      // sentence (a 404 "No CV file is on record") from a bare 5xx.
+      throw await apiErrorFromResponse(res);
     }
     const pdf = new Blob([await res.blob()], { type: 'application/pdf' });
     const url = URL.createObjectURL(pdf);

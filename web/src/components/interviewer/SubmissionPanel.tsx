@@ -49,10 +49,11 @@ import {
 import { downloadUrl } from '@/lib/safeUrl';
 import { formatDate } from '@/lib/formatters';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
 import { AlertTriangle, Download, ExternalLink, Info, Loader2 } from '@/design/components/icons';
 
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, fallback);
 }
 
 /** An item's key, read as a label only when no matching item prompt was

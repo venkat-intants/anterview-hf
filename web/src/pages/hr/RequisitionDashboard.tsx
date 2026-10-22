@@ -33,7 +33,7 @@ import {
   Users,
 } from '@/design/components/icons';
 import { StatusTag, SegTabs } from '@/design/components/primitives';
-import { notLiveReason } from '@/lib/openingList';
+import { closingDatePassed, notLiveReason } from '@/lib/openingList';
 import { Breadcrumbs, Page, PageBody, PageHeader } from '@/design/components/page';
 import { Card } from '@/design/components/card';
 import { Section } from '@/design/components/rows';
@@ -44,9 +44,10 @@ import { Stat, StatGroup } from '@/design/components/stat-group';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
-import { queryKeys } from '@/lib/queryKeys';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { defaultStageKey, primaryAction, type StageKey } from '@/lib/openingSetup';
 import {
   getRequisitionDashboard,
@@ -64,7 +65,7 @@ import { appPath } from '@/lib/safeUrl';
 import ApprovalPill from '@/components/hr/opening/ApprovalPill';
 import SetupTab, { type RoleStepRequest } from '@/components/hr/opening/SetupTab';
 import { useOpeningSetup } from '@/components/hr/opening/useOpeningSetup';
-import { formatScore } from '@/lib/formatters';
+import { formatDate, formatScore } from '@/lib/formatters';
 import { statusLabel } from '@/lib/statusLabel';
 
 type Tab = 'setup' | 'pipeline';
@@ -74,8 +75,9 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'pipeline', label: 'Pipeline' },
 ];
 
+/** The shared error copy (errorMessage), with this page's period-less fallbacks. */
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, `${fallback}.`);
 }
 
 function days(n: number | null | undefined): string {
@@ -128,9 +130,7 @@ function useStatusChange(requisitionId: string) {
             ? `Paused “${v.title}”`
             : `Reopened “${v.title}”`,
       );
-      void qc.invalidateQueries({ queryKey: queryKeys.requisition(requisitionId) });
-      void qc.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
-      void qc.invalidateQueries({ queryKey: ['hr', 'requisition-dashboard', requisitionId] });
+      void invalidateAfterHrMutation(qc);
     },
     onError: (e) => {
       if (e instanceof UnresolvedCandidatesError) {
@@ -145,17 +145,24 @@ function useStatusChange(requisitionId: string) {
 
 type StatusChange = ReturnType<typeof useStatusChange>;
 
+const REOPEN_NEEDS_DATE = 'Set a new closing date in Opening details to reopen it.';
+
 /** Pause / Reopen / Close — quiet ghost buttons: they are rare, not the next step. */
 function StatusButtons({
   status,
   title,
   change,
+  closingPassed,
 }: {
   status: string;
   title: string;
   change: StatusChange;
+  /** HR-M8: the server refuses to reopen while the closing date has passed. */
+  closingPassed: boolean;
 }) {
   const { mut } = change;
+  // HR-L16: closing takes the careers listing down at once, so it asks first.
+  const [confirmClose, setConfirmClose] = useState(false);
   const btn = (label: string, next: RequisitionStatus) => (
     <Button
       type="button"
@@ -166,21 +173,64 @@ function StatusButtons({
       {label}
     </Button>
   );
+  const reopen = closingPassed ? (
+    <span className="inline-flex items-center gap-2">
+      <Button type="button" variant="ghost" disabled aria-describedby="reopen-needs-date">
+        Reopen
+      </Button>
+      <span id="reopen-needs-date" className="text-[12.5px] text-muted-foreground">
+        {REOPEN_NEEDS_DATE}
+      </span>
+    </span>
+  ) : (
+    btn('Reopen', 'open')
+  );
+  const close = confirmClose ? (
+    <span role="group" aria-label="Confirm: close opening" className="inline-flex items-center gap-1.5">
+      <span className="text-[13px] text-muted-foreground">
+        Close it? The careers listing comes down now.
+      </span>
+      <Button
+        type="button"
+        variant="destructive"
+        size="sm"
+        disabled={mut.isPending}
+        onClick={() => {
+          setConfirmClose(false);
+          mut.mutate({ next: 'closed', title });
+        }}
+      >
+        Close opening
+      </Button>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmClose(false)}>
+        Keep open
+      </Button>
+    </span>
+  ) : (
+    <Button
+      type="button"
+      variant="ghost"
+      disabled={mut.isPending}
+      onClick={() => setConfirmClose(true)}
+    >
+      Close
+    </Button>
+  );
   return (
     <>
       {status === 'open' ? (
         <>
           {btn('Pause', 'paused')}
-          {btn('Close', 'closed')}
+          {close}
         </>
       ) : null}
       {status === 'paused' ? (
         <>
-          {btn('Reopen', 'open')}
-          {btn('Close', 'closed')}
+          {reopen}
+          {close}
         </>
       ) : null}
-      {status === 'closed' ? btn('Reopen', 'open') : null}
+      {status === 'closed' ? reopen : null}
     </>
   );
 }
@@ -189,13 +239,21 @@ function CloseUnresolvedPanel({
   requisitionId,
   title,
   change,
+  awaiting,
 }: {
   requisitionId: string;
   title: string;
   change: StatusChange;
+  /** How many of them the decision queue lists (waiting on a person). */
+  awaiting: number;
 }) {
   const { mut, pendingClose, setPendingClose } = change;
   if (pendingClose === null) return null;
+  // HR-M6: "unresolved" counts everyone without a final decision, including
+  // new and mid-round candidates the decision queue does not list. Say which
+  // is which, so "Review N" does not open a queue showing fewer, or nobody.
+  const waiting = Math.min(awaiting, pendingClose);
+  const inProgress = pendingClose - waiting;
   return (
     <div
       role="alertdialog"
@@ -209,18 +267,32 @@ function CloseUnresolvedPanel({
         <AlertTriangle className="h-4 w-4 text-[var(--ui-warn)]" aria-hidden="true" />
         {pendingClose} candidate{pendingClose === 1 ? '' : 's'} still undecided
       </h3>
+      <ul className="mt-1.5 list-disc pl-5 text-[13px] leading-relaxed text-foreground">
+        {waiting > 0 ? (
+          <li>
+            {waiting} waiting on your decision. They stay in the decision queue exactly as they
+            are.
+          </li>
+        ) : null}
+        {inProgress > 0 ? (
+          <li>
+            {inProgress} still in progress (new, or part-way through a round). They continue their
+            rounds.
+          </li>
+        ) : null}
+      </ul>
       <p className="mt-1.5 text-[13px] leading-relaxed text-foreground">
-        Closing does not reject them. They stay in the decision queue exactly as they are - nothing
-        here ends a candidacy without you. Decide on them now, or close the opening and come back to
-        them.
+        Closing does not reject them - nothing here ends a candidacy without you.
       </p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <Button asChild>
-          <Link to={`/hr/requisitions/${requisitionId}/decisions`}>
-            <Users aria-hidden="true" />
-            Review {pendingClose}
-          </Link>
-        </Button>
+        {waiting > 0 ? (
+          <Button asChild>
+            <Link to={`/hr/requisitions/${requisitionId}/decisions`}>
+              <Users aria-hidden="true" />
+              Review {waiting}
+            </Link>
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="outline"
@@ -381,7 +453,7 @@ function HeldPool({
   const { held_pool: pool, progress } = data;
   return (
     <Section
-      title="Held for your decision"
+      title={readOnly ? "Held for HR's decision" : 'Held for your decision'}
       className={className}
       data-testid="held-pool"
       description="Below a round’s threshold. Held, not rejected - they wait for a person."
@@ -436,16 +508,20 @@ function HeldPool({
   );
 }
 
-function ManualSteps({ data }: { data: Dashboard }) {
+// The super admin's read-only view (audit AD-F17) shows HR's decisions, so the
+// labels name HR instead of "you".
+function ManualSteps({ data, readOnly = false }: { data: Dashboard; readOnly?: boolean }) {
   return (
     <Section
-      title="Waiting on you, by design"
+      title={readOnly ? 'Waiting on HR, by design' : 'Waiting on you, by design'}
       titleAs="h2"
       data-testid="manual-steps"
       description="The steps a person takes. Nothing here is stuck for want of automation."
     >
       {data.manual_steps.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">Nothing waiting on you.</p>
+        <p className="text-[13px] text-muted-foreground">
+          {readOnly ? 'Nothing waiting on HR.' : 'Nothing waiting on you.'}
+        </p>
       ) : (
         <ul className="flex flex-col gap-1.5">
           {data.manual_steps.map((s) => (
@@ -601,7 +677,7 @@ function PipelineTab({
 
   const asideBody = (
     <div className="flex flex-col gap-6">
-      <ManualSteps data={data} />
+      <ManualSteps data={data} readOnly={readOnly} />
       <TimingAndScores data={data} />
       <Section
         title={`Public applications ${req.public_apply_enabled ? 'on' : 'off'}`}
@@ -631,7 +707,11 @@ function PipelineTab({
       variant="card"
       headingLevel="h2"
       title="Process, timing and applications"
-      summary="Steps waiting on you, how long it takes, public applications"
+      summary={
+        readOnly
+          ? 'Steps waiting on HR, how long it takes, public applications'
+          : 'Steps waiting on you, how long it takes, public applications'
+      }
       persistKey={asideKey}
       data-testid="pipeline-aside"
     >
@@ -645,7 +725,11 @@ function PipelineTab({
           else in the system will clear. */}
       <div>
         <StatGroup aria-label="Pipeline summary" data-testid="pipeline-stats">
-          <Stat label="Awaiting your decision" value={progress.awaiting_decision} to={decisions} />
+          <Stat
+            label={readOnly ? "Awaiting HR's decision" : 'Awaiting your decision'}
+            value={progress.awaiting_decision}
+            to={decisions}
+          />
           <Stat label="Held, not rejected" value={progress.held} />
           <Stat label="In a round now" value={progress.in_progress} />
           <Stat label="Applications" value={progress.applications} />
@@ -861,11 +945,13 @@ export default function RequisitionDashboard({
         breadcrumbs={
           <Breadcrumbs
             items={[
-              {
-                label: readOnly ? 'Hiring board' : 'Openings',
-                to: readOnly ? '/superadmin/board' : '/hr/requisitions',
-              },
-              { label: 'Opening dashboard' },
+              readOnly
+                ? req.approval_status !== 'pending_approval'
+                  ? { label: 'Hiring board', to: '/superadmin/board' }
+                  : { label: 'Approvals', to: '/superadmin/approvals' }
+                : { label: 'Openings', to: '/hr/requisitions' },
+              // HR-L8: name the opening, as the decision queue does.
+              { label: req.title },
             ]}
           />
         }
@@ -897,7 +983,7 @@ export default function RequisitionDashboard({
             {req.department ? <span>{req.department}</span> : null}
             {req.location ? <span>{req.location}</span> : null}
             {req.closes_at ? (
-              <span>closes {new Date(req.closes_at).toLocaleDateString()}</span>
+              <span>closes {formatDate(req.closes_at)}</span>
             ) : null}
             {req.owner_name ? <span>owner {req.owner_name}</span> : null}
             <span data-testid="workflow-state">
@@ -913,7 +999,12 @@ export default function RequisitionDashboard({
             </span>
           ) : (
             <>
-              <StatusButtons status={req.status} title={req.title} change={statusChange} />
+              <StatusButtons
+                status={req.status}
+                title={req.title}
+                change={statusChange}
+                closingPassed={closingDatePassed(req)}
+              />
               <Button asChild variant="outline">
                 <Link to={`/hr/requisitions/${requisitionId}/workflow`}>Workflow</Link>
               </Button>
@@ -963,6 +1054,7 @@ export default function RequisitionDashboard({
           requisitionId={requisitionId}
           title={req.title}
           change={statusChange}
+          awaiting={req.awaiting_decision}
         />
       )}
 

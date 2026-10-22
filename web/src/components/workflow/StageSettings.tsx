@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from '@/design/components/icons';
 import { toast } from '@/lib/toast';
 import { getStages, listStageOwners, setStage, type StageSetting } from '@/api/stageSla';
+import { errorMessage } from '@/lib/errorMessage';
 
 interface Props {
   workflowId: string;
@@ -61,7 +62,7 @@ export default function StageSettings({ workflowId, roundId, label }: Props): JS
       qc.setQueryData(['hr', 'workflow', workflowId, 'stages'], next);
       toast.success(`Saved for ${label}`);
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not save this stage'),
+    onError: (e) => toast.error(errorMessage(e, 'Could not save this stage.')),
   });
 
   if (stages.isLoading || owners.isLoading) {

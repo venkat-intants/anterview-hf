@@ -600,6 +600,25 @@ describe('HRAnalyticsPage - cohort switch', () => {
   });
 });
 
+describe('HRAnalyticsPage - date range (HR-L14)', () => {
+  it('does not query an inverted range, and says why', async () => {
+    renderPage();
+    await screen.findByText('12.5%');
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('To'), '2026-03-01');
+    await waitFor(() =>
+      expect(getAnalyticsFunnel).toHaveBeenCalledWith(expect.objectContaining({ to: '2026-03-01' })),
+    );
+    await user.type(screen.getByLabelText('From'), '2026-04-01');
+
+    expect(await screen.findByText(/from must be on or before to/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('From')).toHaveAttribute('aria-invalid', 'true');
+    expect(getAnalyticsFunnel).not.toHaveBeenCalledWith(
+      expect.objectContaining({ from: '2026-04-01' }),
+    );
+  });
+});
+
 describe('HRAnalyticsPage - "How is this calculated?"', () => {
   it('shows the metric@version, formula and change note', async () => {
     renderPage();

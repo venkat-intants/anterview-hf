@@ -24,6 +24,7 @@
 
 import { apiDelete, apiGet, apiPatch, apiPost, ApiError, uploadWithProgress } from './client';
 import { pathId } from './pathId';
+import { errorMessage } from '@/lib/errorMessage';
 
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
 const API_BASE: string = import.meta.env.VITE_API_BASE_URL;
@@ -107,8 +108,10 @@ export const CORPUS_FAILURE_SENTENCES: Record<string, string> = {
   too_long: 'This document is longer than we index (about 400,000 characters). Split it.',
   too_many_chunks: 'This document is longer than we index (about 400,000 characters). Split it.',
   quota_exceeded: 'Your library is full (200 documents). Delete one first.',
+  // Only ever on a row the reconciler has parked, which nothing indexes again
+  // without Retry, so the sentence beside that button says so (audit PL-F9).
   embedding_unavailable:
-    'Search indexing is unavailable. The document is stored and will be indexed automatically.',
+    'Indexing failed because search was unavailable. The file is stored; press Retry to index it.',
 };
 
 /** The sentence for a row whose `failure_code` is set. Falls back to a
@@ -150,12 +153,33 @@ export function corpusListHasPendingVersion(docs: CorpusDocument[] | undefined):
  */
 export function corpusErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
-    const detail = error.detail as { failure_code?: string; message?: string } | undefined;
+    const detail = error.detail as { failure_code?: string } | undefined;
     const code = detail?.failure_code;
     if (code && CORPUS_FAILURE_SENTENCES[code]) return CORPUS_FAILURE_SENTENCES[code];
-    return error.message || fallback;
   }
-  return error instanceof Error && error.message ? error.message : fallback;
+  // The shared rules: the server's sentence, then status copy, then the
+  // fallback, so a validation failure never reads "HTTP 422" (audit PL-F12).
+  return errorMessage(error, fallback);
+}
+
+/** The largest file the server takes (config.py `corpus_document_max_bytes`). */
+export const CORPUS_MAX_BYTES = 10 * 1024 * 1024;
+const CORPUS_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md'];
+
+/**
+ * Why a picked file would be refused, before uploading all of it (audit F15),
+ * or null when it looks acceptable. The server still decides: this checks only
+ * the size and the extension the picker's `accept` already asks for, with the
+ * same sentences the server would send.
+ */
+export function corpusFileProblem(file: File): string | null {
+  if (file.size === 0) return 'This file is empty. Check you chose the right file.';
+  if (file.size > CORPUS_MAX_BYTES) return CORPUS_FAILURE_SENTENCES.too_large;
+  const name = file.name.toLowerCase();
+  if (!CORPUS_EXTENSIONS.some((ext) => name.endsWith(ext))) {
+    return CORPUS_FAILURE_SENTENCES.unsupported_type;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,16 +236,20 @@ export function uploadCorpusDocument(
  * `POST /hr/library/{id}/versions` — a replace-upload, also rate-limited per
  * company (same bucket/window as upload — see `uploadCorpusDocument`).
  * Always inserts a NEW version; never overwrites the one it supersedes
- * (`app/corpus.py::add_version`). Takes only a file — title and audience are
+ * (`app/corpus.py::add_version`). Takes a file and the same "company
+ * document, not a candidate record" attestation as the first upload, which
+ * the server refuses without (audit PL-F7). Title and audience are
  * document-level, not per-version.
  */
 export function replaceCorpusDocument(
   documentId: string,
   file: File,
+  attested: boolean,
   onProgress?: (pct: number) => void,
 ): Promise<CorpusDocument> {
   const form = new FormData();
   form.append('file', file);
+  form.append('attested', attested ? 'true' : 'false');
   return uploadWithProgress<CorpusDocument>(
     `${API_BASE}/hr/library/${pathId(documentId)}/versions`,
     form,

@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, HTTPException, Query, Request, status
+from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -73,6 +73,11 @@ class InviteCreateIn(BaseModel):
     avatar_mode: str = "avatar"
     scheduled_at: datetime | None = None
     ttl_hours: int | None = Field(default=None, ge=1, le=8760)
+    # The application already has a live link. Without this the request is
+    # refused (409) rather than silently revoking the link the candidate holds:
+    # HR confirms the replacement in the UI, and a copilot proposal or a stale
+    # tab re-firing the same request cannot rotate the link behind anyone's back.
+    replace_existing: bool = False
 
     @field_validator("language")
     @classmethod
@@ -98,6 +103,10 @@ class InviteResult(BaseModel):
     expires_at: str
     scheduled_at: str | None
     status: str
+    # True when an identical request was answered with the invite it already
+    # made (a double submit or a re-fired proposal): no new link was minted and
+    # no second email went out, so ``magic_link`` is empty.
+    reused: bool = False
 
 
 class InviteOut(BaseModel):
@@ -113,6 +122,12 @@ class InviteOut(BaseModel):
     created_at: str
     composite_score: float | None
     scorecard_id: str | None
+    # Display-only, derived from the stored row (nothing is written):
+    # ``missed_slot`` — still 'invited', but the scheduled join window has
+    # closed, so the candidate can no longer start until HR reschedules.
+    # ``can_reschedule`` — the server would accept a PATCH for this invite.
+    missed_slot: bool = False
+    can_reschedule: bool = False
 
 
 class EligibleApplicantOut(BaseModel):
@@ -149,6 +164,92 @@ async def _get_owned_invite(
     db: AsyncSession, company_id: uuid.UUID, invite_id: uuid.UUID
 ) -> InterviewInvite:
     return await get_owned(db, InterviewInvite, company_id, invite_id, noun="Invite")
+
+
+#: How long a scheduled link stays alive after its join window closes. First
+#: start is gated to ``scheduled_at .. scheduled_at + join window``
+#: (interview_take.redeem_invite), but a candidate who starts late in the window
+#: must still be able to reconnect after a dropped call, which needs the link.
+_RECONNECT_GRACE = timedelta(hours=2)
+
+#: An identical invite request repeated within this long is answered with the
+#: invite it already made instead of minting a second link and email.
+_DEDUPE_WINDOW = timedelta(minutes=10)
+
+
+def invite_expiry(
+    now: datetime,
+    scheduled_at: datetime | None,
+    *,
+    ttl_hours: int,
+    extra_days: int | None = None,
+    current: datetime | None = None,
+) -> datetime:
+    """When an invite's link stops working.
+
+    The TTL alone used to decide it, so an interview scheduled further out than
+    the TTL (48h by default) was emailed with a link that died before the slot.
+    A scheduled link now lives at least until the join window plus a reconnect
+    grace has passed. ``current`` is the existing expiry on a reschedule: the
+    link is extended when needed and never shortened.
+    """
+    expiry = now + timedelta(hours=ttl_hours, days=extra_days or 0)
+    if scheduled_at is not None:
+        floor = (
+            scheduled_at
+            + timedelta(minutes=settings.interview_join_window_minutes)
+            + _RECONNECT_GRACE
+        )
+        expiry = max(expiry, floor)
+    if current is not None:
+        expiry = max(expiry, current)
+    return expiry
+
+
+def _effective_status(inv: InterviewInvite, *, has_scorecard: bool, now: datetime) -> str:
+    """Status for DISPLAY only; nothing is written. A scorecard existing means
+    the interview is finished whether or not the sweep has caught up, and a
+    non-completed invite past its expiry is dead (redeem already 404s it)."""
+    if has_scorecard and inv.status == "consumed":
+        return "completed"
+    if inv.status in ("invited", "consumed") and inv.expires_at <= now:
+        return "expired"
+    return inv.status
+
+
+def _missed_slot(inv: InterviewInvite, now: datetime) -> bool:
+    """Still 'invited' but the scheduled join window has closed: the candidate
+    can no longer start (interview_take refuses first start outside it)."""
+    if inv.status != "invited" or inv.scheduled_at is None:
+        return False
+    window = timedelta(minutes=settings.interview_join_window_minutes)
+    return now > inv.scheduled_at + window
+
+
+def _invite_out(
+    inv: InterviewInvite,
+    *,
+    name: str | None,
+    title: str | None,
+    scorecard_id: Any = None,
+    composite: Any = None,
+    now: datetime | None = None,
+) -> InviteOut:
+    now = now or datetime.now(tz=UTC)
+    return InviteOut(
+        invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name or "",
+        job_title=title or "", language=inv.language, avatar_mode=inv.avatar_mode,
+        status=_effective_status(inv, has_scorecard=scorecard_id is not None, now=now),
+        scheduled_at=inv.scheduled_at.isoformat() if inv.scheduled_at else None,
+        expires_at=inv.expires_at.isoformat(), created_at=inv.created_at.isoformat(),
+        composite_score=float(composite) if composite is not None else None,
+        scorecard_id=str(scorecard_id) if scorecard_id else None,
+        missed_slot=_missed_slot(inv, now),
+        # Reschedule is for an interview nobody has started. Allowed on an
+        # expired-but-unstarted link too: moving the slot re-extends it, which
+        # is the recovery for a missed slot.
+        can_reschedule=inv.status == "invited" and inv.deleted_at is None,
+    )
 
 
 async def _create_job_from_applicant(
@@ -376,8 +477,9 @@ async def advance_applicant_to_interview(
         token_hash=hash_interview_token(raw_token, settings.interview_link_secret),
         language=language,
         avatar_mode=avatar_mode,
-        expires_at=now + timedelta(
-            hours=settings.interview_link_ttl_hours, days=extra_days or 0
+        expires_at=invite_expiry(
+            now, scheduled_at, ttl_hours=settings.interview_link_ttl_hours,
+            extra_days=extra_days,
         ),
         scheduled_at=scheduled_at,
         accommodation_id=adj_row.id if adj_row else None,
@@ -477,6 +579,7 @@ _GATE_SQL = text(
 SELECT 1 FROM application_progress
  WHERE company_id = :cid AND applicant_id = :a
    AND enrolment_id IS NOT DISTINCT FROM CAST(:e AS uuid)
+   AND stored_status NOT IN ('hired', 'rejected')
    AND (stored_status = 'shortlisted' OR exam_passed IS TRUE)
 """
 )
@@ -484,7 +587,8 @@ SELECT 1 FROM application_progress
 
 @router.post("/interviews", status_code=status.HTTP_201_CREATED, response_model=InviteResult)
 async def create_invite(
-    body: InviteCreateIn, request: Request, ctx: HrCtxDep, db: DbSessionDep
+    body: InviteCreateIn, request: Request, response: Response, ctx: HrCtxDep,
+    db: DbSessionDep,
 ) -> InviteResult:
     hr_uid, company_id = ctx
     applicant = await _get_owned(db, company_id, body.applicant_id)
@@ -518,25 +622,94 @@ async def create_invite(
             detail="Applicant must be shortlisted or have passed an exam before an interview.",
         )
 
-    if body.scheduled_at is not None and body.scheduled_at < datetime.now(tz=UTC):
-        raise HTTPException(status_code=422, detail="scheduled_at cannot be in the past.")
+    now = datetime.now(tz=UTC)
+    if body.scheduled_at is not None and body.scheduled_at < now:
+        raise HTTPException(
+            status_code=422, detail="The interview time cannot be in the past."
+        )
+
+    # The live link this application already has, if any. Matched on the
+    # APPLICATION (applicant + enrolment + company), never on job_id: the form
+    # sends no job_id, so _resolve_job mints a fresh Job on every call and a
+    # job-keyed lookup never found the old invite. Both links then stayed live
+    # and the candidate could sit the AI interview twice (IV-H2). An invite
+    # recorded against no application counts too, as in the workflow path.
+    prior_q = select(InterviewInvite).where(
+        InterviewInvite.applicant_id == applicant.id,
+        InterviewInvite.company_id == company_id,
+        InterviewInvite.status.in_(("invited", "consumed")),
+        InterviewInvite.deleted_at.is_(None),
+        InterviewInvite.expires_at > now,
+    )
+    if app_.enrolment_id is not None:
+        prior_q = prior_q.where(
+            or_(InterviewInvite.enrolment_id == app_.enrolment_id,
+                InterviewInvite.enrolment_id.is_(None))
+        )
+    else:
+        prior_q = prior_q.where(InterviewInvite.enrolment_id.is_(None))
+    priors = list((await db.scalars(prior_q.order_by(InterviewInvite.created_at.desc()))).all())
+
+    for prior in priors:
+        if prior.status != "consumed":
+            continue
+        # A consumed invite with a scorecard is a finished interview, not a live
+        # one; it is left as it is and does not block a new invite.
+        if prior.session_id is not None and await db.scalar(
+            select(Scorecard.scorecard_id).where(Scorecard.session_id == prior.session_id)
+        ) is not None:
+            continue
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"{applicant.full_name} has already started this interview, so the link "
+                "cannot be replaced. Wait for it to finish."
+            ),
+        )
+    live = [p for p in priors if p.status == "invited"]
+
+    if live:
+        newest = live[0]
+        identical = (
+            newest.language == body.language
+            and newest.avatar_mode == body.avatar_mode
+            and newest.scheduled_at == body.scheduled_at
+            and now - newest.created_at < _DEDUPE_WINDOW
+        )
+        if identical:
+            # A repeat of the request that made this invite (double submit,
+            # re-fired proposal, retried network call). Answer with what it
+            # already made: no second link, no second email.
+            response.status_code = status.HTTP_200_OK
+            title = await db.scalar(select(Job.title).where(Job.id == newest.job_id))
+            log.info("hr.interview.invite_deduplicated", invite_id=str(newest.id),
+                     company_id=str(company_id))
+            return InviteResult(
+                invite_id=str(newest.id), applicant_id=str(applicant.id),
+                applicant_name=applicant.full_name, job_title=title or "",
+                magic_link="", expires_at=newest.expires_at.isoformat(),
+                scheduled_at=newest.scheduled_at.isoformat() if newest.scheduled_at else None,
+                status=newest.status, reused=True,
+            )
+        if not body.replace_existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"{applicant.full_name} already has an active interview link for this "
+                    "opening. Confirm the replacement to revoke it and send a new one."
+                ),
+            )
 
     job = await _resolve_job(db, hr_uid, company_id, applicant, body, role=app_)
 
-    # Rotate any active invite for this (applicant, job) so the active partial-unique holds.
-    prior = await db.scalar(
-        select(InterviewInvite).where(
-            InterviewInvite.applicant_id == applicant.id,
-            InterviewInvite.job_id == job.id,
-            InterviewInvite.company_id == company_id,
-            InterviewInvite.status.in_(("invited", "consumed")),
-            InterviewInvite.deleted_at.is_(None),
-        )
-    )
-    now = datetime.now(tz=UTC)
-    if prior is not None:
+    for prior in live:
         prior.status = "revoked"
         prior.updated_at = now
+        _audit_invite(db, request, actor=hr_uid, action="interview_invite.revoked",
+                      invite_id=prior.id,
+                      details={"company_id": str(company_id), "previous_status": "invited",
+                               "reason": "replaced"})
+    if live:
         await db.flush()
 
     ttl_hours = body.ttl_hours or settings.interview_link_ttl_hours
@@ -558,7 +731,9 @@ async def create_invite(
         token_hash=hash_interview_token(raw_token, settings.interview_link_secret),
         language=body.language,
         avatar_mode=body.avatar_mode,
-        expires_at=now + timedelta(hours=ttl_hours, days=extra_days or 0),
+        expires_at=invite_expiry(
+            now, body.scheduled_at, ttl_hours=ttl_hours, extra_days=extra_days
+        ),
         scheduled_at=body.scheduled_at,
         accommodation_id=adj_row.id if adj_row else None,
         status="invited",
@@ -633,7 +808,7 @@ class InviteRescheduleIn(BaseModel):
     @classmethod
     def _future(cls, v: datetime) -> datetime:
         if v < datetime.now(tz=UTC):
-            raise ValueError("scheduled_at cannot be in the past.")
+            raise ValueError("The new interview time cannot be in the past.")
         return v
 
 
@@ -642,14 +817,24 @@ async def reschedule_invite(
     invite_id: uuid.UUID, body: InviteRescheduleIn, request: Request, ctx: HrCtxDep,
     db: DbSessionDep,
 ) -> InviteResult:
-    """Change an invite's scheduled_at (only while still invited/consumed, not
-    completed/expired/revoked). Re-emails the candidate the new time. The magic
-    link is NOT re-minted, so the response carries no raw token."""
+    """Change an invite's scheduled_at, only while nobody has started it.
+
+    A started ('consumed') interview is refused: moving it would email the
+    candidate "your interview has been rescheduled" in the middle of it and
+    change nothing about the running session. An unstarted link past its expiry
+    may be moved; the new slot re-extends it, which is how HR recovers a missed
+    slot. Re-emails the candidate the new time. The magic link is NOT re-minted,
+    so the response carries no raw token."""
     hr_uid, company_id = ctx
     inv = await _get_owned_invite(db, company_id, invite_id)
-    if inv.status not in ("invited", "consumed"):
+    if inv.status != "invited":
         raise HTTPException(
-            status_code=409, detail="Only an active invite can be rescheduled."
+            status_code=409,
+            detail=(
+                "Only an interview the candidate has not started can be rescheduled."
+                if inv.status == "consumed"
+                else f"This interview is {inv.status}, so it cannot be rescheduled."
+            ),
         )
     previous = inv.scheduled_at
     if inv.scheduled_at != body.scheduled_at:
@@ -657,6 +842,11 @@ async def reschedule_invite(
         # its own 24h and 1h nudges.
         await rearm_interview_reminders(db, inv.id)
     inv.scheduled_at = body.scheduled_at
+    # The link must still work at the new time (IV-H1): extend, never shorten.
+    inv.expires_at = invite_expiry(
+        datetime.now(tz=UTC), body.scheduled_at,
+        ttl_hours=settings.interview_link_ttl_hours, current=inv.expires_at,
+    )
     _audit_invite(db, request, actor=hr_uid, action="interview_invite.rescheduled",
                   invite_id=inv.id,
                   details={"company_id": str(company_id),
@@ -728,29 +918,12 @@ async def list_invites(
     now = datetime.now(tz=UTC)
     out: list[InviteOut] = []
     for inv, name, title, scorecard_id, composite in rows:
-        # Effective status for DISPLAY only — nothing is written. A scorecard
-        # existing means the interview is finished, whether or not the sweep has
-        # caught up, so HR sees the truth immediately while the durable
-        # transition stays single-owner.
-        if scorecard_id is not None and inv.status == "consumed":
-            eff_status = "completed"
-        elif inv.status in ("invited", "consumed") and inv.expires_at <= now:
-            # A non-completed invite past its expiry is effectively dead (redeem
-            # already 404s it) — surface it as 'expired' rather than a stale
-            # 'invited'/'consumed' so HR sees real link state.
-            eff_status = "expired"
-        else:
-            eff_status = inv.status
-        out.append(
-            InviteOut(
-                invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name,
-                job_title=title, language=inv.language, avatar_mode=inv.avatar_mode, status=eff_status,
-                scheduled_at=inv.scheduled_at.isoformat() if inv.scheduled_at else None,
-                expires_at=inv.expires_at.isoformat(), created_at=inv.created_at.isoformat(),
-                composite_score=float(composite) if composite is not None else None,
-                scorecard_id=str(scorecard_id) if scorecard_id else None,
-            )
-        )
+        # Effective status for DISPLAY only (see _effective_status): HR sees the
+        # truth immediately while the durable transition stays single-owner.
+        out.append(_invite_out(
+            inv, name=name, title=title, scorecard_id=scorecard_id, composite=composite,
+            now=now,
+        ))
     return out
 
 
@@ -772,14 +945,7 @@ async def get_invite(invite_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep) -> I
         ).first()
         if row is not None:
             sc, composite = row
-    return InviteOut(
-        invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name or "",
-        job_title=title or "", language=inv.language, avatar_mode=inv.avatar_mode, status=inv.status,
-        scheduled_at=inv.scheduled_at.isoformat() if inv.scheduled_at else None,
-        expires_at=inv.expires_at.isoformat(), created_at=inv.created_at.isoformat(),
-        composite_score=float(composite) if composite is not None else None,
-        scorecard_id=str(sc) if sc else None,
-    )
+    return _invite_out(inv, name=name, title=title, scorecard_id=sc, composite=composite)
 
 
 @router.post("/interviews/{invite_id}/revoke", response_model=InviteOut)
@@ -788,6 +954,20 @@ async def revoke_invite(
 ) -> InviteOut:
     hr_uid, company_id = ctx
     inv = await _get_owned_invite(db, company_id, invite_id)
+    # Only a link nobody has used yet. A 'consumed' invite is an interview in
+    # progress (the list polls, so HR can see "Invited" seconds after the
+    # candidate started): revoking it would block their reconnect mid-interview.
+    # A completed, expired or already-revoked one has nothing left to revoke.
+    if inv.status != "invited":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "The candidate has already started this interview, so the link cannot "
+                "be revoked."
+                if inv.status == "consumed"
+                else f"This interview is {inv.status}, so there is no link to revoke."
+            ),
+        )
     _audit_invite(db, request, actor=hr_uid, action="interview_invite.revoked",
                   invite_id=inv.id,
                   details={"company_id": str(company_id), "previous_status": inv.status})
@@ -798,13 +978,7 @@ async def revoke_invite(
     await db.commit()
     name = await db.scalar(select(Applicant.full_name).where(Applicant.id == inv.applicant_id))
     title = await db.scalar(select(Job.title).where(Job.id == inv.job_id))
-    return InviteOut(
-        invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name or "",
-        job_title=title or "", language=inv.language, avatar_mode=inv.avatar_mode, status=inv.status,
-        scheduled_at=inv.scheduled_at.isoformat() if inv.scheduled_at else None,
-        expires_at=inv.expires_at.isoformat(), created_at=inv.created_at.isoformat(),
-        composite_score=None, scorecard_id=None,
-    )
+    return _invite_out(inv, name=name, title=title)
 
 
 class AvatarModeIn(BaseModel):
@@ -868,14 +1042,7 @@ async def set_invite_avatar_mode(
         )
     name = await db.scalar(select(Applicant.full_name).where(Applicant.id == inv.applicant_id))
     title = await db.scalar(select(Job.title).where(Job.id == inv.job_id))
-    return InviteOut(
-        invite_id=str(inv.id), applicant_id=str(inv.applicant_id), applicant_name=name or "",
-        job_title=title or "", language=inv.language, avatar_mode=inv.avatar_mode,
-        status=inv.status,
-        scheduled_at=inv.scheduled_at.isoformat() if inv.scheduled_at else None,
-        expires_at=inv.expires_at.isoformat(), created_at=inv.created_at.isoformat(),
-        composite_score=None, scorecard_id=None,
-    )
+    return _invite_out(inv, name=name, title=title)
 
 
 @router.get("/interviews/{invite_id}/result", response_model=InterviewOutcome)

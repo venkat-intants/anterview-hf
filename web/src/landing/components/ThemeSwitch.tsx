@@ -1,4 +1,5 @@
 import { Moon, Sun } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../lib/cn'
 import type { LandingTheme } from '../lib/useLandingTheme'
 
@@ -21,18 +22,19 @@ export function ThemeSwitch({
   className?: string
   testIdPrefix?: string
 }) {
-  const options: { id: LandingTheme; label: string; Icon: typeof Sun }[] = [
-    { id: 'light', label: 'Light', Icon: Sun },
-    { id: 'dark', label: 'Dark', Icon: Moon },
+  const { t } = useTranslation()
+  const options: { id: LandingTheme; label: string; title: string; Icon: typeof Sun }[] = [
+    { id: 'light', label: t('lp.theme.light'), title: t('lp.theme.lightTitle'), Icon: Sun },
+    { id: 'dark', label: t('lp.theme.dark'), title: t('lp.theme.darkTitle'), Icon: Moon },
   ]
 
   return (
     <div
       role="radiogroup"
-      aria-label="Colour theme"
+      aria-label={t('lp.theme.group')}
       className={cn('flex items-center gap-0.5 rounded-pill border border-[var(--lp-line)] bg-[var(--lp-surface-alt)] p-[3px]', className)}
     >
-      {options.map(({ id, label, Icon }) => {
+      {options.map(({ id, label, title, Icon }) => {
         const active = theme === id
         return (
           <button
@@ -41,7 +43,7 @@ export function ThemeSwitch({
             role="radio"
             aria-checked={active}
             aria-label={label}
-            title={`${label} theme`}
+            title={title}
             data-testid={`${testIdPrefix}-${id}`}
             onClick={() => onChange(id)}
             className={cn(

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Pause, Play, Target } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '../../lib/cn'
 import { usePrefersReducedMotion } from '../../lib/usePrefersReducedMotion'
 import { PortraitTile } from '../../components/PortraitTile'
@@ -13,22 +14,16 @@ import { PortraitTile } from '../../components/PortraitTile'
  * visitor simply gets the final composed frame with no timer at all.
  */
 
-const QUESTION = 'Tell me about a time a number in your work looked wrong. What did you do?'
-const ANSWER = 'A weekly report showed sales doubling overnight. I traced it to a duplicated join, fixed the query and showed my manager both versions.'
-const FOLLOW_UP = 'What would you check first next time?'
-const Q_WORDS = QUESTION.split(' ')
-const A_WORDS = ANSWER.split(' ')
-const F_WORDS = FOLLOW_UP.split(' ')
-
+// Every word is an i18n key under lp.demo, so the demo reads in the page
+// language (audit CA-M16).
 const CARD = {
   score: 78,
   bars: [
-    { name: 'Communication', pct: 84 },
-    { name: 'Problem solving', pct: 76 },
-    { name: 'Role knowledge', pct: 72 },
+    { nameKey: 'lp.demo.barCommunication', pct: 84 },
+    { nameKey: 'lp.demo.barProblem', pct: 76 },
+    { nameKey: 'lp.demo.barRole', pct: 72 },
   ],
-  strengths: ['Clear, structured explanation', 'Checked the data before blaming it'],
-  improve: 'Put a number on the impact of your fix',
+  strengthKeys: ['lp.demo.strength1', 'lp.demo.strength2'],
 }
 
 // Timeline, ms.
@@ -45,13 +40,12 @@ const wordsShown = (t: number, start: number, per: number, total: number) => (t 
 type Phase = 'ask' | 'listen' | 'follow' | 'score'
 const phaseAt = (t: number): Phase => (t < T_ANSWER ? 'ask' : t < T_FOLLOW ? 'listen' : t < T_SCORE ? 'follow' : 'score')
 
-const PHASE_LABEL: Record<Phase, string> = {
-  ask: 'Anna is asking',
-  listen: 'You are answering',
-  follow: 'Anna is following up',
-  score: 'Scoring the interview',
+const PHASE_LABEL_KEY: Record<Phase, string> = {
+  ask: 'lp.demo.ask',
+  listen: 'lp.demo.listen',
+  follow: 'lp.demo.follow',
+  score: 'lp.demo.score',
 }
-const DONE_LABEL = 'Interview complete'
 
 /** Words revealed one by one; the full text is always laid out (transparent
  *  remainder) so the bubble never changes size and nothing shifts. */
@@ -100,6 +94,7 @@ function Wave({ active, running }: { active: boolean; running: boolean }) {
 }
 
 function Scorecard({ t }: { t: number }) {
+  const { t: tr } = useTranslation()
   const ring = prog(t, T_SCORE + 600, 1400)
   const size = 76
   const stroke = 8
@@ -128,14 +123,14 @@ function Scorecard({ t }: { t: number }) {
           </div>
         </div>
         <div>
-          <p className="text-[13px] font-bold text-[var(--lp-text)]">Scorecard</p>
-          <p className="text-[11px] leading-snug text-[var(--lp-text-muted)]">Junior data analyst, sample role</p>
+          <p className="text-[13px] font-bold text-[var(--lp-text)]">{tr('lp.demo.scorecard')}</p>
+          <p className="text-[11px] leading-snug text-[var(--lp-text-muted)]">{tr('lp.demo.sampleRole')}</p>
         </div>
       </div>
       <ul className="flex flex-col gap-1.5">
         {CARD.bars.map((b, i) => (
-          <li key={b.name} className="flex items-center gap-2 text-[11.5px] text-[var(--lp-text-soft)]">
-            <span className="w-[104px] flex-none truncate sm:w-[112px]">{b.name}</span>
+          <li key={b.nameKey} className="flex items-center gap-2 text-[11.5px] text-[var(--lp-text-soft)]">
+            <span className="w-[104px] flex-none truncate sm:w-[112px]">{tr(b.nameKey)}</span>
             <span className="h-1.5 flex-1 overflow-hidden rounded-pill bg-[var(--lp-inset)]">
               <span className="block h-full rounded-pill bg-[var(--lp-accent)]" style={{ width: `${b.pct * prog(t, T_SCORE + 1400 + i * 350, 900)}%` }} />
             </span>
@@ -143,7 +138,7 @@ function Scorecard({ t }: { t: number }) {
         ))}
       </ul>
       <ul className="flex flex-col gap-1">
-        {CARD.strengths.map((s, i) => (
+        {CARD.strengthKeys.map((s, i) => (
           <li
             key={s}
             className={cn(
@@ -152,7 +147,7 @@ function Scorecard({ t }: { t: number }) {
             )}
           >
             <Check size={13} strokeWidth={2.6} className="mt-px flex-none text-[var(--ui-ok)]" aria-hidden="true" />
-            {s}
+            {tr(s)}
           </li>
         ))}
         <li
@@ -163,8 +158,8 @@ function Scorecard({ t }: { t: number }) {
         >
           <Target size={13} strokeWidth={2.4} className="mt-px flex-none text-[var(--ui-info)]" aria-hidden="true" />
           <span>
-            <span className="font-semibold">To work on: </span>
-            {CARD.improve}
+            <span className="font-semibold">{tr('lp.demo.toWorkOn')} </span>
+            {tr('lp.demo.improve')}
           </span>
         </li>
       </ul>
@@ -173,6 +168,10 @@ function Scorecard({ t }: { t: number }) {
 }
 
 export function ProductDemo({ className }: { className?: string }) {
+  const { t: tr } = useTranslation()
+  const qWords = tr('lp.demo.question').split(' ')
+  const aWords = tr('lp.demo.answer').split(' ')
+  const fWords = tr('lp.demo.followUp').split(' ')
   const reduce = usePrefersReducedMotion()
   const [playing, setPlaying] = useState(true)
   const [inView, setInView] = useState(true)
@@ -207,7 +206,7 @@ export function ProductDemo({ className }: { className?: string }) {
   const speaker = phase === 'ask' || phase === 'follow'
 
   return (
-    <figure ref={root} aria-label="Product demo" className={cn('relative m-0', className)}>
+    <figure ref={root} aria-label={tr('lp.demo.label')} className={cn('relative m-0', className)}>
       <div className="overflow-hidden rounded-card border border-[var(--lp-line)] bg-[var(--lp-surface)] shadow-elevated">
         {/* Window bar. The pause control is real UI, so it sits outside the aria-hidden stage. */}
         <div className="flex h-11 items-center justify-between gap-3 border-b border-[var(--lp-line)] px-3.5">
@@ -217,7 +216,7 @@ export function ProductDemo({ className }: { className?: string }) {
               <span className="h-2.5 w-2.5 rounded-full bg-[var(--lp-inset)]" />
               <span className="h-2.5 w-2.5 rounded-full bg-[var(--lp-inset)]" />
             </span>
-            <span className="rounded-pill bg-[var(--ui-info-wash)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--ui-info)]">Product demo</span>
+            <span className="rounded-pill bg-[var(--ui-info-wash)] px-2.5 py-0.5 text-[11px] font-semibold text-[var(--ui-info)]">{tr('lp.demo.label')}</span>
           </div>
           {!reduce && (
             <button
@@ -227,7 +226,7 @@ export function ProductDemo({ className }: { className?: string }) {
               className="inline-flex h-8 items-center gap-1.5 rounded-pill border border-[var(--lp-line)] px-3 text-xs font-medium text-[var(--lp-text-soft)] transition-colors hover:bg-[var(--lp-surface-alt)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--lp-accent)]"
             >
               {playing ? <Pause size={13} aria-hidden="true" /> : <Play size={13} aria-hidden="true" />}
-              {playing ? 'Pause demo' : 'Play demo'}
+              {playing ? tr('lp.demo.pause') : tr('lp.demo.play')}
             </button>
           )}
         </div>
@@ -243,7 +242,7 @@ export function ProductDemo({ className }: { className?: string }) {
             >
               <PortraitTile
                 src="/avatars/anna.jpg"
-                alt="Anna, one of AntHire’s AI interviewers"
+                alt={tr('lp.demo.annaAlt')}
                 name="Anna"
                 width={216}
                 height={270}
@@ -253,14 +252,14 @@ export function ProductDemo({ className }: { className?: string }) {
               />
               <span className="absolute inset-x-2 bottom-2 hidden items-center gap-1.5 rounded-pill bg-[image:var(--ui-grad-brand)] px-2.5 py-1 text-[11px] font-medium text-[var(--ui-brand-ink)] sm:inline-flex">
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--ui-brand-ink)]" />
-                Anna · AI interviewer
+                {tr('lp.demo.annaTag')}
               </span>
             </div>
             <div className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-[11px] font-semibold text-[var(--lp-text)] sm:hidden">Anna · AI interviewer</span>
+              <span className="text-[11px] font-semibold text-[var(--lp-text)] sm:hidden">{tr('lp.demo.annaTag')}</span>
               <div className="flex items-center gap-2.5">
                 <Wave active={phase !== 'score'} running={running} />
-                <span className="truncate text-[11px] text-[var(--lp-text-muted)]">{t >= T_SCORE + 3000 ? DONE_LABEL : PHASE_LABEL[phase]}</span>
+                <span className="truncate text-[11px] text-[var(--lp-text-muted)]">{t >= T_SCORE + 3000 ? tr('lp.demo.done') : tr(PHASE_LABEL_KEY[phase])}</span>
               </div>
             </div>
           </div>
@@ -269,13 +268,13 @@ export function ProductDemo({ className }: { className?: string }) {
           <div className="relative min-h-0 overflow-hidden rounded-[14px] border border-[var(--lp-line)] bg-[var(--lp-canvas)] p-3">
             <div className={cn('flex flex-col gap-2 transition-opacity duration-500 motion-reduce:transition-none', showCard ? 'opacity-0' : 'opacity-100')}>
               <Bubble who="Anna" visible={t >= 300}>
-                <Typed words={Q_WORDS} count={wordsShown(t, 300, 140, Q_WORDS.length)} />
+                <Typed words={qWords} count={wordsShown(t, 300, 140, qWords.length)} />
               </Bubble>
-              <Bubble who="You" mine visible={t >= T_ANSWER}>
-                <Typed words={A_WORDS} count={wordsShown(t, T_ANSWER, 230, A_WORDS.length)} />
+              <Bubble who={tr('lp.demo.you')} mine visible={t >= T_ANSWER}>
+                <Typed words={aWords} count={wordsShown(t, T_ANSWER, 230, aWords.length)} />
               </Bubble>
               <Bubble who="Anna" visible={t >= T_FOLLOW}>
-                <Typed words={F_WORDS} count={wordsShown(t, T_FOLLOW + 200, 170, F_WORDS.length)} />
+                <Typed words={fWords} count={wordsShown(t, T_FOLLOW + 200, 170, fWords.length)} />
               </Bubble>
             </div>
             <div className={cn('absolute inset-0 bg-[var(--lp-canvas)] p-3 transition-opacity duration-500 motion-reduce:transition-none', showCard ? 'opacity-100' : 'opacity-0')}>
@@ -285,8 +284,7 @@ export function ProductDemo({ className }: { className?: string }) {
         </div>
       </div>
       <figcaption className="sr-only">
-        Product demo, with invented content. An AI interviewer asks a question, the candidate answers out loud and the interviewer asks a follow-up. The interview then
-        ends with a sample scorecard: an overall score of {CARD.score} out of 100, three competency scores, two strengths and one area to work on.
+        {tr('lp.demo.caption', { score: CARD.score })}
       </figcaption>
     </figure>
   )

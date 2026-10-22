@@ -42,6 +42,7 @@ import { Page, PageHeader, SectionCard, Stepper } from '@/design/components/page
 import { StatusTag, WaveBars } from '@/design/components/primitives';
 import { initialsOf } from '@/design/data/shared';
 import type { Language, Avatar as AvatarType } from '@/types/interview';
+import { readPref, writePref } from '@/lib/localPref';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -478,23 +479,23 @@ export default function StartInterview() {
 
   // ── Language (persisted) ────────────────────────────────────────────────────
   const [selectedLanguage, setSelectedLanguage] = useState<Language>(() => {
-    const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    const stored = readPref(LANGUAGE_STORAGE_KEY);
     if (stored === 'en' || stored === 'hi' || stored === 'te') return stored;
     return 'en';
   });
 
   useEffect(() => {
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, selectedLanguage);
+    writePref(LANGUAGE_STORAGE_KEY, selectedLanguage);
   }, [selectedLanguage]);
 
   // ── Avatar selection (persisted) ────────────────────────────────────────────
   const [selectedAvatarId, setSelectedAvatarId] = useState<string>(() => {
-    const stored = localStorage.getItem(AVATAR_STORAGE_KEY);
+    const stored = readPref(AVATAR_STORAGE_KEY);
     return stored ?? DEFAULT_AVATAR_ID;
   });
 
   useEffect(() => {
-    localStorage.setItem(AVATAR_STORAGE_KEY, selectedAvatarId);
+    writePref(AVATAR_STORAGE_KEY, selectedAvatarId);
   }, [selectedAvatarId]);
 
   // ── Stepper position (presentation only) ────────────────────────────────────
@@ -573,10 +574,26 @@ export default function StartInterview() {
     },
   });
 
+  // The practice job made for these exact form values. A retry after the
+  // session failed to start reuses it instead of creating a duplicate job
+  // (audit CA-L5); any edit to the form makes a new one.
+  const createdJobRef = useRef<{ key: string; id: string } | null>(null);
+
   const proceedToSession = useCallback(
     async (formVals: FormValues) => {
-      const created = await createJobMutation.mutateAsync(formVals);
-      createSessionMutation.mutate(created.id);
+      const key = JSON.stringify([
+        formVals.title.trim(),
+        formVals.company_name.trim(),
+        formVals.jd_text.trim(),
+        formVals.level,
+      ]);
+      let jobId = createdJobRef.current?.key === key ? createdJobRef.current.id : null;
+      if (!jobId) {
+        const created = await createJobMutation.mutateAsync(formVals);
+        createdJobRef.current = { key, id: created.id };
+        jobId = created.id;
+      }
+      createSessionMutation.mutate(jobId);
     },
     [createJobMutation, createSessionMutation],
   );

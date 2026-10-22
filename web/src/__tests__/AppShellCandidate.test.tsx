@@ -1,11 +1,12 @@
 // The candidate's shell: its two nav groups, and one primary per page.
 //
-// The top bar's filled "New interview" button is hidden on /dashboard, where the
+// The top bar's filled "Practice interview" button is hidden on /dashboard, where the
 // page already has its one primary (the next-step strip). Everywhere else it is
 // there, and staff never see it.
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { I18nextProvider } from 'react-i18next';
 import { useEffect } from 'react';
@@ -59,12 +60,15 @@ describe('AppShell - candidate', () => {
   it('hides the top-bar New interview button on the dashboard', async () => {
     renderShell('/dashboard', ['candidate']);
     await screen.findByRole('navigation', { name: 'Primary' });
-    expect(screen.queryByRole('link', { name: 'New interview' })).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole('banner')).queryByRole('link', { name: 'Practice interview' }),
+    ).not.toBeInTheDocument();
   });
 
   it('keeps it on every other candidate page', async () => {
     renderShell('/applications', ['candidate']);
-    const link = await screen.findByRole('link', { name: 'New interview' });
+    await screen.findByRole('navigation', { name: 'Primary' });
+    const link = within(screen.getByRole('banner')).getByRole('link', { name: 'Practice interview' });
     expect(link).toHaveAttribute('href', '/start');
   });
 
@@ -104,18 +108,18 @@ describe('AppShell - candidate', () => {
   it.each([
     {
       lang: 'hi',
-      newInterview: 'नया इंटरव्यू',
+      newInterview: 'अभ्यास इंटरव्यू',
       promoTitle: 'अभ्यास के लिए तैयार हैं?',
-      promoCta: 'इंटरव्यू शुरू करें',
-      search: 'खोजें',
+      promoCta: 'अभ्यास इंटरव्यू',
+      search: 'नौकरियाँ खोजें',
       roleLabel: 'उम्मीदवार',
     },
     {
       lang: 'te',
-      newInterview: 'కొత్త ఇంటర్వ్యూ',
+      newInterview: 'సాధన ఇంటర్వ్యూ',
       promoTitle: 'సాధనకు సిద్ధమా?',
-      promoCta: 'ఇంటర్వ్యూ ప్రారంభించండి',
-      search: 'వెతకండి',
+      promoCta: 'సాధన ఇంటర్వ్యూ',
+      search: 'ఉద్యోగాలు వెతకండి',
       roleLabel: 'అభ్యర్థి',
     },
   ])('renders the top bar and promo in $lang', async (c) => {
@@ -123,14 +127,19 @@ describe('AppShell - candidate', () => {
     try {
       renderShell('/applications', ['candidate']);
       await screen.findByRole('navigation', { name: 'Primary' });
-      expect(screen.getByRole('link', { name: c.newInterview })).toHaveAttribute('href', '/start');
+      // One label for the /start action everywhere (audit CA-L12).
+      expect(
+        within(screen.getByRole('banner')).getByRole('link', { name: c.newInterview }),
+      ).toHaveAttribute('href', '/start');
       expect(screen.getByText(c.promoTitle)).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: c.promoCta })).toHaveAttribute('href', '/start');
+      for (const link of screen.getAllByRole('link', { name: c.promoCta })) {
+        expect(link).toHaveAttribute('href', '/start');
+      }
       expect(screen.getByRole('searchbox', { name: c.search })).toBeInTheDocument();
       expect(screen.getAllByText(c.roleLabel).length).toBeGreaterThan(0);
       // None of the English literals this shell used to hard-code.
       expect(screen.queryByText('Ready to practice?')).not.toBeInTheDocument();
-      expect(screen.queryByRole('link', { name: 'New interview' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Practice interview' })).not.toBeInTheDocument();
     } finally {
       await i18n.changeLanguage('en');
     }
@@ -139,7 +148,7 @@ describe('AppShell - candidate', () => {
   it('shows staff none of it', async () => {
     renderShell('/hr', ['hr_manager']);
     await screen.findByRole('navigation', { name: 'Primary' });
-    expect(screen.queryByRole('link', { name: 'New interview' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Practice interview' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'My applications' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Practice interview' })).not.toBeInTheDocument();
   });
@@ -148,6 +157,53 @@ describe('AppShell - candidate', () => {
     renderShell('/dashboard', ['guest_candidate']);
     await screen.findByRole('navigation', { name: 'Primary' });
     expect(screen.queryByRole('link', { name: 'My applications' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'New interview' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Practice interview' })).not.toBeInTheDocument();
+  });
+});
+
+function Where() {
+  const loc = useLocation();
+  return <p data-testid="where">{`${loc.pathname}${loc.search}`}</p>;
+}
+
+describe('AppShell - search and storage', () => {
+  // Audit CA-M5: the search used to drop what was typed.
+  it('carries the typed term to /jobs', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <I18nextProvider i18n={i18n}>
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={['/applications']}>
+            <AuthProvider>
+              <Session roles={['candidate']}>
+                <AppShell>
+                  <Where />
+                </AppShell>
+              </Session>
+            </AuthProvider>
+          </MemoryRouter>
+        </QueryClientProvider>
+      </I18nextProvider>,
+    );
+    const box = await screen.findByRole('searchbox', { name: 'Search jobs' });
+    await userEvent.type(box, 'data entry{Enter}');
+    expect(screen.getByTestId('where')).toHaveTextContent('/jobs?q=data%20entry');
+  });
+
+  // Audit CA-L18: blocked storage threw at render and took the shell down.
+  it('still renders when storage is blocked', async () => {
+    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('SecurityError');
+    });
+    try {
+      renderShell('/applications', ['candidate']);
+      expect(await screen.findByRole('navigation', { name: 'Primary' })).toBeInTheDocument();
+    } finally {
+      get.mockRestore();
+      set.mockRestore();
+    }
   });
 });

@@ -3,12 +3,14 @@
 // Language picker persisted to localStorage ('intants:interview-language').
 // The page title is rendered here (PageHeader); AppShell supplies only the top bar.
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 
 import { useAuth } from '@/context/AuthContext';
+import { readPref, writePref } from '@/lib/localPref';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { useConsent } from '@/context/ConsentContext';
 import { getJobs } from '@/api/jobs';
 import { createSession } from '@/api/sessions';
@@ -74,23 +76,31 @@ export default function JobsList() {
   const { accessToken } = useAuth();
   const navigate = useNavigate();
   const { consented, loading: consentLoading, recordConsent } = useConsent();
+  const errorText = useCandidateError();
+  const [searchParams] = useSearchParams();
 
   // Language picker — persisted to localStorage
   const [selectedLanguage, setSelectedLanguage] = useState<Language>(() => {
-    const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    const stored = readPref(LANGUAGE_STORAGE_KEY);
     if (stored === 'en' || stored === 'hi' || stored === 'te') return stored;
     return 'en';
   });
 
   useEffect(() => {
-    localStorage.setItem(LANGUAGE_STORAGE_KEY, selectedLanguage);
+    writePref(LANGUAGE_STORAGE_KEY, selectedLanguage);
   }, [selectedLanguage]);
 
   // Level filter (client-side only)
   const [levelFilter, setLevelFilter] = useState<LevelFilter>('');
 
   // Design search box — additive presentation only (no backend; filters by title)
-  const [searchQuery, setSearchQuery] = useState('');
+  // Seeded from ?q=, which the top-bar search sends (audit CA-M5), and kept in
+  // step when that search is used again while already on this page.
+  const qParam = searchParams.get('q') ?? '';
+  const [searchQuery, setSearchQuery] = useState(qParam);
+  useEffect(() => {
+    setSearchQuery(qParam);
+  }, [qParam]);
 
   // Pending job that was clicked while consent was needed
   const [pendingJobId, setPendingJobId] = useState<string | null>(null);
@@ -124,6 +134,12 @@ export default function JobsList() {
       void navigate(`/interview/${result.session_id}`);
     },
   });
+  // The start error is shown above the list; move focus there so it is seen
+  // from whichever card was pressed (audit CA-L4).
+  const startErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (startInterviewMutation.isError) startErrorRef.current?.focus();
+  }, [startInterviewMutation.isError]);
 
   /** Kick off the session once consent is confirmed */
   const proceedToSession = useCallback(
@@ -136,6 +152,8 @@ export default function JobsList() {
   /** Called when a JobCard "Start Interview" button is clicked */
   const handleStartInterview = useCallback(
     (jobId: string) => {
+      // One session at a time: a second card must not start a second one.
+      if (startInterviewMutation.isPending) return;
       setShowDeclineBanner(false);
       setConsentError(null);
 
@@ -148,7 +166,7 @@ export default function JobsList() {
         setShowConsent(true);
       }
     },
-    [consented, proceedToSession],
+    [consented, proceedToSession, startInterviewMutation.isPending],
   );
 
   /** User clicked "I Agree" in the modal */
@@ -163,11 +181,11 @@ export default function JobsList() {
         setPendingJobId(null);
       }
     } catch (err) {
-      setConsentError(err instanceof Error ? err.message : t('jobs.consentError'));
+      setConsentError(errorText(err, t('jobs.consentError')));
     } finally {
       setIsSubmittingConsent(false);
     }
-  }, [recordConsent, pendingJobId, proceedToSession, t]);
+  }, [recordConsent, pendingJobId, proceedToSession, t, errorText]);
 
   /** User clicked "Decline" or pressed Esc in the modal */
   const handleDecline = useCallback(() => {
@@ -268,11 +286,15 @@ export default function JobsList() {
 
       {/* Session-start error banner */}
       {startInterviewMutation.isError && (
-        <div role="alert" className="rounded-[14px] bg-[var(--ui-danger-wash)] px-4 py-3">
+        <div
+          ref={startErrorRef}
+          role="alert"
+          tabIndex={-1}
+          data-testid="start-error"
+          className="rounded-[14px] bg-[var(--ui-danger-wash)] px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+        >
           <p className="text-[14px] text-foreground">
-            {startInterviewMutation.error instanceof Error
-              ? startInterviewMutation.error.message
-              : t('jobs.startError')}
+            {errorText(startInterviewMutation.error, t('jobs.startError'))}
           </p>
         </div>
       )}
@@ -395,6 +417,7 @@ export default function JobsList() {
                   startInterviewMutation.isPending &&
                   startInterviewMutation.variables?.jobId === job.id
                 }
+                disabled={startInterviewMutation.isPending || isSubmittingConsent}
               />
             ))}
           </div>

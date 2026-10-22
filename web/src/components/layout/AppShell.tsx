@@ -58,6 +58,7 @@ import {
   type NavItem,
 } from './navSections';
 import { appPath } from '@/lib/safeUrl';
+import { readPref, writePref } from '@/lib/localPref';
 
 // The interview-language localStorage key (separate concern from UI language)
 const INTERVIEW_LANGUAGE_KEY = 'intants:interview-language';
@@ -641,7 +642,9 @@ function TopBar() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            void navigate('/jobs');
+            // Carry the term: /jobs filters on ?q= (audit CA-M5).
+            const term = q.trim();
+            void navigate(term ? `/jobs?q=${encodeURIComponent(term)}` : '/jobs');
           }}
           className="hidden h-10 w-[340px] items-center gap-2.5 rounded-full border border-border bg-card px-4 text-[var(--ui-faint)] transition-[border-color,box-shadow] focus-within:border-[var(--accent)] focus-within:shadow-[0_0_0_3px_rgba(var(--accent-rgb),0.16)] md:flex"
         >
@@ -689,8 +692,10 @@ interface AppShellProps {
 
 export default function AppShell({ children }: AppShellProps) {
   // Ensure the interview-language key exists so other pages can read it
-  if (!localStorage.getItem(INTERVIEW_LANGUAGE_KEY)) {
-    localStorage.setItem(INTERVIEW_LANGUAGE_KEY, 'en');
+  // Guarded: blocked storage used to throw here and take the shell down
+  // (audit CA-L18).
+  if (!readPref(INTERVIEW_LANGUAGE_KEY)) {
+    writePref(INTERVIEW_LANGUAGE_KEY, 'en');
   }
 
   const location = useLocation();
@@ -699,12 +704,12 @@ export default function AppShell({ children }: AppShellProps) {
 
   // Desktop sidebar collapse — persisted so it sticks across reloads/navigation.
   const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1',
+    () => readPref(SIDEBAR_COLLAPSED_KEY) === '1',
   );
   const toggleSidebar = () => {
     setCollapsed((prev) => {
       const next = !prev;
-      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+      writePref(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
       return next;
     });
   };

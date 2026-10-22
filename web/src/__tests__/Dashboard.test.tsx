@@ -325,7 +325,7 @@ describe('Dashboard page', () => {
     renderDashboard();
     const stats = await screen.findByTestId('practice-stats');
     expect(within(stats).getByText('Interviews')).toBeInTheDocument();
-    expect(within(stats).getByText('Avg Score')).toBeInTheDocument();
+    expect(within(stats).getByText('Avg score')).toBeInTheDocument();
     expect(within(stats).getAllByText('71')).toHaveLength(2); // average and best
   });
 

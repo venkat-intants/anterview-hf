@@ -84,11 +84,11 @@ function TokenSetter({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function renderJobsList() {
+function renderJobsList(entry = '/jobs') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[entry]}>
         <AuthProvider>
           <TokenSetter>
             <ConsentProvider>
@@ -224,4 +224,35 @@ describe('JobsList page', () => {
       );
     });
   });
+  // Audit CA-L4: a second card could start a second session.
+  it('disables every start button while one session is being created', async () => {
+    const { createSession } = await import('../api/sessions');
+    let release: (v: { session_id: string }) => void = () => undefined;
+    vi.mocked(createSession).mockImplementationOnce(
+      () =>
+        new Promise<{ session_id: string }>((resolve) => {
+          release = resolve;
+        }) as ReturnType<typeof createSession>,
+    );
+    const user = userEvent.setup();
+    renderJobsList();
+    const buttons = await screen.findAllByRole('button', { name: /start interview/i });
+    await user.click(buttons[0]);
+    await waitFor(() => {
+      for (const b of screen.getAllByRole('button', { name: /start interview/i })) {
+        expect(b).toBeDisabled();
+      }
+    });
+    expect(vi.mocked(createSession)).toHaveBeenCalledTimes(1);
+    release({ session_id: 'mock-session-abc' });
+  });
+
+  // Audit CA-M5: the top-bar search lands here with ?q=.
+  it('filters by the term carried in ?q=', async () => {
+    renderJobsList('/jobs?q=sales');
+    expect(await screen.findByText('Sales Associate')).toBeInTheDocument();
+    expect(screen.queryByText('Junior Java Developer')).not.toBeInTheDocument();
+    expect(screen.getByRole('searchbox')).toHaveValue('sales');
+  });
 });
+

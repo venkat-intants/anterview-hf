@@ -147,9 +147,13 @@ async def run_agent(
             # drafted proposals before the provider died, throwing that away
             # would waste the tokens AND the user's time.
             if not run.reply:
+                # Worded for the common case, not the rare one: the provider
+                # answering "too many requests" (a rate limit) is far more
+                # frequent here than it being unreachable, and both are
+                # folded into this one stop reason.
                 run.reply = (
-                    "I ran into a problem reaching the language model. "
-                    "Please try again in a moment."
+                    "The language model did not answer. It may be busy, so "
+                    "try again in a minute."
                 )
             break
 

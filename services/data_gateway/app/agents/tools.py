@@ -454,8 +454,10 @@ async def _get_funnel_analytics(args: dict[str, Any], ctx: ToolContext) -> ToolO
                 id="funnel",
                 label="Hiring funnel",
                 # No record to open (CITATION_ROUTES["analytics"] is None), but
-                # the console that SHOWS this aggregate is a declared view.
-                href=citation_href("analytics", view="hr"),
+                # the console that SHOWS this aggregate is a declared view, and
+                # which console depends on who asked: this tool is offered to
+                # super_admin too, whose route guard bounces /hr/* (AD-F2).
+                href=citation_href_for_role("analytics", "", role=ctx.role),
             )
         ],
     )
@@ -532,7 +534,12 @@ async def _get_exam_question_stats(args: dict[str, Any], ctx: ToolContext) -> To
         seen_exam_ids.add(exam_id)
         citations.append(
             Citation(
-                kind="exam", id=exam_id, label=r.title, href=citation_href("exam", exam_id)
+                kind="exam",
+                id=exam_id,
+                label=r.title,
+                # Role-aware: the exam screen exists only in the HR console, so
+                # a super admin's chip is unlinked rather than bounced (AD-F2).
+                href=citation_href_for_role("exam", exam_id, role=ctx.role),
             )
         )
 

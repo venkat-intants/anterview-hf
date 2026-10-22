@@ -90,7 +90,9 @@ export const CITATION_ROUTES: Record<Citation['kind'], string | null> = {
   interview: '/hr/interviews/{id}',
   job: '/hr/requisitions/{id}',
   interviewer_scorecard: '/hr/enrolments/{id}/evidence',
-  decision: '/hr/enrolments/{id}/evidence?decision={id}',
+  // No `?decision={id}`: one id fills every placeholder, so the enrolment id
+  // used to land where a decision id belongs (audit CP-L6).
+  decision: '/hr/enrolments/{id}/evidence',
   // PH5-E2 coordination: moved from /hr/documents/{id} — that path was shared
   // with an unrelated entity (candidate documents), differing only by verb.
   document: '/hr/library/{id}',

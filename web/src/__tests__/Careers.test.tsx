@@ -304,3 +304,31 @@ describe('Careers board', () => {
     expect(await screen.findByText('Platform Engineer')).toBeInTheDocument();
   });
 });
+
+// Audit CA-M24 and CA-L10.
+describe('Careers board - search box and labels', () => {
+  it('empties the search box when the filters are cleared', async () => {
+    const user = userEvent.setup();
+    renderBoard('/careers/acme-test?q=platform');
+    const box = await screen.findByRole('searchbox');
+    expect(box).toHaveValue('platform');
+    await user.click(screen.getByRole('button', { name: /clear filters/i }));
+    await waitFor(() => expect(screen.getByRole('searchbox')).toHaveValue(''));
+    // A blur on the emptied box does not bring the old term back.
+    await user.click(screen.getByRole('searchbox'));
+    await user.tab();
+    await waitFor(() =>
+      expect(getCareersBoard).toHaveBeenLastCalledWith(
+        'acme-test',
+        expect.not.objectContaining({ q: 'platform' }),
+      ),
+    );
+  });
+
+  it('names the level in words, not the code', async () => {
+    getCareersBoard.mockResolvedValue(board({ items: [job({ level: 'mid' })] }));
+    renderBoard();
+    expect(await screen.findByText(/Mid level/)).toBeInTheDocument();
+    expect(screen.queryByText(/mid level level/i)).not.toBeInTheDocument();
+  });
+});

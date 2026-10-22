@@ -271,6 +271,15 @@ describe('StartInterview page', () => {
     });
   });
 
+  // Audit CA-L10: the avatar's gender is a word in the UI language, not the code.
+  it('avatar picker: names the gender in the UI language', async () => {
+    renderPage();
+    await screen.findByRole('radio', { name: /select lucas/i });
+    expect(screen.getAllByText('Female').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Male').length).toBeGreaterThan(0);
+    expect(screen.queryByText('male')).not.toBeInTheDocument();
+  });
+
   it('avatar picker: default selection is anna', async () => {
     renderPage();
     await waitFor(() => {

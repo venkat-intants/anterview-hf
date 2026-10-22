@@ -267,7 +267,9 @@ function AvatarCard({ avatar, selected, onSelect }: AvatarCardProps) {
       </span>
 
       <div className="text-[14px] font-semibold text-foreground">{avatar.name}</div>
-      <div className="text-[12px] capitalize text-muted-foreground">{avatar.gender}</div>
+      <div className="text-[12px] text-muted-foreground">
+        {avatar.gender === 'female' ? t('startInterview.genderFemale') : t('startInterview.genderMale')}
+      </div>
       {selected ? <span className="sr-only">{t('startInterview.selected')}</span> : null}
     </button>
   );

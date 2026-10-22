@@ -385,6 +385,8 @@ const en = {
     },
     // Start interview
     startInterview: {
+      genderFemale: 'Female',
+      genderMale: 'Male',
       pageTitle: 'Practice interview',
       pageDesc:
         'Tell us about the role. The AI interviewer will tailor questions to the job and your resume.',
@@ -746,7 +748,6 @@ const en = {
       viewApply: 'View & apply',
       applied: 'Applied',
       trackIt: 'Track it',
-      levelLine: '{{level}} level',
       expSame: '{{n}} years',
       expRange: '{{lo}}-{{hi}} years',
       expMin: '{{n}}+ years',
@@ -1280,7 +1281,6 @@ const en = {
       previous: 'Previous',
       next: 'Next',
       pageOf: 'Page {{page}} of {{total}}',
-      levelLine: '{{level}} level',
       postedToday: 'Posted today',
       postedYesterday: 'Posted yesterday',
       postedDaysAgo: 'Posted {{count}} days ago',
@@ -1507,6 +1507,9 @@ const en = {
     },
     // ── PH4-A3/A4: the public offer page (magic link, no login) ───────────
     offer: {
+      payPerHour: '{{pay}} per hour',
+      payPerMonth: '{{pay}} per month',
+      payPerYear: '{{pay}} per year',
       invalidTitle: "This offer link isn't valid",
       invalidDesc:
         'It may have expired, been withdrawn, or already been answered. Please ask the hiring team for a fresh link.',
@@ -2193,6 +2196,8 @@ const hi = {
       footerContact: 'Contact',
     },
     startInterview: {
+      genderFemale: 'महिला',
+      genderMale: 'पुरुष',
       pageTitle: 'अभ्यास इंटरव्यू',
       pageDesc:
         'पद के बारे में बताएं। AI इंटरव्यूअर job और आपके resume के अनुसार प्रश्न तैयार करेगा।',
@@ -2540,7 +2545,6 @@ const hi = {
       viewApply: 'देखें और आवेदन करें',
       applied: 'आवेदन किया',
       trackIt: 'स्थिति देखें',
-      levelLine: '{{level}} स्तर',
       expSame: '{{n}} वर्ष',
       expRange: '{{lo}}-{{hi}} वर्ष',
       expMin: '{{n}}+ वर्ष',
@@ -3044,7 +3048,6 @@ const hi = {
       previous: 'पिछला',
       next: 'अगला',
       pageOf: 'पेज {{page}}, कुल {{total}} में से',
-      levelLine: '{{level}} स्तर',
       postedToday: 'आज पोस्ट किया गया',
       postedYesterday: 'कल पोस्ट किया गया',
       postedDaysAgo: '{{count}} दिन पहले पोस्ट किया गया',
@@ -3249,6 +3252,9 @@ const hi = {
         'अभी कोई सदस्य नहीं है। ऊपर दिए गए बटन से उम्मीदवार जोड़ें, या रीडिस्कवरी से मेल खोजें।',
     },
     offer: {
+      payPerHour: '{{pay}} प्रति घंटा',
+      payPerMonth: '{{pay}} प्रति माह',
+      payPerYear: '{{pay}} प्रति वर्ष',
       invalidTitle: 'यह पेशकश लिंक मान्य नहीं है',
       invalidDesc:
         'यह समाप्त हो चुका हो सकता है, वापस लिया जा चुका हो सकता है, या पहले ही उत्तर दिया जा चुका हो सकता है। कृपया भर्ती टीम से नया लिंक माँगें।',
@@ -3907,6 +3913,8 @@ const te = {
       footerContact: 'Contact',
     },
     startInterview: {
+      genderFemale: 'స్త్రీ',
+      genderMale: 'పురుషుడు',
       pageTitle: 'సాధన ఇంటర్వ్యూ',
       pageDesc:
         'పదవి గురించి చెప్పండి. AI ఇంటర్వ్యూయర్ job మరియు మీ resume ఆధారంగా ప్రశ్నలు తయారు చేస్తాడు.',
@@ -4256,7 +4264,6 @@ const te = {
       viewApply: 'చూసి దరఖాస్తు చేయండి',
       applied: 'దరఖాస్తు చేశారు',
       trackIt: 'స్థితి చూడండి',
-      levelLine: '{{level}} స్థాయి',
       expSame: '{{n}} సంవత్సరాలు',
       expRange: '{{lo}}-{{hi}} సంవత్సరాలు',
       expMin: '{{n}}+ సంవత్సరాలు',
@@ -4764,7 +4771,6 @@ const te = {
       previous: 'మునుపటి',
       next: 'తదుపరి',
       pageOf: 'మొత్తం {{total}}లో {{page}}వ పేజీ',
-      levelLine: '{{level}} స్థాయి',
       postedToday: 'ఈ రోజు పోస్ట్ చేయబడింది',
       postedYesterday: 'నిన్న పోస్ట్ చేయబడింది',
       postedDaysAgo: '{{count}} రోజుల క్రితం పోస్ట్ చేయబడింది',
@@ -4969,6 +4975,9 @@ const te = {
         'ఇంకా సభ్యులు లేరు. పైన ఉన్న బటన్‌తో అభ్యర్థులను జోడించండి, లేదా రీడిస్కవరీతో సరిపోలికలను కనుగొనండి.',
     },
     offer: {
+      payPerHour: 'గంటకు {{pay}}',
+      payPerMonth: 'నెలకు {{pay}}',
+      payPerYear: 'సంవత్సరానికి {{pay}}',
       invalidTitle: 'ఈ ఆఫర్ లింక్ చెల్లదు',
       invalidDesc:
         'ఇది గడువు ముగిసి ఉండవచ్చు, ఉపసంహరించుకుని ఉండవచ్చు, లేదా ఇప్పటికే సమాధానం ఇచ్చి ఉండవచ్చు. దయచేసి నియామక బృందాన్ని కొత్త లింక్ కోసం అడగండి.',

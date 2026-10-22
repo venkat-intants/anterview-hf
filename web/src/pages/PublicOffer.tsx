@@ -41,6 +41,7 @@ import {
   type PublicChecklistItem,
   type PublicOffer as PublicOfferShape,
 } from '@/api/publicOffer';
+import type { PayPeriod } from '@/api/offers';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { DataList, Stepper } from '@/design/components/page';
 import type { DataItem } from '@/design/components/page';
@@ -61,6 +62,12 @@ import {
 
 /** Offer states in which the link can do nothing more. */
 const TERMINAL_OFFER_STATUSES: ReadonlySet<string> = new Set(['expired', 'withdrawn', 'declined']);
+
+const PAY_PERIOD_KEY: Record<PayPeriod, string> = {
+  annual: 'offer.payPerYear',
+  monthly: 'offer.payPerMonth',
+  hourly: 'offer.payPerHour',
+};
 
 const MAX_DOC_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -156,7 +163,8 @@ function OfferFacts({
   if (pay) {
     facts.push({
       label: t('offer.compensation'),
-      value: `${pay}${offer.pay_period ? ` / ${offer.pay_period}` : ''}`,
+      // The period in words, not the stored code ("/ annual"; audit CA-L10).
+      value: offer.pay_period ? t(PAY_PERIOD_KEY[offer.pay_period], { pay }) : pay,
     });
   }
   if (offer.employment_type) {

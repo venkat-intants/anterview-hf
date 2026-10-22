@@ -18,8 +18,9 @@
 // does not sort by department.
 //
 // THE URL IS THE STATE. Filters live in the query string, so a filtered board
-// can be shared, bookmarked and reloaded. It also means the back button walks
-// filter changes, which is what people expect from a search page.
+// can be shared, bookmarked and reloaded. Each change is its own history entry,
+// so the back button walks filter changes, which is what people expect from a
+// search page.
 
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -28,6 +29,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { getCareersBoard, type BoardQuery, type JobCard } from '@/api/careers';
 import { ApiError } from '@/api/client';
+import { levelLabel } from '@/lib/candidateCopy';
 import { Briefcase, MapPin, Search, X } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
@@ -134,7 +136,7 @@ function Card({ job }: { job: JobCard }) {
       ) : null}
 
       <p className="mt-3 text-[12.5px] text-[var(--ui-soft)]">
-        {t('careers.levelLine', { level: job.level })}
+        {levelLabel(t, job.level)}
         {experience ? ` · ${experience}` : ''} · {postedLine(t, job.posted_at)}
       </p>
     </Link>
@@ -196,7 +198,10 @@ export default function Careers() {
     // one. Paging itself must obviously not reset the page — deleting it
     // unconditionally here made Next a no-op.
     if (key !== 'page') next.delete('page');
-    setParams(next, { replace: true });
+    // No new history entry for a non-change (a blur on an untouched box).
+    if (next.toString() === params.toString()) return;
+    // Pushed, not replaced, so Back undoes a filter (audit CA-M24).
+    setParams(next);
   }
 
   const setFilter = update;
@@ -252,6 +257,10 @@ export default function Careers() {
             aria-hidden="true"
           />
           <input
+            // Keyed on the applied term so "Clear filters" (or Back) empties
+            // the box instead of leaving stale text a blur re-applies
+            // (audit CA-M24). Typing stays uncontrolled until Enter or blur.
+            key={params.get('q') ?? ''}
             type="search"
             defaultValue={params.get('q') ?? ''}
             placeholder={t('careers.searchPlaceholder')}
@@ -353,7 +362,7 @@ export default function Careers() {
             <Button
               type="button"
               variant="ghost"
-              onClick={() => setParams(new URLSearchParams(), { replace: true })}
+              onClick={() => setParams(new URLSearchParams())}
               className="h-11"
             >
               <X size={14} aria-hidden="true" />
@@ -391,7 +400,7 @@ export default function Careers() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setParams(new URLSearchParams(), { replace: true })}
+                  onClick={() => setParams(new URLSearchParams())}
                 >
                   {t('careers.clearFilters')}
                 </Button>

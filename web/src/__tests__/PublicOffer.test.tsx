@@ -193,6 +193,9 @@ describe('PublicOffer - a sent offer', () => {
     await screen.findByText('Backend Engineer');
     expect(screen.getByText('Acme Corp')).toBeInTheDocument();
     expect(screen.getByText(/12,00,000|1,200,000/)).toBeInTheDocument();
+    // The period in words, not the stored code (audit CA-L10).
+    expect(screen.getByText(/per year/)).toBeInTheDocument();
+    expect(screen.queryByText(/\/ annual/)).not.toBeInTheDocument();
   });
 
   it('offers Accept and Decline, and nothing from the documents step', async () => {

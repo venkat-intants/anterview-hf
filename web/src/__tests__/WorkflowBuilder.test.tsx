@@ -533,6 +533,36 @@ describe('WorkflowBuilder - publishing', () => {
     expect(toastError).toHaveBeenCalledWith('This workflow is not ready to publish');
   });
 
+  it('disables the confirm button while the publish is in flight (HR-M3)', async () => {
+    const user = userEvent.setup();
+    validateWorkflow.mockResolvedValue(REPORT_READY);
+    publishWorkflow.mockImplementation(() => new Promise(() => undefined));
+    getWorkflow.mockResolvedValue(APPROVED_DRAFT);
+    getReview.mockResolvedValue({
+      review_status: 'approved',
+      submitted_at: null,
+      submitted_by_name: null,
+      reviewed_at: null,
+      reviewed_by_name: 'A Reviewer',
+      note: null,
+      history: [],
+    });
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await waitFor(() =>
+      expect((screen.getByText('Publish').closest('button') as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    await user.click(screen.getByText('Publish'));
+    const confirm = screen.getByTestId('confirm-publish');
+    await user.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled());
+    await user.click(confirm);
+    expect(publishWorkflow).toHaveBeenCalledTimes(1);
+  });
+
   it('disables the header Publish button when validation still finds issues, and says why', async () => {
     // Approved, but validation (re-checked live) still finds the coverage gap —
     // the header must not let this be clicked regardless.
@@ -1139,5 +1169,20 @@ describe('WorkflowBuilder - auto-shortlist follows the server rules', () => {
     // The preview used to promise "nothing more happens until you shortlist
     // them" whatever the setting — false on an auto-shortlisting version.
     expect(await screen.findByText(/start round one on their own/i)).toBeInTheDocument();
+  });
+});
+
+describe('WorkflowBuilder - discarding a draft (HR-M2)', () => {
+  it('asks before deleting the draft', async () => {
+    const user = userEvent.setup();
+    discardDraft.mockResolvedValue(undefined);
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }));
+    expect(discardDraft).not.toHaveBeenCalled();
+    const armed = screen.getByRole('group', { name: 'Confirm: Discard draft' });
+    await user.click(within(armed).getByRole('button', { name: 'Discard draft' }));
+    await waitFor(() => expect(discardDraft).toHaveBeenCalledWith('wf-draft'));
   });
 });

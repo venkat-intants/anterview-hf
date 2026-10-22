@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
 import { cn } from '@/lib/utils';
 import { listExams, getStructure } from '@/api/exams';
 import { getRoundKit, updateRoundKit } from '@/api/scorecards';
@@ -552,7 +553,7 @@ function KitEditor({
       void qc.invalidateQueries({ queryKey: ['hr', 'round-kit', roundId] });
     },
     onError: (e) =>
-      toast.error(e instanceof Error ? e.message : 'Could not save the interview kit'),
+      toast.error(errorMessage(e, 'Could not save the interview kit.')),
   });
 
   if (kit.isLoading) {

@@ -36,7 +36,6 @@ import {
   Play,
   Send,
   Sparkles,
-  Trash2,
   Users,
 } from '@/design/components/icons';
 import { GlassCard, StatusTag, ToggleSwitch, type TagTone } from '@/design/components/primitives';
@@ -95,6 +94,8 @@ import ReviewPanel from '@/components/workflow/ReviewPanel';
 import DryRunPanel from '@/components/workflow/DryRunPanel';
 import StageSettings from '@/components/workflow/StageSettings';
 import { NumberField } from '@/components/workflow/NumberField';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { errorMessage } from '@/lib/errorMessage';
 import { applicationsWarning, nextAction, publishImpact } from '@/lib/workflowLifecycle';
 import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
 
@@ -114,8 +115,9 @@ type SheetKind = 'submit' | 'details' | null;
 const PRIMARY_CLASS =
   'inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-40';
 
+/** The shared error copy (errorMessage), with this page's period-less fallbacks. */
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, `${fallback}.`);
 }
 
 /* ── Settings panel — C9 ─────────────────────────────────────────────────────
@@ -758,19 +760,16 @@ export default function WorkflowBuilder(): JSX.Element {
         secondary={
           workflow ? (
             <>
-              {/* Discard sits first, away from the primary on the right: it
-                  fires with no confirmation, so it is a quiet ghost until it
-                  is hovered or focused. */}
+              {/* Discard sits first, away from the primary on the right.
+                  HR-M2: it deletes the draft with its rounds and criteria, so
+                  it asks first. */}
               {editable ? (
-                <button
-                  type="button"
-                  onClick={() => discardMut.mutate()}
-                  disabled={discardMut.isPending}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-medium text-muted-foreground hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:bg-[var(--ui-danger-wash)] focus-visible:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                  Discard
-                </button>
+                <ConfirmDeleteButton
+                  label="Discard draft"
+                  confirmText="Discard draft"
+                  onConfirm={() => discardMut.mutate()}
+                  pending={discardMut.isPending}
+                />
               ) : null}
               {(versions.data ?? []).length > 1 ? (
                 <select
@@ -923,12 +922,19 @@ export default function WorkflowBuilder(): JSX.Element {
               >
                 Not yet
               </button>
+              {/* HR-M3: guarded like the header button, so a double click
+                  cannot send two publishes. */}
               <button
                 type="button"
                 onClick={() => publishMut.mutate()}
+                disabled={publishMut.isPending}
+                aria-busy={publishMut.isPending}
                 data-testid="confirm-publish"
-                className="min-h-[40px] rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
               >
+                {publishMut.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                ) : null}
                 Publish version {workflow.version}
               </button>
             </div>

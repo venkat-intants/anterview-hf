@@ -2,6 +2,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import WorkflowCanvas from '../components/workflow/WorkflowCanvas';
 import { coverageVerdict } from '../lib/workflowLifecycle';
 import { ROUND_KIND_META } from '../components/workflow/roundKinds';
@@ -104,5 +105,27 @@ describe('the coverage verdict', () => {
     expect(coverageVerdict(0.8)).toMatch(/^Reasonable coverage/);
     expect(coverageVerdict(0.5)).toMatch(/^Thin coverage.*only 50%/);
     expect(coverageVerdict(null)).toBeNull();
+  });
+});
+
+describe('the canvas - removing a round (HR-M2)', () => {
+  it('asks before removing, since the round takes its criteria with it', async () => {
+    const onRemove = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <WorkflowCanvas
+        rounds={[round({ id: 'a', title: 'Aptitude' })]}
+        selectedId={null}
+        editable
+        onSelect={vi.fn()}
+        onAdd={vi.fn()}
+        onRemove={onRemove}
+        onReorder={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Remove Aptitude' }));
+    expect(onRemove).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Remove round' }));
+    expect(onRemove).toHaveBeenCalledWith('a');
   });
 });

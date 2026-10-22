@@ -228,6 +228,31 @@ describe('PublicOffer - a sent offer', () => {
     expect(await screen.findByText('Offer accepted')).toBeInTheDocument();
   });
 
+  // Audit CA-M28: an email that never arrived meant cancelling and starting over.
+  it('offers to resend the code after a short wait', async () => {
+    const user = userEvent.setup();
+    requestOfferCode.mockResolvedValue({ sent: true, minutes: 15 });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Accept offer' }));
+    await user.click(screen.getByRole('button', { name: 'Send me a code' }));
+    await screen.findByText(/Code sent/);
+
+    const wait = screen.getByRole('button', { name: /^Resend code in \d+ seconds$/ });
+    expect(wait).toBeDisabled();
+
+    // Half a minute later.
+    const realNow = Date.now.bind(Date);
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 31_000);
+    try {
+      const resend = await screen.findByRole('button', { name: 'Resend code' }, { timeout: 2500 });
+      await user.click(resend);
+      await waitFor(() => expect(requestOfferCode).toHaveBeenCalledTimes(2));
+      expect(await screen.findByText('We sent a new code. Use the newest one.')).toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('says what accepting agrees to, before the candidate confirms (DPDP)', async () => {
     const user = userEvent.setup();
     requestOfferCode.mockResolvedValue({ sent: true, minutes: 15 });
@@ -522,8 +547,10 @@ describe('PublicOffer - documents, once accepted', () => {
   // property a candidate depends on, it had no test, and the next refactor of
   // this mutation could quietly lose it.
   it.each([
-    ['the server fails', new Error('Internal server error.'), /Internal server error/],
-    ['the request never arrives', new TypeError('Failed to fetch'), /Failed to fetch/],
+    // The wording now comes from the shared candidate error copy (audit
+    // CA-M21): the page's own sentence, never a raw "Failed to fetch".
+    ['the server fails', new Error('Internal server error.'), /Could not upload that file/],
+    ['the request never arrives', new TypeError('Failed to fetch'), /Could not reach the server/],
   ])('tells the candidate when an upload fails because %s', async (_why, failure, shown) => {
     requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
     openDocumentsSession.mockResolvedValue({

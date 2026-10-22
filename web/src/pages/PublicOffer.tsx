@@ -42,6 +42,7 @@ import {
   type PublicOffer as PublicOfferShape,
 } from '@/api/publicOffer';
 import type { PayPeriod } from '@/api/offers';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { DataList, Stepper } from '@/design/components/page';
 import type { DataItem } from '@/design/components/page';
@@ -81,8 +82,37 @@ function localeFor(lang: string): string {
 /** The server's own sentence, shown exactly as written — never paraphrased
  *  or translated, so a candidate reading it and calling the hiring team
  *  describes precisely what they saw. */
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+// How long "Resend code" waits after a code is sent (audit CA-M28). The server
+// rate-limits sends as well; this only keeps a double tap from asking twice.
+const RESEND_COOLDOWN_SECONDS = 30;
+
+/** "Resend code", disabled with a countdown for a short while after a send. */
+function ResendCode({
+  sentAt,
+  pending,
+  onResend,
+}: {
+  sentAt: number;
+  pending: boolean;
+  onResend: () => void;
+}) {
+  const { t } = useTranslation();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const wait = Math.max(0, RESEND_COOLDOWN_SECONDS - Math.floor((now - sentAt) / 1000));
+  return (
+    <button
+      type="button"
+      onClick={onResend}
+      disabled={pending || wait > 0}
+      className="inline-flex min-h-10 items-center self-start rounded text-[13px] font-semibold text-[var(--ui-info)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:text-muted-foreground disabled:no-underline"
+    >
+      {wait > 0 ? t('offer.resendIn', { count: wait }) : t('offer.resendCode')}
+    </button>
+  );
 }
 
 function isLocked(e: unknown): e is ApiError {
@@ -280,7 +310,10 @@ function AnswerPanel({
   onCancel: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const errText = useCandidateError();
   const [codeSent, setCodeSent] = useState(false);
+  const [sentAt, setSentAt] = useState(0);
+  const [resent, setResent] = useState(false);
   const [minutes, setMinutes] = useState<number | null>(null);
   const [code, setCode] = useState('');
   const [fullName, setFullName] = useState('');
@@ -290,7 +323,9 @@ function AnswerPanel({
   const codeMut = useMutation({
     mutationFn: () => requestOfferCode(token, purpose),
     onSuccess: (res) => {
+      setResent(codeSent);
       setCodeSent(true);
+      setSentAt(Date.now());
       setMinutes(res.minutes);
       setError(null);
     },
@@ -332,9 +367,12 @@ function AnswerPanel({
         </>
       ) : (
         <>
-          <p className="mt-2 text-[13px] text-[var(--ui-ok)]">
-            {t('offer.codeSent', { minutes: minutes ?? '' })}
+          <p className="mt-2 text-[13px] text-[var(--ui-ok)]" aria-live="polite">
+            {resent ? t('offer.codeResent') : t('offer.codeSent', { minutes: minutes ?? '' })}
           </p>
+          {/* The email may not arrive: ask again here instead of starting
+              over (audit CA-M28). */}
+          <ResendCode sentAt={sentAt} pending={codeMut.isPending} onResend={() => codeMut.mutate()} />
           <div className="mt-4 flex flex-col gap-3">
             <label className={FIELD_LABEL}>
               {t('offer.codeLabel')}
@@ -453,6 +491,7 @@ function DocumentRow({
   onSessionExpired: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [expiresOn, setExpiresOn] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -577,9 +616,12 @@ function DocumentRow({
 
 function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferShape }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const qc = useQueryClient();
   const [session, setSession] = useState<string | null>(null);
   const [codeSent, setCodeSent] = useState(false);
+  const [sentAt, setSentAt] = useState(0);
+  const [resent, setResent] = useState(false);
   const [minutes, setMinutes] = useState<number | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -599,7 +641,9 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
   const codeMut = useMutation({
     mutationFn: () => requestDocumentsCode(token),
     onSuccess: (res) => {
+      setResent(codeSent);
       setCodeSent(true);
+      setSentAt(Date.now());
       setMinutes(res.minutes);
       setError(null);
     },
@@ -686,9 +730,14 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
             </>
           ) : (
             <div className="flex flex-col gap-3">
-              <p className="text-[13px] text-[var(--ui-ok)]">
-                {t('offer.codeSent', { minutes: minutes ?? '' })}
+              <p className="text-[13px] text-[var(--ui-ok)]" aria-live="polite">
+                {resent ? t('offer.codeResent') : t('offer.codeSent', { minutes: minutes ?? '' })}
               </p>
+              <ResendCode
+                sentAt={sentAt}
+                pending={codeMut.isPending}
+                onResend={() => codeMut.mutate()}
+              />
               <label className={FIELD_LABEL}>
                 {t('offer.codeLabel')}
                 <input

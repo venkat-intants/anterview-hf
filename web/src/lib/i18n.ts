@@ -1507,6 +1507,10 @@ const en = {
     },
     // ── PH4-A3/A4: the public offer page (magic link, no login) ───────────
     offer: {
+      codeResent: 'We sent a new code. Use the newest one.',
+      resendIn_other: 'Resend code in {{count}} seconds',
+      resendIn_one: 'Resend code in {{count}} second',
+      resendCode: 'Resend code',
       payPerHour: '{{pay}} per hour',
       payPerMonth: '{{pay}} per month',
       payPerYear: '{{pay}} per year',
@@ -3252,6 +3256,10 @@ const hi = {
         'अभी कोई सदस्य नहीं है। ऊपर दिए गए बटन से उम्मीदवार जोड़ें, या रीडिस्कवरी से मेल खोजें।',
     },
     offer: {
+      codeResent: 'हमने नया कोड भेजा है। सबसे नया कोड इस्तेमाल करें।',
+      resendIn_other: '{{count}} सेकंड में कोड फिर से भेजें',
+      resendIn_one: '{{count}} सेकंड में कोड फिर से भेजें',
+      resendCode: 'कोड फिर से भेजें',
       payPerHour: '{{pay}} प्रति घंटा',
       payPerMonth: '{{pay}} प्रति माह',
       payPerYear: '{{pay}} प्रति वर्ष',
@@ -4975,6 +4983,10 @@ const te = {
         'ఇంకా సభ్యులు లేరు. పైన ఉన్న బటన్‌తో అభ్యర్థులను జోడించండి, లేదా రీడిస్కవరీతో సరిపోలికలను కనుగొనండి.',
     },
     offer: {
+      codeResent: 'కొత్త కోడ్ పంపాము. తాజా కోడ్‌ను ఉపయోగించండి.',
+      resendIn_other: '{{count}} సెకన్లలో కోడ్ మళ్లీ పంపండి',
+      resendIn_one: '{{count}} సెకనులో కోడ్ మళ్లీ పంపండి',
+      resendCode: 'కోడ్ మళ్లీ పంపండి',
       payPerHour: 'గంటకు {{pay}}',
       payPerMonth: 'నెలకు {{pay}}',
       payPerYear: 'సంవత్సరానికి {{pay}}',

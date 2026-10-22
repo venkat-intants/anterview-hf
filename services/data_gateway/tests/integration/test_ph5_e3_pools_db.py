@@ -178,6 +178,29 @@ async def test_creating_a_pool_past_the_per_company_limit_is_refused(
     assert caught.value.code == "pool_limit_reached"
 
 
+@pytest.mark.asyncio
+async def test_the_pool_list_counts_archived_pools_even_when_it_hides_them(
+    db: AsyncSession,
+) -> None:
+    """Archived pools count toward the limit, so the list reports them even
+    when it is listing only the active ones (audit F20)."""
+    f = await _seed(db)
+    await _create_pool(db, f, name="Active")
+    archived = await _create_pool(db, f, name="Old")
+    await pools.update_pool(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(archived), name=None,
+        description=None, archived=True, name_given=False, description_given=False, meta=META,
+    )
+
+    active_only = await pools.list_pools(db, company_id=f.company_a)
+    assert [p["name"] for p in active_only["pools"]] == ["Active"]
+    assert active_only["pool_count"] == 2
+    assert active_only["archived_count"] == 1
+
+    other = await pools.list_pools(db, company_id=f.company_b)
+    assert other["pool_count"] == 0
+
+
 # ===========================================================================
 # Members: add, skip reasons, soft removal + re-add, member_count
 # ===========================================================================
@@ -930,7 +953,8 @@ async def test_erasure_request_makes_a_member_ineligible_immediately(db: AsyncSe
     pool_id = await _create_pool(db, f)
     await pools.add_members(
         db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(pool_id),
-        applicant_ids=[f.applicant1], source="manual", note=None, match_reason=None, meta=META,
+        applicant_ids=[f.applicant1], source="manual", note="Strong fault diagnosis",
+        match_reason=None, meta=META,
     )
     await db.execute(
         text(
@@ -945,6 +969,11 @@ async def test_erasure_request_makes_a_member_ineligible_immediately(db: AsyncSe
     member = fetched["members"][0]
     assert member["eligible"] is False
     assert member["ineligible_reason"] == "erasure_requested"
+    # PL-F1: an erasing member is a name, a reason and Remove; the free-text
+    # note (which may describe the person) and the profile are withheld too.
+    assert member["note"] is None
+    assert member["current_title"] is None
+    assert member["current_company"] is None
 
 
 @pytest.mark.asyncio
@@ -1012,3 +1041,187 @@ async def test_step_5k_in_the_right_order_deletes_the_membership(db: AsyncSessio
         text("SELECT count(*) FROM talent_pool_events WHERE pool_id = :p"), {"p": pool_id}
     )
     assert events_still_there and events_still_there > 0
+
+
+# ===========================================================================
+# Audit fixes (2026-10 UX/functional audit, pools area)
+# ===========================================================================
+_SNAPSHOT: dict[str, Any] = {
+    "why": [
+        {"signal": "interviewer_scorecard", "contribution": 12, "explainable": True,
+         "freshness": "ageing", "competency": "Fault diagnosis", "score": 4, "of": 5},
+    ],
+    "query_terms": ["hydraulics"],
+}
+
+
+async def _rediscovery_member(db: AsyncSession, f: F) -> tuple[uuid.UUID, uuid.UUID]:
+    await _opt_in(db, f, user_id=f.cand1)
+    pool_id = uuid.UUID(await _create_pool(db, f))
+    added = await pools.add_members(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id,
+        applicant_ids=[f.applicant1], source="rediscovery", note=None,
+        match_reason=dict(_SNAPSHOT), meta=META,
+    )
+    return pool_id, uuid.UUID(added["added"][0])
+
+
+@pytest.mark.asyncio
+async def test_pl_f1_an_ineligible_member_ships_no_match_reason_or_evidence(
+    db: AsyncSession,
+) -> None:
+    """Design §7 row 4: once consent lapses the row is a name, a reason and
+    Remove. The API must not send the frozen snapshot or the band at all, so
+    a client that ignores ``eligible`` has nothing to show."""
+    f = await _seed(db)
+    pool_id, member_id = await _rediscovery_member(db, f)
+    await pools.mark_evidence_reviewed(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id, member_id=member_id, meta=META,
+    )
+    before = await pools.get_pool_with_members(db, company_id=f.company_a, pool_id=pool_id)
+    assert before is not None
+    assert before["members"][0]["match_reason"] is not None
+    assert before["members"][0]["evidence_freshness"] == "ageing"
+
+    await rd.revoke_opt_ins(db, user_id=f.cand1, company_id=f.company_a)
+    after = await pools.get_pool_with_members(db, company_id=f.company_a, pool_id=pool_id)
+    assert after is not None
+    member = after["members"][0]
+    assert member["eligible"] is False
+    assert member["ineligible_reason"] == "consent_withdrawn"
+    assert member["match_reason"] is None
+    assert member["evidence_freshness"] is None
+    assert member["evidence_reviewed_at"] is None
+    assert member["evidence_reviewed_by_name"] is None
+    assert member["review_current"] is False
+
+
+@pytest.mark.asyncio
+async def test_pl_f2_a_rediscovery_snapshot_carries_the_server_frozen_at(db: AsyncSession) -> None:
+    f = await _seed(db)
+    sent = dict(_SNAPSHOT, frozen_at="1999-01-01T00:00:00+00:00")  # a client value is ignored
+    await _opt_in(db, f, user_id=f.cand1)
+    pool_id = uuid.UUID(await _create_pool(db, f))
+    await pools.add_members(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id,
+        applicant_ids=[f.applicant1], source="rediscovery", note=None,
+        match_reason=sent, meta=META,
+    )
+    stored = await db.scalar(
+        text("SELECT match_reason FROM talent_pool_members WHERE pool_id = :p"), {"p": pool_id},
+    )
+    assert stored["frozen_at"] and not stored["frozen_at"].startswith("1999")
+    fetched = await pools.get_pool_with_members(db, company_id=f.company_a, pool_id=pool_id)
+    assert fetched is not None
+    member = fetched["members"][0]
+    frozen = datetime.fromisoformat(member["match_reason"]["frozen_at"])
+    assert abs((frozen - datetime.fromisoformat(member["added_at"])).total_seconds()) < 1
+
+
+@pytest.mark.asyncio
+async def test_pl_f2_a_snapshot_stored_without_frozen_at_reads_its_added_at(
+    db: AsyncSession,
+) -> None:
+    """Rows written before the add path stamped ``frozen_at``: the snapshot was
+    frozen by the same INSERT that set ``added_at``, so that is its date."""
+    f = await _seed(db)
+    pool_id, member_id = await _rediscovery_member(db, f)
+    await db.execute(
+        text("UPDATE talent_pool_members SET match_reason = match_reason - 'frozen_at'"
+             " WHERE id = :i"),
+        {"i": member_id},
+    )
+    fetched = await pools.get_pool_with_members(db, company_id=f.company_a, pool_id=pool_id)
+    assert fetched is not None
+    member = fetched["members"][0]
+    assert member["match_reason"]["frozen_at"] == member["added_at"]
+
+
+@pytest.mark.asyncio
+async def test_pl_f3_an_expired_review_is_reported_as_not_current(db: AsyncSession) -> None:
+    f = await _seed(db)
+    pool_id, member_id = await _seed_stale_member(db, f)
+    reviewed = await pools.mark_evidence_reviewed(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id, member_id=member_id, meta=META,
+    )
+    assert reviewed["review_current"] is True
+    assert reviewed["review_expires_at"] is not None
+
+    await db.execute(
+        text("UPDATE talent_pool_members SET evidence_reviewed_at = :t WHERE id = :i"),
+        {"t": datetime.now(tz=UTC) - timedelta(days=settings.rediscovery_review_valid_days + 1),
+         "i": member_id},
+    )
+    fetched = await pools.get_pool_with_members(db, company_id=f.company_a, pool_id=pool_id)
+    assert fetched is not None
+    member = fetched["members"][0]
+    assert member["evidence_reviewed_at"] is not None
+    assert member["review_current"] is False
+    assert datetime.fromisoformat(member["review_expires_at"]) < datetime.now(tz=UTC)
+
+
+@pytest.mark.asyncio
+async def test_pl_f5_a_manual_add_refuses_a_pending_erasure_request(db: AsyncSession) -> None:
+    f = await _seed(db)
+    pool_id = uuid.UUID(await _create_pool(db, f))
+    await db.execute(
+        text(
+            "INSERT INTO erasure_requests"
+            " (request_id, user_id, requested_by, status, scheduled_for, created_at)"
+            " VALUES (gen_random_uuid(), :u, :u, 'pending', now(), now())"
+        ),
+        {"u": f.cand1},
+    )
+    out = await pools.add_members(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id,
+        applicant_ids=[f.applicant1, f.applicant2], source="manual", note=None,
+        match_reason=None, meta=META,
+    )
+    assert out["skipped"] == [{"applicant_id": str(f.applicant1), "reason": "erasure_requested"}]
+    assert len(out["added"]) == 1  # applicant2, never opted in, is still a valid manual add
+
+
+@pytest.mark.asyncio
+async def test_pl_l3_an_archived_pool_refuses_add_and_invite(db: AsyncSession) -> None:
+    f = await _seed(db)
+    pool_id, member_id = await _seed_stale_member(db, f)
+    await pools.update_pool(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id, name=None, description=None,
+        archived=True, name_given=False, description_given=False, meta=META,
+    )
+    with pytest.raises(pools.PoolError) as add_err:
+        await pools.add_members(
+            db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id,
+            applicant_ids=[f.applicant2], source="manual", note=None, match_reason=None,
+            meta=META,
+        )
+    assert add_err.value.code == "pool_archived"
+    assert add_err.value.status_code == 409
+    with pytest.raises(pools.PoolError) as invite_err:
+        await pools.invite_member(
+            db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id, member_id=member_id,
+            requisition_id=f.requisition, acknowledged_stale=True, meta=META,
+        )
+    assert invite_err.value.code == "pool_archived"
+    # Remove still works: tidying an archived list is allowed.
+    removed = await pools.remove_member(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id, member_id=member_id,
+        reason=None, meta=META,
+    )
+    assert removed == {"removed": True}
+
+
+@pytest.mark.asyncio
+async def test_pl_l10_a_membership_change_bumps_the_pool_updated_at(db: AsyncSession) -> None:
+    f = await _seed(db)
+    pool_id = uuid.UUID(await _create_pool(db, f))
+    old = datetime.now(tz=UTC) - timedelta(days=30)
+    await db.execute(text("UPDATE talent_pools SET updated_at = :t WHERE id = :p"),
+                     {"t": old, "p": pool_id})
+    await pools.add_members(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=pool_id,
+        applicant_ids=[f.applicant1], source="manual", note=None, match_reason=None, meta=META,
+    )
+    updated = await db.scalar(text("SELECT updated_at FROM talent_pools WHERE id = :p"),
+                              {"p": pool_id})
+    assert updated > old + timedelta(days=29)

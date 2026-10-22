@@ -257,7 +257,11 @@ async def test_the_chunk_quota_is_checked_after_parsing_but_before_the_first_ins
     with pytest.raises(corpus.CorpusError) as caught:
         await ingest(db)
 
-    assert caught.value.code == "quota_exceeded"
+    # Its own code and sentence (audit F13): it used to share
+    # `quota_exceeded`, whose sentence says "200 documents", with a company
+    # that might hold only a few long ones.
+    assert caught.value.code == "chunk_quota_exceeded"
+    assert "200" not in caught.value.message
     assert db.writes() == []
     assert spy.put == []
     assert db.added == []
@@ -349,6 +353,7 @@ async def replace(db: FakeSession, **over: Any) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "company_id": COMPANY, "actor": ACTOR, "actor_role": "hr_manager",
         "document_id": DOC, "data": TXT, "filename": "handbook-v2.txt", "meta": META,
+        "attested": True,
     }
     kwargs.update(over)
     return await corpus.add_version(db, **kwargs)  # type: ignore[arg-type]
@@ -1416,3 +1421,167 @@ async def test_every_function_that_takes_an_existing_document_404s_when_it_is_go
     assert caught.value.code == "not_found"
     assert db.writes() == []
     assert db.added == []
+
+
+# ---------------------------------------------------------------------------
+# Audit fixes: PL-F7 (attested replace), PL-F8 (past expiry), PL-F10 (storage
+# outage), F14 (empty file)
+# ---------------------------------------------------------------------------
+async def test_a_replace_without_the_attestation_is_refused_before_anything_is_parsed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PL-F7: Replace used to take any file with no attestation, although the
+    first upload of the same document requires one. Junk bytes prove the
+    order: an `unsupported_type` here would mean the parse ran first."""
+    db = replace_session(current=uuid.uuid4())
+    spy = install_store(monkeypatch, corpus, StoreSpy(db))
+
+    with pytest.raises(corpus.CorpusError) as caught:
+        await replace(db, attested=False, data=b"\x00\x01 junk", filename="junk.bin")
+
+    assert caught.value.code == "attestation_required"
+    assert caught.value.status_code == 422
+    assert db.writes() == []
+    assert spy.put == []
+
+
+async def test_an_attested_replace_records_the_attestation_on_its_audit_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = replace_session(current=uuid.uuid4())
+    install_store(monkeypatch, corpus, StoreSpy(db))
+
+    await replace(db)
+
+    assert db.added[0].action == "corpus.document.replaced"
+    assert db.added[0].details["attested"] is True
+
+
+async def test_an_empty_file_is_refused_as_empty_not_as_the_wrong_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F14: an empty file used to read "We take PDF, Word (.docx) ..."."""
+    db = ingest_session()
+    spy = install_store(monkeypatch, corpus, StoreSpy(db))
+
+    with pytest.raises(corpus.CorpusError) as caught:
+        await ingest(db, data=b"", filename="handbook.txt")
+
+    assert caught.value.code == "empty_file"
+    assert "empty" in caught.value.message
+    assert db.writes() == []
+    assert spy.put == []
+
+
+async def test_a_storage_outage_on_upload_is_a_503_with_a_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PL-F10: ``StorageUnavailableError`` used to escape the corpus as a bare
+    500. The router rolls back on any CorpusError, so the rows written before
+    the store call do not survive it."""
+    db = ingest_session()
+    install_store(
+        monkeypatch, corpus,
+        StoreSpy(db, fail_put=corpus.store.StorageUnavailableError("not configured")),
+    )
+
+    with pytest.raises(corpus.CorpusError) as caught:
+        await ingest(db)
+
+    assert caught.value.status_code == 503
+    assert caught.value.code == "storage_unavailable"
+    assert "try again" in caught.value.message
+
+
+async def test_a_storage_outage_on_replace_is_a_503_with_a_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = replace_session(current=uuid.uuid4())
+    install_store(
+        monkeypatch, corpus,
+        StoreSpy(db, fail_put=corpus.store.StorageUnavailableError("ClientError")),
+    )
+
+    with pytest.raises(corpus.CorpusError) as caught:
+        await replace(db)
+
+    assert caught.value.status_code == 503
+    assert caught.value.code == "storage_unavailable"
+
+
+async def test_a_download_link_that_cannot_be_signed_is_a_503_not_a_500(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from botocore.exceptions import NoCredentialsError
+
+    db = FakeSession(
+        routes=[(
+            "FROM corpus_documents d",
+            [{"audience": "all_staff", "storage_key": "corpus/k", "original_name": "h.txt",
+              "version": 1}],
+        )],
+    )
+
+    async def boom(*_a: Any, **_k: Any) -> str:
+        raise NoCredentialsError()
+
+    monkeypatch.setattr(corpus.store, "signed_download", boom)
+
+    with pytest.raises(corpus.CorpusError) as caught:
+        await corpus.download_url(
+            db, company_id=COMPANY, actor=ACTOR, role="hr_manager", document_id=DOC, meta=META,
+        )  # type: ignore[arg-type]
+
+    assert caught.value.status_code == 503
+    assert caught.value.code == "storage_unavailable"
+    assert db.added == []
+
+
+async def test_an_upload_with_an_expiry_in_the_past_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """PL-F8: the nightly purge deletes a document once its expiry has passed,
+    so a past date would delete the upload permanently the same night."""
+    db = ingest_session()
+    spy = install_store(monkeypatch, corpus, StoreSpy(db))
+    yesterday = datetime.now(tz=UTC).date() - timedelta(days=1)
+
+    with pytest.raises(corpus.CorpusError) as caught:
+        await ingest(db, expires_on=yesterday)
+
+    assert caught.value.code == "expiry_in_past"
+    assert db.writes() == []
+    assert spy.put == []
+
+
+async def test_an_upload_expiring_today_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = ingest_session()
+    install_store(monkeypatch, corpus, StoreSpy(db))
+
+    await ingest(db, expires_on=datetime.now(tz=UTC).date())
+
+    assert db.has("INSERT INTO corpus_documents")
+
+
+async def test_an_edit_to_an_expiry_in_the_past_is_refused() -> None:
+    db = FakeSession(routes=[("SELECT * FROM corpus_documents", [doc_row()])])
+    yesterday = datetime.now(tz=UTC).date() - timedelta(days=1)
+
+    with pytest.raises(corpus.CorpusError) as caught:
+        await edit(db, expires_on=yesterday)
+
+    assert caught.value.code == "expiry_in_past"
+    assert db.writes() == []
+
+
+async def test_an_unchanged_past_expiry_does_not_block_an_audience_edit() -> None:
+    """The purge has not run yet tonight: re-sending the row's own expiry with
+    a narrower audience must still go through."""
+    yesterday = datetime.now(tz=UTC).date() - timedelta(days=1)
+    db = FakeSession(
+        routes=[("SELECT * FROM corpus_documents", [doc_row(expires_on=yesterday)])]
+    )
+
+    await edit(db, audience="hr_only", expires_on=yesterday)
+
+    assert db.params_for("UPDATE corpus_documents SET audience = :a")["a"] == "hr_only"

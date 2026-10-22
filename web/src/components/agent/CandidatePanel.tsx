@@ -24,6 +24,7 @@ import {
 } from '@/api/agent';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Button } from '@/components/ui/button';
+import { errorMessage } from '@/lib/errorMessage';
 import CitationChips from './CitationChips';
 import EvidenceBanner from './EvidenceBanner';
 
@@ -109,11 +110,19 @@ export default function CandidatePanel({
     try {
       setVerdict(await assessCandidate(applicantId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Assessment failed');
+      // A failed re-run keeps the previous read on screen, with the reason
+      // above it, rather than throwing away evidence the user already has.
+      setError(errorMessage(err, 'Could not run the assessment.'));
     } finally {
       setLoading(false);
     }
   }
+
+  const errorLine = error ? (
+    <p className="text-sm font-medium text-[var(--ui-danger)]" role="alert">
+      {error}
+    </p>
+  ) : null;
 
   if (!verdict) {
     return (
@@ -123,11 +132,7 @@ export default function CandidatePanel({
           Reads {applicantName ? `${applicantName}'s` : 'this candidate’s'} resume, exam, coding
           test and interview independently, then reports where they disagree.
         </p>
-        {error && (
-          <p className="text-sm font-medium text-[var(--ui-danger)]" role="alert">
-            {error}
-          </p>
-        )}
+        {errorLine}
         <Button type="button" onClick={() => void run()} disabled={loading} aria-busy={loading}>
           {loading ? 'Assessing…' : 'Run assessment'}
         </Button>
@@ -144,9 +149,27 @@ export default function CandidatePanel({
             Overall confidence {verdict.confidence.toFixed(2)} · four independent reads
           </p>
         </div>
-        {/* Stated on the card, not just in a doc: this is advice, not a decision. */}
-        <StatusTag tone="neutral">Advisory only</StatusTag>
+        <div className="flex flex-none flex-wrap items-center justify-end gap-2">
+          {/* Stated on the card, not just in a doc: this is advice, not a decision. */}
+          <StatusTag tone="neutral">Advisory only</StatusTag>
+          {/* New evidence (an exam taken, an interview scored) arrives after a
+              read, and without this the only way to see it was a page reload
+              (audit CP-L9). Still an explicit click: each run is several
+              model calls. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void run()}
+            disabled={loading}
+            aria-busy={loading}
+          >
+            {loading ? 'Assessing…' : 'Run again'}
+          </Button>
+        </div>
       </div>
+
+      {errorLine}
 
       {verdict.contradictions.length > 0 && (
         <div className="space-y-2">
@@ -168,6 +191,10 @@ export default function CandidatePanel({
 
       {verdict.summary && <p className="text-sm leading-relaxed">{verdict.summary}</p>}
 
+      {/* No separate strip for `verdict.citations`: the server builds it as
+          the union of the per-signal citations (shared/agents/panel.py and
+          _filter_panel_citations in routers/agent.py), and each signal row
+          already shows its own. A second strip would repeat every chip. */}
       <div className="divide-y divide-border">
         {verdict.signals.map((s) => (
           <SignalRow key={s.signal} signal={s} />

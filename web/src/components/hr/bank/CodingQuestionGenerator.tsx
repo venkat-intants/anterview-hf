@@ -37,6 +37,7 @@ import { Well } from '@/design/components/rows';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { errorMessage } from '@/lib/errorMessage';
 import { cn } from '@/lib/utils';
 import { toGenerationFailure, type GenerationFailure } from '@/lib/generationError';
 import { GenerationError } from '@/components/bank/GenerationError';
@@ -97,10 +98,6 @@ const CHIP =
 const CHIP_ON =
   'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]';
 const CHIP_OFF = 'border-border text-muted-foreground hover:text-foreground';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 function plural(n: number, one: string, many: string = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
@@ -313,7 +310,7 @@ export function CodingQuestionGenerator({
       onGenerated(saved);
     } catch (e) {
       if (!mounted.current) return;
-      setSaveError(errText(e, 'The drafts could not be added.'));
+      setSaveError(errorMessage(e, 'The drafts could not be added.'));
     }
   };
 

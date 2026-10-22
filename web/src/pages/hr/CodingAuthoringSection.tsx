@@ -7,7 +7,7 @@
 // inflate the initial bundle.
 
 import BankProvenanceChip from '@/components/bank/BankProvenanceChip';
-import { Suspense, lazy, useMemo, useState } from 'react';
+import { Suspense, lazy, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Plus,
@@ -32,8 +32,14 @@ import {
   type GeneratedCodingQuestion,
 } from '@/api/exams';
 import { saveCodingQuestionToBank, type SaveToBankInput } from '@/api/questionBanks';
+import { errorMessage } from '@/lib/errorMessage';
+import { examEditorMutationKey } from '@/lib/examEditor';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
+import { useTabKeys } from '@/lib/tabKeys';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { StatusTag } from '@/design/components/primitives';
 import { EmptyState } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
@@ -210,6 +216,13 @@ function TestCasesEditor({
   );
 }
 
+const COMPOSER_TABS = ['manual', 'ai'] as const;
+type ComposerTab = (typeof COMPOSER_TABS)[number];
+const COMPOSER_TAB_META: Record<ComposerTab, { label: string; icon: typeof Pencil }> = {
+  manual: { label: 'Manual', icon: Pencil },
+  ai: { label: 'AI', icon: Sparkles },
+};
+
 interface Props {
   examId: string;
   sectionId: string;
@@ -219,6 +232,7 @@ interface Props {
 export default function CodingAuthoringSection({ examId, sectionId, locked }: Props) {
   const qc = useQueryClient();
   const qKey = ['hr', 'exam', examId, 'section', sectionId, 'coding-questions'];
+  const editorKey = examEditorMutationKey(examId);
 
   const questionsQuery = useQuery({
     queryKey: qKey,
@@ -226,7 +240,9 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
   });
   const questions = questionsQuery.data ?? [];
 
-  const refresh = () => void qc.invalidateQueries({ queryKey: qKey });
+  // Prefix invalidation: this list, and the structure's question counts that
+  // gate Publish.
+  const refresh = () => void invalidateAfterHrMutation(qc);
 
   // PH4-D1 — the bank picker, and per-row "Save to bank".
   const [showBankPicker, setShowBankPicker] = useState(false);
@@ -240,13 +256,19 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
       setSavingToBankId(null);
     },
     onError: (e: unknown) => {
-      toast.error(e instanceof Error ? e.message : 'Could not save this question to a bank');
+      toast.error(errorMessage(e, 'Could not save this question to a bank.'));
       setSavingToBankId(null);
     },
   });
 
   // Composer state
-  const [composerTab, setComposerTab] = useState<'manual' | 'ai'>('manual');
+  const [composerTab, setComposerTab] = useState<ComposerTab>('manual');
+  const tabs = useTabKeys({
+    idBase: `coding-${sectionId}`,
+    keys: COMPOSER_TABS,
+    active: composerTab,
+    onChange: setComposerTab,
+  });
   const [prompt, setPrompt] = useState('');
   const [langs, setLangs] = useState<string[]>(['python']);
   const [starter, setStarter] = useState('');
@@ -260,6 +282,8 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
   const [aiDifficulty, setAiDifficulty] = useState<ExamDifficulty>('medium');
   const [aiLanguage, setAiLanguage] = useState<ExamLanguage>('en');
   const [aiPreview, setAiPreview] = useState<GeneratedCodingQuestion[]>([]);
+  // How many drafts the current "Add" has saved, for the partial-failure toast.
+  const savedCount = useRef(0);
 
   const editorLang = useMemo(() => langs[0] ?? 'python', [langs]);
 
@@ -280,8 +304,10 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
   });
 
   const addGeneratedMut = useMutation({
-    mutationFn: async () => {
-      for (const q of aiPreview) {
+    mutationKey: editorKey,
+    mutationFn: async (drafts: GeneratedCodingQuestion[]) => {
+      savedCount.current = 0;
+      for (const q of drafts) {
         await addSectionCodingQuestion(examId, sectionId, {
           prompt: q.prompt,
           allowed_languages: q.allowed_languages,
@@ -291,21 +317,29 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
           time_limit_ms: q.time_limit_ms,
           points: q.points,
         });
+        savedCount.current += 1;
+        // Out of the preview as soon as it is saved: a failure part-way then
+        // leaves only the unsaved drafts, and Add again cannot duplicate the
+        // saved ones (audit E7).
+        setAiPreview((p) => p.filter((d) => d !== q));
       }
-      return aiPreview.length;
+      return drafts.length;
     },
-    onSuccess: (n) => {
-      setAiPreview([]);
-      toast.success(`${n} coding problem${n === 1 ? '' : 's'} added`);
-      refresh();
-    },
+    onSuccess: (n) => toast.success(`${n} coding problem${n === 1 ? '' : 's'} added`),
     onError: (e: unknown) => {
-      toast.error(e instanceof Error ? e.message : 'Add failed');
-      refresh(); // some drafts may have been persisted before the failure
+      const base = errorMessage(e, 'Could not add the generated problems.');
+      const saved = savedCount.current;
+      toast.error(
+        saved > 0
+          ? `${base} ${saved} problem${saved === 1 ? ' was' : 's were'} added; the rest are still in the list.`
+          : base,
+      );
     },
+    onSettled: refresh, // some drafts may have been persisted before a failure
   });
 
   const addMut = useMutation({
+    mutationKey: editorKey,
     mutationFn: () =>
       addSectionCodingQuestion(examId, sectionId, {
         prompt: prompt.trim(),
@@ -328,13 +362,17 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
       toast.success('Coding question added');
       refresh();
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Add failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not add the coding question.')),
   });
 
   const delMut = useMutation({
+    mutationKey: editorKey,
     mutationFn: (qid: string) => deleteSectionCodingQuestion(examId, sectionId, qid),
-    onSuccess: refresh,
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Delete failed'),
+    onSuccess: () => {
+      toast.success('Coding question deleted');
+      refresh();
+    },
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not delete the coding question.')),
   });
 
   function toggleLang(slug: string, on: boolean) {
@@ -364,15 +402,13 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
           <Skeleton className="h-20 rounded-[16px]" />
           <Skeleton className="h-20 rounded-[16px]" />
         </div>
-      ) : questionsQuery.isError ? (
-        <div role="alert" className="flex flex-wrap items-center gap-3">
-          <p className="text-[13.5px] text-[var(--ui-danger)]">
-            Could not load this section&apos;s coding questions.
-          </p>
-          <Button type="button" variant="outline" onClick={() => void questionsQuery.refetch()}>
-            Try again
-          </Button>
-        </div>
+      ) : questionsQuery.isError && !questionsQuery.data ? (
+        <QueryErrorPanel
+          title="Could not load this section's coding questions."
+          error={questionsQuery.error}
+          onRetry={() => void questionsQuery.refetch()}
+          retrying={questionsQuery.isFetching}
+        />
       ) : questions.length === 0 ? (
         <EmptyState
           icon={Code2}
@@ -431,14 +467,12 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                     />
                   </div>
                   {!locked && (
-                    <button
-                      type="button"
-                      aria-label="Delete question"
-                      className={ICON_BTN}
-                      onClick={() => delMut.mutate(q.id)}
-                    >
-                      <Trash2 size={16} aria-hidden="true" />
-                    </button>
+                    <ConfirmDeleteButton
+                      title={`Delete coding question ${i + 1}`}
+                      confirmText="Delete question"
+                      pending={delMut.isPending && delMut.variables === q.id}
+                      onConfirm={() => delMut.mutate(q.id)}
+                    />
                   )}
                 </div>
               </li>
@@ -476,20 +510,18 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
             role="tablist"
             aria-label="How to add coding questions"
             className="mb-4 flex gap-1 rounded-full bg-[var(--ui-inset-strong)] p-1"
+            {...tabs.tabListProps}
           >
-            {[
-              { key: 'manual', label: 'Manual', icon: Pencil },
-              { key: 'ai', label: 'AI', icon: Sparkles },
-            ].map((t) => {
+            {COMPOSER_TABS.map((key) => {
+              const t = COMPOSER_TAB_META[key];
               const Icon = t.icon;
-              const active = composerTab === t.key;
+              const active = composerTab === key;
               return (
                 <button
-                  key={t.key}
+                  key={key}
                   type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setComposerTab(t.key as 'manual' | 'ai')}
+                  {...tabs.tabProps(key)}
+                  onClick={() => setComposerTab(key)}
                   className={cn(
                     'flex min-h-10 flex-1 items-center justify-center gap-1.5 rounded-full px-3 text-[13.5px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
                     active
@@ -506,7 +538,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
           {/* AI generate */}
           {composerTab === 'ai' && (
-            <div className="space-y-5" aria-label="AI generate coding questions">
+            <div className="space-y-5" {...tabs.panelProps('ai')}>
               <div className="space-y-4">
                 <h3 className="text-[15px] font-bold text-foreground">What to generate</h3>
                 <Input
@@ -635,7 +667,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                       type="button"
                       disabled={addGeneratedMut.isPending}
                       aria-busy={addGeneratedMut.isPending}
-                      onClick={() => addGeneratedMut.mutate()}
+                      onClick={() => addGeneratedMut.mutate(aiPreview)}
                     >
                       {addGeneratedMut.isPending ? (
                         <Loader2 className="animate-spin" aria-hidden="true" />
@@ -644,8 +676,13 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                       )}
                       Add {aiPreview.length} problem{aiPreview.length === 1 ? '' : 's'}
                     </Button>
-                    <Button type="button" variant="ghost" onClick={() => setAiPreview([])}>
-                      Discard
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={addGeneratedMut.isPending}
+                      onClick={() => setAiPreview([])}
+                    >
+                      Discard all
                     </Button>
                   </div>
                 </div>
@@ -655,6 +692,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
           {/* Manual */}
           {composerTab === 'manual' && (
+            <div {...tabs.panelProps('manual')}>
             <form onSubmit={submit} className="space-y-5" aria-label="New coding question">
               <div>
                 <h3 className="mb-3 text-[15px] font-bold text-foreground">Problem</h3>
@@ -729,6 +767,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                 </Button>
               </div>
             </form>
+            </div>
           )}
         </div>
       )}

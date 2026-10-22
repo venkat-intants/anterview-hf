@@ -3,14 +3,16 @@
 // answers "who is mid-preboarding, and what are they waiting on?" across
 // every candidate at once.
 
-import { offerStatusWord } from '@/lib/offerStatus';
+import { OFFER_STATUS_TONE } from '@/lib/offerStatus';
+import { statusLabel } from '@/lib/statusLabel';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { listCompanyOffers, type OfferListFilter, type OfferStatus } from '@/api/offers';
-import { StatusTag, type TagTone } from '@/design/components/primitives';
+import { listCompanyOffers, type OfferListFilter } from '@/api/offers';
+import { StatusTag } from '@/design/components/primitives';
 import { Page, PageHeader, EmptyState, Toolbar } from '@/design/components/page';
-import { offerNeeds } from '@/lib/offerTrack';
+import { effectiveOfferStatus, isLapsed, offerNeeds } from '@/lib/offerTrack';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FileText } from '@/design/components/icons';
@@ -21,35 +23,24 @@ const PAGE_SIZE = 25;
 const TH = 'sticky top-0 z-[1] whitespace-nowrap border-b border-border bg-card px-5 py-3';
 const TD = 'border-b border-border px-5 py-3 align-middle group-last:border-0';
 
-const STATUS_TONE: Record<OfferStatus, TagTone> = {
-  draft: 'neutral',
-  pending_approval: 'amber',
-  approved: 'electric',
-  rejected: 'ember',
-  sent: 'electric',
-  accepted: 'forest',
-  declined: 'ember',
-  expired: 'neutral',
-  withdrawn: 'neutral',
-};
-
 const FILTERS: { value: OfferListFilter | ''; label: string }[] = [
   { value: '', label: 'All' },
-  { value: 'draft', label: 'Draft' },
-  { value: 'pending_approval', label: 'Pending approval' },
-  { value: 'approved', label: 'Approved' },
-  { value: 'rejected', label: 'Sent back' },
-  { value: 'sent', label: 'Sent' },
-  { value: 'accepted', label: 'Accepted' },
-  { value: 'declined', label: 'Declined' },
-  { value: 'expired', label: 'Expired' },
-  { value: 'withdrawn', label: 'Withdrawn' },
+  // The same words the status pills use, so a filter and a pill never disagree.
+  ...(
+    [
+      'draft',
+      'pending_approval',
+      'approved',
+      'rejected',
+      'sent',
+      'accepted',
+      'declined',
+      'expired',
+      'withdrawn',
+    ] as const
+  ).map((value) => ({ value, label: statusLabel(value, 'offer') })),
   { value: 'preboarding', label: 'In preboarding' },
 ];
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 export default function Offers() {
   const [status, setStatus] = useState<OfferListFilter | ''>('');
@@ -106,12 +97,12 @@ export default function Offers() {
           ))}
         </div>
       ) : list.isError ? (
-        <p
-          role="alert"
-          className="rounded-[12px] border border-[var(--ui-danger)] bg-[var(--ui-danger-wash)] p-4 text-[13.5px] text-[var(--ui-danger)]"
-        >
-          {errText(list.error, 'Could not load offers.')}
-        </p>
+        <QueryErrorPanel
+          title="Could not load offers."
+          error={list.error}
+          onRetry={() => void list.refetch()}
+          retrying={list.isFetching}
+        />
       ) : rows.length === 0 ? (
         <EmptyState
           icon={FileText}
@@ -140,52 +131,61 @@ export default function Offers() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((o) => (
-                  <tr
-                    key={o.id}
-                    className="group transition-colors hover:bg-[var(--ui-inset-soft)]"
-                  >
-                    <td className={TD}>
-                      <Link
-                        to={`/hr/offers/${o.id}`}
-                        className="rounded-[6px] text-[14px] font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                      >
-                        {o.candidate_name}
-                      </Link>
-                    </td>
-                    <td className={cn(TD, 'text-[13px] text-muted-foreground')}>{o.job_title}</td>
-                    <td className={cn(TD, 'text-[12.5px] text-muted-foreground')}>
-                      <div className="flex flex-col gap-0.5">
-                        {o.status === 'sent' && o.expires_at ? (
-                          <span>Expires {formatDate(o.expires_at)}</span>
-                        ) : null}
-                        {o.preboarding_completed_at ? <span>Preboarding complete</span> : null}
-                        {o.documents.mandatory_total > 0 ? (
-                          <span className="tabular-nums">
-                            Documents {o.documents.mandatory_verified}/{o.documents.mandatory_total}
-                            {o.documents.awaiting_review > 0
-                              ? ` · ${o.documents.awaiting_review} awaiting review`
-                              : ''}
-                          </span>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className={TD}>
-                      <StatusTag tone={STATUS_TONE[o.status]} dot>
-                        {offerStatusWord(o.status)}
-                      </StatusTag>
-                      <span
-                        data-testid="offer-needs"
-                        className={cn(
-                          'mt-1 block text-[12.5px]',
-                          offerNeeds(o).mine ? 'font-medium text-foreground' : 'text-muted-foreground',
-                        )}
-                      >
-                        {offerNeeds(o).text}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((o) => {
+                  // A row loaded before the deadline passed still says "sent";
+                  // it is read as expired from then on (audit OF-F4).
+                  const status = effectiveOfferStatus(o);
+                  const needs = offerNeeds(o);
+                  return (
+                    <tr
+                      key={o.id}
+                      className="group transition-colors hover:bg-[var(--ui-inset-soft)]"
+                    >
+                      <td className={TD}>
+                        <Link
+                          to={`/hr/offers/${o.id}`}
+                          className="rounded-[6px] text-[14px] font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                        >
+                          {o.candidate_name}
+                        </Link>
+                      </td>
+                      <td className={cn(TD, 'text-[13px] text-muted-foreground')}>{o.job_title}</td>
+                      <td className={cn(TD, 'text-[12.5px] text-muted-foreground')}>
+                        <div className="flex flex-col gap-0.5">
+                          {o.status === 'sent' && o.expires_at ? (
+                            <span>
+                              {isLapsed(o) ? 'Expired' : 'Expires'} {formatDate(o.expires_at)}
+                            </span>
+                          ) : null}
+                          {o.preboarding_completed_at ? <span>Preboarding complete</span> : null}
+                          {o.documents.mandatory_total > 0 ? (
+                            <span className="tabular-nums">
+                              Documents {o.documents.mandatory_verified}/
+                              {o.documents.mandatory_total}
+                              {o.documents.awaiting_review > 0
+                                ? ` · ${o.documents.awaiting_review} awaiting review`
+                                : ''}
+                            </span>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className={TD}>
+                        <StatusTag tone={OFFER_STATUS_TONE[status]} dot>
+                          {statusLabel(status, 'offer')}
+                        </StatusTag>
+                        <span
+                          data-testid="offer-needs"
+                          className={cn(
+                            'mt-1 block text-[12.5px]',
+                            needs.mine ? 'font-medium text-foreground' : 'text-muted-foreground',
+                          )}
+                        >
+                          {needs.text}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

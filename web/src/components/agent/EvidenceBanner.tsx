@@ -23,6 +23,13 @@ import { cn } from '@/lib/utils';
 interface EvidenceBannerProps {
   citationState: CitationState;
   className?: string;
+  /**
+   * 'compact' is the short form for a block that sits UNDER an answer that
+   * already carries the full sentence (each proposal card of a copilot turn).
+   * It states the same server-computed fact in a few words, so the state is
+   * still on every card without six identical sentences in a row.
+   */
+  variant?: 'full' | 'compact';
 }
 
 const COPY: Record<CitationState, string> = {
@@ -31,6 +38,12 @@ const COPY: Record<CitationState, string> = {
     'Records were read for this answer, but no claim in it is tied to a ' +
     "specific one - read it as the assistant's own summary, not a sourced fact.",
   unread: "No records were read for this answer - this is the assistant's own reading.",
+};
+
+const COMPACT_COPY: Record<CitationState, string> = {
+  sourced: 'Drafted from your records.',
+  unattributed: 'Drafted after reading records, but not tied to a specific one.',
+  unread: 'Drafted without reading any records.',
 };
 
 const ICON: Record<CitationState, typeof CheckCircle2> = {
@@ -42,12 +55,13 @@ const ICON: Record<CitationState, typeof CheckCircle2> = {
 export default function EvidenceBanner({
   citationState,
   className,
+  variant = 'full',
 }: EvidenceBannerProps): JSX.Element {
   const Icon = ICON[citationState];
   return (
     <p className={cn('flex items-start gap-1.5 text-xs text-muted-foreground', className)}>
       <Icon className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
-      <span>{COPY[citationState]}</span>
+      <span>{(variant === 'compact' ? COMPACT_COPY : COPY)[citationState]}</span>
     </p>
   );
 }

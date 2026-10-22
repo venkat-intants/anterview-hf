@@ -191,6 +191,23 @@ describe('QuestionBankDetail - the editor is draft-only', () => {
     expect(screen.getByRole('button', { name: 'New version' })).toBeInTheDocument();
   });
 
+  it('asks before retiring an approved question (audit E19)', async () => {
+    const user = userEvent.setup();
+    getBankQuestion.mockResolvedValue({
+      question: APPROVED_V2,
+      versions: [RETIRED_V1, APPROVED_V2],
+      used_in_exams: [],
+    });
+    retireBankQuestion.mockResolvedValue({ ...APPROVED_V2, status: 'retired' });
+    renderPage('approved');
+
+    await user.click(await screen.findByRole('button', { name: 'Retire' }));
+    expect(retireBankQuestion).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Retire question' }));
+
+    await waitFor(() => expect(retireBankQuestion).toHaveBeenCalledWith(APPROVED_V2.id));
+  });
+
   it('New version opens the content for editing and saves as a new version', async () => {
     const user = userEvent.setup();
     getBankQuestion.mockResolvedValue({

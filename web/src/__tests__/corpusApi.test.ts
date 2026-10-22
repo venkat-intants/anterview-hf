@@ -7,6 +7,7 @@ import {
   CORPUS_FAILURE_SENTENCES,
   corpusErrorMessage,
   corpusFailureSentence,
+  corpusFileProblem,
   corpusListHasPendingVersion,
   getCorpusSemanticStatus,
   reindexCorpusDocument,
@@ -175,12 +176,12 @@ describe('replaceCorpusDocument - multipart shape', () => {
 
   const DOC_ID = '11111111-1111-4111-8111-111111111111';
 
-  it('posts only the file, to the versions sub-route', async () => {
+  it('posts the file and the attestation, to the versions sub-route', async () => {
     const mock = createXhrMock(201, JSON.stringify({ id: DOC_ID, version: 2 }));
     global.XMLHttpRequest = vi.fn(() => mock) as unknown as typeof XMLHttpRequest;
 
     const file = new File(['%PDF-1.4'], 'v2.pdf', { type: 'application/pdf' });
-    await replaceCorpusDocument(DOC_ID, file);
+    await replaceCorpusDocument(DOC_ID, file, true);
 
     expect(mock.open).toHaveBeenCalledWith(
       'POST',
@@ -188,6 +189,8 @@ describe('replaceCorpusDocument - multipart shape', () => {
     );
     const sent = mock.send.mock.calls[0]?.[0] as FormData;
     expect(sent.get('file')).toBe(file);
+    // PL-F7: a new version carries the same attestation as the first upload.
+    expect(sent.get('attested')).toBe('true');
     expect(sent.get('title')).toBeNull();
   });
 });
@@ -278,7 +281,29 @@ describe('corpusFailureSentence', () => {
   });
 });
 
+describe('corpusFileProblem', () => {
+  // F15: a 50 MB file used to upload in full before the server refused it.
+  it('refuses an oversized, empty or wrongly typed file before upload', () => {
+    const big = new File(['x'], 'big.pdf', { type: 'application/pdf' });
+    Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 });
+    expect(corpusFileProblem(big)).toBe(CORPUS_FAILURE_SENTENCES.too_large);
+    expect(corpusFileProblem(new File([], 'empty.txt'))).toMatch(/empty/);
+    expect(corpusFileProblem(new File(['x'], 'photo.png'))).toBe(
+      CORPUS_FAILURE_SENTENCES.unsupported_type,
+    );
+    expect(corpusFileProblem(new File(['x'], 'Handbook.DOCX'))).toBeNull();
+  });
+});
+
 describe('corpusErrorMessage', () => {
+  // PL-F12: an array-detail 422 used to surface as "HTTP 422".
+  it('never shows a bare status for a validation failure', () => {
+    const err = new ApiError('HTTP 422', 422, [{ loc: ['body', 'query'], msg: 'too long' }], false);
+    expect(corpusErrorMessage(err, 'Could not search your documents.')).toBe(
+      'Could not search your documents.',
+    );
+  });
+
   it('prefers our own sentence for a failure_code it recognises', () => {
     const err = new ApiError('some server text', 422, {
       failure_code: 'too_large',

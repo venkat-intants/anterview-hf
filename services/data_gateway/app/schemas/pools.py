@@ -81,6 +81,11 @@ class PoolLimits(BaseModel):
 class PoolListOut(BaseModel):
     pools: list[PoolOut]
     limits: PoolLimits
+    # Every live pool (archived included) and the archived share of it,
+    # whatever include_archived asked to list: archived pools count toward
+    # limits.max_per_company.
+    pool_count: int = 0
+    archived_count: int = 0
 
 
 class PoolDeleteOut(BaseModel):
@@ -110,6 +115,12 @@ class MemberOut(BaseModel):
     evidence_freshness: Freshness | None = None
     evidence_reviewed_at: str | None = None
     evidence_reviewed_by_name: str | None = None
+    #: Whether the review above still clears the invite gate. A review expires
+    #: after ``rediscovery_review_valid_days`` (``talent_pools.
+    #: _evidence_review_is_current``), and the screen must offer a new one
+    #: then rather than go on saying "re-checked" (audit PL-F3).
+    review_current: bool = False
+    review_expires_at: str | None = None
     eligible: bool
     ineligible_reason: IneligibleReason | None = None
     opted_in_at: str | None = None
@@ -159,7 +170,9 @@ class MemberAddIn(BaseModel):
 
 class MemberSkip(BaseModel):
     applicant_id: str
-    reason: Literal["already_a_member", "not_this_company", "pool_full", "not_eligible"]
+    reason: Literal[
+        "already_a_member", "not_this_company", "pool_full", "not_eligible", "erasure_requested",
+    ]
 
 
 class MemberAddOut(BaseModel):

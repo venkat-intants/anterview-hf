@@ -221,6 +221,27 @@ describe('Rediscovery - searching', () => {
   });
 });
 
+describe('Rediscovery - while a search runs', () => {
+  it('holds the results area with skeleton rows until the search answers', async () => {
+    const user = userEvent.setup();
+    let answer: (v: unknown) => void = () => undefined;
+    rediscoveryApi.searchRediscovery.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+
+    await runSearch(user);
+
+    expect(await screen.findByTestId('results-loading')).toBeInTheDocument();
+    answer(searchResponse());
+    await waitFor(() => expect(screen.queryByTestId('results-loading')).not.toBeInTheDocument());
+    expect(await screen.findByText(/1 of 1 matches shown/)).toBeInTheDocument();
+  });
+});
+
 describe('Rediscovery - the unexplained section is separate', () => {
   it('keeps an unexplained row out of the explained list, under its own heading, with no one-click invite', async () => {
     const user = userEvent.setup();
@@ -369,5 +390,180 @@ describe('Rediscovery - add to pool', () => {
       'pool-1',
       expect.objectContaining({ applicantIds: ['app-2'] }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit fixes (PL-F11, F22 to F28)
+// ---------------------------------------------------------------------------
+
+describe('Rediscovery - add to pool results', () => {
+  // PL-F11: skips were collapsed into "N could not be added", the dialog
+  // closed anyway and the selection stayed, so the bulk bar kept offering
+  // the same people.
+  it('names each person not added with a reason, and clears the added ones from the selection', async () => {
+    const user = userEvent.setup();
+    const rowA = result({ applicant_id: 'app-1', full_name: 'Asha K' });
+    const rowB = result({ applicant_id: 'app-2', full_name: 'Ravi P' });
+    rediscoveryApi.searchRediscovery.mockResolvedValue(
+      searchResponse({ results: [rowA, rowB], matched: 2, returned: 2 }),
+    );
+    poolsApi.addPoolMembers.mockImplementation((_pool: string, input: { applicantIds: string[] }) =>
+      Promise.resolve(
+        input.applicantIds[0] === 'app-1'
+          ? { added: ['app-1'], skipped: [] }
+          : { added: [], skipped: [{ applicant_id: 'app-2', reason: 'already_a_member' }] },
+      ),
+    );
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+    await runSearch(user);
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select Asha K' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Ravi P' }));
+    await user.click(screen.getByRole('button', { name: 'Add 2 to pool' }));
+    await user.selectOptions(await screen.findByLabelText('Pool'), 'pool-1');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    const notAdded = await within(screen.getByRole('dialog')).findByRole('status');
+    expect(within(notAdded).getByText(/Ravi P: Already a member of this pool/)).toBeInTheDocument();
+    expect(toastSuccess).toHaveBeenCalledWith('Added 1 candidate to the pool');
+    // Nothing left that a retry could change, so no retry button.
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+
+    await user.click(within(screen.getByRole('dialog')).getAllByRole('button', { name: 'Close' })[0]);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    // Both were dealt with, so the bulk bar is gone.
+    expect(screen.queryByRole('button', { name: /^Add \d+ to pool$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select Asha K' })).not.toBeChecked();
+  });
+
+  it('keeps a failed request open for another try, sending only that person again', async () => {
+    const user = userEvent.setup();
+    const rowA = result({ applicant_id: 'app-1', full_name: 'Asha K' });
+    const rowB = result({ applicant_id: 'app-2', full_name: 'Ravi P' });
+    rediscoveryApi.searchRediscovery.mockResolvedValue(
+      searchResponse({ results: [rowA, rowB], matched: 2, returned: 2 }),
+    );
+    poolsApi.addPoolMembers
+      .mockResolvedValueOnce({ added: ['app-1'], skipped: [] })
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({ added: ['app-2'], skipped: [] });
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+    await runSearch(user);
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select Asha K' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select Ravi P' }));
+    await user.click(screen.getByRole('button', { name: 'Add 2 to pool' }));
+    await user.selectOptions(await screen.findByLabelText('Pool'), 'pool-1');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByText(/Ravi P: Could not reach the server/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(poolsApi.addPoolMembers).toHaveBeenCalledTimes(3));
+    const [, retryInput] = poolsApi.addPoolMembers.mock.calls[2] as [string, { applicantIds: string[] }];
+    expect(retryInput.applicantIds).toEqual(['app-2']);
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('switches to New pool, with a hint, when the company has no pools', async () => {
+    const user = userEvent.setup();
+    poolsApi.listPools.mockResolvedValue({
+      pools: [],
+      limits: { max_per_company: 100, max_members: 2000 },
+    });
+    rediscoveryApi.searchRediscovery.mockResolvedValue(searchResponse());
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+    await runSearch(user);
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('button', { name: 'Add to pool' }));
+    expect(await screen.findByText('You have no pools yet. Name a new one.')).toBeInTheDocument();
+    expect(screen.getByLabelText('New pool name')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Existing pool' })).toBeDisabled();
+  });
+
+  it('shows a retryable error, not an empty select, when the pools cannot be loaded', async () => {
+    const user = userEvent.setup();
+    poolsApi.listPools.mockRejectedValue(new TypeError('Failed to fetch'));
+    rediscoveryApi.searchRediscovery.mockResolvedValue(searchResponse());
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+    await runSearch(user);
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('button', { name: 'Add to pool' }));
+    expect(await screen.findByText(/Could not reach the server/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Pool')).not.toBeInTheDocument();
+  });
+
+  // F28: the two radios had no name, so they were not one group.
+  it('groups the Existing / New pool radios under one name', async () => {
+    const user = userEvent.setup();
+    rediscoveryApi.searchRediscovery.mockResolvedValue(searchResponse());
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+    await runSearch(user);
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('button', { name: 'Add to pool' }));
+    const group = await screen.findByRole('group', { name: 'Add to' });
+    const radios = within(group).getAllByRole('radio');
+    expect(radios).toHaveLength(2);
+    radios.forEach((r) => expect(r).toHaveAttribute('name', 'pool-mode'));
+  });
+});
+
+describe('Rediscovery - result copy and controls', () => {
+  it('shows the match score with its scale', async () => {
+    const user = userEvent.setup();
+    rediscoveryApi.searchRediscovery.mockResolvedValue(searchResponse());
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+    await runSearch(user);
+    expect(await screen.findByText('Match 69/100')).toBeInTheDocument();
+  });
+
+  it('says the rest may have let their consent lapse, not only that they never opted in', async () => {
+    renderPage();
+    expect(
+      await screen.findByText(/the rest have not opted in, or their consent has lapsed/),
+    ).toBeInTheDocument();
+  });
+
+  it('marks the why toggle as expanded and points it at its panel', async () => {
+    const user = userEvent.setup();
+    rediscoveryApi.searchRediscovery.mockResolvedValue(searchResponse());
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+    await runSearch(user);
+
+    const toggle = await screen.findByRole('button', { name: /why this match/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    const hide = screen.getByRole('button', { name: 'Hide why' });
+    expect(hide).toHaveAttribute('aria-expanded', 'true');
+    expect(document.getElementById(hide.getAttribute('aria-controls') ?? '')).not.toBeNull();
+  });
+
+  // F22: the opening list asked for the default page of 50.
+  it('asks for the largest page of open openings', async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(listRequisitions).toHaveBeenCalledWith({ status: 'open', limit: 200 }),
+    );
+  });
+
+  it('offers a retry when the universe count cannot be loaded', async () => {
+    rediscoveryApi.getRediscoveryUniverse.mockRejectedValue(new TypeError('Failed to fetch'));
+    renderPage();
+    expect(
+      await screen.findByText('Could not check how many candidates are searchable.'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 });

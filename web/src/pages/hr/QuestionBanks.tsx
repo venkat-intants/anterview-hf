@@ -35,6 +35,7 @@ import { Page, PageHeader, EmptyState, Toolbar } from '@/design/components/page'
 import { Card } from '@/design/components/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
@@ -58,10 +59,6 @@ import {
   type BankOut,
   type BankQuestionStatus,
 } from '@/api/questionBanks';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 const STATUS_TONE: Record<BankQuestionStatus, TagTone> = {
   draft: 'neutral',
@@ -125,7 +122,7 @@ export default function QuestionBanks(): JSX.Element {
       setRenaming(null);
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not rename this bank')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not rename this bank.')),
   });
 
   const archiveMut = useMutation({
@@ -134,7 +131,7 @@ export default function QuestionBanks(): JSX.Element {
       toast.success('Bank archived');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not archive this bank')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not archive this bank.')),
   });
 
   const allBanks: BankOut[] = data ?? [];
@@ -356,10 +353,15 @@ export default function QuestionBanks(): JSX.Element {
                                   the idle button is quieted from outside. The pair it
                                   swaps to when armed is a span and is not touched. */}
                               <span className={QUIET_ARCHIVE}>
+                                {/* There is no unarchive in the app, so the
+                                    confirm says so (audit E18). */}
                                 <ConfirmDeleteButton
                                   label="Archive"
+                                  confirmText="Archive bank"
+                                  title="Archiving hides this bank. It cannot be restored from the app."
+                                  confirmGroupLabel={`Archive ${b.name}? It cannot be restored from the app.`}
                                   icon={Archive}
-                                  pending={archiveMut.isPending}
+                                  pending={archiveMut.isPending && archiveMut.variables === b.id}
                                   onConfirm={() => archiveMut.mutate(b.id)}
                                 />
                               </span>

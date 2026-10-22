@@ -130,9 +130,34 @@ def test_sanitise_match_reason_bounds_why_items_and_query_terms() -> None:
 def test_sanitise_match_reason_drops_malformed_input_rather_than_raising() -> None:
     assert pools._sanitise_match_reason(None) is None
     assert pools._sanitise_match_reason({}) is None
-    assert pools._sanitise_match_reason({"why": "not a list"}) == {
+    assert pools._sanitise_match_reason({"why": "not a list"}, frozen_at=NOW) == {
+        "frozen_at": NOW.isoformat(),
         "breakdown": None, "why": [], "searched_at": None, "query_terms": [],
     }
+
+
+def test_sanitise_match_reason_stamps_frozen_at_from_the_server_not_the_body() -> None:
+    """Audit PL-F2: the snapshot's date is the server's, and a body that sends
+    its own ``frozen_at`` does not get to choose it."""
+    out = pools._sanitise_match_reason(
+        {"why": [], "frozen_at": "1999-01-01T00:00:00+00:00"}, frozen_at=NOW,
+    )
+    assert out is not None
+    assert out["frozen_at"] == NOW.isoformat()
+    defaulted = pools._sanitise_match_reason({"why": []})
+    assert defaulted is not None
+    assert datetime.fromisoformat(defaulted["frozen_at"]).tzinfo is not None
+
+
+def test_review_expiry_matches_the_gate_bound() -> None:
+    """`_evidence_review_expires_at` is the first moment
+    `_evidence_review_is_current` turns false, never a re-derived guess."""
+    reviewed = NOW
+    expires = pools._evidence_review_expires_at(reviewed)
+    assert expires is not None
+    assert pools._evidence_review_is_current(reviewed, now=expires - timedelta(seconds=1))
+    assert not pools._evidence_review_is_current(reviewed, now=expires)
+    assert pools._evidence_review_expires_at(None) is None
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +255,60 @@ def test_review_validity_defaults_equal_to_stale_days_today_deliberately() -> No
     today, but two separate settings -- this pins that they have NOT drifted,
     not that they may never be given different values."""
     assert settings.rediscovery_review_valid_days == settings.rediscovery_stale_days
+
+
+# ---------------------------------------------------------------------------
+# _member_out: audit PL-F1 follow-up. A member whose consent was withdrawn or
+# expired, or who asked for erasure, is a name, a reason and Remove on the
+# wire: no title, company or free-text note either. A never-opted-in manual
+# add keeps them (application consent, design section 4.3).
+# ---------------------------------------------------------------------------
+def _member_row() -> dict[str, Any]:
+    return {
+        "member_id": uuid.uuid4(), "applicant_id": uuid.uuid4(),
+        "full_name": "Asha Rao", "current_title": "Fitter", "current_company": "Acme",
+        "source": "rediscovery", "added_at": NOW, "added_by_name": "Priya Nair",
+        "note": "Strong fault diagnosis",
+        "match_reason": {"why": [], "frozen_at": NOW.isoformat()},
+        "evidence_freshness": "fresh", "evidence_reviewed_at": NOW,
+        "evidence_reviewed_by_name": "Priya Nair", "enrolment_id": None,
+    }
+
+
+def _elig(eligible: bool, reason: str | None) -> dict[str, Any]:
+    return {"eligible": eligible, "ineligible_reason": reason, "opted_in_at": None, "expires_at": None}
+
+
+@pytest.mark.parametrize("reason", ["consent_withdrawn", "consent_expired", "erasure_requested"])
+def test_a_withdrawn_expired_or_erasing_member_is_reduced_to_a_name(reason: str) -> None:
+    out = pools._member_out(_member_row(), _elig(False, reason), now=NOW)
+    assert out["full_name"] == "Asha Rao"
+    assert out["ineligible_reason"] == reason
+    for key in (
+        "current_title", "current_company", "note", "match_reason",
+        "evidence_freshness", "evidence_reviewed_at", "evidence_reviewed_by_name",
+    ):
+        assert out[key] is None, key
+    assert out["review_current"] is False
+
+
+def test_a_never_opted_in_member_keeps_its_profile_but_no_evidence() -> None:
+    out = pools._member_out(_member_row(), _elig(False, None), now=NOW)
+    assert out["current_title"] == "Fitter"
+    assert out["current_company"] == "Acme"
+    assert out["note"] == "Strong fault diagnosis"
+    assert out["match_reason"] is None
+    assert out["evidence_freshness"] is None
+    assert out["evidence_reviewed_by_name"] is None
+
+
+def test_an_eligible_member_carries_everything() -> None:
+    out = pools._member_out(_member_row(), _elig(True, None), now=NOW)
+    assert out["note"] == "Strong fault diagnosis"
+    assert out["current_title"] == "Fitter"
+    assert out["match_reason"] is not None
+    assert out["evidence_freshness"] == "fresh"
+    assert out["review_current"] is True
 
 
 def test_match_reason_evidence_freshness_is_the_worst_band() -> None:

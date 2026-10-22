@@ -180,13 +180,14 @@ async def upload_document(
 async def replace_document(
     document_id: uuid.UUID, request: Request, ctx: CorpusCtxDep, db: DbSessionDep,
     file: Annotated[UploadFile, File()],
+    attested: Annotated[bool, Form()] = False,
 ) -> dict[str, Any]:
     actor, company_id, role = ctx
     data = await file.read(settings.corpus_document_max_bytes + 1)
     try:
         out = await svc.add_version(
             db, company_id=company_id, actor=actor, actor_role=role, document_id=document_id,
-            data=data, filename=file.filename, meta=_meta(request),
+            data=data, filename=file.filename, meta=_meta(request), attested=attested,
         )
     except CorpusError as exc:
         raise await _fail(db, exc) from exc

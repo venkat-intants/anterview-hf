@@ -384,7 +384,12 @@ async def test_the_last_attempt_parks_the_version_with_a_code_a_person_can_read(
     assert result.gave_up == 1
     assert db.params_for(MARK_FAILED)["fc"] == "embedding_unavailable"
     assert db.has("SET gave_up_at = :now")
-    assert "will be indexed automatically" in corpus.FAILURE_SENTENCES["embedding_unavailable"]
+    # A parked version is never picked up again without Retry
+    # (corpus.reindex_document), so the sentence beside that button must say
+    # so rather than promise an automatic retry (audit PL-F9).
+    sentence = corpus.FAILURE_SENTENCES["embedding_unavailable"]
+    assert "Retry" in sentence
+    assert "automatically" not in sentence
 
 
 async def test_a_refused_indexing_update_parks_the_batch_instead_of_wedging_the_loop(

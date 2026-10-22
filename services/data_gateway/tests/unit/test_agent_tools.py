@@ -151,12 +151,37 @@ def _sequence_db(sequence: list[list[Any]], sql_log: list[str] | None = None) ->
     return db
 
 
+A1 = "11111111-1111-4111-8111-111111111111"
+A2 = "22222222-2222-4222-8222-222222222222"
+E1 = "eeeeeeee-0000-4000-8000-000000000001"
+E2 = "eeeeeeee-0000-4000-8000-000000000002"
+
+
+def _app_row(**overrides: Any) -> MagicMock:
+    """One application_progress row, as the draft tools select it."""
+    fields: dict[str, Any] = {
+        "id": A1,
+        "full_name": "Asha",
+        "email": "a@x.com",
+        "enrolment_id": E1,
+        "opening_title": "Welder",
+        "stored_status": "shortlisted",
+        "exam_passed": False,
+        "has_active_invite": False,
+        "live_applications": 1,
+    }
+    fields.update(overrides)
+    return _row(**fields)
+
+
 async def test_interview_invite_proposal_matches_the_real_endpoint() -> None:
-    """POST /hr/interviews with {applicant_id, language} — see InviteCreateIn."""
-    db = _fake_db([_row(id="a-1", full_name="Asha", email="a@x.com", target_job_title="Welder")])
+    """POST /hr/interviews with {applicant_id, enrolment_id, language}; see
+    InviteCreateIn. The enrolment_id is what lets the endpoint attribute the
+    interview to one application instead of answering "choose which one"."""
+    db = _fake_db([_app_row()])
     result = await registry.invoke(
         "draft_interview_invites",
-        {"applicant_ids": ["a-1"], "language": "hi", "reason": "top ATS"},
+        {"applicant_ids": [A1], "language": "hi", "reason": "top ATS"},
         _ctx(db),
         call_id="c1",
     )
@@ -166,49 +191,139 @@ async def test_interview_invite_proposal_matches_the_real_endpoint() -> None:
     commit = result.proposals[0].commit
     assert commit.method == "POST"
     assert commit.path == "/hr/interviews"
-    assert set(commit.body) == {"applicant_id", "language"}
-    assert commit.body["language"] == "hi"
+    assert commit.body == {"applicant_id": A1, "enrolment_id": E1, "language": "hi"}
+
+
+async def test_invite_draft_for_a_person_filed_under_no_opening_omits_enrolment_id() -> None:
+    """application_progress carries a NULL-enrolment row for someone with no
+    live application; the endpoint resolves that person without one."""
+    db = _fake_db([_app_row(enrolment_id=None, opening_title=None, live_applications=0)])
+    result = await registry.invoke(
+        "draft_interview_invites", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
+    )
+    assert set(result.proposals[0].commit.body) == {"applicant_id", "language"}
+
+
+async def test_invite_draft_names_each_application_of_a_multi_application_person() -> None:
+    db = _fake_db([
+        _app_row(enrolment_id=E1, opening_title="Welder", live_applications=2),
+        _app_row(enrolment_id=E2, opening_title="Fitter", exam_passed=True,
+                 stored_status="new", live_applications=2),
+    ])
+    result = await registry.invoke(
+        "draft_interview_invites", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
+    )
+    assert [p.commit.body["enrolment_id"] for p in result.proposals] == [E1, E2]
+    assert [p.title for p in result.proposals] == [
+        "Interview invite - Asha (Welder)",
+        "Interview invite - Asha (Fitter)",
+    ]
+
+
+async def test_invite_draft_skips_an_application_that_is_not_interview_eligible() -> None:
+    """The endpoint 409s unless the application is shortlisted or passed an
+    exam; a draft it is bound to refuse is a button that can only fail."""
+    db = _fake_db([_app_row(stored_status="new", exam_passed=False)])
+    result = await registry.invoke(
+        "draft_interview_invites", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
+    )
+    assert result.proposals == []
+    assert "not shortlisted and no exam passed" in result.content
+
+
+async def test_invite_draft_skips_a_decided_application_even_with_an_exam_pass() -> None:
+    db = _fake_db([_app_row(stored_status="rejected", exam_passed=True)])
+    result = await registry.invoke(
+        "draft_interview_invites", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
+    )
+    assert result.proposals == []
+
+
+async def test_invite_draft_never_rotates_a_live_invite() -> None:
+    """Committing an invite for someone who already holds one revokes their link
+    and emails them again, so the draft is refused with a reason instead."""
+    db = _fake_db([_app_row(has_active_invite=True)])
+    result = await registry.invoke(
+        "draft_interview_invites", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
+    )
+    assert result.proposals == []
+    assert "already has an active invite" in result.content
 
 
 async def test_invite_draft_skips_a_candidate_with_no_email() -> None:
     """An invite is delivered by email — drafting one without an address would
     render a button that fails on click."""
-    db = _fake_db([_row(id="a-1", full_name="Bala", email=None, target_job_title="Welder")])
+    db = _fake_db([_app_row(full_name="Bala", email=None)])
     result = await registry.invoke(
-        "draft_interview_invites", {"applicant_ids": ["a-1"]}, _ctx(db), call_id="c1"
+        "draft_interview_invites", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
     )
     assert result.proposals == []
     assert "no email on file" in result.content
 
 
 async def test_invite_draft_warns_that_email_is_irreversible() -> None:
-    db = _fake_db([_row(id="a-1", full_name="Asha", email="a@x.com", target_job_title="Welder")])
+    db = _fake_db([_app_row()])
     result = await registry.invoke(
-        "draft_interview_invites", {"applicant_ids": ["a-1"]}, _ctx(db), call_id="c1"
+        "draft_interview_invites", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
     )
     assert "cannot be unsent" in (result.proposals[0].risk_note or "")
+
+
+async def test_draft_tools_drop_malformed_ids_before_they_reach_sql() -> None:
+    """One bad string inside CAST(:ids AS uuid[]) fails the whole query; it is
+    reported as not found instead, and the valid ids still run."""
+    seen: list[dict[str, Any]] = []
+    result_rows = MagicMock()
+    result_rows.all.return_value = [_app_row(id=A2)]
+    db = MagicMock()
+
+    async def _execute(_sql: Any, params: dict[str, Any]) -> MagicMock:
+        seen.append(params)
+        return result_rows
+
+    db.execute = _execute
+    result = await registry.invoke(
+        "draft_interview_invites",
+        {"applicant_ids": ["not-a-uuid", A2.upper(), A2]},
+        _ctx(db),
+        call_id="c1",
+    )
+    assert seen[0]["ids"] == [A2]
+    assert len(result.proposals) == 1
 
 
 async def test_shortlist_proposal_warns_it_emails_the_candidate() -> None:
     """PATCH /hr/applicants/{id} calls email_applicant_decision on a real
     transition, so a shortlist is NOT a silent internal change."""
-    db = _fake_db([_row(id="a-1", full_name="Asha", status="new")])
+    db = _fake_db([_app_row(stored_status="new")])
     result = await registry.invoke(
-        "draft_shortlist", {"applicant_ids": ["a-1"]}, _ctx(db), call_id="c1"
+        "draft_shortlist", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
     )
     proposal = result.proposals[0]
     assert proposal.commit.method == "PATCH"
-    assert proposal.commit.path == "/hr/applicants/a-1"
-    assert proposal.commit.body == {"status": "shortlisted"}
+    assert proposal.commit.path == f"/hr/applicants/{A1}"
+    assert proposal.commit.body == {"status": "shortlisted", "enrolment_id": E1}
     assert proposal.risk_note and "Emails the candidate" in proposal.risk_note
 
 
 async def test_shortlist_draft_skips_already_decided_candidates() -> None:
-    db = _fake_db([_row(id="a-1", full_name="Asha", status="hired")])
+    db = _fake_db([_app_row(stored_status="hired")])
     result = await registry.invoke(
-        "draft_shortlist", {"applicant_ids": ["a-1"]}, _ctx(db), call_id="c1"
+        "draft_shortlist", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
     )
     assert result.proposals == []
+
+
+@pytest.mark.parametrize("stored", ["shortlisted", "interviewed", "hired", "rejected"])
+async def test_shortlist_draft_only_moves_a_new_or_held_application(stored: str) -> None:
+    db = _fake_db([_app_row(stored_status=stored), _app_row(enrolment_id=E2,
+                                                            stored_status="held",
+                                                            live_applications=2)])
+    result = await registry.invoke(
+        "draft_shortlist", {"applicant_ids": [A1]}, _ctx(db), call_id="c1"
+    )
+    assert [p.commit.body["enrolment_id"] for p in result.proposals] == [E2]
+    assert f"already {stored}" in result.content
 
 
 async def test_draft_tools_reject_an_empty_id_list() -> None:

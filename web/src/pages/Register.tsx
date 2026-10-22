@@ -6,17 +6,20 @@
 //        registerUser()→getMe()→setAuth→/dashboard, isPending/aria-busy,
 //        toast errors, all t() keys. No role tabs (role is server-assigned).
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useMutation } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { register as registerUser, getMe } from '@/api/auth';
 import { googleLoginUrl } from '@/api/sso';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from '@/lib/toast';
+import { useCandidateError } from '@/lib/candidateCopy';
+import { ConsentDisclosure } from '@/components/layout/ConsentDisclosure';
 import type { AuthUser } from '@/types/auth';
 import AuthLayout, { FormError, PasswordField, StatusPanel } from '@/components/layout/AuthLayout';
 import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
@@ -24,19 +27,21 @@ import { Field, Pill } from '@/design/components/primitives';
 import { User, Mail, Lock, CheckCircle2 } from '@/design/components/icons';
 
 // ── Zod schema ────────────────────────────────────────────────────────────────
-const registerSchema = z.object({
-  full_name: z
-    .string()
-    .min(2, 'Full name must be at least 2 characters')
-    .max(100, 'Full name is too long'),
-  email: z.string().email('Enter a valid email address'),
-  password: z
-    .string()
-    .min(8, 'Password must be at least 8 characters')
-    .max(128, 'Password is too long'),
-});
+// Built per render language so field errors are localised (audit CA-M17).
+function registerSchema(t: TFunction) {
+  return z.object({
+    full_name: z.string().min(2, t('auth.errNameMin')).max(100, t('auth.errNameMax')),
+    email: z.string().email(t('auth.errEmail')),
+    password: z.string().min(8, t('auth.errPasswordMin')).max(128, t('auth.errPasswordMax')),
+  });
+}
 
-type RegisterFormValues = z.infer<typeof registerSchema>;
+type RegisterFormValues = z.infer<ReturnType<typeof registerSchema>>;
+
+function statusOf(err: unknown): number | null {
+  const status: unknown = err instanceof Error ? (err as { status?: unknown }).status : null;
+  return typeof status === 'number' ? status : null;
+}
 
 // ── Google "G" badge (conic gradient — matches design SsoButtons) ──────────────
 function GoogleBadge() {
@@ -61,6 +66,7 @@ export default function Register() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { setAuth } = useAuth();
+  const errorText = useCandidateError();
 
   // DPDP consent (DPDP §7) — gates BOTH sign-up paths. For Google SSO the
   // consent signal is threaded through initiate → callback, which records the
@@ -71,8 +77,9 @@ export default function Register() {
   // account but does NOT log in — we show a "check your inbox" panel instead.
   const [verifyEmailSent, setVerifyEmailSent] = useState<string | null>(null);
 
+  const schema = useMemo(() => registerSchema(t), [t]);
   const form = useForm<RegisterFormValues>({
-    resolver: zodResolver(registerSchema),
+    resolver: zodResolver(schema),
     defaultValues: { full_name: '', email: '', password: '' },
   });
 
@@ -111,8 +118,15 @@ export default function Register() {
       void navigate('/onboarding', { replace: true });
     },
     onError: (err: unknown) => {
-      const message = err instanceof Error ? err.message : t('error.generic');
-      toast.error(message);
+      // English server text gives way to the page's language (audit CA-M21).
+      const status = statusOf(err);
+      const fallback =
+        status === 409
+          ? t('auth.errAccountExists')
+          : status === 400 || status === 422
+            ? t('auth.errRegisterInvalid')
+            : t('error.generic');
+      toast.error(errorText(err, fallback));
     },
   });
 
@@ -127,17 +141,19 @@ export default function Register() {
         <StatusPanel
           icon={CheckCircle2}
           tone="ok"
-          title="Confirm your email"
+          title={t('auth.confirmEmailTitle')}
           actions={
             <Link to="/login" className={PRIMARY_LINK_CLASS}>
-              Go to sign in
+              {t('auth.goToSignIn')}
             </Link>
           }
         >
           <p>
-            Your account is ready. We sent a confirmation link to{' '}
-            <span className="font-semibold text-foreground">{verifyEmailSent}</span>. Click it to verify your
-            email, then sign in.
+            <Trans
+              i18nKey="auth.confirmEmailBody"
+              values={{ email: verifyEmailSent }}
+              components={{ 1: <span className="font-semibold text-foreground" /> }}
+            />
           </p>
         </StatusPanel>
       </AuthLayout>
@@ -156,7 +172,7 @@ export default function Register() {
       <form
         onSubmit={(e) => void handleSubmit(onSubmit)(e)}
         noValidate
-        aria-label="Registration form"
+        aria-label={t('auth.registerFormAria')}
         className="mt-8 flex flex-col gap-2"
       >
         <div>
@@ -164,7 +180,7 @@ export default function Register() {
             label={t('auth.fullName')}
             type="text"
             autoComplete="name"
-            placeholder="Your name"
+            placeholder={t('auth.namePlaceholder')}
             icon={<User size={15} aria-hidden="true" />}
             aria-invalid={errors.full_name ? true : undefined}
             aria-describedby={errors.full_name ? 'reg-full_name-error' : undefined}
@@ -191,9 +207,10 @@ export default function Register() {
           <PasswordField
             label={t('auth.password')}
             autoComplete="new-password"
-            placeholder="8+ characters"
+            placeholder={t('auth.passwordPlaceholder')}
             icon={<Lock size={15} aria-hidden="true" />}
-            hint="Use 8+ characters with a number and a symbol."
+            // Says what is enforced (length) and only advises the rest (audit CA-L8).
+            hint={t('auth.passwordHint')}
             invalid={Boolean(errors.password)}
             aria-describedby={errors.password ? 'reg-password-error' : undefined}
             {...register('password')}
@@ -208,14 +225,11 @@ export default function Register() {
             checked={agreedToDpdp}
             onChange={(e) => { setAgreedToDpdp(e.target.checked); }}
             className="mt-0.5 h-4 w-4 flex-none cursor-pointer accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            aria-label="I agree to the Terms and DPDP-compliant Privacy Policy"
-            aria-describedby={agreedToDpdp ? undefined : 'reg-consent-help'}
+            aria-describedby={agreedToDpdp ? 'reg-consent-disclosure' : 'reg-consent-help reg-consent-disclosure'}
           />
-          <span>
-            I agree to the Terms and the DPDP-compliant Privacy Policy, including
-            interview recording for scoring.
-          </span>
+          <span>{t('auth.consentLabel')}</span>
         </label>
+        <ConsentDisclosure id="reg-consent-disclosure" />
 
         {!agreedToDpdp && (
           <p id="reg-consent-help" className="text-[12.5px] text-muted-foreground">

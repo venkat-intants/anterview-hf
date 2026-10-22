@@ -16,6 +16,7 @@ import { getMe } from '@/api/auth';
 import { useAuth } from '@/context/AuthContext';
 import { homePathFor } from '@/components/layout/navSections';
 import { toast } from '@/lib/toast';
+import { takeReturnPath } from '@/lib/returnTo';
 import { CenteredCard } from '@/components/layout/AuthLayout';
 import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
 import { AlertCircle } from '@/design/components/icons';
@@ -76,7 +77,8 @@ export default function GoogleCallback() {
         // role-scoped sidebar does not even link to. homePathFor already
         // returns /dashboard for candidates and for unknown/empty roles, so
         // the candidate path is unchanged.
-        void navigate(homePathFor(me.roles), { replace: true });
+        // Or the protected page that sent them to sign in (audit CA-M27).
+        void navigate(takeReturnPath() ?? homePathFor(me.roles), { replace: true });
       } catch (err) {
         // The server answers with a machine code (GOOGLE_SIGNIN_CANDIDATES_ONLY).
         // Known codes get a sentence in the visitor's language; an unknown

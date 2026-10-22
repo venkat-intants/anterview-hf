@@ -4,30 +4,42 @@
 // Logic: RHF + zodResolver, login()→getMe()→setAuth, role-aware redirect,
 //        must_change_password guard, isPending/aria-busy, toast errors, all t() keys.
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useMutation } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { login, getMe } from '@/api/auth';
 import { googleLoginUrl } from '@/api/sso';
 import { useAuth } from '@/context/AuthContext';
 import { homePathFor } from '@/components/layout/navSections';
 import { toast } from '@/lib/toast';
+import { useCandidateError } from '@/lib/candidateCopy';
+import { rememberReturnPath, safeReturnPath } from '@/lib/returnTo';
+import { ConsentDisclosure } from '@/components/layout/ConsentDisclosure';
 import type { AuthUser } from '@/types/auth';
 import AuthLayout, { FormError, PasswordField } from '@/components/layout/AuthLayout';
 import { Field, Pill } from '@/design/components/primitives';
 import { Mail, Lock } from '@/design/components/icons';
 
 // ── Zod schema ────────────────────────────────────────────────────────────────
-const loginSchema = z.object({
-  email: z.string().email('Enter a valid email address'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-});
+// Built per render language so field errors are localised (audit CA-M17).
+function loginSchema(t: TFunction) {
+  return z.object({
+    email: z.string().email(t('auth.errEmail')),
+    password: z.string().min(8, t('auth.errPasswordMin')),
+  });
+}
 
-type LoginFormValues = z.infer<typeof loginSchema>;
+type LoginFormValues = z.infer<ReturnType<typeof loginSchema>>;
+
+function statusOf(err: unknown): number | null {
+  const status: unknown = err instanceof Error ? (err as { status?: unknown }).status : null;
+  return typeof status === 'number' ? status : null;
+}
 
 // ── Google "G" badge (conic gradient — matches design SsoButtons) ──────────────
 function GoogleBadge() {
@@ -51,15 +63,20 @@ const ssoBase =
 export default function Login() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const location = useLocation();
   const { setAuth } = useAuth();
+  const errorText = useCandidateError();
+  // The protected page that sent the visitor here, if any (audit CA-M27).
+  const returnTo = safeReturnPath((location.state as { from?: unknown } | null)?.from);
 
   // DPDP consent — gates the account-creating Google sign-in (DPDP §7). Signing
   // in with Google can create a new candidate account, so we capture consent
   // here and pass it through; the password form below is for existing accounts.
   const [agreedToDpdp, setAgreedToDpdp] = useState(false);
 
+  const schema = useMemo(() => loginSchema(t), [t]);
   const form = useForm<LoginFormValues>({
-    resolver: zodResolver(loginSchema),
+    resolver: zodResolver(schema),
     defaultValues: { email: '', password: '' },
   });
 
@@ -91,12 +108,21 @@ export default function Login() {
         // homePathFor, not a local if-chain: this branch previously had no
         // `admin` case and fell through to /dashboard, stranding admin-only
         // accounts on a candidate page their sidebar does not link to.
-        void navigate(homePathFor(me.roles), { replace: true });
+        // Back to the page that asked for a sign-in, when there was one.
+        void navigate(returnTo ?? homePathFor(me.roles), { replace: true });
       }
     },
     onError: (err: unknown) => {
-      const message = err instanceof Error ? err.message : t('error.generic');
-      toast.error(message);
+      // The server writes English; a Hindi or Telugu page gets its own words
+      // for the cases a person can act on (audit CA-M21).
+      const status = statusOf(err);
+      const fallback =
+        status === 401
+          ? t('auth.errBadCredentials')
+          : status === 403
+            ? t('auth.errEmailUnconfirmed')
+            : t('error.generic');
+      toast.error(errorText(err, fallback));
     },
   });
 
@@ -116,7 +142,7 @@ export default function Login() {
       <form
         onSubmit={(e) => void handleSubmit(onSubmit)(e)}
         noValidate
-        aria-label="Login form"
+        aria-label={t('auth.loginFormAria')}
         className="mt-8 flex flex-col gap-2"
       >
         <div>
@@ -184,14 +210,11 @@ export default function Login() {
           checked={agreedToDpdp}
           onChange={(e) => { setAgreedToDpdp(e.target.checked); }}
           className="mt-0.5 h-4 w-4 flex-none cursor-pointer accent-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-          aria-label="I agree to the Terms and DPDP-compliant Privacy Policy"
-          aria-describedby={agreedToDpdp ? undefined : 'login-consent-help'}
+          aria-describedby={agreedToDpdp ? 'login-consent-disclosure' : 'login-consent-help login-consent-disclosure'}
         />
-        <span>
-          I agree to the Terms and the DPDP-compliant Privacy Policy, including
-          interview recording for scoring.
-        </span>
+        <span>{t('auth.consentLabel')}</span>
       </label>
+      <ConsentDisclosure id="login-consent-disclosure" />
 
       {!agreedToDpdp && (
         <p id="login-consent-help" className="mt-2 text-[12.5px] text-muted-foreground">
@@ -208,7 +231,10 @@ export default function Login() {
           aria-disabled={!agreedToDpdp}
           aria-describedby={agreedToDpdp ? undefined : 'login-consent-help'}
           className={`${ssoBase} border border-[var(--ui-line-strong)] bg-card text-foreground hover:bg-[var(--ui-inset)] disabled:cursor-not-allowed disabled:opacity-50`}
-          onClick={() => { window.location.assign(googleLoginUrl('/dashboard', agreedToDpdp, 1)); }}
+          onClick={() => {
+            rememberReturnPath(returnTo);
+            window.location.assign(googleLoginUrl('/dashboard', agreedToDpdp, 1));
+          }}
         >
           <GoogleBadge />
           {t('auth.signInWithGoogle')}

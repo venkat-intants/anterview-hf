@@ -18,6 +18,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { useTranslation } from 'react-i18next';
 import { THEME_CHANGE_EVENT } from '@/lib/useAccentColor';
 
 // 'black' keeps its stored id (renaming it would drop a visitor's saved choice);
@@ -26,10 +27,10 @@ type ThemeId = 'blue' | 'violet' | 'black';
 
 const THEME_KEY = 'intants:theme';
 
-const THEMES: { id: ThemeId; label: string; swatch: string }[] = [
-  { id: 'blue', label: 'Blue', swatch: 'linear-gradient(135deg,#6ea0ff,#1d4ed8)' },
-  { id: 'violet', label: 'Violet', swatch: 'linear-gradient(135deg,#9d8cff,#5b38f0)' },
-  { id: 'black', label: 'Graphite', swatch: 'linear-gradient(135deg,#a8b0c0,#3b4557)' },
+const THEMES: { id: ThemeId; labelKey: string; swatch: string }[] = [
+  { id: 'blue', labelKey: 'shell.accentBlue', swatch: 'linear-gradient(135deg,#6ea0ff,#1d4ed8)' },
+  { id: 'violet', labelKey: 'shell.accentViolet', swatch: 'linear-gradient(135deg,#9d8cff,#5b38f0)' },
+  { id: 'black', labelKey: 'shell.accentGraphite', swatch: 'linear-gradient(135deg,#a8b0c0,#3b4557)' },
 ];
 
 function readTheme(): ThemeId {
@@ -49,9 +50,10 @@ function applyTheme(id: ThemeId): void {
 }
 
 export default function ThemeToggle() {
+  const { t } = useTranslation();
   const [theme, setTheme] = useState<ThemeId>(() => readTheme());
 
-  const active = THEMES.find((t) => t.id === theme) ?? THEMES[0];
+  const active = THEMES.find((th) => th.id === theme) ?? THEMES[0];
 
   function choose(id: ThemeId) {
     applyTheme(id);
@@ -63,8 +65,8 @@ export default function ThemeToggle() {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="Theme"
-          title="Theme"
+          aria-label={t('shell.themeLabel')}
+          title={t('shell.themeLabel')}
           className="flex h-9 items-center gap-1.5 rounded-full border border-border bg-card px-3 text-[13px] text-[var(--ui-soft)] transition-colors hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] data-[state=open]:bg-[var(--ui-inset)] data-[state=open]:text-foreground"
         >
           <Palette size={15} aria-hidden="true" />
@@ -76,16 +78,16 @@ export default function ThemeToggle() {
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" sideOffset={8} className="w-48 min-w-0">
-        <DropdownMenuLabel>Accent</DropdownMenuLabel>
+        <DropdownMenuLabel>{t('shell.accentLabel')}</DropdownMenuLabel>
         <DropdownMenuRadioGroup value={theme} onValueChange={(id) => choose(id as ThemeId)}>
-          {THEMES.map(({ id, label, swatch }) => (
+          {THEMES.map(({ id, labelKey, swatch }) => (
             <DropdownMenuRadioItem key={id} value={id} className="gap-2.5">
               <span
                 className="h-4 w-4 flex-none rounded-full"
                 style={{ background: swatch }}
                 aria-hidden="true"
               />
-              <span className="flex-1 truncate">{label}</span>
+              <span className="flex-1 truncate">{t(labelKey)}</span>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>

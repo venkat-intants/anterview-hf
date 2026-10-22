@@ -116,7 +116,7 @@ describe('ResetPassword', () => {
   it('refuses to show the form when the link carries no token', () => {
     renderPage(<ResetPassword />);
 
-    expect(screen.getByRole('heading', { name: /invalid reset link/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /reset link no longer works/i })).toBeInTheDocument();
     expect(screen.queryByRole('form', { name: /reset password form/i })).not.toBeInTheDocument();
   });
 
@@ -180,7 +180,7 @@ describe('VerifyEmail', () => {
     renderPage(<VerifyEmail />);
 
     expect(
-      await screen.findByRole('heading', { name: /couldn.t verify your email/i }),
+      await screen.findByRole('heading', { name: /could not verify your email/i }),
     ).toBeInTheDocument();
     expect(screen.getByText(/missing its token/i)).toBeInTheDocument();
     expect(verifyEmail).not.toHaveBeenCalled();

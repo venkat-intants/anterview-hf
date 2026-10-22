@@ -53,7 +53,7 @@ function renderRegister() {
 /** The DPDP consent checkbox gates the submit button. Check it before submitting. */
 async function checkDpdpConsent(user: ReturnType<typeof userEvent.setup>) {
   const checkbox = screen.getByRole('checkbox', {
-    name: /i agree to the terms and dpdp/i,
+    name: /i agree to AntHire processing/i,
   });
   await user.click(checkbox);
 }

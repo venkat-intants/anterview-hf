@@ -169,3 +169,34 @@ async def test_resend_invite_is_tenant_scoped_pending_only_and_audited(
     with pytest.raises(HTTPException) as exc:
         await admin_hr.resend_my_hr_manager_invite(hr_id, (uuid.UUID(sa_a.user_id), cid_a), db)
     assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_only_the_newest_set_password_link_is_live(db: AsyncSession) -> None:
+    """Each resend used to add a live link without retiring the earlier ones,
+    so every mailed link worked until one was used. Now the newest supersedes
+    the rest."""
+    owner = await _owner(db)
+    tag = uuid.uuid4().hex[:8]
+    with patch.object(admin_hr, "_hash_password", new=AsyncMock(return_value="x")):
+        co = await admin_hr.create_company(admin_hr.CreateCompanyBody(name=f"T {tag}"), owner, db)
+        cid = uuid.UUID(co.id)
+        sa = await admin_hr.create_company_admin(
+            cid, admin_hr.CreateUserBody(email=f"sa-t-{tag}@example.com", full_name="SA T"),
+            owner, db,
+        )
+    sa_id = uuid.UUID(sa.user_id)
+    for _ in range(2):
+        out = await admin_hr.resend_company_admin_invite(cid, owner, db)
+        assert out.email_queued is True
+    counts = (
+        await db.execute(
+            text(
+                "SELECT count(*) FILTER (WHERE consumed_at IS NULL),"
+                "       count(*) FILTER (WHERE consumed_at IS NOT NULL)"
+                "  FROM auth_tokens WHERE user_id = :u AND kind = 'password_reset'"
+            ),
+            {"u": sa_id},
+        )
+    ).one()
+    assert tuple(counts) == (1, 2)

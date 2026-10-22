@@ -192,3 +192,117 @@ async def test_resend_scopes_the_lookup_to_the_callers_company_and_role(
     assert "u.company_id = :cid" in sql and "r.name = :role" in sql
     assert params["cid"] == company_id
     assert params["role"] == "interviewer"
+
+
+# ---------------------------------------------------------------------------
+# Resend is bounded: per caller, per inbox, and one live link at a time
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/admin/companies/{company_id}/admin/resend-invite",
+        "/admin/hr-managers/{user_id}/resend-invite",
+        "/admin/interviewers/{user_id}/resend-invite",
+    ],
+)
+def test_every_resend_route_is_rate_limited_per_actor(path: str) -> None:
+    from fastapi.routing import APIRoute
+
+    from app.routers import admin_hr
+
+    routes = [r for r in admin_hr.router.routes
+              if isinstance(r, APIRoute) and r.path == path and "POST" in r.methods]
+    assert len(routes) == 1, path
+    limiters = [d.dependency for d in routes[0].dependencies
+                if d.dependency is not None
+                and d.dependency.__qualname__.startswith("rate_limit_actor.")]
+    assert limiters, f"{path} has no per-actor rate limit"
+
+
+def _pending_account_db() -> AsyncMock:
+    db = AsyncMock()
+    result = MagicMock()
+    result.fetchone.return_value = ("hr@acme.com", "HR", True)
+    db.execute = AsyncMock(return_value=result)
+    return db
+
+
+@pytest.mark.asyncio
+async def test_a_resend_over_the_per_target_budget_sends_and_records_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import admin_hr
+
+    audits = _recorder(monkeypatch)
+    charged: list[dict[str, object]] = []
+
+    async def _over(**kw: object) -> None:
+        charged.append(kw)
+        raise HTTPException(status_code=429, detail="slow down")
+
+    sent = AsyncMock(return_value=True)
+    monkeypatch.setattr(admin_hr, "enforce_key_budget", _over)
+    monkeypatch.setattr(admin_hr, "_send_credentials_email", sent)
+    target = uuid.uuid4()
+    with pytest.raises(HTTPException) as exc:
+        await admin_hr.resend_my_hr_manager_invite(target, (uuid.uuid4(), uuid.uuid4()),
+                                                   _pending_account_db())
+    assert exc.value.status_code == 429
+    assert charged[0]["key"] == str(target)
+    assert charged[0]["bucket"] == "resend_invite_target"
+    assert audits == []
+    sent.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_missing_account_does_not_spend_the_target_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.routers import admin_hr
+
+    _recorder(monkeypatch)
+    budget = AsyncMock()
+    monkeypatch.setattr(admin_hr, "enforce_key_budget", budget)
+    db = AsyncMock()
+    result = MagicMock()
+    result.fetchone.return_value = None
+    db.execute = AsyncMock(return_value=result)
+    with pytest.raises(HTTPException):
+        await admin_hr.resend_my_hr_manager_invite(uuid.uuid4(), (uuid.uuid4(), uuid.uuid4()), db)
+    budget.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_new_link_retires_the_earlier_unused_ones_in_the_same_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every mailed link stayed live until one was used, so ten resends meant
+    ten working set-password links. The newest one now supersedes the rest,
+    before the commit that also mints it."""
+    from app.routers import admin_hr
+
+    monkeypatch.setattr(admin_hr, "enqueue_email", AsyncMock(return_value=object()))
+    steps: list[str] = []
+    db = AsyncMock()
+
+    async def _execute(stmt: object, params: object = None) -> MagicMock:
+        steps.append(" ".join(str(stmt).split()))
+        return MagicMock()
+
+    async def _commit() -> None:
+        steps.append("COMMIT")
+
+    db.execute = AsyncMock(side_effect=_execute)
+    db.commit = AsyncMock(side_effect=_commit)
+    db.scalar = AsyncMock(return_value="Acme")
+    uid = uuid.uuid4()
+    assert await admin_hr._send_credentials_email(
+        db, user_id=uid, email="hr@acme.com", full_name="HR", role="hr_manager",
+        company_id=uuid.uuid4(),
+    ) is True
+    retire = next(i for i, s in enumerate(steps) if s.startswith("UPDATE auth_tokens"))
+    mint = next(i for i, s in enumerate(steps) if s.startswith("INSERT INTO auth_tokens"))
+    assert retire < mint < steps.index("COMMIT")
+    assert "kind = 'password_reset'" in steps[retire]
+    assert "consumed_at IS NULL" in steps[retire]
+    assert "user_id = :uid" in steps[retire]

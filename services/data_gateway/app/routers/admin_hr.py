@@ -49,6 +49,7 @@ from app.database import get_db_session, get_session_factory
 from app.dependencies import get_auth_provider_dep, require_role_password_ok
 from app.interviewer_scorecards import RequestMeta, withdraw_open_for_interviewer
 from app.mailer import enqueue_email
+from app.rate_limit import enforce_key_budget, rate_limit_actor
 from app.scheduling import job_status
 
 log = structlog.get_logger(__name__)
@@ -295,6 +296,17 @@ async def _send_credentials_email(
     try:
         now = datetime.now(tz=UTC)
         raw = mint_token()
+        # The newest link supersedes every earlier unused one, in the same
+        # transaction that mints it: a resend must not leave several live
+        # set-password links in one inbox. Nothing is retired if this send
+        # rolls back, so a failed resend never strands the account.
+        await db.execute(
+            text(
+                "UPDATE auth_tokens SET consumed_at = :now"
+                " WHERE user_id = :uid AND kind = 'password_reset' AND consumed_at IS NULL"
+            ),
+            {"now": now, "uid": user_id},
+        )
         await db.execute(
             text(
                 "INSERT INTO auth_tokens (id, user_id, kind, token_hash, expires_at, created_at) "
@@ -337,6 +349,13 @@ async def _send_credentials_email(
     return event is not None
 
 
+#: Resend budgets. Per actor: generous enough for a super admin working down a
+#: list of pending accounts. Per target: a few links per window to one inbox.
+RESEND_INVITE_PER_ACTOR_PER_MINUTE = 10
+RESEND_INVITE_PER_TARGET = 3
+RESEND_INVITE_WINDOW_SECONDS = 600
+
+
 async def _resend_invite(
     db: AsyncSession,
     *,
@@ -372,6 +391,15 @@ async def _resend_invite(
             status_code=status.HTTP_409_CONFLICT,
             detail="This person has already set a password. They can use forgot password.",
         )
+    # Per target, after the lookup so a probe for a missing or active account
+    # spends nothing. The per-actor route limit bounds one caller; this bounds
+    # the inbox, whoever is pressing the button.
+    await enforce_key_budget(
+        bucket="resend_invite_target", key=str(user_id),
+        limit=RESEND_INVITE_PER_TARGET, window_seconds=RESEND_INVITE_WINDOW_SECONDS,
+        detail="A set-password link was sent to this person a moment ago. "
+        "Wait a few minutes before sending another.",
+    )
     # The audit row commits first and on its own: a resend is recorded even
     # when the mail itself then fails.
     await _audit(
@@ -766,7 +794,9 @@ async def create_company_admin(
 
 
 @router.post(
-    "/companies/{company_id}/admin/resend-invite", response_model=ResendInviteResponse
+    "/companies/{company_id}/admin/resend-invite",
+    response_model=ResendInviteResponse,
+    dependencies=[rate_limit_actor("resend_invite", RESEND_INVITE_PER_ACTOR_PER_MINUTE)],
 )
 async def resend_company_admin_invite(
     company_id: uuid.UUID, current_user: PlatformOwnerDep, db: DbSessionDep
@@ -954,7 +984,11 @@ async def create_my_hr_manager(
     )
 
 
-@router.post("/hr-managers/{user_id}/resend-invite", response_model=ResendInviteResponse)
+@router.post(
+    "/hr-managers/{user_id}/resend-invite",
+    response_model=ResendInviteResponse,
+    dependencies=[rate_limit_actor("resend_invite", RESEND_INVITE_PER_ACTOR_PER_MINUTE)],
+)
 async def resend_my_hr_manager_invite(
     user_id: uuid.UUID, ctx: CompanyAdminCtxDep, db: DbSessionDep
 ) -> ResendInviteResponse:
@@ -1093,7 +1127,11 @@ async def create_my_interviewer(
     )
 
 
-@router.post("/interviewers/{user_id}/resend-invite", response_model=ResendInviteResponse)
+@router.post(
+    "/interviewers/{user_id}/resend-invite",
+    response_model=ResendInviteResponse,
+    dependencies=[rate_limit_actor("resend_invite", RESEND_INVITE_PER_ACTOR_PER_MINUTE)],
+)
 async def resend_my_interviewer_invite(
     user_id: uuid.UUID, ctx: CompanyAdminCtxDep, db: DbSessionDep
 ) -> ResendInviteResponse:

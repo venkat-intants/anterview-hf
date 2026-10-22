@@ -1,4 +1,4 @@
-// tabKeys — the keyboard half of the WAI-ARIA tabs pattern, for the small
+// tabKeys: the keyboard half of the WAI-ARIA tabs pattern, for the small
 // hand-built tab bars in the exam editor, the coding composer and the attempt
 // detail page (audit E26). Those bars had role="tab" with no tabpanel wiring
 // and no arrow-key movement, so a keyboard user had to Tab through every tab

@@ -1301,7 +1301,7 @@ class AttemptLocationOut(BaseModel):
 async def locate_attempt(
     attempt_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
 ) -> AttemptLocationOut:
-    """Which exam an attempt belongs to — one request, for a citation link
+    """Which exam an attempt belongs to, in one request, for a citation link
     (``/hr/exams/attempts/{id}``) that carries only the attempt id.
 
     The console used to find it by asking every exam for its attempts (1 + N

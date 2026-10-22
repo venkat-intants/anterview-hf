@@ -128,7 +128,7 @@ async def _count(db: AsyncSession, section: uuid.UUID) -> int:
 
 
 # ===========================================================================
-# E1 — the import lands in the section it was made from
+# E1: the import lands in the section it was made from
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_section_import_writes_into_that_section_even_when_round_one_is_published(
@@ -176,7 +176,7 @@ async def test_section_import_is_tenant_scoped(db: AsyncSession) -> None:
 
 
 # ===========================================================================
-# E2 / E10 — unpublishing
+# E2 / E10: unpublishing
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_unpublishing_a_taken_round_says_why(db: AsyncSession) -> None:
@@ -256,7 +256,7 @@ async def test_the_structure_read_carries_each_rounds_attempt_count(db: AsyncSes
 
 
 # ===========================================================================
-# E11 — a time limit can be cleared
+# E11: a time limit can be cleared
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_a_round_time_limit_can_be_cleared(db: AsyncSession) -> None:
@@ -306,7 +306,7 @@ async def test_an_exam_time_limit_can_be_cleared_and_the_exam_closed(db: AsyncSe
 
 
 # ===========================================================================
-# E8 / E12 / E25 — results and assignments carry the round
+# E8 / E12 / E25: results and assignments carry the round
 # ===========================================================================
 @pytest.mark.asyncio
 async def test_attempts_carry_their_round_and_its_pass_mark(db: AsyncSession) -> None:
@@ -369,7 +369,7 @@ async def test_an_attempt_is_located_in_one_request_and_only_in_its_company(
 
 
 # ===========================================================================
-# E15 — "Used in N exams" counts distinct live exams
+# E15: "Used in N exams" counts distinct live exams
 # ===========================================================================
 async def _approved_bank(db: AsyncSession, f: F, n: int) -> tuple[uuid.UUID, list[uuid.UUID]]:
     """A bank of *n* approved MCQ questions, each its own lineage, approved the

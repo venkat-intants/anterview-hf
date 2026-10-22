@@ -1,4 +1,4 @@
-// examEditor — small pieces the exam editor and its lazily loaded coding
+// examEditor: small pieces the exam editor and its lazily loaded coding
 // section share, kept here so the lazy chunk does not import the editor page.
 //
 // The editor header shows "Saving…/Saved" for the edits made ON the editor.

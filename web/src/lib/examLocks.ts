@@ -1,4 +1,4 @@
-// examLocks — PH4-D1. The lock sentences reused verbatim from
+// examLocks: PH4-D1. The lock sentences reused verbatim from
 // services/data_gateway/app/exam_locks.py (PUBLISHED_REASON, TAKEN_REASON), so
 // the banner shown before a write is attempted reads exactly like the 409 a
 // write would get back if it went ahead anyway.

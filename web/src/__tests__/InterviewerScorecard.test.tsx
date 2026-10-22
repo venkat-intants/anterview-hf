@@ -71,7 +71,11 @@ function detail(over: Partial<ScorecardDetail> = {}): ScorecardDetail {
         competency_id: 'c-sysdesign',
         competency_name: 'System design',
         weight: 0.6,
-        anchors: { low: 'Cannot decompose a problem', mid: 'Decomposes with prompting', high: 'Decomposes unprompted' },
+        anchors: {
+          low: 'Cannot decompose a problem',
+          mid: 'Decomposes with prompting',
+          high: 'Decomposes unprompted',
+        },
         score: null,
         not_assessed: false,
         evidence: null,
@@ -102,7 +106,11 @@ function kit(over: Partial<InterviewKit> = {}): InterviewKit {
         competency_id: 'c-sysdesign',
         competency_name: 'System design',
         weight: 0.6,
-        anchors: { low: 'Cannot decompose a problem', mid: 'Decomposes with prompting', high: 'Decomposes unprompted' },
+        anchors: {
+          low: 'Cannot decompose a problem',
+          mid: 'Decomposes with prompting',
+          high: 'Decomposes unprompted',
+        },
         frozen_probes: ['Design a URL shortener'],
         what_to_evaluate: ['Depth of tradeoff discussion'],
         look_for: ['Mentions caching'],
@@ -127,7 +135,10 @@ function notes(over: Partial<PrivateNotes> = {}): PrivateNotes {
   return { notes: '', updated_at: null, ...over };
 }
 
-function renderPage(id = '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41', path = `/interviewer/scorecards/${id}`) {
+function renderPage(
+  id = '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41',
+  path = `/interviewer/scorecards/${id}`,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
@@ -146,7 +157,10 @@ beforeEach(() => {
   api.getScorecard.mockResolvedValue(detail());
   api.getScorecardKit.mockResolvedValue(kit());
   api.getPrivateNotes.mockResolvedValue(notes());
-  api.saveScorecard.mockResolvedValue({ scorecard_id: '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41', status: 'in_progress' });
+  api.saveScorecard.mockResolvedValue({
+    scorecard_id: '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41',
+    status: 'in_progress',
+  });
   api.submitScorecard.mockResolvedValue({
     scorecard_id: '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41',
     status: 'submitted',
@@ -154,7 +168,10 @@ beforeEach(() => {
     late: false,
   });
   api.savePrivateNotes.mockResolvedValue({ updated_at: '2026-09-10T00:00:00.000Z' });
-  api.requestCorrection.mockResolvedValue({ scorecard_id: '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f42', corrects: '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41' });
+  api.requestCorrection.mockResolvedValue({
+    scorecard_id: '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f42',
+    corrects: '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41',
+  });
 });
 
 describe('InterviewerScorecard - loading and error', () => {
@@ -201,7 +218,9 @@ describe('InterviewerScorecard - the interview kit tab', () => {
   });
 
   it('works with no custom kit - the no-kit fallback', async () => {
-    api.getScorecardKit.mockResolvedValue(kit({ has_custom_kit: false, instructions: null, interviewer_notes_from_hr: null }));
+    api.getScorecardKit.mockResolvedValue(
+      kit({ has_custom_kit: false, instructions: null, interviewer_notes_from_hr: null }),
+    );
     renderPage();
 
     expect(await screen.findByText(/has not customised this round/i)).toBeInTheDocument();
@@ -219,7 +238,10 @@ describe('InterviewerScorecard - the interview kit tab', () => {
     await user.click(screen.getByRole('button', { name: /save notes/i }));
 
     await waitFor(() =>
-      expect(api.savePrivateNotes).toHaveBeenCalledWith('5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41', 'Candidate hesitated on caching.'),
+      expect(api.savePrivateNotes).toHaveBeenCalledWith(
+        '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41',
+        'Candidate hesitated on caching.',
+      ),
     );
     expect(toastSuccess).toHaveBeenCalledWith('Private notes saved');
     // The "Saved …" line follows the save rather than staying at "Not saved yet".
@@ -257,14 +279,23 @@ describe('InterviewerScorecard - the scorecard tab', () => {
 
     radios[0].focus();
     await user.keyboard('{ArrowRight}{ArrowRight}');
-    expect(within(group).getByRole('radio', { name: 'Score 3' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(group).getByRole('radio', { name: 'Score 3' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
     expect(within(group).getByRole('radio', { name: 'Score 3' })).toHaveFocus();
     expect(within(group).getByRole('radio', { name: 'Score 3' })).toHaveAttribute('tabindex', '0');
 
     await user.keyboard('{End}');
-    expect(within(group).getByRole('radio', { name: 'Score 5' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(group).getByRole('radio', { name: 'Score 5' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
     await user.keyboard('{ArrowRight}');
-    expect(within(group).getByRole('radio', { name: 'Score 1' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(group).getByRole('radio', { name: 'Score 1' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
     await user.keyboard('{ArrowLeft}');
     expect(within(group).getByRole('radio', { name: 'Score 5' })).toHaveFocus();
   });
@@ -274,12 +305,18 @@ describe('InterviewerScorecard - the scorecard tab', () => {
 
     const group = screen.getByRole('radiogroup', { name: 'Score - System design' });
     await user.click(within(group).getByRole('radio', { name: 'Score 3' }));
-    expect(within(group).getByRole('radio', { name: 'Score 3' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(group).getByRole('radio', { name: 'Score 3' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
 
     await user.click(screen.getByRole('switch', { name: 'Mark System design as not assessed' }));
 
     // The score is cleared once marked not assessed.
-    expect(within(group).getByRole('radio', { name: 'Score 3' })).toHaveAttribute('aria-checked', 'false');
+    expect(within(group).getByRole('radio', { name: 'Score 3' })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
     expect(within(group).getByRole('radio', { name: 'Score 3' })).toBeDisabled();
   });
 
@@ -293,7 +330,10 @@ describe('InterviewerScorecard - the scorecard tab', () => {
     await user.click(screen.getByRole('button', { name: /save draft/i }));
 
     await waitFor(() => expect(api.saveScorecard).toHaveBeenCalledTimes(1));
-    const [id, body] = api.saveScorecard.mock.calls[0] as [string, { scores: unknown[]; summary: string | null }];
+    const [id, body] = api.saveScorecard.mock.calls[0] as [
+      string,
+      { scores: unknown[]; summary: string | null },
+    ];
     expect(id).toBe('5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41');
     expect(body.summary).toBe('Strong candidate.');
     expect(body.scores).toContainEqual({
@@ -332,7 +372,9 @@ describe('InterviewerScorecard - the scorecard tab', () => {
 
 describe('InterviewerScorecard - read-only, superseded and correction', () => {
   it('disables every control when can_edit is false and there is nothing to correct', async () => {
-    api.getScorecard.mockResolvedValue(detail({ can_edit: false, can_correct: false, status: 'submitted', state: 'submitted' }));
+    api.getScorecard.mockResolvedValue(
+      detail({ can_edit: false, can_correct: false, status: 'submitted', state: 'submitted' }),
+    );
     const user = userEvent.setup();
     renderPage();
 
@@ -346,7 +388,13 @@ describe('InterviewerScorecard - read-only, superseded and correction', () => {
 
   it('shows a superseded banner and stays read-only', async () => {
     api.getScorecard.mockResolvedValue(
-      detail({ can_edit: false, can_correct: false, superseded: true, status: 'submitted', state: 'submitted' }),
+      detail({
+        can_edit: false,
+        can_correct: false,
+        superseded: true,
+        status: 'submitted',
+        state: 'submitted',
+      }),
     );
     renderPage();
 
@@ -370,7 +418,10 @@ describe('InterviewerScorecard - read-only, superseded and correction', () => {
     await user.type(screen.getByLabelText(/why does this need correcting/i), 'Too short');
     expect(startButton).toBeDisabled();
 
-    await user.type(screen.getByLabelText(/why does this need correcting/i), ' - realised the wrong evidence was recorded.');
+    await user.type(
+      screen.getByLabelText(/why does this need correcting/i),
+      ' - realised the wrong evidence was recorded.',
+    );
     expect(startButton).not.toBeDisabled();
 
     await user.click(startButton);
@@ -393,11 +444,21 @@ describe('InterviewerScorecard - read-only, superseded and correction', () => {
     api.getScorecard.mockImplementation((id: string) =>
       Promise.resolve(
         id === ORIGINAL
-          ? detail({ can_edit: false, can_correct: true, status: 'submitted', state: 'submitted',
-                     summary: 'Original summary', criteria: scored(2) })
-          : detail({ scorecard_id: CORRECTION, is_correction: true,
-                     correction_reason: 'Scored design too low',
-                     summary: 'Corrected summary', criteria: scored(4) }),
+          ? detail({
+              can_edit: false,
+              can_correct: true,
+              status: 'submitted',
+              state: 'submitted',
+              summary: 'Original summary',
+              criteria: scored(2),
+            })
+          : detail({
+              scorecard_id: CORRECTION,
+              is_correction: true,
+              correction_reason: 'Scored design too low',
+              summary: 'Corrected summary',
+              criteria: scored(4),
+            }),
       ),
     );
     const user = userEvent.setup();
@@ -407,7 +468,10 @@ describe('InterviewerScorecard - read-only, superseded and correction', () => {
     await user.click(screen.getByRole('tab', { name: 'Scorecard' }));
     expect(screen.getByLabelText('Overall summary')).toHaveValue('Original summary');
     await user.click(screen.getByRole('button', { name: /request correction/i }));
-    await user.type(screen.getByLabelText(/why does this need correcting/i), 'Scored design too low');
+    await user.type(
+      screen.getByLabelText(/why does this need correcting/i),
+      'Scored design too low',
+    );
     await user.click(screen.getByRole('button', { name: /start correction/i }));
 
     // The new draft's own content — not the first scorecard's hydrated state.
@@ -415,7 +479,10 @@ describe('InterviewerScorecard - read-only, superseded and correction', () => {
     await user.click(screen.getByRole('tab', { name: 'Scorecard' }));
     expect(screen.getByLabelText('Overall summary')).toHaveValue('Corrected summary');
     const group = screen.getByRole('radiogroup', { name: 'Score - System design' });
-    expect(within(group).getByRole('radio', { name: 'Score 4' })).toHaveAttribute('aria-checked', 'true');
+    expect(within(group).getByRole('radio', { name: 'Score 4' })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
     // And none of the first page's transient state (the correction form).
     expect(screen.queryByLabelText(/why does this need correcting/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -467,5 +534,98 @@ describe('InterviewerScorecard - the route parameter', () => {
     expect(api.getScorecard).not.toHaveBeenCalled();
     expect(api.getScorecardKit).not.toHaveBeenCalled();
     expect(api.getPrivateNotes).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit fixes AD-F14, AD-F15, AD-F20, AD-F30
+// ---------------------------------------------------------------------------
+
+describe('InterviewerScorecard - unsaved drafts are not lost silently (AD-F14)', () => {
+  it('asks before a link takes the interviewer away from unsaved scores', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Deepa Menon');
+    await user.click(screen.getByRole('tab', { name: 'Scorecard' }));
+
+    // Nothing typed yet: leaving does not ask.
+    await user.click(screen.getByRole('link', { name: 'My interviews' }));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(await screen.findByText('my interviews page')).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it('holds the page when the interviewer cancels leaving with unsaved scores', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Deepa Menon');
+    await user.click(screen.getByRole('tab', { name: 'Scorecard' }));
+    const group = screen.getByRole('radiogroup', { name: 'Score - System design' });
+    await user.click(within(group).getByRole('radio', { name: 'Score 4' }));
+
+    await user.click(screen.getByRole('link', { name: 'My interviews' }));
+    expect(confirm).toHaveBeenCalled();
+    expect(screen.queryByText('my interviews page')).not.toBeInTheDocument();
+    expect(screen.getByText('Deepa Menon')).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it('stops asking once the draft is saved', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Deepa Menon');
+    await user.click(screen.getByRole('tab', { name: 'Scorecard' }));
+    const group = screen.getByRole('radiogroup', { name: 'Score - System design' });
+    await user.click(within(group).getByRole('radio', { name: 'Score 4' }));
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+    await waitFor(() => expect(api.saveScorecard).toHaveBeenCalled());
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Draft saved'));
+
+    await user.click(screen.getByRole('link', { name: 'My interviews' }));
+    expect(confirm).not.toHaveBeenCalled();
+    expect(await screen.findByText('my interviews page')).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+});
+
+describe('InterviewerScorecard - read-only means read-only (AD-F15)', () => {
+  it('disables "Not assessed" on a submitted scorecard', async () => {
+    api.getScorecard.mockResolvedValue(
+      detail({ can_edit: false, can_correct: false, status: 'submitted', state: 'submitted' }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Deepa Menon');
+    await user.click(screen.getByRole('tab', { name: 'Scorecard' }));
+
+    expect(
+      screen.getByRole('switch', { name: 'Mark System design as not assessed' }),
+    ).toBeDisabled();
+  });
+});
+
+describe('InterviewerScorecard - limits and errors (AD-F20, AD-F30)', () => {
+  it('caps the summary at the server limit instead of failing with a 422', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Deepa Menon');
+    await user.click(screen.getByRole('tab', { name: 'Scorecard' }));
+    expect(screen.getByLabelText('Overall summary')).toHaveAttribute('maxlength', '4000');
+  });
+
+  it('says the assignment is gone when a save hits a withdrawn assignment', async () => {
+    api.saveScorecard.mockRejectedValue(new ApiError('Not found', 404));
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Deepa Menon');
+    await user.click(screen.getByRole('tab', { name: 'Scorecard' }));
+    await user.click(screen.getByRole('button', { name: /save draft/i }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('This assignment is no longer available.'),
+    );
   });
 });

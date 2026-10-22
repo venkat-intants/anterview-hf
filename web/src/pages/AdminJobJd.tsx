@@ -13,15 +13,15 @@
 
 import { useCallback, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { AlertCircle, Briefcase } from '@/design/components/icons';
+import { Briefcase, Info } from '@/design/components/icons';
 import { useAuth } from '@/context/AuthContext';
-import { getJobs } from '@/api/jobs';
+import { getAllJobs } from '@/api/jobs';
 import { uploadJd } from '@/api/jd';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import FileUploadZone from '@/components/FileUploadZone';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
+import { QueryErrorPanel } from '@/components/QueryState';
 import {
   Select,
   SelectContent,
@@ -31,7 +31,7 @@ import {
 } from '@/components/ui/select';
 import { GlassCard } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
-import { PageHeader } from '@/design/components/page';
+import { EmptyState, Page, PageHeader } from '@/design/components/page';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -52,18 +52,18 @@ export default function AdminJobJd() {
     isError: jobsError,
     error: jobsFetchError,
     refetch: refetchJobs,
+    isFetching: jobsFetching,
   } = useQuery({
-    queryKey: ['jobs'],
-    queryFn: () => {
-      if (!accessToken) throw new Error('No access token');
-      return getJobs(accessToken);
-    },
+    // Its own key: every page of the catalogue, not the first page of 20 that
+    // the candidate job list caches under ['jobs'] (AD-F10).
+    queryKey: ['jobs', 'all-practice-roles'],
+    queryFn: () => getAllJobs(),
     enabled: accessToken !== null,
     staleTime: 60_000,
     retry: 1,
   });
 
-  const jobs = jobsData?.items ?? [];
+  const jobs = jobsData ?? [];
 
   // ── Handlers ────────────────────────────────────────────────────────────────
 
@@ -75,10 +75,10 @@ export default function AdminJobJd() {
   const handleJdUpload = useCallback(
     (file: File, onProgress: (pct: number) => void) => {
       if (!accessToken) return Promise.reject(new Error('No access token'));
-      if (!selectedJobId) return Promise.reject(new Error('Select a job first'));
+      if (!selectedJobId) return Promise.reject(new Error('Select a practice role first.'));
       return uploadJd(selectedJobId, file, accessToken, onProgress).then((result) => {
         toast.success(
-          `JD processed - ${result.text_length.toLocaleString()} characters extracted.`,
+          `Job description saved - ${result.text_length.toLocaleString('en-IN')} characters read`,
         );
         return { text_length: result.text_length };
       });
@@ -91,10 +91,9 @@ export default function AdminJobJd() {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="mx-auto max-w-[1080px] px-0 py-2 space-y-6">
+    <Page width="default">
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <PageHeader
-        className="mb-0"
         title="Practice-interview job descriptions"
         description="Attach a job description to a role in the platform-wide practice catalogue that candidates use for practice interviews. A company's own openings are not managed here - each company's HR adds the job description on the opening itself (Openings → the opening → Role and posting)."
       />
@@ -114,7 +113,9 @@ export default function AdminJobJd() {
               <Briefcase size={20} />
             </span>
             <div>
-              <h2 className="text-[17px] font-semibold text-foreground">Upload Job Description</h2>
+              <h2 className="text-[17px] font-semibold text-foreground">
+                Upload a job description
+              </h2>
               <p className="text-[13px] text-muted-foreground">
                 PDF only - maximum 10 MB. The document will be parsed and indexed for AI question
                 generation.
@@ -126,8 +127,10 @@ export default function AdminJobJd() {
 
           {/* ── Job picker ──────────────────────────────────────────────── */}
           <div className="space-y-2">
+            {/* "Practice role", not "job posting" (AD-F25): these are catalogue
+                roles for practice interviews, not a company's openings. */}
             <label htmlFor="job-select" className="text-[12.5px] font-medium text-[var(--ui-soft)]">
-              Job posting
+              Practice role
             </label>
 
             {/* Loading state */}
@@ -139,53 +142,45 @@ export default function AdminJobJd() {
                 <div
                   className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
                   role="status"
-                  aria-label="Loading jobs"
+                  aria-label="Loading practice roles"
                 />
-                <span>Loading jobs…</span>
+                <span>Loading practice roles…</span>
                 <Skeleton className="h-10 w-full rounded-[12px] mt-1 bg-[var(--ui-inset)]" />
               </div>
             )}
 
             {/* Error state */}
             {jobsError && (
-              <div
-                role="alert"
-                className="rounded-[16px] border border-[var(--ui-danger)]/35 bg-[var(--ui-danger-wash)] p-4 flex items-start gap-3"
-              >
-                <AlertCircle
-                  className="h-5 w-5 text-[var(--ui-danger)] shrink-0 mt-0.5"
-                  aria-hidden="true"
-                />
-                <p className="text-[13px] text-[var(--ui-danger)] flex-1">
-                  {jobsFetchError instanceof Error
-                    ? jobsFetchError.message
-                    : 'Failed to load jobs.'}
-                </p>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  onClick={() => void refetchJobs()}
-                  className="shrink-0"
-                >
-                  Retry
-                </Button>
-              </div>
+              <QueryErrorPanel
+                title="Could not load the practice roles."
+                error={jobsFetchError}
+                onRetry={() => void refetchJobs()}
+                retrying={jobsFetching}
+              />
+            )}
+
+            {/* An empty catalogue says so, rather than an empty select (AD-F25). */}
+            {!jobsLoading && !jobsError && jobs.length === 0 && (
+              <EmptyState
+                icon={Briefcase}
+                title="The practice catalogue has no roles yet."
+                description="Add a practice role first, then attach its job description here."
+              />
             )}
 
             {/* Select — shown when data ready */}
-            {!jobsLoading && !jobsError && (
+            {!jobsLoading && !jobsError && jobs.length > 0 && (
               <Select value={selectedJobId} onValueChange={handleJobChange}>
                 <SelectTrigger
                   id="job-select"
-                  aria-label="Select job posting"
+                  aria-label="Select a practice role"
                   className={cn(
                     'w-full rounded-[12px] border border-border bg-secondary',
                     'text-[14px] text-foreground placeholder:text-[var(--ui-faint)]',
                     'focus:border-[var(--accent)] focus:ring-0',
                   )}
                 >
-                  <SelectValue placeholder="- select a job -" />
+                  <SelectValue placeholder="Select a practice role" />
                 </SelectTrigger>
                 <SelectContent>
                   {jobs.map((job) => (
@@ -202,12 +197,20 @@ export default function AdminJobJd() {
           {selectedJobId ? (
             <div className="space-y-3">
               <p className="text-[13px] text-muted-foreground">
-                JD document for{' '}
+                Job description for{' '}
                 <span className="font-medium text-foreground">{selectedJobTitle}</span>
+              </p>
+              {/* The upload overwrites the role's stored document (AD-F25). */}
+              <p className="flex items-start gap-1.5 text-[12.5px] text-muted-foreground">
+                <Info
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--ui-info)]"
+                  aria-hidden="true"
+                />
+                Uploading replaces any job description this role already has.
               </p>
               <FileUploadZone
                 key={uploadKey}
-                label="Job Description"
+                label="Job description"
                 accept="application/pdf"
                 maxBytes={JD_MAX_BYTES}
                 onUpload={handleJdUpload}
@@ -225,13 +228,12 @@ export default function AdminJobJd() {
                 aria-hidden="true"
               />
               <p className="text-[13px] text-[var(--ui-faint)]">
-                Select a job above to enable JD upload
+                Select a practice role above to upload its job description.
               </p>
             </div>
           )}
         </GlassCard>
       </Reveal>
-
-    </div>
+    </Page>
   );
 }

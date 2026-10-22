@@ -25,6 +25,7 @@ import {
   type SimulationRound,
   type SimulationScenario,
 } from '@/api/workflowReview';
+import { errorMessage } from '@/lib/errorMessage';
 
 const STATUS_META: Record<
   SimulationResult['status'],
@@ -169,7 +170,7 @@ export default function DryRunPanel({ workflowId }: { workflowId: string }): JSX
             : 'Dry run found errors',
       );
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not run the dry run'),
+    onError: (e) => toast.error(errorMessage(e, 'Could not run the dry run.')),
   });
 
   const result = latest.data;

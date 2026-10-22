@@ -1,8 +1,9 @@
 // NotFound — 404 page rendered for any unmatched route.
 // Design: calm centred card on the canvas, one primary action.
 // Unauthenticated users (and invited guests, who have no home in the app) get
-// a link to /; everyone else gets their role's home, not the candidate
-// dashboard (audit CA-L16).
+// a link to /; a signed-in user gets their own role's home (homePathFor), the
+// same target login and a denied route use, so staff are not sent to the
+// candidate dashboard (audit CA-L16, AD-F16).
 
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';

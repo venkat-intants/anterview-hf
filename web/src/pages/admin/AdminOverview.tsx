@@ -8,7 +8,6 @@
 // Data: all live react-query hooks (getOverview, getTrends, getScoreDistribution,
 // getSystemHealth with a 60 s refetch), data-testid="overview-tiles".
 
-import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { CheckCircle2, AlertCircle, AlertTriangle } from '@/design/components/icons';
 import {
@@ -24,7 +23,7 @@ import {
 } from 'recharts';
 import { getOverview, getTrends, getScoreDistribution, getSystemHealth } from '@/api/admin';
 import type { TrendItem, ScoreBucket } from '@/api/admin';
-import { toast } from '@/lib/toast';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { formatDuration, formatScore } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -169,18 +168,19 @@ function DistributionChart({ buckets }: { buckets: ScoreBucket[] }) {
 // ── AdminOverview page ─────────────────────────────────────────────────────────
 
 export default function AdminOverview() {
-  const {
-    data: overview,
-    isLoading: overviewLoading,
-    isError: overviewError,
-    error: overviewErr,
-  } = useQuery({
+  const overviewQuery = useQuery({
     queryKey: ['admin', 'overview'],
     queryFn: getOverview,
     staleTime: 2 * 60 * 1000,
     retry: false,
     throwOnError: false,
   });
+  const {
+    data: overview,
+    isLoading: overviewLoading,
+    isError: overviewError,
+    error: overviewErr,
+  } = overviewQuery;
 
   const {
     data: trendsData,
@@ -216,18 +216,10 @@ export default function AdminOverview() {
     throwOnError: false,
   });
 
-  useEffect(() => {
-    if (overviewError) {
-      toast.error(
-        overviewErr instanceof Error ? overviewErr.message : 'Failed to load overview data.',
-      );
-    }
-  }, [overviewError, overviewErr]);
-
   const header = (
     <PageHeader
       eyebrow="Platform"
-      title="Admin Overview"
+      title="Overview"
       description="Platform health, throughput and performance at a glance."
     />
   );
@@ -238,15 +230,14 @@ export default function AdminOverview() {
     return (
       <Page width="default">
         {header}
-        <div role="alert">
-          <SectionCard title="Failed to load overview">
-            <EmptyState
-              icon={AlertCircle}
-              title="We could not load the platform numbers"
-              description={`${overviewErr instanceof Error ? overviewErr.message : 'Unknown error'}. Reload the page to try again.`}
-            />
-          </SectionCard>
-        </div>
+        <SectionCard title="Platform numbers">
+          <QueryErrorPanel
+            title="Could not load the platform numbers."
+            error={overviewErr}
+            onRetry={() => void overviewQuery.refetch()}
+            retrying={overviewQuery.isFetching}
+          />
+        </SectionCard>
       </Page>
     );
   }
@@ -301,7 +292,7 @@ export default function AdminOverview() {
       {/* Charts row */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <SectionCard
-          title="Daily Interview Volume (30 days)"
+          title="Daily interview volume (30 days)"
           description="Interviews per day over the last 30 days, across all companies."
         >
           {trendsLoading ? (
@@ -320,7 +311,7 @@ export default function AdminOverview() {
         </SectionCard>
 
         <SectionCard
-          title="Score Distribution"
+          title="Score distribution"
           description="How composite scores spread across score bands, with the average for each axis."
         >
           {distLoading ? (
@@ -411,7 +402,7 @@ export default function AdminOverview() {
         </SectionCard>
 
         <SectionCard
-          title="System Status"
+          title="System status"
           description="Datastores and the overall platform state. Refreshes every minute."
           action={
             health ? (

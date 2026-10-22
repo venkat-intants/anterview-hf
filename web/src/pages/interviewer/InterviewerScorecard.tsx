@@ -18,9 +18,12 @@ import { AlertTriangle, Check, CheckCircle2, Info, Lock, Loader2 } from '@/desig
 import { GlassCard, SegTabs, StatusTag, ToggleSwitch } from '@/design/components/primitives';
 import { Breadcrumbs, PageHeader, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+import { errorMessage } from '@/lib/errorMessage';
 import { ApiError } from '@/api/client';
+import { useUnsavedGuard } from '@/components/bank/useUnsavedGuard';
 import { isUuid } from '@/api/pathId';
 import {
   getPrivateNotes,
@@ -38,22 +41,20 @@ import SubmissionPanel from '@/components/interviewer/SubmissionPanel';
 /** PH4-D4 — only these two round kinds carry a submission to review. */
 const TASK_ROUND_KINDS = new Set(['job_simulation', 'portfolio']);
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
-
 /** A withdrawn assignment now 404s on every interviewer-facing endpoint for
  *  it (kit, notes, the scorecard itself) — read as "gone", not a generic error. */
 const WITHDRAWN_MESSAGE = 'This assignment is no longer available.';
 
 function errOrWithdrawn(e: unknown, fallback: string): string {
   if (e instanceof ApiError && e.status === 404) return WITHDRAWN_MESSAGE;
-  return errText(e, fallback);
+  return errorMessage(e, fallback);
 }
 
 const MIN_CORRECTION_REASON = 10;
 const MAX_CORRECTION_REASON = 1000;
 const MAX_EVIDENCE = 4000;
+/** The server's limit on the overall summary (routers/interviewer.py). */
+const MAX_SUMMARY = 4000;
 const MAX_NOTES = 20000;
 
 type ScoreState = Record<string, { score: number | null; not_assessed: boolean; evidence: string }>;
@@ -68,6 +69,11 @@ function initScores(detail: ScorecardDetail | undefined): ScoreState {
     };
   }
   return out;
+}
+
+/** A comparable form of the draft, to tell saved from unsaved. */
+function snapshot(scores: ScoreState, summary: string): string {
+  return JSON.stringify([toScoreInputs(scores), summary.trim()]);
 }
 
 function toScoreInputs(scores: ScoreState): ScoreInput[] {
@@ -109,14 +115,15 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
       qc.setQueryData(['interviewer', 'notes', scorecardId], { notes, updated_at: res.updated_at });
       toast.success('Private notes saved');
     },
-    onError: (e) => toast.error(errText(e, 'Could not save your notes')),
+    onError: (e) => toast.error(errOrWithdrawn(e, 'Could not save your notes.')),
   });
 
   if (kit.isLoading) {
     return (
-      <div className="flex items-center gap-2 py-10 text-[13px] text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-        Loading the interview kit…
+      <div className="flex flex-col gap-3 py-2" role="status" aria-label="Loading the interview kit">
+        <Skeleton className="h-5 w-48" />
+        <Skeleton className="h-20 w-full rounded-card" />
+        <Skeleton className="h-20 w-full rounded-card" />
       </div>
     );
   }
@@ -355,8 +362,11 @@ function ScoreControl({
         </p>
       </div>
       <label className="flex min-h-10 items-center gap-2 text-[13px] text-foreground">
+        {/* Locked with the score buttons (audit AD-F15): on a submitted or
+            superseded scorecard it used to clear the score on screen. */}
         <ToggleSwitch
           checked={value.not_assessed}
+          disabled={disabled}
           onChange={(next) => onChange({ score: next ? null : value.score, not_assessed: next })}
           label={`Mark ${competencyName} as not assessed`}
         />
@@ -487,6 +497,7 @@ function ScorecardPanel({
           id="scorecard-summary"
           value={summary}
           disabled={readOnly}
+          maxLength={MAX_SUMMARY}
           onChange={(e) => setSummary(e.target.value)}
           rows={4}
           className={TEXTAREA}
@@ -530,6 +541,11 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
   const [correcting, setCorrecting] = useState(false);
   const [correctionReason, setCorrectionReason] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+  // What the server last held, to tell unsaved edits from saved ones. Drafts
+  // live only in this page until "Save draft"; leaving by a breadcrumb, the
+  // sidebar, Back or a reload used to discard them silently (audit AD-F14).
+  const [saved, setSaved] = useState<string | null>(null);
+  const guard = useUnsavedGuard();
 
   const detailQuery = useQuery({
     queryKey: ['interviewer', 'scorecard', scorecardId],
@@ -539,11 +555,20 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
 
   useEffect(() => {
     if (detail && !hydrated) {
-      setScores(initScores(detail));
+      const initial = initScores(detail);
+      setScores(initial);
       setSummary(detail.summary ?? '');
+      setSaved(snapshot(initial, detail.summary ?? ''));
       setHydrated(true);
     }
   }, [detail, hydrated]);
+
+  const current = snapshot(scores, summary);
+  const editable = detail?.can_edit === true;
+  const { setDirty } = guard;
+  useEffect(() => {
+    setDirty(hydrated && editable && saved !== null && current !== saved);
+  }, [current, saved, hydrated, editable, setDirty]);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['interviewer', 'scorecard', scorecardId] });
@@ -559,10 +584,12 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
     onSuccess: () => {
       toast.success('Draft saved');
       setFormError(null);
+      setSaved(current);
       invalidate();
     },
     onError: (e) => {
-      const msg = errText(e, 'Could not save this draft');
+      // A withdrawn assignment reads as gone, as it does on load (AD-F30).
+      const msg = errOrWithdrawn(e, 'Could not save this draft.');
       setFormError(msg);
       toast.error(msg);
     },
@@ -577,12 +604,13 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
     onSuccess: (res) => {
       setConfirmSubmit(false);
       setFormError(null);
+      setSaved(current);
       toast.success(res.late ? 'Submitted - after the due date' : 'Scorecard submitted');
       invalidate();
     },
     onError: (e) => {
       setConfirmSubmit(false);
-      const msg = errText(e, 'Could not submit this scorecard');
+      const msg = errOrWithdrawn(e, 'Could not submit this scorecard.');
       setFormError(msg);
       toast.error(msg);
     },
@@ -594,15 +622,17 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
       toast.success('Correction started - the original is kept');
       void navigate(`/interviewer/scorecards/${res.scorecard_id}`);
     },
-    onError: (e) => toast.error(errText(e, 'Could not start a correction')),
+    onError: (e) => toast.error(errOrWithdrawn(e, 'Could not start a correction.')),
   });
 
   if (detailQuery.isLoading) {
     return (
       <Page width="form">
-        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading scorecard…
+        <div className="flex flex-col gap-4 py-4" role="status" aria-label="Loading scorecard">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-32 w-full rounded-card" />
+          <Skeleton className="h-32 w-full rounded-card" />
+          <span className="sr-only">Loading scorecard…</span>
         </div>
       </Page>
     );
@@ -637,7 +667,13 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
           </>
         }
         actions={
-          <StatusTag tone={detail.status === 'submitted' ? 'forest' : 'amber'} dot>
+          // Same tones as the assignments list (AD-F30): late is ember there.
+          <StatusTag
+            tone={
+              detail.status === 'submitted' ? 'forest' : detail.state === 'late' ? 'ember' : 'amber'
+            }
+            dot
+          >
             {detail.status === 'submitted'
               ? 'Submitted'
               : detail.state === 'late'
@@ -772,7 +808,12 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
                 </div>
               ) : null
             ) : (
-              <div className="sticky bottom-0 z-20 -mx-5 -mb-5 mt-6 rounded-b-card border-t border-border bg-card/95 px-5 py-3 backdrop-blur">
+              // Pinned clear of the floating "Ask assistant" button, which
+              // sits in the bottom-right corner (audit AD-F29).
+              <div
+                data-testid="scorecard-actions"
+                className="sticky bottom-20 z-20 -mx-5 -mb-5 mt-6 rounded-b-card border-t border-border bg-card/95 px-5 py-3 backdrop-blur"
+              >
                 {confirmSubmit ? (
                   <div
                     role="group"

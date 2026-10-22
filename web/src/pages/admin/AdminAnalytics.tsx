@@ -13,7 +13,6 @@
 // NOTE: There is no live endpoint for interviews-per-month, spend or a daily
 //       series, so none of those are shown.
 
-import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useAccentColor } from '@/lib/useAccentColor';
 import { BarChart3, AlertTriangle } from '@/design/components/icons';
@@ -32,7 +31,6 @@ import {
 } from 'recharts';
 import { getByRole, getByLanguage, getScoreDistribution } from '@/api/admin';
 import { languageLabel, formatScore } from '@/lib/formatters';
-import { toast } from '@/lib/toast';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState, PageHeader, SectionCard, Page } from '@/design/components/page';
 import { AXIS_STYLE, GRID_STROKE, PALETTE, TOOLTIP_STYLE } from '@/lib/chartTheme';
@@ -302,7 +300,6 @@ export default function AdminAnalytics() {
     data: roleData,
     isLoading: roleLoading,
     isError: roleError,
-    error: roleErr,
   } = useQuery({
     queryKey: ['admin', 'by-role'],
     queryFn: getByRole,
@@ -334,12 +331,6 @@ export default function AdminAnalytics() {
     retry: false,
     throwOnError: false,
   });
-
-  useEffect(() => {
-    if (roleError) {
-      toast.error(roleErr instanceof Error ? roleErr.message : 'Failed to load analytics data.');
-    }
-  }, [roleError, roleErr]);
 
   // ── Page ──────────────────────────────────────────────────────────────────────
 

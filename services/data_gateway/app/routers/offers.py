@@ -243,17 +243,21 @@ async def list_company_offers(ctx: HrCtxDep, db: DbSessionDep, status: str | Non
     offers still collecting documents."""
     _uid, company_id = ctx
     try:
-        return await svc.list_offers(db, company_id=company_id, status=status, limit=limit,
-                                     offset=offset)
+        out = await svc.list_offers(db, company_id=company_id, status=status, limit=limit,
+                                    offset=offset)
     except OfferError as exc:
         raise await _fail(db, exc) from exc
+    await db.commit()  # keeps any lapsed offer the read found and expired
+    return out
 
 
 @hr_router.get("/enrolments/{enrolment_id}/offers")
 async def list_enrolment_offers(enrolment_id: uuid.UUID, ctx: HrCtxDep,
                                 db: DbSessionDep) -> list[dict[str, Any]]:
     _uid, company_id = ctx
-    return await svc.offers_for_enrolment(db, company_id=company_id, enrolment_id=enrolment_id)
+    out = await svc.offers_for_enrolment(db, company_id=company_id, enrolment_id=enrolment_id)
+    await db.commit()  # keeps any lapsed offer the read found and expired
+    return out
 
 
 @hr_router.post("/enrolments/{enrolment_id}/offers", status_code=201)

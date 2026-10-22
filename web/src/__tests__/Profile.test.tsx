@@ -105,7 +105,12 @@ beforeEach(() => {
   mockUseAuth.mockReturnValue({
     isAuthenticated: true,
     isInitializing: false,
-    user: { user_id: 'u-1', full_name: 'Bhavya Nair', email: 'bhavya@example.com', roles: ['candidate'] },
+    user: {
+      user_id: 'u-1',
+      full_name: 'Bhavya Nair',
+      email: 'bhavya@example.com',
+      roles: ['candidate'],
+    },
   });
 });
 
@@ -242,7 +247,12 @@ describe('Profile - saving', () => {
     mockUseAuth.mockReturnValue({
       isAuthenticated: true,
       isInitializing: false,
-      user: { user_id: 'u-2', full_name: 'Chetan Iyer', email: 'chetan@acme.edu', roles: ['hr_manager'] },
+      user: {
+        user_id: 'u-2',
+        full_name: 'Chetan Iyer',
+        email: 'chetan@acme.edu',
+        roles: ['hr_manager'],
+      },
     });
     const user = userEvent.setup();
     await renderHydrated('Chetan Iyer');
@@ -254,6 +264,26 @@ describe('Profile - saving', () => {
     expect(body).toHaveProperty('official_email', 'chetan@acme.edu');
     expect(body).not.toHaveProperty('desired_roles');
     expect(body).not.toHaveProperty('employment_status');
+  });
+
+  it.each([
+    [['interviewer'], 'Interviewer'],
+    [['platform_owner'], 'Platform owner'],
+  ])('treats %j as staff, not a candidate (AD-F9)', async (roles, label) => {
+    getMe.mockResolvedValue({ ...HR, roles, company_name: undefined, official_email: undefined });
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isInitializing: false,
+      user: { user_id: 'u-2', full_name: 'Chetan Iyer', email: 'chetan@acme.edu', roles },
+    });
+    await renderHydrated('Chetan Iyer');
+
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.queryByText('Candidate')).not.toBeInTheDocument();
+    // No candidate-only asks: no resume upload, no desired roles, no Career section.
+    expect(screen.queryByText('Upload your resume')).not.toBeInTheDocument();
+    expect(screen.queryByText('Add the roles you want')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /edit career/i })).not.toBeInTheDocument();
   });
 
   it('gives an HR manager no Career section', async () => {
@@ -347,5 +377,18 @@ describe('Profile - avatar upload', () => {
     await waitFor(() =>
       expect(updateProfile).toHaveBeenCalledWith({ avatar_url: 'data:image/jpeg;base64,AAAA' }),
     );
+  });
+
+  it('reports an unreadable image with the translated message, not the helper text', async () => {
+    imageFileToDataUrl.mockRejectedValueOnce(new Error('Canvas not supported.'));
+    const user = userEvent.setup();
+    await renderHydrated();
+    const png = new File(['x'], 'me.png', { type: 'image/png' });
+    const input = document.body.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, png);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not read that image.'));
+    expect(toastError).not.toHaveBeenCalledWith('Canvas not supported.');
+    expect(updateProfile).not.toHaveBeenCalled();
   });
 });

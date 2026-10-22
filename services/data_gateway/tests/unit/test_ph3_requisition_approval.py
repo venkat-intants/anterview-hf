@@ -29,6 +29,7 @@ MIGRATION = (
 REQ = uuid.UUID("11111111-1111-1111-1111-111111111111")
 COMPANY = uuid.UUID("22222222-2222-2222-2222-222222222222")
 ACTOR = uuid.UUID("33333333-3333-3333-3333-333333333333")
+APPROVER = uuid.UUID("44444444-4444-4444-4444-444444444444")
 
 
 def _db(requisition: dict | None, *, has_approver: bool = True) -> AsyncMock:
@@ -40,6 +41,10 @@ def _db(requisition: dict | None, *, has_approver: bool = True) -> AsyncMock:
         mapped.first = MagicMock(return_value=requisition)
         mapped.all = MagicMock(return_value=[requisition] if requisition else [])
         res.mappings = MagicMock(return_value=mapped)
+        # The approver lookup: the company's super admins, as ids.
+        res.scalars = MagicMock(
+            return_value=MagicMock(all=MagicMock(return_value=[APPROVER] if has_approver else []))
+        )
         return res
 
     db.execute = AsyncMock(side_effect=_execute)
@@ -264,6 +269,46 @@ async def test_a_company_with_no_approver_is_warned_about_not_refused() -> None:
         db, requisition_id=REQ, company_id=COMPANY, actor_user_id=ACTOR
     )
     assert result["approval_status"] == "pending_approval"
+
+
+@pytest.mark.asyncio
+async def test_submitting_notifies_every_super_admin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An opening waiting for approval alerts the approver (audit AD-F18), the
+    way workflow and offer submissions already did, and links to the queue."""
+    from app import requisition_approval
+
+    sent: list[dict[str, object]] = []
+
+    async def _notify(_db: object, **kw: object) -> bool:
+        sent.append(kw)
+        return True
+
+    monkeypatch.setattr(requisition_approval, "create_notification", _notify)
+    db = _db(_req())
+    await requisition_approval.submit_for_approval(
+        db, requisition_id=REQ, company_id=COMPANY, actor_user_id=ACTOR
+    )
+    assert [n["user_id"] for n in sent] == [APPROVER]
+    assert sent[0]["link"] == "/superadmin/approvals"
+    assert "Platform Engineer" in str(sent[0]["title"])
+
+
+@pytest.mark.asyncio
+async def test_no_approver_means_no_notification(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import requisition_approval
+
+    sent: list[dict[str, object]] = []
+
+    async def _notify(_db: object, **kw: object) -> bool:
+        sent.append(kw)
+        return True
+
+    monkeypatch.setattr(requisition_approval, "create_notification", _notify)
+    db = _db(_req(), has_approver=False)
+    await requisition_approval.submit_for_approval(
+        db, requisition_id=REQ, company_id=COMPANY, actor_user_id=ACTOR
+    )
+    assert sent == []
 
 
 def test_the_approval_queue_is_oldest_first() -> None:

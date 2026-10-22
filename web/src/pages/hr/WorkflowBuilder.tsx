@@ -36,7 +36,6 @@ import {
   Play,
   Send,
   Sparkles,
-  Trash2,
   Users,
 } from '@/design/components/icons';
 import { GlassCard, StatusTag, ToggleSwitch, type TagTone } from '@/design/components/primitives';
@@ -94,6 +93,9 @@ import SubmitBlockers from '@/components/workflow/SubmitBlockers';
 import ReviewPanel from '@/components/workflow/ReviewPanel';
 import DryRunPanel from '@/components/workflow/DryRunPanel';
 import StageSettings from '@/components/workflow/StageSettings';
+import { NumberField } from '@/components/workflow/NumberField';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { errorMessage } from '@/lib/errorMessage';
 import { applicationsWarning, nextAction, publishImpact } from '@/lib/workflowLifecycle';
 import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
 
@@ -113,8 +115,9 @@ type SheetKind = 'submit' | 'details' | null;
 const PRIMARY_CLASS =
   'inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-40';
 
+/** The shared error copy (errorMessage), with this page's period-less fallbacks. */
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, `${fallback}.`);
 }
 
 /* ── Settings panel — C9 ─────────────────────────────────────────────────────
@@ -191,7 +194,7 @@ function AutoShortlistToggle({
         <div className="text-[13px] text-foreground">Shortlist without my confirmation</div>
         <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
           {!hasBar
-            ? 'Set an ATS score of at least 1 above first - without one, every applicant would be shortlisted.'
+            ? 'Set an ATS score of at least 10 above first - without one, every applicant would be shortlisted.'
             : !autoAssign
               ? 'Turn on “Send the first round automatically” first - otherwise applicants would be shortlisted and then left with nothing started.'
               : on
@@ -218,10 +221,13 @@ function SettingsPanel({
   workflow,
   editable,
   onPatch,
+  resetKey,
 }: {
   workflow: Workflow;
   editable: boolean;
   onPatch: (fields: Partial<WorkflowSettings>) => void;
+  /** Bumped when a save fails, so number fields drop a refused value. */
+  resetKey: number;
 }) {
   const s = workflow.settings;
   return (
@@ -255,18 +261,18 @@ function SettingsPanel({
           rejected automatically.
         </p>
         <div className="mt-2 flex items-center gap-2">
-          <input
+          {/* HR-H2: saved on blur or Enter, after a range check, not per keystroke. */}
+          <NumberField
             id="hold-band"
-            type="number"
             min={0}
             max={100}
             disabled={!editable}
-            value={s.hold_band ?? ''}
-            onChange={(e) => {
-              const v = e.target.value.trim();
-              onPatch({ hold_band: v === '' ? null : Number(v) });
+            value={s.hold_band}
+            onCommit={(n) => {
+              if (n !== null) onPatch({ hold_band: n });
             }}
-            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
+            resetKey={resetKey}
+            className="w-24"
           />
           <span className="text-[13px] text-muted-foreground">points</span>
         </div>
@@ -282,21 +288,29 @@ function SettingsPanel({
             : 'Applicants at or above this are flagged to you as ready to shortlist. You confirm, and that starts their first round.'}
         </p>
         <div className="mt-2 flex items-center gap-2">
-          <input
+          {/* HR-L7: entered out of 100 like every other ATS figure in the
+              console; the workflow stores tenths (0-10), so it moves in tens.
+              With automatic shortlisting on, the bar cannot be cleared: the
+              server refuses that combination, so say so before saving. */}
+          <NumberField
             id="ats-threshold"
-            type="number"
             min={0}
-            max={10}
+            max={100}
+            step={10}
+            allowEmpty={!s.auto_shortlist}
             disabled={!editable}
-            value={s.shortlist_ats_threshold ?? ''}
+            value={s.shortlist_ats_threshold === null ? null : s.shortlist_ats_threshold * 10}
             placeholder="off"
-            onChange={(e) => {
-              const v = e.target.value.trim();
-              onPatch({ shortlist_ats_threshold: v === '' ? null : Number(v) });
-            }}
-            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
+            rangeMessage={
+              s.auto_shortlist
+                ? 'Enter 10, 20 and so on up to 100. Turn off automatic shortlisting to clear it.'
+                : 'Enter 10, 20 and so on up to 100, or leave it empty to turn suggestions off.'
+            }
+            onCommit={(n) => onPatch({ shortlist_ats_threshold: n === null ? null : n / 10 })}
+            resetKey={resetKey}
+            className="w-24"
           />
-          <span className="text-[13px] text-muted-foreground">/ 10</span>
+          <span className="text-[13px] text-muted-foreground">/ 100</span>
         </div>
 
         <AutoShortlistToggle
@@ -547,10 +561,17 @@ export default function WorkflowBuilder(): JSX.Element {
     void qc.invalidateQueries({ queryKey: ['hr', 'workflows', requisitionId] });
   };
 
+  // Counts refused saves. A refused PATCH leaves the cached workflow as it
+  // was, so the number fields would not otherwise notice and would keep
+  // showing the refused value; bumping this puts the saved one back.
+  const [failedSaves, setFailedSaves] = useState(0);
   const mutating = useMutation({
     mutationFn: async (op: () => Promise<Workflow>) => op(),
     onSuccess: applyWorkflow,
-    onError: (e) => toast.error(errText(e, 'That change did not save')),
+    onError: (e) => {
+      setFailedSaves((n) => n + 1);
+      toast.error(errText(e, 'That change did not save'));
+    },
   });
 
   const run = (op: () => Promise<Workflow>) => mutating.mutate(op);
@@ -680,7 +701,8 @@ export default function WorkflowBuilder(): JSX.Element {
       <EditorHeader
         breadcrumbs={[
           { label: 'Openings', to: '/hr/requisitions' },
-          { label: 'Opening', to: `/hr/requisitions/${requisitionId}` },
+          // HR-L8: name the opening, as the decision queue does.
+          { label: req.data?.title ?? 'Opening', to: `/hr/requisitions/${requisitionId}` },
           { label: 'Workflow' },
         ]}
         title={req.data?.title ?? 'Hiring workflow'}
@@ -751,19 +773,16 @@ export default function WorkflowBuilder(): JSX.Element {
         secondary={
           workflow ? (
             <>
-              {/* Discard sits first, away from the primary on the right: it
-                  fires with no confirmation, so it is a quiet ghost until it
-                  is hovered or focused. */}
+              {/* Discard sits first, away from the primary on the right.
+                  HR-M2: it deletes the draft with its rounds and criteria, so
+                  it asks first. */}
               {editable ? (
-                <button
-                  type="button"
-                  onClick={() => discardMut.mutate()}
-                  disabled={discardMut.isPending}
-                  className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-4 py-2 text-[13px] font-medium text-muted-foreground hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:bg-[var(--ui-danger-wash)] focus-visible:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
-                >
-                  <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                  Discard
-                </button>
+                <ConfirmDeleteButton
+                  label="Discard draft"
+                  confirmText="Discard draft"
+                  onConfirm={() => discardMut.mutate()}
+                  pending={discardMut.isPending}
+                />
               ) : null}
               {(versions.data ?? []).length > 1 ? (
                 <select
@@ -916,12 +935,19 @@ export default function WorkflowBuilder(): JSX.Element {
               >
                 Not yet
               </button>
+              {/* HR-M3: guarded like the header button, so a double click
+                  cannot send two publishes. */}
               <button
                 type="button"
                 onClick={() => publishMut.mutate()}
+                disabled={publishMut.isPending}
+                aria-busy={publishMut.isPending}
                 data-testid="confirm-publish"
-                className="min-h-[40px] rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
               >
+                {publishMut.isPending ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                ) : null}
                 Publish version {workflow.version}
               </button>
             </div>
@@ -1180,6 +1206,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     workflow={workflow}
                     editable={editable}
                     onPatch={(fields) => run(() => updateSettings(workflow.id, fields))}
+                    resetKey={failedSaves}
                   />
                 ) : activeTab === 'assistant' && copilotAvailable ? null : selected ? (
                   <RoundInspector
@@ -1195,6 +1222,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     )}
                     returnTo={`/hr/requisitions/${requisitionId}/workflow`}
                     onPatch={(fields) => run(() => updateRound(workflow.id, selected.id, fields))}
+                    resetKey={failedSaves}
                     onCriteria={(criteria: CriterionInput[]) =>
                       run(() => setRoundCriteria(workflow.id, selected.id, criteria))
                     }

@@ -134,14 +134,20 @@ describe('submitting for approval in GovernancePanel', () => {
     expect(getRequisitionFn).toHaveBeenCalledTimes(2);
   });
 
-  it('invalidates exactly the shared key', async () => {
+  it('invalidates a prefix of the shared key, so the page and the openings list refresh (HR-L12)', async () => {
     const client = setup();
     const spy = vi.spyOn(client, 'invalidateQueries');
     await userEvent.click(await screen.findByRole('button', { name: /Submit for approval/ }));
     await waitFor(() => expect(submitRequisitionForApproval).toHaveBeenCalled());
-    await waitFor(() =>
-      expect(spy).toHaveBeenCalledWith({ queryKey: queryKeys.requisition('req-1') }),
-    );
+    const target = queryKeys.requisition('req-1');
+    await waitFor(() => {
+      const keys = spy.mock.calls.map((c) => (c[0] as { queryKey?: readonly unknown[] })?.queryKey);
+      expect(
+        keys.some(
+          (k) => Array.isArray(k) && k.length <= target.length && k.every((p, i) => p === target[i]),
+        ),
+      ).toBe(true);
+    });
   });
 
   it('writes a saved budget under the key the page reads', async () => {
@@ -161,8 +167,10 @@ describe('no file spells the short key any more', () => {
     ['JdVersionPanel', jdPanelSrc],
     ['PostingEditor', postingSrc],
     ['WorkflowBuilder', builderSrc],
-  ])('%s goes through queryKeys.requisition', (_name, src) => {
+  ])('%s goes through queryKeys.requisition or the HR-wide invalidation', (_name, src) => {
     expect(src).not.toMatch(/\[\s*'requisition'\s*,/);
-    expect(src).toContain('queryKeys.requisition(');
+    expect(
+      src.includes('queryKeys.requisition(') || src.includes('invalidateAfterHrMutation('),
+    ).toBe(true);
   });
 });

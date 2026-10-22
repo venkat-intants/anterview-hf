@@ -7,21 +7,22 @@
 // exportInterviewsCsv, PER_PAGE=20 pagination, row → /admin/interviews/:id
 // (click or Enter/Space), skeleton / empty / error states.
 
-import { useState, useEffect, useCallback, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
   Search,
   Download,
   ChevronLeft,
   ChevronRight,
-  AlertCircle,
   ClipboardList,
   ArrowRight,
 } from '@/design/components/icons';
 import { listInterviews, exportInterviewsCsv } from '@/api/admin';
 import type { InterviewListItem, InterviewFilters } from '@/api/admin';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { formatDate, formatDuration, statusProps, languageLabel, formatScore } from '@/lib/formatters';
 import { SegTabs, StatusTag, Avatar } from '@/design/components/primitives';
 import { EmptyState, PageHeader, SectionCard, Toolbar, Page } from '@/design/components/page';
@@ -387,44 +388,90 @@ function PaginationBar({ page, totalPages, total, perPage, onPrev, onNext }: Pag
   );
 }
 
+// ── Filters in the URL ─────────────────────────────────────────────────────────
+//
+// The filters, search and page live in the query string (audit AD-F26), so
+// opening a session and coming back restores the list exactly as it was, and a
+// filtered view can be shared as a link. Defaults are left out of the URL.
+
+const TEXT_KEYS = ['q', 'status', 'language', 'date_from', 'date_to'] as const;
+const NUMBER_KEYS = ['min_score', 'max_score'] as const;
+
+function filtersFromParams(params: URLSearchParams): InterviewFilters {
+  const out: InterviewFilters = {
+    page: 1,
+    per_page: PER_PAGE,
+    sort_by: 'created_at',
+    sort_desc: true,
+  };
+  const page = Number(params.get('page'));
+  if (Number.isInteger(page) && page > 1) out.page = page;
+  for (const key of TEXT_KEYS) {
+    const v = params.get(key);
+    if (v) out[key] = v;
+  }
+  for (const key of NUMBER_KEYS) {
+    const raw = params.get(key);
+    const v = raw === null || raw === '' ? NaN : Number(raw);
+    if (Number.isFinite(v)) out[key] = v;
+  }
+  if (params.get('sort_by') === 'composite_score') out.sort_by = 'composite_score';
+  if (params.get('sort_desc') === 'false') out.sort_desc = false;
+  return out;
+}
+
+function paramsFromFilters(f: InterviewFilters): URLSearchParams {
+  const p = new URLSearchParams();
+  if (f.page && f.page > 1) p.set('page', String(f.page));
+  for (const key of TEXT_KEYS) {
+    const v = f[key];
+    if (v) p.set(key, v);
+  }
+  for (const key of NUMBER_KEYS) {
+    const v = f[key];
+    if (v !== undefined) p.set(key, String(v));
+  }
+  if (f.sort_by && f.sort_by !== 'created_at') p.set('sort_by', f.sort_by);
+  if (f.sort_desc === false) p.set('sort_desc', 'false');
+  return p;
+}
+
 // ── AdminInterviews page ───────────────────────────────────────────────────────
 
 export default function AdminInterviews() {
   const navigate = useNavigate();
   const [exporting, setExporting] = useState(false);
 
-  const [filters, setFilters] = useState<InterviewFilters>({
-    page: 1,
-    per_page: PER_PAGE,
-    sort_by: 'created_at',
-    sort_desc: true,
-  });
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filters = useMemo(() => filtersFromParams(searchParams), [searchParams]);
 
-  const updateFilters = useCallback((patch: Partial<InterviewFilters>) => {
-    setFilters((prev) => ({ ...prev, ...patch }));
-  }, []);
+  const updateFilters = useCallback(
+    (patch: Partial<InterviewFilters>) => {
+      // Replace, not push: each keystroke or filter change is not a history
+      // entry, so Back from a session lands on the list in one step.
+      setSearchParams((prev) => paramsFromFilters({ ...filtersFromParams(prev), ...patch }), {
+        replace: true,
+      });
+    },
+    [setSearchParams],
+  );
 
-  const { data, isLoading, isError, error } = useQuery({
+  const interviewsQuery = useQuery({
     queryKey: ['admin', 'interviews', filters],
     queryFn: () => listInterviews(filters),
     staleTime: 60 * 1000,
     retry: false,
     throwOnError: false,
   });
-
-  useEffect(() => {
-    if (isError) {
-      toast.error(error instanceof Error ? error.message : 'Failed to load interview list.');
-    }
-  }, [isError, error]);
+  const { data, isLoading, isError, error } = interviewsQuery;
 
   const handleExport = useCallback(async () => {
     setExporting(true);
     try {
       await exportInterviewsCsv(filters);
-      toast.success('CSV download started.');
+      toast.success('CSV download started');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Export failed.');
+      toast.error(errorMessage(err, 'Could not export the interviews.'));
     } finally {
       setExporting(false);
     }
@@ -479,16 +526,14 @@ export default function AdminInterviews() {
       <FilterBar filters={filters} onFiltersChange={updateFilters} />
 
       {isError && !isLoading ? (
-        <div role="alert">
-          <SectionCard title="Sessions">
-            <EmptyState
-              size="page"
-              icon={AlertCircle}
-              title="Failed to load interviews"
-              description={`${error instanceof Error ? error.message : 'Unknown error'}. Change a filter or reload the page to try again.`}
-            />
-          </SectionCard>
-        </div>
+        <SectionCard title="Sessions">
+          <QueryErrorPanel
+            title="Could not load the interviews."
+            error={error}
+            onRetry={() => void interviewsQuery.refetch()}
+            retrying={interviewsQuery.isFetching}
+          />
+        </SectionCard>
       ) : !isLoading && items.length === 0 ? (
         <NoInterviews hasFilters={hasFilters} />
       ) : (

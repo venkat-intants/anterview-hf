@@ -644,6 +644,13 @@ async def material_download(
 # ---------------------------------------------------------------------------
 # Runner hook — issuing a task
 # ---------------------------------------------------------------------------
+def _workflow_link(workflow: dict[str, Any]) -> str:
+    """Where HR fixes a round: the opening's workflow builder, or the hiring
+    board when the workflow row does not carry its opening."""
+    requisition_id = workflow.get("requisition_id")
+    return f"/hr/requisitions/{requisition_id}/workflow" if requisition_id else "/hr/requisitions"
+
+
 async def issue(
     db: AsyncSession, *, enrolment: dict[str, Any], round_: dict[str, Any], workflow: dict[str, Any],
 ) -> uuid.UUID | None:
@@ -669,7 +676,9 @@ async def issue(
                 title=f"{enrolment['full_name']} could not start {round_['title']}",
                 body="This round has no task configuration. Add a brief and items in the "
                      "workflow builder.",
-                link="/hr/workflows",
+                # The opening's own workflow page: there is no /hr/workflows
+                # route, so this link used to open the 404 page (audit AD-F18).
+                link=_workflow_link(workflow),
             )
         return None
 
@@ -1673,7 +1682,7 @@ async def reissue(
     round_ = await _round(db, company_id, sub["round_id"])
     workflow = (
         await db.execute(
-            text("SELECT created_by_user_id FROM workflow_rounds wr"
+            text("SELECT w.created_by_user_id, w.requisition_id FROM workflow_rounds wr"
                  " JOIN workflows w ON w.id = wr.workflow_id WHERE wr.id = :r"),
             {"r": sub["round_id"]},
         )

@@ -314,8 +314,12 @@ export interface WorkloadRow {
   by_day: Record<string, number>;
   open_scorecards: number;
   overdue_scorecards: number;
+  /** Effective limits: the override, else the company default. */
   max_per_day: number;
   max_per_week: number;
+  /** The stored override, or null when the company default applies. */
+  custom_max_per_day: number | null;
+  custom_max_per_week: number | null;
   over_allocated_days: string[];
   over_allocated_weeks: string[];
   outside_availability: number;

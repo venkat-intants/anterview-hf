@@ -136,9 +136,9 @@ beforeEach(() => {
 describe('approval state', () => {
   it.each([
     ['draft', 'Not submitted'],
-    ['pending_approval', 'Waiting for approval'],
+    ['pending_approval', 'Awaiting approval'],
     ['approved', 'Approved'],
-    ['rejected', 'Changes requested'],
+    ['rejected', 'Sent back'],
   ] as const)('reads %s as "%s"', async (status, label) => {
     renderPanel(requisition({ approval_status: status }));
     expect(await screen.findByText(label)).toBeInTheDocument();
@@ -158,11 +158,28 @@ describe('approval state', () => {
     ).toBeInTheDocument();
   });
 
+  it('keeps one primary action: Schedule is primary only once approved (audit A5)', async () => {
+    renderPanel();
+    const submit = await screen.findByRole('button', { name: /Submit for approval/ });
+    expect(submit.className).toMatch(/(^|\s)bg-primary(\s|$)/);
+    expect(screen.getByRole('button', { name: /^Schedule$/ }).className).not.toMatch(
+      /(^|\s)bg-primary(\s|$)/,
+    );
+  });
+
+  it('makes Schedule the primary action on an approved opening', async () => {
+    renderPanel(requisition({ approval_status: 'approved' }));
+    await screen.findByText('Approved');
+    expect(
+      (await screen.findByRole('button', { name: /^Schedule$/ })).className,
+    ).toMatch(/(^|\s)bg-primary(\s|$)/);
+  });
+
   it('offers no approve button to HR at all', async () => {
     // Not hidden conditionally — absent. Approving requires the super_admin
     // role and a user holds exactly one, so this console could never do it.
     renderPanel(requisition({ approval_status: 'pending_approval' }));
-    await screen.findByText('Waiting for approval');
+    await screen.findByText('Awaiting approval');
     expect(screen.queryByRole('button', { name: /^Approve/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Request changes/ })).not.toBeInTheDocument();
   });
@@ -247,6 +264,9 @@ describe('scheduled publishing', () => {
     await userEvent.click(
       await screen.findByRole('button', { name: /Cancel scheduled publication/ }),
     );
+    // It asks first: a cancelled schedule is not restored by itself.
+    expect(cancelPublishSchedule).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel publication' }));
     await waitFor(() => expect(cancelPublishSchedule).toHaveBeenCalledWith('req-1'));
   });
 
@@ -371,32 +391,111 @@ describe('the approval queue', () => {
     expect(await screen.findByText(/Waiting \d+ days/)).toBeInTheDocument();
   });
 
-  it('approves in one click', async () => {
+  // AD-F12: the same decision pattern as the workflow, offer and question
+  // queues - approve in two steps, send back with a reason.
+  it('approves in two steps, like every other review queue', async () => {
     listPendingApprovals.mockResolvedValue([pending()]);
     approveRequisition.mockResolvedValue(requisition());
     renderQueue();
     await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    expect(approveRequisition).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
     await waitFor(() => expect(approveRequisition).toHaveBeenCalledWith('req-9', undefined));
   });
 
-  it('takes two clicks to send something back', async () => {
+  it('needs a reason of at least 10 characters to send something back', async () => {
     // Sending an opening back costs somebody a week. It deserves a beat in
     // which to write down why.
     listPendingApprovals.mockResolvedValue([pending()]);
     rejectRequisition.mockResolvedValue(requisition());
     renderQueue();
     await userEvent.click(await screen.findByRole('button', { name: /Request changes/ }));
-    expect(rejectRequisition).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: /Confirm - send back/ }));
-    await waitFor(() => expect(rejectRequisition).toHaveBeenCalledWith('req-9', undefined));
+    await userEvent.type(screen.getByLabelText(/what needs to change/i), 'too short');
+    expect(screen.getByRole('button', { name: 'Send back' })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/what needs to change/i), ' - add a budget');
+    await userEvent.click(screen.getByRole('button', { name: 'Send back' }));
+    await waitFor(() =>
+      expect(rejectRequisition).toHaveBeenCalledWith('req-9', 'too short - add a budget'),
+    );
   });
 
   it('sends the note with the decision', async () => {
     listPendingApprovals.mockResolvedValue([pending()]);
     approveRequisition.mockResolvedValue(requisition());
     renderQueue();
-    await userEvent.type(await screen.findByLabelText(/Note for Data Engineer/), 'Go ahead');
-    await userEvent.click(screen.getByRole('button', { name: /^Approve$/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    await userEvent.type(screen.getByLabelText(/note \(optional\)/i), 'Go ahead');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
     await waitFor(() => expect(approveRequisition).toHaveBeenCalledWith('req-9', 'Go ahead'));
+  });
+
+  it('does not carry a half-typed rejection note into an approval', async () => {
+    listPendingApprovals.mockResolvedValue([pending()]);
+    approveRequisition.mockResolvedValue(requisition());
+    renderQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /Request changes/ }));
+    await userEvent.type(screen.getByLabelText(/what needs to change/i), 'No, because');
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Approve$/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
+    await waitFor(() => expect(approveRequisition).toHaveBeenCalledWith('req-9', undefined));
+  });
+
+  it('keeps the row locked after a decision until the queue refetches (AD-F22)', async () => {
+    listPendingApprovals.mockResolvedValue([pending()]);
+    approveRequisition.mockResolvedValue(requisition());
+    renderQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    // The refetch is held, as if the network were slow.
+    listPendingApprovals.mockImplementation(() => new Promise(() => undefined));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    expect(await screen.findByText(/Approved\. Updating the queue/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Approve$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm approval' })).not.toBeInTheDocument();
+    expect(approveRequisition).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands the controls back if the refetch still lists the row', async () => {
+    // Without this the row stayed on "Updating the queue" for good, with no
+    // decision controls and no retry.
+    listPendingApprovals.mockResolvedValue([pending()]);
+    approveRequisition.mockResolvedValue(requisition());
+    renderQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    expect(await screen.findByRole('button', { name: /^Approve$/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Updating the queue/)).not.toBeInTheDocument();
+    expect(listPendingApprovals).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers a retry when the refetch after a decision fails', async () => {
+    listPendingApprovals.mockResolvedValueOnce([pending()]);
+    approveRequisition.mockResolvedValue(requisition());
+    renderQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    listPendingApprovals.mockRejectedValueOnce(new Error('offline'));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    expect(await screen.findByText('Could not load the approval queue.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+});
+
+describe('submitting refreshes every view of the opening (HR-L12)', () => {
+  it('invalidates the whole HR console, not only this opening', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    render(
+      <QueryClientProvider client={client}>
+        <GovernancePanel requisition={requisition()} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /Submit for approval/ }));
+    await waitFor(() => expect(submitRequisitionForApproval).toHaveBeenCalled());
+    // ['hr'] is the prefix of ['hr', 'requisitions', ...], which the HR
+    // home's "Openings in setup" badge reads.
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ['hr'] }));
   });
 });

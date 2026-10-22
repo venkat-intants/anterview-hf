@@ -70,6 +70,8 @@ const api = {
   listMyInterviewers: vi.fn(),
   createMyInterviewer: vi.fn(),
   deleteMyInterviewer: vi.fn(),
+  resendMyHrManagerInvite: vi.fn(),
+  resendMyInterviewerInvite: vi.fn(),
 };
 vi.mock('../api/hr', () => ({
   listMyHrManagers: (...a: unknown[]) => api.listMyHrManagers(...a) as unknown,
@@ -78,6 +80,8 @@ vi.mock('../api/hr', () => ({
   listMyInterviewers: (...a: unknown[]) => api.listMyInterviewers(...a) as unknown,
   createMyInterviewer: (...a: unknown[]) => api.createMyInterviewer(...a) as unknown,
   deleteMyInterviewer: (...a: unknown[]) => api.deleteMyInterviewer(...a) as unknown,
+  resendMyHrManagerInvite: (...a: unknown[]) => api.resendMyHrManagerInvite(...a) as unknown,
+  resendMyInterviewerInvite: (...a: unknown[]) => api.resendMyInterviewerInvite(...a) as unknown,
 }));
 
 // "Waiting on you": the four queue lengths. Same functions the queue pages use.
@@ -91,7 +95,8 @@ vi.mock('../api/requisitions', () => ({
   listPendingApprovals: (...a: unknown[]) => queues.listPendingApprovals(...a) as unknown,
 }));
 vi.mock('../api/workflowReview', () => ({
-  listPendingWorkflowReviews: (...a: unknown[]) => queues.listPendingWorkflowReviews(...a) as unknown,
+  listPendingWorkflowReviews: (...a: unknown[]) =>
+    queues.listPendingWorkflowReviews(...a) as unknown,
 }));
 vi.mock('../api/offers', () => ({
   listOfferApprovals: (...a: unknown[]) => queues.listOfferApprovals(...a) as unknown,
@@ -106,12 +111,14 @@ vi.mock('../api/auth', () => ({
 }));
 
 const toastError = vi.fn();
+const toastSuccess = vi.fn();
+const toastWarning = vi.fn();
 vi.mock('../lib/toast', () => ({
   toast: {
     error: (...a: unknown[]) => toastError(...a) as unknown,
-    success: vi.fn(),
+    success: (...a: unknown[]) => toastSuccess(...a) as unknown,
     info: vi.fn(),
-    warning: vi.fn(),
+    warning: (...a: unknown[]) => toastWarning(...a) as unknown,
   },
 }));
 
@@ -182,6 +189,8 @@ beforeEach(() => {
   api.listMyInterviewers.mockResolvedValue(INTERVIEWERS);
   api.createMyInterviewer.mockResolvedValue(INTERVIEWERS[0]);
   api.deleteMyInterviewer.mockResolvedValue(undefined);
+  api.resendMyHrManagerInvite.mockResolvedValue({ email_queued: true });
+  api.resendMyInterviewerInvite.mockResolvedValue({ email_queued: true });
   queues.listPendingApprovals.mockResolvedValue([{}, {}, {}]);
   queues.listPendingWorkflowReviews.mockResolvedValue([{}]);
   queues.listOfferApprovals.mockResolvedValue([]);
@@ -208,9 +217,9 @@ describe('CompanyAdminConsole - scoping', () => {
   it("names the caller's own company from the session, not from a URL param", async () => {
     renderConsole();
 
-    expect(await screen.findByRole('heading', { name: /super admin/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /^team$/i })).toBeInTheDocument();
     expect(
-      await screen.findByText(/hr managers for acme skills university/i),
+      await screen.findByText(/hr managers and interviewers for acme skills university/i),
     ).toBeInTheDocument();
   });
 
@@ -218,7 +227,7 @@ describe('CompanyAdminConsole - scoping', () => {
     getMe.mockImplementation(() => new Promise(() => undefined));
     renderConsole();
 
-    expect(screen.getByText(/hr managers for your company/i)).toBeInTheDocument();
+    expect(screen.getByText(/hr managers and interviewers for your company/i)).toBeInTheDocument();
   });
 
   it('lists the HR managers the server scoped to this company', async () => {
@@ -246,12 +255,18 @@ describe('CompanyAdminConsole - creating an HR manager', () => {
     const user = userEvent.setup();
     renderConsole();
 
-    await screen.findByRole('heading', { name: /super admin/i });
+    await screen.findByRole('heading', { name: /^team$/i });
     // The fields do not exist until the dialog is opened from the page header.
     expect(screen.queryByLabelText(/^email$/i)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
-    await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), '  new.hr@acme.edu  ');
-    await user.type(screen.getByLabelText(/full name/i, { selector: '#hr-name' }), '  Deepa Menon  ');
+    await user.type(
+      screen.getByLabelText(/^email$/i, { selector: '#hr-email' }),
+      '  new.hr@acme.edu  ',
+    );
+    await user.type(
+      screen.getByLabelText(/full name/i, { selector: '#hr-name' }),
+      '  Deepa Menon  ',
+    );
     await user.click(screen.getByRole('button', { name: /^add hr$/i }));
 
     await waitFor(() =>
@@ -273,7 +288,7 @@ describe('CompanyAdminConsole - creating an HR manager', () => {
     const user = userEvent.setup();
     renderConsole();
 
-    await screen.findByRole('heading', { name: /super admin/i });
+    await screen.findByRole('heading', { name: /^team$/i });
     await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
     await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'typed@acme.edu');
     await user.click(screen.getByRole('button', { name: /^cancel$/i }));
@@ -287,7 +302,7 @@ describe('CompanyAdminConsole - creating an HR manager', () => {
   it('never ships a password - a set-password link is emailed instead', async () => {
     renderConsole();
 
-    await screen.findByRole('heading', { name: /super admin/i });
+    await screen.findByRole('heading', { name: /^team$/i });
     expect(screen.queryByLabelText(/password/i)).not.toBeInTheDocument();
     // Once for HR managers, once for interviewers — both rosters say it.
     expect(screen.getAllByText(/set your password.*link is emailed/i).length).toBe(2);
@@ -297,9 +312,12 @@ describe('CompanyAdminConsole - creating an HR manager', () => {
     const user = userEvent.setup();
     renderConsole();
 
-    await screen.findByRole('heading', { name: /super admin/i });
+    await screen.findByRole('heading', { name: /^team$/i });
     await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
-    await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'only.email@acme.edu');
+    await user.type(
+      screen.getByLabelText(/^email$/i, { selector: '#hr-email' }),
+      'only.email@acme.edu',
+    );
     await user.click(screen.getByRole('button', { name: /^add hr$/i }));
 
     expect(api.createMyHrManager).not.toHaveBeenCalled();
@@ -313,7 +331,7 @@ describe('CompanyAdminConsole - creating an HR manager', () => {
     const user = userEvent.setup();
     renderConsole();
 
-    await screen.findByRole('heading', { name: /super admin/i });
+    await screen.findByRole('heading', { name: /^team$/i });
     await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
     await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'dupe@acme.edu');
     await user.type(screen.getByLabelText(/full name/i, { selector: '#hr-name' }), 'Dupe');
@@ -322,7 +340,9 @@ describe('CompanyAdminConsole - creating an HR manager', () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Email already registered'));
     // The dialog stays open with the values and the reason, so nothing is lost.
     expect(await screen.findByRole('alert')).toHaveTextContent('Email already registered');
-    expect(screen.getByLabelText(/^email$/i, { selector: '#hr-email' })).toHaveValue('dupe@acme.edu');
+    expect(screen.getByLabelText(/^email$/i, { selector: '#hr-email' })).toHaveValue(
+      'dupe@acme.edu',
+    );
   });
 });
 
@@ -336,9 +356,10 @@ describe('CompanyAdminConsole - removing an HR manager', () => {
     expect(api.deleteMyHrManager).not.toHaveBeenCalled();
 
     await user.click(
-      within(screen.getByRole('group', { name: 'Confirm: Remove' })).getByRole('button', {
-        name: 'Remove',
-      }),
+      within(screen.getByRole('group', { name: 'Permanently remove Chetan Iyer' })).getByRole(
+        'button',
+        { name: 'Remove' },
+      ),
     );
     await waitFor(() => expect(api.deleteMyHrManager).toHaveBeenCalledWith('u-hr-2'));
   });
@@ -368,8 +389,14 @@ describe('CompanyAdminConsole - interviewers (D4-1)', () => {
 
     await screen.findByText('Farah Khan');
     await user.click(screen.getByRole('button', { name: /^new interviewer$/i }));
-    await user.type(screen.getByLabelText(/^email$/i, { selector: '#interviewer-email' }), 'new.iv@acme.edu');
-    await user.type(screen.getByLabelText(/full name/i, { selector: '#interviewer-name' }), 'New Interviewer');
+    await user.type(
+      screen.getByLabelText(/^email$/i, { selector: '#interviewer-email' }),
+      'new.iv@acme.edu',
+    );
+    await user.type(
+      screen.getByLabelText(/full name/i, { selector: '#interviewer-name' }),
+      'New Interviewer',
+    );
     await user.click(screen.getByRole('button', { name: /^add interviewer$/i }));
 
     await waitFor(() =>
@@ -385,7 +412,9 @@ describe('CompanyAdminConsole - interviewers (D4-1)', () => {
     renderConsole();
     await screen.findByText('Farah Khan');
     expect(
-      screen.getByText(/removing an interviewer also withdraws their unsubmitted interview assignments/i),
+      screen.getByText(
+        /removing an interviewer is permanent and also withdraws their unsubmitted interview assignments/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -398,9 +427,10 @@ describe('CompanyAdminConsole - interviewers (D4-1)', () => {
     expect(api.deleteMyInterviewer).not.toHaveBeenCalled();
 
     await user.click(
-      within(screen.getByRole('group', { name: 'Confirm: Remove' })).getByRole('button', {
-        name: 'Remove',
-      }),
+      within(screen.getByRole('group', { name: 'Permanently remove Farah Khan' })).getByRole(
+        'button',
+        { name: 'Remove' },
+      ),
     );
     await waitFor(() => expect(api.deleteMyInterviewer).toHaveBeenCalledWith('u-iv-1'));
   });
@@ -427,14 +457,14 @@ describe('CompanyAdminConsole - a wrong-role user sees nothing', () => {
     // not a shared /dashboard fallback their scoped nav does not link to. For
     // a candidate that home genuinely is /dashboard.
     expect(await screen.findByText(landing)).toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: /super admin/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /^team$/i })).not.toBeInTheDocument();
     expect(api.listMyHrManagers).not.toHaveBeenCalled();
   });
 
   it('lets a super_admin through to the console', async () => {
     renderGuarded(['super_admin']);
 
-    expect(await screen.findByRole('heading', { name: /super admin/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /^team$/i })).toBeInTheDocument();
     await waitFor(() => expect(api.listMyHrManagers).toHaveBeenCalled());
   });
 });
@@ -481,7 +511,9 @@ describe('CompanyAdminConsole - waiting on you', () => {
     renderConsole();
 
     const group = await screen.findByTestId('waiting-on-you');
-    expect(await within(group).findByRole('alert')).toHaveTextContent(/could not load the approval queues/i);
+    expect(await within(group).findByRole('alert')).toHaveTextContent(
+      /could not load the approval queues/i,
+    );
     expect(within(group).queryByRole('link')).not.toBeInTheDocument();
   });
 
@@ -490,5 +522,118 @@ describe('CompanyAdminConsole - waiting on you', () => {
     const group = await screen.findByTestId('waiting-on-you');
     const roster = await screen.findByRole('list', { name: /^hr managers$/i });
     expect(group.compareDocumentPosition(roster) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit fixes AD-F6, AD-F7, AD-F8, AD-F23
+// ---------------------------------------------------------------------------
+
+describe('CompanyAdminConsole - a failed roster is an error, not an empty team (AD-F6)', () => {
+  it('shows an error with a retry instead of "No HR managers yet"', async () => {
+    api.listMyHrManagers.mockRejectedValue(new Error('503'));
+    const user = userEvent.setup();
+    renderConsole();
+
+    expect(await screen.findByText('Could not load HR managers.')).toBeInTheDocument();
+    expect(screen.queryByText(/no hr managers yet/i)).not.toBeInTheDocument();
+
+    api.listMyHrManagers.mockResolvedValue(HRS);
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Bhavya Nair')).toBeInTheDocument();
+  });
+
+  it('does the same for interviewers', async () => {
+    api.listMyInterviewers.mockRejectedValue(new Error('503'));
+    renderConsole();
+    expect(await screen.findByText('Could not load interviewers.')).toBeInTheDocument();
+    expect(screen.queryByText(/no interviewers yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('CompanyAdminConsole - removing an HR manager is described honestly (AD-F7)', () => {
+  it('warns that it is permanent and withdraws their interview assignments', async () => {
+    renderConsole();
+    await screen.findByText('Bhavya Nair');
+    expect(
+      screen.getByText(
+        /removing an hr manager is permanent and also withdraws their unsubmitted interview assignments/i,
+      ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('CompanyAdminConsole - the set-password email (AD-F8)', () => {
+  async function createHr(user: ReturnType<typeof userEvent.setup>) {
+    await screen.findByRole('heading', { name: /^team$/i });
+    await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
+    await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'n@acme.edu');
+    await user.type(screen.getByLabelText(/full name/i, { selector: '#hr-name' }), 'N');
+    await user.click(screen.getByRole('button', { name: /^add hr$/i }));
+  }
+
+  it('warns instead of claiming the email went when it was not queued', async () => {
+    api.createMyHrManager.mockResolvedValue({ ...HRS[1], email_queued: false });
+    const user = userEvent.setup();
+    renderConsole();
+    await createHr(user);
+
+    await waitFor(() => expect(toastWarning).toHaveBeenCalled());
+    expect(String(toastWarning.mock.calls[0]?.[0])).toMatch(/could not be sent/i);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it('confirms the email only when the server queued it', async () => {
+    api.createMyHrManager.mockResolvedValue({ ...HRS[1], email_queued: true });
+    const user = userEvent.setup();
+    renderConsole();
+    await createHr(user);
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(toastWarning).not.toHaveBeenCalled();
+  });
+
+  it('offers Resend link only on accounts still pending first login', async () => {
+    const user = userEvent.setup();
+    renderConsole();
+    const list = await screen.findByRole('list', { name: /^hr managers$/i });
+
+    // Chetan is pending; Bhavya is active and has no resend.
+    expect(
+      within(list).queryByRole('button', { name: /resend the set-password link to bhavya nair/i }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      within(list).getByRole('button', { name: /resend the set-password link to chetan iyer/i }),
+    );
+    await waitFor(() => expect(api.resendMyHrManagerInvite).toHaveBeenCalledWith('u-hr-2'));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+  });
+
+  it('says so when a resend could not be sent', async () => {
+    api.resendMyHrManagerInvite.mockResolvedValue({ email_queued: false });
+    const user = userEvent.setup();
+    renderConsole();
+    const list = await screen.findByRole('list', { name: /^hr managers$/i });
+    await user.click(
+      within(list).getByRole('button', { name: /resend the set-password link to chetan iyer/i }),
+    );
+    await waitFor(() => expect(toastWarning).toHaveBeenCalled());
+  });
+});
+
+describe('CompanyAdminConsole - one name for the page and one status label (AD-F23)', () => {
+  it('is titled Team, like its nav entry, and says it covers interviewers too', async () => {
+    renderConsole();
+    expect(await screen.findByTestId('page-title')).toHaveTextContent('Team');
+    expect(
+      await screen.findByText(/hr managers and interviewers for acme skills university/i),
+    ).toBeInTheDocument();
+  });
+
+  it('uses the same pending label on rows and in the summary', async () => {
+    renderConsole();
+    await screen.findByText('Chetan Iyer');
+    expect(screen.getAllByText('Pending first login').length).toBeGreaterThan(1);
+    expect(screen.queryByText(/awaiting first login/i)).not.toBeInTheDocument();
   });
 });

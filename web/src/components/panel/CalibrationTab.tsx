@@ -30,6 +30,7 @@ import {
 } from '@/api/workflows';
 import { Loader2 } from '@/design/components/icons';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
+import { QueryErrorPanel } from '@/components/QueryState';
 import CalibrationInfoDialog from './CalibrationInfoDialog';
 import CalibrationJudgementsDialog from './CalibrationJudgementsDialog';
 
@@ -48,12 +49,15 @@ function periodRange(days: Period): { start: string; end: string } {
   return { start: start.toISOString(), end: end.toISOString() };
 }
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+/** Every calibration figure is printed to one decimal place, the same as the
+ *  sentences beside it (IV-L13): the table used to show 3 decimals, the gap 2
+ *  and the sentences 1, so one number appeared three ways on one card. */
+function oneDp(n: number | null | undefined): string {
+  return n === null || n === undefined ? '-' : n.toFixed(1);
 }
 
 function signed(n: number): string {
-  return `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
+  return `${n > 0 ? '+' : ''}${n.toFixed(1)}`;
 }
 
 /** The overall paired-gap sentence (PH5-E4 §4.3 wording) — every number in
@@ -221,10 +225,10 @@ function CriteriaTable({
                         ))}
                       </div>
                     </td>
-                    <td className="py-2 pr-3 text-foreground">{c.mean ?? '-'}</td>
+                    <td className="py-2 pr-3 text-foreground">{oneDp(c.mean)}</td>
                     <td className="py-2 pr-3">
                       <div className="flex flex-wrap items-center gap-1.5">
-                        <span className="text-foreground">{c.disagreement ?? '-'}</span>
+                        <span className="text-foreground">{oneDp(c.disagreement)}</span>
                         {c.signal === 'wide_disagreement' ? (
                           <StatusTag tone="amber">wide disagreement</StatusTag>
                         ) : null}
@@ -296,7 +300,7 @@ function CalibrationRowCard({
         </div>
         <div>
           <dt className="text-muted-foreground">Average of everything scored</dt>
-          <dd className="text-foreground">{row.mean ?? '-'}</dd>
+          <dd className="text-foreground">{oneDp(row.mean)}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Shared judgements</dt>
@@ -310,7 +314,8 @@ function CalibrationRowCard({
         </div>
       </dl>
 
-      {row.same_direction_share !== null ? (
+      {/* Only when the flag sentence above does not already say it. */}
+      {row.same_direction_share !== null && !sentence ? (
         <p className="mt-2 text-[12px] text-muted-foreground">
           Same direction in {Math.round(row.same_direction_share * 100)}% of shared judgements.
         </p>
@@ -487,6 +492,20 @@ export default function CalibrationTab(): JSX.Element {
               </option>
             ))}
           </select>
+          {openings.isError ? (
+            // Without this a failed list reads as "you have no openings"
+            // (IV-L10); "All openings" still works.
+            <p className="mt-1 text-[12px] text-[var(--ui-danger)]" role="alert">
+              Could not load openings.{' '}
+              <button
+                type="button"
+                onClick={() => void openings.refetch()}
+                className="underline hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              >
+                Try again
+              </button>
+            </p>
+          ) : null}
         </div>
         <div>
           <label
@@ -523,10 +542,14 @@ export default function CalibrationTab(): JSX.Element {
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Loading…
         </div>
-      ) : calibration.isError ? (
-        <p className="mt-4 text-[13px] text-[var(--ui-danger)]">
-          {errText(calibration.error, 'Could not load calibration')}
-        </p>
+      ) : calibration.isError && !calibration.data ? (
+        <QueryErrorPanel
+          className="mt-4"
+          title="Could not load calibration."
+          error={calibration.error}
+          onRetry={() => void calibration.refetch()}
+          retrying={calibration.isFetching}
+        />
       ) : (data?.interviewers.length ?? 0) === 0 ? (
         <p className="mt-4 text-[13px] text-muted-foreground">
           No submitted scorecards to compare in this period.

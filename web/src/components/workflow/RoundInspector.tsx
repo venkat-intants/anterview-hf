@@ -28,6 +28,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
 import { cn } from '@/lib/utils';
 import { listExams, getStructure } from '@/api/exams';
 import { getRoundKit, updateRoundKit } from '@/api/scorecards';
@@ -44,6 +45,7 @@ import { ROUND_KIND_META, ROUND_KIND_ORDER } from './roundKinds';
 import RoundRouting from './RoundRouting';
 import StageSettings from './StageSettings';
 import TaskEditor from './TaskEditor';
+import { NumberField } from './NumberField';
 
 // The panel sits beside the canvas, so — like the candidate drawer — each group
 // is a titled block divided from the last by a hairline. Native <select> and
@@ -74,6 +76,8 @@ interface Props {
   returnTo?: string;
   onPatch: (fields: RoundPatch) => void;
   onCriteria: (criteria: CriterionInput[]) => void;
+  /** Bumped by the builder when a save fails, so number fields drop a refused value. */
+  resetKey?: number;
 }
 
 /* ── Exam picker ─────────────────────────────────────────────────────────────
@@ -551,7 +555,7 @@ function KitEditor({
       void qc.invalidateQueries({ queryKey: ['hr', 'round-kit', roundId] });
     },
     onError: (e) =>
-      toast.error(e instanceof Error ? e.message : 'Could not save the interview kit'),
+      toast.error(errorMessage(e, 'Could not save the interview kit.')),
   });
 
   if (kit.isLoading) {
@@ -679,6 +683,7 @@ export default function RoundInspector({
   returnTo,
   onPatch,
   onCriteria,
+  resetKey,
 }: Props): JSX.Element {
   const meta = ROUND_KIND_META[round.kind];
   const Icon = meta.icon;
@@ -755,36 +760,37 @@ export default function RoundInspector({
             <label htmlFor="deadline" className={cn(LABEL, 'mb-1.5 block')}>
               Days to complete
             </label>
-            <Input
+            {/* HR-H2: saved on blur or Enter, after a range check, not per keystroke. */}
+            <NumberField
               id="deadline"
-              type="number"
               min={1}
               max={365}
               disabled={!editable}
               value={round.deadline_days}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                if (n >= 1 && n <= 365) onPatch({ deadline_days: n });
+              onCommit={(n) => {
+                if (n !== null) onPatch({ deadline_days: n });
               }}
+              resetKey={resetKey}
             />
           </div>
           <div>
             <label htmlFor="timelimit" className={cn(LABEL, 'mb-1.5 block')}>
               Time limit (min)
             </label>
-            <Input
+            {/* Empty means no limit. The server caps a round at 24 hours. */}
+            <NumberField
               id="timelimit"
-              type="number"
               min={1}
+              max={1440}
+              allowEmpty
               placeholder="none"
               disabled={!editable}
               value={
-                round.time_limit_seconds === null ? '' : Math.round(round.time_limit_seconds / 60)
+                round.time_limit_seconds === null ? null : Math.round(round.time_limit_seconds / 60)
               }
-              onChange={(e) => {
-                const v = e.target.value.trim();
-                onPatch({ time_limit_seconds: v === '' ? null : Number(v) * 60 });
-              }}
+              rangeMessage="Enter whole minutes from 1 to 1440, or leave it empty for no limit."
+              onCommit={(n) => onPatch({ time_limit_seconds: n === null ? null : n * 60 })}
+              resetKey={resetKey}
             />
           </div>
         </div>
@@ -914,18 +920,17 @@ export default function RoundInspector({
               Advance at or above
             </label>
             <div className="flex items-center gap-2">
-              <Input
+              <NumberField
                 id="threshold"
-                type="number"
                 min={0}
                 max={100}
+                decimal
+                allowEmpty
                 disabled={!editable}
-                value={round.pass_threshold ?? ''}
+                value={round.pass_threshold}
                 placeholder="required"
-                onChange={(e) => {
-                  const v = e.target.value.trim();
-                  onPatch({ pass_threshold: v === '' ? null : Number(v) });
-                }}
+                onCommit={(n) => onPatch({ pass_threshold: n })}
+                resetKey={resetKey}
                 className="w-28"
               />
               <span className="text-[14px] text-muted-foreground">%</span>

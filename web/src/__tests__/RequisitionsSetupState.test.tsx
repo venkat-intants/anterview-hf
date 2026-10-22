@@ -81,7 +81,7 @@ describe('the openings list shows real setup state', () => {
 
     expect(within(row('Waiting Role')).getByTestId('opening-approval').textContent).toBe('Awaiting approval');
     expect(within(row('Waiting Role')).getByText('not live · not approved yet')).toBeTruthy();
-    expect(within(row('Sent Back Role')).getByTestId('opening-approval').textContent).toBe('Changes requested');
+    expect(within(row('Sent Back Role')).getByTestId('opening-approval').textContent).toBe('Sent back');
     expect(within(row('Fresh Role')).getByTestId('opening-approval').textContent).toBe('Not submitted');
 
     // a paused opening is not "live", whatever its switch says, and is not

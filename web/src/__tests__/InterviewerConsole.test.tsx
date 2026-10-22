@@ -147,11 +147,19 @@ describe('InterviewerConsole - listing assignments', () => {
     expect(await screen.findByText('Nothing assigned yet')).toBeInTheDocument();
   });
 
-  it('surfaces a load failure rather than an empty state', async () => {
+  it('surfaces a load failure rather than an empty state, with a retry', async () => {
     listAssignments.mockRejectedValue(new Error('Could not reach the server'));
     renderConsole();
 
-    expect(await screen.findByText('Could not reach the server')).toBeInTheDocument();
+    expect(await screen.findByText('Could not load your interviews.')).toBeInTheDocument();
+    expect(screen.getByText('Could not reach the server')).toBeInTheDocument();
+    expect(screen.queryByText('Nothing assigned yet')).not.toBeInTheDocument();
+  });
+
+  it('gives the assignments list its own heading (AD-F30)', async () => {
+    listAssignments.mockResolvedValue([ASSIGNED]);
+    renderConsole();
+    expect(await screen.findByRole('heading', { name: 'Scorecards to write' })).toBeInTheDocument();
   });
 
   it('shows a loading state before the assignments arrive', () => {
@@ -178,7 +186,9 @@ describe('InterviewerConsole - page copy', () => {
     renderConsole();
 
     const heading = await screen.findByRole('heading', { name: /my interviews/i });
-    expect(within(heading.parentElement as HTMLElement).getByText(/nothing here decides an outcome/i)).toBeInTheDocument();
+    expect(
+      within(heading.parentElement as HTMLElement).getByText(/nothing here decides an outcome/i),
+    ).toBeInTheDocument();
   });
 });
 
@@ -227,11 +237,22 @@ describe('InterviewerConsole - upcoming interviews', () => {
     expect(await screen.findByText('Nothing scheduled right now.')).toBeInTheDocument();
   });
 
-  it('surfaces a load failure for the sessions list', async () => {
+  it('surfaces a load failure for the sessions list as an alert', async () => {
     schedulingApi.getMySessions.mockRejectedValue(new Error('Could not reach the server'));
     renderConsole();
 
-    expect(await screen.findByText('Could not reach the server')).toBeInTheDocument();
+    const title = await screen.findByText('Could not load your interview sessions.');
+    expect(title.closest('[role="alert"]')).not.toBeNull();
+  });
+
+  it('labels past sessions honestly, with readable statuses (AD-F30)', async () => {
+    schedulingApi.getMySessions.mockResolvedValue([{ ...SESSION, status: 'no_show' }]);
+    renderConsole();
+
+    expect(
+      await screen.findByRole('heading', { name: 'Your interview sessions' }),
+    ).toBeInTheDocument();
+    expect(await screen.findByText('No show')).toBeInTheDocument();
   });
 });
 
@@ -256,13 +277,67 @@ describe('InterviewerConsole - my availability', () => {
     expect(toastSuccess).toHaveBeenCalled();
   });
 
-  it('removes a window on request', async () => {
+  it('deletes a window only after a confirm, naming the window (AD-F33, B3)', async () => {
     schedulingApi.getMyAvailability.mockResolvedValue([WINDOW]);
     schedulingApi.removeMyAvailability.mockResolvedValue(undefined);
     const user = userEvent.setup();
     renderConsole();
 
-    await user.click(await screen.findByRole('button', { name: 'Remove this window' }));
+    // The label carries the window's own dates, not a generic "this window".
+    await user.click(await screen.findByRole('button', { name: /^Delete the window .+ to .+/ }));
+    expect(schedulingApi.removeMyAvailability).not.toHaveBeenCalled();
+    const group = screen.getByRole('group', { name: /^Delete the window/ });
+    await user.click(within(group).getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(schedulingApi.removeMyAvailability).toHaveBeenCalledWith('win-1'));
+  });
+
+  it('asks the server for every window it can show, not just four weeks (AD-F11)', async () => {
+    schedulingApi.getMyAvailability.mockResolvedValue([]);
+    renderConsole();
+
+    await waitFor(() => expect(schedulingApi.getMyAvailability).toHaveBeenCalled());
+    const arg = schedulingApi.getMyAvailability.mock.calls[0]?.[0] as {
+      start: string;
+      end: string;
+    };
+    const days = (Date.parse(arg.end) - Date.parse(arg.start)) / 86_400_000;
+    expect(Math.round(days)).toBe(92);
+    expect(screen.getByText(/at most 14 days/)).toBeInTheDocument();
+  });
+
+  it('refuses a window longer than 14 days before sending it (AD-F11)', async () => {
+    schedulingApi.getMyAvailability.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderConsole();
+    await screen.findByText('No windows set yet.');
+
+    const start = new Date(Date.now() + 2 * 86_400_000);
+    const end = new Date(start.getTime() + 20 * 86_400_000);
+    const local = (d: Date) => {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T10:00`;
+    };
+    await user.type(screen.getByLabelText('From'), local(start));
+    await user.type(screen.getByLabelText('To'), local(end));
+
+    expect(await screen.findByText(/A window can be at most 14 days/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add window' })).toBeDisabled();
+    expect(schedulingApi.addMyAvailability).not.toHaveBeenCalled();
+  });
+
+  it('refuses a window further out than the list can show (AD-F11)', async () => {
+    schedulingApi.getMyAvailability.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderConsole();
+    await screen.findByText('No windows set yet.');
+
+    const start = new Date(Date.now() + 120 * 86_400_000);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const day = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-${pad(start.getDate())}`;
+    await user.type(screen.getByLabelText('From'), `${day}T10:00`);
+    await user.type(screen.getByLabelText('To'), `${day}T16:00`);
+
+    expect(await screen.findByText(/up to 92 days ahead/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add window' })).toBeDisabled();
   });
 });

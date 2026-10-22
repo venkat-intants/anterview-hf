@@ -44,9 +44,8 @@ const SAMPLE_ID = '11111111-1111-4111-8111-111111111111';
 
 /** A citation template ('/hr/library/{id}') as a concrete URL path. */
 function urlFor(template: string): string {
-  // `{id}` can appear twice — /hr/enrolments/{id}/evidence?decision={id} — so
-  // the replacement is global. (Not `replaceAll`: this project's TS lib target
-  // does not declare it.)
+  // Global, in case a template ever names `{id}` twice. (Not `replaceAll`:
+  // this project's TS lib target does not declare it.)
   const filled = template.replace(/\{id\}/g, SAMPLE_ID);
   // matchRoutes parses a string location itself, but stripping the query and
   // hash here keeps the failure message about the path that was matched.

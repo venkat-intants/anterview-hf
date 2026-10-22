@@ -63,3 +63,22 @@ async def create_notification(
         .returning(Notification.id)
     )
     return (await db.execute(stmt)).first() is not None
+
+
+async def company_super_admin_ids(db: AsyncSession, *, company_id: uuid.UUID) -> list[uuid.UUID]:
+    """Every live super admin of ``company_id``: who gets told when something
+    waits for their approval or review. The company comes from the caller's
+    session, never from a request argument."""
+    return list(
+        (
+            await db.execute(
+                text(
+                    "SELECT u.id FROM users u"
+                    "  JOIN user_roles ur ON ur.user_id = u.id"
+                    "  JOIN roles r ON r.id = ur.role_id AND r.name = 'super_admin'"
+                    " WHERE u.company_id = :c AND u.deleted_at IS NULL"
+                ),
+                {"c": company_id},
+            )
+        ).scalars().all()
+    )

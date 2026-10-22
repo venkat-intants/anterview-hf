@@ -16,10 +16,13 @@ import {
   type TemplateInput,
 } from '@/api/offers';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { GlassCard } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Page, PageHeader, Toolbar } from '@/design/components/page';
-import { Loader2 } from '@/design/components/icons';
 
 const inputCls =
   'mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
@@ -28,10 +31,6 @@ const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ['full_time', 'part_time', 'contract', 'internship'];
 const PAY_PERIODS: PayPeriod[] = ['annual', 'monthly', 'hourly'];
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 interface FormState {
   name: string;
@@ -45,17 +44,45 @@ interface FormState {
   valid_days: string;
 }
 
+/** A new template starts from the values the server would give it anyway
+ *  (the columns' defaults), so employment type, pay period, currency and the
+ *  offer window always hold a value: none of them can be "unset". */
 const EMPTY: FormState = {
   name: '',
-  employment_type: '',
-  currency: '',
-  pay_period: '',
+  employment_type: 'full_time',
+  currency: 'INR',
+  pay_period: 'annual',
   probation_months: '',
   notice_period_days: '',
   benefits: '',
   terms: '',
-  valid_days: '',
+  valid_days: '7',
 };
+
+/** The server's limits (TemplateIn and clean_fields), mirrored so a person is
+ *  told before saving rather than by a refusal after it. */
+const LIMITS = { name: 120, benefits: 4000, terms: 20000 } as const;
+
+function wholeIn(value: string, min: number, max: number): boolean {
+  if (!/^\d+$/.test(value.trim())) return false;
+  const n = Number(value);
+  return n >= min && n <= max;
+}
+
+/** The first thing wrong with the form, in words, or null when it can be saved. */
+function templateProblem(f: FormState): string | null {
+  if (!f.name.trim()) return 'Give the template a name.';
+  if (!/^[A-Za-z]{3}$/.test(f.currency.trim()))
+    return 'Currency is a three-letter code, such as INR.';
+  if (!wholeIn(f.valid_days, 1, 60)) return 'An offer stays open for 1 to 60 days.';
+  if (f.probation_months.trim() !== '' && !wholeIn(f.probation_months, 0, 24)) {
+    return 'Probation is 0 to 24 months, or leave it empty.';
+  }
+  if (f.notice_period_days.trim() !== '' && !wholeIn(f.notice_period_days, 0, 365)) {
+    return 'The notice period is 0 to 365 days, or leave it empty.';
+  }
+  return null;
+}
 
 /** Accepts either a saved OfferTemplate (fields are `T | null`) or a
  *  TemplateInput (fields are `T | undefined`) — the fallbacks below treat
@@ -86,17 +113,22 @@ function toInput(t: TemplateLike): FormState {
   };
 }
 
+/**
+ * The request body. A cleared optional field is sent as null, never left out:
+ * the server updates only the fields it is given, so an omitted one kept its
+ * old value while the page said "Template updated" (audit OF-F3 / M9).
+ */
 function toBody(f: FormState): TemplateInput {
   return {
-    name: f.name.trim() || undefined,
-    employment_type: (f.employment_type || undefined) as EmploymentType | undefined,
-    currency: f.currency.trim() || undefined,
-    pay_period: (f.pay_period || undefined) as PayPeriod | undefined,
-    probation_months: f.probation_months === '' ? undefined : Number(f.probation_months),
-    notice_period_days: f.notice_period_days === '' ? undefined : Number(f.notice_period_days),
-    benefits: f.benefits.trim() || undefined,
-    terms: f.terms.trim() || undefined,
-    valid_days: f.valid_days === '' ? undefined : Number(f.valid_days),
+    name: f.name.trim(),
+    employment_type: f.employment_type as EmploymentType,
+    currency: f.currency.trim().toUpperCase(),
+    pay_period: f.pay_period as PayPeriod,
+    probation_months: f.probation_months.trim() === '' ? null : Number(f.probation_months),
+    notice_period_days: f.notice_period_days.trim() === '' ? null : Number(f.notice_period_days),
+    benefits: f.benefits.trim() || null,
+    terms: f.terms.trim() || null,
+    valid_days: Number(f.valid_days),
   };
 }
 
@@ -115,6 +147,10 @@ function TemplateForm({
   const [form, setForm] = useState(initial);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+  const problem = templateProblem(form);
+  // Say what is wrong only once there is something typed; an untouched new
+  // form simply has its button disabled.
+  const showProblem = problem !== null && form.name.trim() !== '';
 
   return (
     <div className="flex flex-col gap-2.5">
@@ -124,6 +160,7 @@ function TemplateForm({
         </label>
         <input
           id={`${uid}-name`}
+          maxLength={LIMITS.name}
           value={form.name}
           onChange={(e) => set('name', e.target.value)}
           className={inputCls}
@@ -140,7 +177,6 @@ function TemplateForm({
             onChange={(e) => set('employment_type', e.target.value)}
             className={inputCls}
           >
-            <option value="">-</option>
             {EMPLOYMENT_TYPES.map((t) => (
               <option key={t} value={t}>
                 {t.replace('_', ' ')}
@@ -158,7 +194,6 @@ function TemplateForm({
             onChange={(e) => set('pay_period', e.target.value)}
             className={inputCls}
           >
-            <option value="">-</option>
             {PAY_PERIODS.map((p) => (
               <option key={p} value={p}>
                 {p}
@@ -187,6 +222,8 @@ function TemplateForm({
             type="number"
             min={1}
             max={60}
+            step={1}
+            required
             value={form.valid_days}
             onChange={(e) => set('valid_days', e.target.value)}
             className={inputCls}
@@ -201,6 +238,7 @@ function TemplateForm({
             type="number"
             min={0}
             max={24}
+            step={1}
             value={form.probation_months}
             onChange={(e) => set('probation_months', e.target.value)}
             className={inputCls}
@@ -215,6 +253,7 @@ function TemplateForm({
             type="number"
             min={0}
             max={365}
+            step={1}
             value={form.notice_period_days}
             onChange={(e) => set('notice_period_days', e.target.value)}
             className={inputCls}
@@ -228,6 +267,7 @@ function TemplateForm({
         <textarea
           id={`${uid}-benefits`}
           rows={2}
+          maxLength={LIMITS.benefits}
           value={form.benefits}
           onChange={(e) => set('benefits', e.target.value)}
           className={inputCls}
@@ -240,14 +280,21 @@ function TemplateForm({
         <textarea
           id={`${uid}-terms`}
           rows={3}
+          maxLength={LIMITS.terms}
           value={form.terms}
           onChange={(e) => set('terms', e.target.value)}
           className={inputCls}
         />
       </div>
+      {showProblem ? (
+        <p id={`${uid}-problem`} className="text-[12.5px] text-[var(--ui-warn)]">
+          {problem}
+        </p>
+      ) : null}
       <button
         type="button"
-        disabled={!form.name.trim() || saving}
+        disabled={problem !== null || saving}
+        aria-describedby={showProblem ? `${uid}-problem` : undefined}
         onClick={() => onSave(toBody(form))}
         className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
       >
@@ -260,7 +307,7 @@ function TemplateForm({
 function TemplateRow({ template }: { template: OfferTemplate }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
-  const invalidate = () => qc.invalidateQueries({ queryKey: ['hr', 'offer-templates'] });
+  const invalidate = () => invalidateAfterHrMutation(qc);
 
   const saveMut = useMutation({
     mutationFn: (body: TemplateInput) => updateOfferTemplate(template.id, body),
@@ -269,7 +316,7 @@ function TemplateRow({ template }: { template: OfferTemplate }) {
       setEditing(false);
       void invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not update this template')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not update this template.')),
   });
 
   const deleteMut = useMutation({
@@ -278,7 +325,7 @@ function TemplateRow({ template }: { template: OfferTemplate }) {
       toast.success('Template deleted');
       void invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not delete this template')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not delete this template.')),
   });
 
   return (
@@ -289,6 +336,8 @@ function TemplateRow({ template }: { template: OfferTemplate }) {
           <button
             type="button"
             onClick={() => setEditing((v) => !v)}
+            aria-label={`${editing ? 'Close' : 'Edit'} ${template.name}`}
+            aria-expanded={editing}
             className="min-h-[40px] rounded-full px-3 text-[13px] font-medium text-[var(--ui-info)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             {editing ? 'Close' : 'Edit'}
@@ -338,9 +387,9 @@ export default function OfferTemplates() {
     onSuccess: () => {
       toast.success('Template created');
       setCreating(false);
-      void qc.invalidateQueries({ queryKey: ['hr', 'offer-templates'] });
+      void invalidateAfterHrMutation(qc);
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not create this template')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not create this template.')),
   });
 
   const needle = search.trim().toLowerCase();
@@ -382,25 +431,29 @@ export default function OfferTemplates() {
       </Toolbar>
 
       {creating ? (
-          <GlassCard className="p-4">
-            <TemplateForm
-              initial={EMPTY}
-              onSave={(body) => createMut.mutate(body)}
-              saving={createMut.isPending}
-              submitLabel="Create template"
-            />
-          </GlassCard>
+        <GlassCard className="p-4">
+          <TemplateForm
+            initial={EMPTY}
+            onSave={(body) => createMut.mutate(body)}
+            saving={createMut.isPending}
+            submitLabel="Create template"
+          />
+        </GlassCard>
       ) : null}
 
       {list.isLoading ? (
-        <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          Loading…
-        </p>
+        <div className="flex flex-col gap-3" role="status" aria-label="Loading templates">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-[72px] w-full rounded-card" />
+          ))}
+        </div>
       ) : list.isError ? (
-        <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
-          Could not load templates.
-        </p>
+        <QueryErrorPanel
+          title="Could not load templates."
+          error={list.error}
+          onRetry={() => void list.refetch()}
+          retrying={list.isFetching}
+        />
       ) : rows.length === 0 ? (
         <p className="text-[13px] text-muted-foreground">
           {list.data && list.data.length > 0 ? 'No templates match.' : 'No templates yet.'}

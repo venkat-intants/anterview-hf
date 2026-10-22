@@ -378,10 +378,12 @@ export function DecisionPanel({
       // Pinned only where there is room for it: on a phone, or a short window,
       // a ~180px panel would cover a quarter to a half of the evidence being
       // read. Elsewhere it stays in the flow, after the last row, so nothing
-      // above it can ever be hidden behind it.
+      // above it can ever be hidden behind it. When pinned it sits above the
+      // floating "Ask assistant" button (bottom-right, up to 72px tall), so
+      // "Send back" is never underneath it (audit AD-F29).
       className={cn(
         sticky &&
-          'sm:[@media(min-height:720px)]:sticky sm:[@media(min-height:720px)]:bottom-4 z-10 shadow-elevated',
+          'sm:[@media(min-height:720px)]:sticky sm:[@media(min-height:720px)]:bottom-20 z-10 shadow-elevated',
       )}
     >
       {mode === null ? (

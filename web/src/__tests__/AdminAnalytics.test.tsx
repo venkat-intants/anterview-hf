@@ -119,8 +119,11 @@ describe('AdminAnalytics', () => {
     getByRole.mockRejectedValue(new Error('analytics warehouse unavailable'));
     renderPage();
 
+    // Both by-role cards say so in place; the raw API text is not echoed in a
+    // second toast (consistency C1).
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith('analytics warehouse unavailable'),
+      expect(screen.getAllByText('Could not load this chart.').length).toBe(2),
     );
+    expect(toastError).not.toHaveBeenCalled();
   });
 });

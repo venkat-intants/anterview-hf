@@ -213,6 +213,13 @@ describe('DecisionQueue - the list', () => {
     expect(screen.getByText('Scores rank and explain. They never decide.')).toBeTruthy();
   });
 
+  it('labels the held pill in words, not the raw status value (audit HR-L5)', async () => {
+    renderQueue();
+    await ready('Asha Rao');
+    expect(within(panel()).getByText('Held')).toBeTruthy();
+    expect(within(panel()).queryByText('held')).toBeNull();
+  });
+
   it('selecting another person swaps the panel, marks them current and updates the position', async () => {
     renderQueue();
     await ready('Asha Rao');
@@ -501,6 +508,22 @@ describe('DecisionQueue - step 3, reason and confirm', () => {
       reason: 'Strong across all three rounds',
       reason_code: 'strong-fit',
     });
+  });
+
+  it('refreshes the attention panel and the rest of the console after a decision (HR-L12)', async () => {
+    const spy = vi.spyOn(QueryClient.prototype, 'invalidateQueries');
+    try {
+      const p = await reachConfirm('Bhavya Nair', /^Hire/);
+      await userEvent.selectOptions(p.getByLabelText('Reason'), 'strong-fit');
+      await userEvent.type(p.getByLabelText(/Why/), 'Strong across all three rounds');
+      await userEvent.click(p.getByText('Confirm'));
+
+      await waitFor(() => expect(recordFinalDecision).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ['hr-attention'] }));
+      expect(spy).toHaveBeenCalledWith({ queryKey: ['hr'] });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('only offers reasons that apply to the decision in progress', async () => {

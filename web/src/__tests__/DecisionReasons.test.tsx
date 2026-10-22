@@ -81,8 +81,8 @@ describe('DecisionReasons - listing', () => {
   it('shows active and retired distinctly', async () => {
     renderPage();
     await screen.findByText('Strong fit');
-    expect(screen.getByText('active')).toBeInTheDocument();
-    expect(screen.getByText('retired')).toBeInTheDocument();
+    expect(screen.getByText('Active')).toBeInTheDocument();
+    expect(screen.getByText('Retired')).toBeInTheDocument();
   });
 
   it('prompts rather than an empty box when there are none yet', async () => {
@@ -120,7 +120,29 @@ describe('DecisionReasons - creating a reason', () => {
     await user.click(screen.getByRole('button', { name: /^add$/i }));
 
     expect(api.createDecisionReason).not.toHaveBeenCalled();
-    expect(toastError).toHaveBeenCalledWith('A label is required.');
+    expect(screen.getByText('A label needs at least 2 characters.')).toBeInTheDocument();
+  });
+
+  it('refuses a one-character label instead of failing with a 422 (AD-F20)', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByText('Strong fit');
+    await user.type(screen.getByLabelText('Label'), 'x');
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    expect(api.createDecisionReason).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Label')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('A label needs at least 2 characters.')).toBeInTheDocument();
+  });
+
+  it('shows a failed load as an error with a retry, not an empty list', async () => {
+    api.listCompanyDecisionReasons.mockRejectedValue(new Error('Could not reach the server'));
+    renderPage();
+
+    expect(await screen.findByText('Could not load the decision reasons.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.queryByText(/no reasons yet/i)).not.toBeInTheDocument();
   });
 });
 
@@ -135,6 +157,8 @@ describe('DecisionReasons - retiring and reactivating', () => {
     await waitFor(() =>
       expect(api.updateDecisionReason).toHaveBeenCalledWith('strong-fit', { active: false }),
     );
+    // Confirmed in words, not only by the tag changing (AD-F32).
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('"Strong fit" retired'));
   });
 
   it('reactivates a retired reason', async () => {

@@ -14,14 +14,11 @@ import { formatDate } from '@/lib/formatters';
 import { X } from '@/design/components/icons';
 import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { appPath } from '@/lib/safeUrl';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+import { errorMessage } from '@/lib/errorMessage';
 
 function signedGap(n: number | null): string {
   if (n === null) return '-';
-  return `${n > 0 ? '+' : ''}${n.toFixed(2)}`;
+  return `${n > 0 ? '+' : ''}${n.toFixed(1)}`;
 }
 
 export default function CalibrationJudgementsDialog({
@@ -124,7 +121,7 @@ export default function CalibrationJudgementsDialog({
           <p className="mt-4 text-[13px] text-muted-foreground">{notFoundMessage}</p>
         ) : judgements.isError ? (
           <p className="mt-4 text-[13px] text-[var(--ui-danger)]">
-            {errText(judgements.error, 'Could not load these judgements just now.')}
+            {errorMessage(judgements.error, 'Could not load these judgements just now.')}
           </p>
         ) : judgements.data && judgements.data.rows.length === 0 ? (
           <p className="mt-4 text-[13px] text-muted-foreground">

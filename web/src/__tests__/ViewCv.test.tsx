@@ -111,4 +111,18 @@ describe('openApplicantCv', () => {
     );
     expect(screen.getByRole('button', { name: 'View CV' })).toBeEnabled();
   });
+
+  it('says what failed in plain words on a server error with no sentence (audit C1)', async () => {
+    fetchBlob.mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: () => Promise.reject(new Error('not json')),
+    } as unknown as Response);
+    const user = userEvent.setup();
+    render(<ViewCvButton applicantId={AP} />);
+    await user.click(screen.getByRole('button', { name: 'View CV' }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('Could not open the CV. Try again in a moment.'),
+    );
+  });
 });

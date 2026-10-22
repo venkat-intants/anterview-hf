@@ -31,6 +31,7 @@
 import type { Citation } from './agent';
 import { apiGet, apiPost, apiPut, ApiError } from './client';
 import { pathId } from './pathId';
+import { errorMessage } from '@/lib/errorMessage';
 
 // ---------------------------------------------------------------------------
 // Shared vocabulary
@@ -196,17 +197,25 @@ export interface RediscoveryUniverseResponse {
  * citation in it carries no `href` — see `RediscoveryCitation`'s own note.
  *
  * `frozen_at` is the moment to show ("Added from a rediscovery search on 24
- * Sep 2026") — never re-derive a date from anything inside `why`.
+ * Sep 2026") — never re-derive a date from anything inside `why`. The server
+ * stamps it on add (`talent_pools._sanitise_match_reason`) and fills it from
+ * the member's `added_at` for rows written before it did.
+ *
+ * What the server STORES is `frozen_at`, `breakdown`, `why`, `searched_at`
+ * and `query_terms` (its field allowlist). The headline fields below are what
+ * the client sends from a live result; they are optional here because the
+ * stored snapshot does not keep them, and a reader must not count on them.
  */
 export interface RediscoveryMatchReasonSnapshot {
   frozen_at: string;
-  score: number;
-  explained: boolean;
-  breakdown: RediscoveryBreakdown;
-  evidence_freshness: RediscoveryHeaderFreshness;
-  requires_review: boolean;
-  review_reasons: string[];
+  score?: number;
+  explained?: boolean;
+  breakdown?: RediscoveryBreakdown | null;
+  evidence_freshness?: RediscoveryHeaderFreshness;
+  requires_review?: boolean;
+  review_reasons?: string[];
   why: RediscoveryWhyItem[];
+  query_terms?: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -307,17 +316,19 @@ export const REDISCOVERY_FAILURE_SENTENCES: Record<string, string> = {
   bad_requisition_id: 'That opening id is not valid.',
   stale_evidence_unreviewed: 'This evidence has not been reviewed recently.',
   consent_not_active: "This person's rediscovery consent is no longer active.",
-  requisition_not_open: 'That opening is not open for new applications.',
+  requisition_not_open: 'That opening is no longer open. Choose another one.',
 };
 
+/** Ours for a code we know, otherwise the shared `errorMessage` rules (a
+ *  server sentence, then status copy, then the fallback), so a validation
+ *  failure never reads "HTTP 422" (audit PL-F12). */
 export function rediscoveryErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
-    const detail = error.detail as { failure_code?: string; message?: string } | undefined;
+    const detail = error.detail as { failure_code?: string } | undefined;
     const code = detail?.failure_code;
     if (code && REDISCOVERY_FAILURE_SENTENCES[code]) return REDISCOVERY_FAILURE_SENTENCES[code];
-    return error.message || fallback;
   }
-  return error instanceof Error && error.message ? error.message : fallback;
+  return errorMessage(error, fallback);
 }
 
 // ---------------------------------------------------------------------------

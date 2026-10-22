@@ -242,6 +242,17 @@ describe('the one next action', () => {
     expect(nextAction(opening({ status: 'closed' }))).toBeNull();
   });
 
+  it('a paused opening past its closing date asks for a new date, not a reopen (HR-M8)', () => {
+    const r = opening({
+      id: 'x', status: 'paused', approval_status: 'approved', closes_at: '2020-01-01T00:00:00Z',
+    });
+    expect(nextAction(r)?.text).toBe('Paused: set a new closing date to reopen, or close it');
+    expect(to(r)).toBe('/hr/requisitions/x?tab=setup');
+    expect(nextAction(opening({ status: 'paused', approval_status: 'approved' }))?.text).toBe(
+      'Paused: reopen or close',
+    );
+  });
+
   it('a closed opening with people still waiting still points at the queue', () => {
     expect(nextAction(opening({ id: 'x', status: 'closed', awaiting_decision: 2 }))?.text).toBe(
       'Next: decide on 2',
@@ -392,13 +403,13 @@ describe('the list on screen', () => {
     m.listRequisitions.mockResolvedValue(ROWS);
     renderList();
     await screen.findAllByTestId('opening-row');
-    expect(m.listRequisitions).toHaveBeenLastCalledWith({ status: 'open' });
+    expect(m.listRequisitions).toHaveBeenLastCalledWith({ status: 'open', limit: 200 });
     await user.click(screen.getByRole('tab', { name: 'Paused' }));
     await screen.findAllByTestId('opening-row');
-    expect(m.listRequisitions).toHaveBeenLastCalledWith({ status: 'paused' });
+    expect(m.listRequisitions).toHaveBeenLastCalledWith({ status: 'paused', limit: 200 });
     await user.click(screen.getByRole('tab', { name: 'All' }));
     await screen.findAllByTestId('opening-row');
-    expect(m.listRequisitions).toHaveBeenLastCalledWith({});
+    expect(m.listRequisitions).toHaveBeenLastCalledWith({ limit: 200 });
   });
 
   it('sums the openings in view, and explains the dots', async () => {
@@ -418,5 +429,33 @@ describe('the list on screen', () => {
     m.listRequisitions.mockRejectedValue(new Error('boom'));
     renderList();
     expect((await screen.findByRole('alert')).textContent).toBe('boom');
+  });
+});
+
+describe('the list is honest about what it loaded', () => {
+  it('names an empty tab in words (HR-L2)', async () => {
+    const user = userEvent.setup();
+    m.listRequisitions.mockResolvedValue([]);
+    renderList();
+    expect(await screen.findByText('No open roles')).toBeTruthy();
+    await user.click(screen.getByRole('tab', { name: 'All' }));
+    expect(await screen.findByText('No openings yet')).toBeTruthy();
+    expect(screen.queryByText(/Nothing all/)).toBeNull();
+  });
+
+  it('says when it is showing only the first page (HR-M7)', async () => {
+    m.listRequisitions.mockResolvedValue(
+      Array.from({ length: 200 }, (_, i) => opening({ id: `r${i}`, title: `Role ${i}` })),
+    );
+    renderList();
+    expect(await screen.findByTestId('openings-truncated')).toBeTruthy();
+    expect(screen.getByText('200+ openings')).toBeTruthy();
+  });
+
+  it('says nothing extra when everything fitted', async () => {
+    m.listRequisitions.mockResolvedValue([opening({ id: 'a' })]);
+    renderList();
+    await screen.findAllByTestId('opening-row');
+    expect(screen.queryByTestId('openings-truncated')).toBeNull();
   });
 });

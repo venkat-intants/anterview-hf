@@ -104,9 +104,14 @@ describe('PipelineBoard - the columns', () => {
     expect(within(column('new')).getByText('Staff Nurse')).toBeInTheDocument();
   });
 
-  it('keeps held applications on the board, with those still to review', () => {
+  it('files held applications with the shortlisted and tags them Held (HR-M11)', () => {
+    // Held means they sat a round and scored just under its pass mark, so
+    // they are past "Applied"; untagged they read as one more new applicant.
     renderBoard([row({ full_name: 'On Hold', status: 'held' })]);
-    expect(within(column('new')).getByText('On Hold')).toBeInTheDocument();
+    const shortlisted = column('shortlisted');
+    expect(within(shortlisted).getByText('On Hold')).toBeInTheDocument();
+    expect(within(shortlisted).getByText('Held')).toBeInTheDocument();
+    expect(within(column('new')).queryByText('On Hold')).not.toBeInTheDocument();
   });
 
   it('puts hired and rejected together under Decided', () => {
@@ -123,7 +128,7 @@ describe('PipelineBoard - the columns', () => {
 
   it('says which outcome it was, since the column cannot', () => {
     renderBoard([row({ full_name: 'Was Hired', status: 'hired' })]);
-    expect(within(column('decided')).getByText('hired')).toBeInTheDocument();
+    expect(within(column('decided')).getByText('Hired')).toBeInTheDocument();
   });
 
   it('shows how the offer ended beside the hire, not instead of it (PH4-A3)', () => {
@@ -134,7 +139,7 @@ describe('PipelineBoard - the columns', () => {
     const decided = column('decided');
     expect(within(decided).getByText('Offer accepted')).toBeInTheDocument();
     expect(within(decided).getByText('Offer declined')).toBeInTheDocument();
-    expect(within(decided).getAllByText('hired')).toHaveLength(2);
+    expect(within(decided).getAllByText('Hired')).toHaveLength(2);
   });
 
   it('does not repeat the status where the heading already says it', () => {

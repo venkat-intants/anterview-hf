@@ -45,6 +45,12 @@ export interface InterviewInvite {
   created_at: string;
   composite_score: number | null;
   scorecard_id: string | null;
+  /** Still `invited`, but the scheduled join window has closed: the candidate
+   *  can no longer start until HR gives a new time. */
+  missed_slot: boolean;
+  /** The server would accept a reschedule: nobody has started the interview,
+   *  no newer invite replaced it, and the application is still open. */
+  can_reschedule: boolean;
 }
 
 export interface InviteResult {
@@ -56,6 +62,10 @@ export interface InviteResult {
   expires_at: string;
   scheduled_at: string | null;
   status: InviteStatus;
+  /** True when the server answered a repeat of an identical request with the
+   *  invite it had already made: no new link, no second email, and
+   *  `magic_link` is empty. */
+  reused?: boolean;
 }
 
 export interface InterviewOutcome {
@@ -84,6 +94,9 @@ export interface InviteCreateInput {
   avatar_mode?: AvatarMode;
   scheduled_at?: string | null;
   ttl_hours?: number;
+  /** The application already has a live link: revoke it and send a new one.
+   *  Without it the server refuses with 409 rather than replacing silently. */
+  replace_existing?: boolean;
 }
 
 export function listEligibleApplicants(
@@ -107,15 +120,32 @@ export function revokeInvite(inviteId: string): Promise<InterviewInvite> {
   return apiPost<InterviewInvite>(`/hr/interviews/${pathId(inviteId)}/revoke`, {});
 }
 
+/** Why HR ended a started interview. A fixed code, never free text: it is
+ *  kept in the append-only audit log, which erasure does not redact for it. */
+export type EndInterviewReason = 'candidate_left' | 'link_shared' | 'technical_problem' | 'other';
+
+/** End an interview the candidate has started but will not finish (they
+ *  dropped out, or the link was forwarded). The server refuses a started link
+ *  without `force`, requires a reason, audits it and marks the session
+ *  abandoned. A new link can then be sent. */
+export function endStartedInterview(
+  inviteId: string,
+  reason: EndInterviewReason,
+): Promise<InterviewInvite> {
+  return apiPost<InterviewInvite>(`/hr/interviews/${pathId(inviteId)}/revoke`, {
+    force: true,
+    reason,
+  });
+}
+
 export function getInviteResult(inviteId: string): Promise<InterviewOutcome> {
   return apiGet<InterviewOutcome>(`/hr/interviews/${pathId(inviteId)}/result`);
 }
 
-export function rescheduleInvite(
-  inviteId: string,
-  scheduledAt: string,
-): Promise<InviteResult> {
-  return apiPatch<InviteResult>(`/hr/interviews/${pathId(inviteId)}`, { scheduled_at: scheduledAt });
+export function rescheduleInvite(inviteId: string, scheduledAt: string): Promise<InviteResult> {
+  return apiPatch<InviteResult>(`/hr/interviews/${pathId(inviteId)}`, {
+    scheduled_at: scheduledAt,
+  });
 }
 
 /** Switch one interview between the avatar and audio-only.

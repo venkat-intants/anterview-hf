@@ -239,3 +239,24 @@ describe('RoundInspector - a published (non-editable) task round', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('RoundInspector - reference materials (audit B3)', () => {
+  it('asks before removing a material, and removes nothing until confirmed', async () => {
+    const user = userEvent.setup();
+    jobTasksApi.listRoundTaskMaterials.mockResolvedValue([
+      { id: 'mat-1', title: 'Floor plan', original_name: 'plan.pdf', content_type: 'application/pdf', size_bytes: 1200, position: 0 },
+    ]);
+    jobTasksApi.removeRoundTaskMaterial.mockResolvedValue(undefined);
+    renderInspector(baseRound({ kind: 'job_simulation' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Remove Floor plan' }));
+    expect(jobTasksApi.removeRoundTaskMaterial).not.toHaveBeenCalled();
+
+    const group = screen.getByRole('group', { name: 'Confirm: Remove' });
+    await user.click(within(group).getByRole('button', { name: 'Remove' }));
+
+    await waitFor(() =>
+      expect(jobTasksApi.removeRoundTaskMaterial).toHaveBeenCalledWith('round-1', 'mat-1'),
+    );
+  });
+});

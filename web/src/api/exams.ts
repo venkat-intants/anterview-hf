@@ -65,6 +65,10 @@ export interface Round {
    *  migration; it was missing from this type, so no HR screen could read or
    *  set it and the feature was unreachable through the product. */
   camera_proctoring_required: boolean;
+  /** Live attempts on this round. Present on the structure read (null on
+   *  write responses, which do not count). A taken round can never be
+   *  unpublished, only duplicated. */
+  attempt_count?: number | null;
 }
 
 export interface ExamStructure {
@@ -132,6 +136,7 @@ export interface Assignment {
   consumed_at: string | null;
   created_at: string;
   round_id?: string | null;
+  enrolment_id?: string | null;
   scheduled_at?: string | null;
 }
 
@@ -157,6 +162,13 @@ export interface AttemptResult {
   status: string;
   submitted_at: string | null;
   attempt_no: number;
+  /** The round this attempt sat, and THAT round's pass mark: `passed` is
+   *  decided by the round's own threshold, not the exam's. Null for a legacy
+   *  attempt that predates rounds. */
+  round_id?: string | null;
+  round_number?: number | null;
+  round_title?: string | null;
+  round_pass_threshold?: number | null;
 }
 
 export interface ExamCreateInput {
@@ -203,10 +215,7 @@ export function createExam(input: ExamCreateInput): Promise<Exam> {
 }
 
 export function updateExam(id: string, patch: ExamUpdateInput): Promise<Exam> {
-  return clientFetch<Exam>(`${API_BASE}/hr/exams/${pathId(id)}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  });
+  return apiPatch<Exam>(`/hr/exams/${pathId(id)}`, patch);
 }
 
 // ── Questions ────────────────────────────────────────────────────────────────
@@ -277,7 +286,24 @@ export function bulkAddQuestions(
   return apiPost<ExamQuestion[]>(`/hr/exams/${pathId(examId)}/questions/bulk`, { questions });
 }
 
-/** Upload an .xlsx/.csv in the template layout; backend parses + inserts valid rows. */
+/** Upload an .xlsx/.csv into ONE section; backend parses + inserts valid rows.
+ *  The server checks that section's own round lock (audit E1: the exam-level
+ *  route below always wrote into the first MCQ section of round 1). */
+export function importSectionQuestions(
+  examId: string,
+  sectionId: string,
+  file: File,
+): Promise<ImportResult> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return uploadWithProgress<ImportResult>(
+    `${API_BASE}/hr/exams/${pathId(examId)}/sections/${pathId(sectionId)}/questions/import`,
+    fd,
+  );
+}
+
+/** Legacy exam-level import: always the exam's FIRST MCQ section. Use
+ *  importSectionQuestions from the round editor. */
 export function importQuestions(examId: string, file: File): Promise<ImportResult> {
   const fd = new FormData();
   fd.append('file', file);
@@ -550,6 +576,11 @@ export function revokeAssignment(examId: string, aid: string): Promise<Assignmen
 }
 
 // ── Results ──────────────────────────────────────────────────────────────────
+/** Which exam an attempt belongs to, for a link that carries only its id. */
+export function locateAttempt(attemptId: string): Promise<{ attempt_id: string; exam_id: string }> {
+  return apiGet<{ attempt_id: string; exam_id: string }>(`/hr/exam-attempts/${pathId(attemptId)}`);
+}
+
 export function listAttempts(examId: string): Promise<AttemptResult[]> {
   return apiGet<AttemptResult[]>(`/hr/exams/${pathId(examId)}/attempts`);
 }

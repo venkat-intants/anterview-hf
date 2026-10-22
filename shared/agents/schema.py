@@ -161,7 +161,13 @@ CITATION_ROUTES: dict[str, str | None] = {
     "interview": "/hr/interviews/{id}",
     "job": "/hr/requisitions/{id}",
     "interviewer_scorecard": "/hr/enrolments/{id}/evidence",
-    "decision": "/hr/enrolments/{id}/evidence?decision={id}",
+    # The enrolment's evidence trail, which opens on its latest decision. The
+    # template used to end in ``?decision={id}``, but ``citation_href`` fills
+    # every ``{id}`` with the ONE id it is given, so the enrolment's UUID landed
+    # in ``?decision=`` and EvidenceTrail silently fell back to the latest
+    # decision anyway (CP-L6). Decision chips that need a specific decision
+    # carry the evidence graph's own ``node.href`` instead.
+    "decision": "/hr/enrolments/{id}/evidence",
     # PH5-E2 coordination: moved from /hr/documents/{id} — that path was
     # shared with an unrelated entity (candidate_documents/preboarding),
     # differing only by verb. The corpus's own routes live under /hr/library.
@@ -198,7 +204,7 @@ CITATION_ROUTES: dict[str, str | None] = {
 # ``href`` the SERVER sent, so the TS ``CITATION_ROUTES`` copy exists for the
 # kind-coverage parity test, not to build links. Adding a new CitationKind does
 # need the TS change; adding a view does not.
-CITATION_VIEWS: dict[tuple[str, str], str] = {
+CITATION_VIEWS: dict[tuple[str, str], str | None] = {
     ("job", "workflow"): "/hr/requisitions/{id}/workflow",
     ("job", "decisions"): "/hr/requisitions/{id}/decisions",
     ("analytics", "hr"): "/hr/analytics",
@@ -211,10 +217,20 @@ CITATION_VIEWS: dict[tuple[str, str], str] = {
     # not. The base route above stays the HR one, which is what hr_manager gets.
     ("document", "hr"): "/hr/library/{id}",
     ("document", "company"): "/superadmin/library/{id}",
+    # The same two-door problem for the other company-scoped kinds a super
+    # admin can be handed (AD-F2). An opening has a super admin view of its
+    # own. An exam does not: the exam screens live in the HR console only, so
+    # the super admin's entry is ``None``, an unlinked chip that says "this
+    # record exists" without opening a page their route guard would bounce.
+    ("job", "hr"): "/hr/requisitions/{id}",
+    ("job", "company"): "/superadmin/requisitions/{id}",
+    ("exam", "hr"): "/hr/exams/{id}",
+    ("exam", "company"): None,
 }
 
 # Which console a staff role is allowed to walk into. Used ONLY for the kinds
-# that exist in more than one console (``document`` today): a citation's kind
+# that have a per-console entry in ``CITATION_VIEWS`` (``document``, ``job``,
+# ``exam`` and the ``analytics`` dashboards today): a citation's kind
 # says what the record is, and this says where that particular reader can open
 # it. On the server because the server is the only side that knows both — the
 # alternative was the client rewriting a path it was handed, which is a second

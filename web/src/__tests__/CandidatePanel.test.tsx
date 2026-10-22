@@ -97,6 +97,15 @@ describe('CandidatePanel - citations', () => {
     expect(screen.getAllByRole('link')).toHaveLength(1);
   });
 
+  it('names the written round "Exam", the term the rest of the HR console uses', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Run assessment/ }));
+
+    expect(await screen.findByText('Exam')).toBeInTheDocument();
+    expect(screen.queryByText('Written exam')).not.toBeInTheDocument();
+  });
+
   // ---------------------------------------------------------------------
   // PH5-E1 criteria 4/5 — the per-signal citation-state banner. CandidatePanel
   // is one of the five surfaces required to carry it.
@@ -137,5 +146,33 @@ describe('CandidatePanel - citations', () => {
     expect(
       await screen.findByText(/Records were read for this answer, but no claim in it/),
     ).toBeInTheDocument();
+  });
+});
+
+describe('CandidatePanel - running it again (audit CP-L9)', () => {
+  it('offers a re-run once a read is on screen, and shows the new read', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Run assessment/ }));
+    await screen.findByText('Consistent across signals.');
+
+    assessCandidate.mockResolvedValue({ ...VERDICT, summary: 'The exam now disagrees.' });
+    await user.click(screen.getByRole('button', { name: 'Run again' }));
+
+    expect(await screen.findByText('The exam now disagrees.')).toBeInTheDocument();
+    expect(assessCandidate).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the previous read when a re-run fails, with a readable reason', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Run assessment/ }));
+    await screen.findByText('Consistent across signals.');
+
+    assessCandidate.mockRejectedValue(new TypeError('Failed to fetch'));
+    await user.click(screen.getByRole('button', { name: 'Run again' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not reach the server/);
+    expect(screen.getByText('Consistent across signals.')).toBeInTheDocument();
   });
 });

@@ -114,3 +114,16 @@ describe('the hiring board (E3)', () => {
     expect(buttons.every((t) => /·/.test(t))).toBe(true);
   });
 });
+
+describe('HiringBoard - a failed load', () => {
+  it('shows an error with a retry that reloads the board', async () => {
+    getHiringBoard.mockRejectedValue(new Error('Could not reach the server'));
+    const user = userEvent.setup();
+    renderBoard();
+
+    expect(await screen.findByText('Could not load the hiring board.')).toBeInTheDocument();
+    getHiringBoard.mockResolvedValue(BOARD);
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByRole('group', { name: 'Filter by health' })).toBeInTheDocument();
+  });
+});

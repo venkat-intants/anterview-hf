@@ -338,6 +338,51 @@ async def test_a_replace_upload_is_a_post_to_the_documents_versions_collection(
     assert db.commits == 1
     assert calls.kwargs["document_id"] == DOC
     assert calls.kwargs["data"] == b"revised text"
+    # No `attested` field sent: the router passes False, and the service
+    # refuses it (test_ph5_e2_corpus_service.py), never a silent default true.
+    assert calls.kwargs["attested"] is False
+
+
+async def test_a_replace_upload_forwards_the_attestation(
+    client: tuple[AsyncClient, FakeSession], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit PL-F7: a new version carries the same "company document, not a
+    candidate record" attestation as the first upload, read from the form."""
+    ac, _db = client
+    calls = stub(monkeypatch, "add_version", DOCUMENT_OUT)
+
+    resp = await ac.post(
+        f"/hr/library/{DOC}/versions",
+        data={"attested": "true"},
+        files={"file": ("handbook-v2.txt", b"revised text", "text/plain")},
+    )
+
+    assert resp.status_code == 201
+    assert calls.kwargs["attested"] is True
+
+
+async def test_a_storage_outage_is_a_readable_503_and_rolls_back(
+    client: tuple[AsyncClient, FakeSession], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Audit PL-F10: the service maps a storage outage to a 503 CorpusError,
+    and the router's ordinary refusal path turns that into a sentence, with
+    the transaction rolled back, not a bare 500."""
+    ac, db = client
+    stub(
+        monkeypatch, "ingest_document",
+        svc.CorpusError(503, "storage_unavailable", "Document storage is unavailable right now."),
+    )
+
+    resp = await ac.post(
+        "/hr/library",
+        data={"title": "Handbook", "audience": "all_staff", "attested": "true"},
+        files={"file": ("h.txt", b"text", "text/plain")},
+    )
+
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["failure_code"] == "storage_unavailable"
+    assert db.rollbacks == 1
+    assert db.commits == 0
 
 
 # ---------------------------------------------------------------------------

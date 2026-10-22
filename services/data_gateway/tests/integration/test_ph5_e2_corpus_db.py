@@ -737,10 +737,17 @@ async def test_purge_corpus_dry_run_counts_without_touching_anything(
     f = await _build(db)
     out = await svc.ingest_document(
         db, company_id=f.company_a, actor=f.hr_a, actor_role="hr_manager", title="Expiring",
-        audience="all_staff", doc_kind="policy", expires_on=datetime.now(tz=UTC).date() - timedelta(days=1),
+        audience="all_staff", doc_kind="policy", expires_on=datetime.now(tz=UTC).date(),
         attested=True, data=_HANDBOOK_TXT.encode(), filename="exp.txt", meta=_META,
     )
     document_id = uuid.UUID(out["id"])
+    # A past expiry can no longer be SET (audit PL-F8, `expiry_in_past`), so
+    # the date passes the way it does in real life: it was valid when set and
+    # time moved on. Backdated directly, as the clock would.
+    await db.execute(
+        text("UPDATE corpus_documents SET expires_on = :e WHERE id = :d"),
+        {"e": datetime.now(tz=UTC).date() - timedelta(days=1), "d": document_id},
+    )
     count = await svc.purge_corpus(db, superseded_days=180, dry_run=True)
     assert count >= 1
     assert fake.objects  # dry-run touches nothing
@@ -758,10 +765,17 @@ async def test_purge_corpus_live_expires_a_document_past_its_date(
     f = await _build(db)
     out = await svc.ingest_document(
         db, company_id=f.company_a, actor=f.hr_a, actor_role="hr_manager", title="Expiring",
-        audience="all_staff", doc_kind="policy", expires_on=datetime.now(tz=UTC).date() - timedelta(days=1),
+        audience="all_staff", doc_kind="policy", expires_on=datetime.now(tz=UTC).date(),
         attested=True, data=_HANDBOOK_TXT.encode(), filename="exp.txt", meta=_META,
     )
     document_id = uuid.UUID(out["id"])
+    # A past expiry can no longer be SET (audit PL-F8, `expiry_in_past`), so
+    # the date passes the way it does in real life: it was valid when set and
+    # time moved on. Backdated directly, as the clock would.
+    await db.execute(
+        text("UPDATE corpus_documents SET expires_on = :e WHERE id = :d"),
+        {"e": datetime.now(tz=UTC).date() - timedelta(days=1), "d": document_id},
+    )
     await svc.purge_corpus(db, superseded_days=180, dry_run=False)
 
     assert not fake.objects

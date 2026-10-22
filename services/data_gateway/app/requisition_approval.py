@@ -49,7 +49,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.notifications_util import create_notification
+from app.notifications_util import company_super_admin_ids, create_notification
 
 log = structlog.get_logger(__name__)
 
@@ -227,19 +227,7 @@ async def decide(
 
 async def _approvers(db: AsyncSession, *, company_id: uuid.UUID) -> list[uuid.UUID]:
     """Everybody at this company who can act on an approval request."""
-    return list(
-        (
-            await db.execute(
-                text(
-                    "SELECT u.id FROM users u"
-                    "  JOIN user_roles ur ON ur.user_id = u.id"
-                    "  JOIN roles r ON r.id = ur.role_id AND r.name = 'super_admin'"
-                    " WHERE u.company_id = :c AND u.deleted_at IS NULL"
-                ),
-                {"c": company_id},
-            )
-        ).scalars().all()
-    )
+    return await company_super_admin_ids(db, company_id=company_id)
 
 
 async def pending_for_company(

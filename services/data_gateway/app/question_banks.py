@@ -51,6 +51,7 @@ from app.models import (
     ExamSection,
     QuestionBank,
 )
+from app.notifications_util import company_super_admin_ids, create_notification
 from app.utils.sql_like import like_literal
 
 log = structlog.get_logger(__name__)
@@ -634,6 +635,43 @@ async def submit(db: AsyncSession, *, company_id: uuid.UUID, qid: uuid.UUID, act
     _audit(db, actor=actor, action="bank_question.submitted", resource_id=q.id,
           details={"company_id": str(company_id)})
     return q
+
+
+REVIEW_QUEUE_LINK = "/superadmin/question-reviews"
+
+
+async def notify_reviewers(
+    db: AsyncSession, *, company_id: uuid.UUID, bank_id: uuid.UUID, count: int,
+) -> int:
+    """Tell the company's super admins that ``count`` questions in ``bank_id``
+    now wait for review (audit AD-F18). Caller commits, so no submission means
+    no notification.
+
+    One notification per reviewer per submit action, not per question: a
+    500-row "submit all" is one event for the person who has to act on it.
+    Returns how many reviewers were told.
+    """
+    if count <= 0:
+        return 0
+    name = await db.scalar(
+        select(QuestionBank.name).where(
+            QuestionBank.id == bank_id, QuestionBank.company_id == company_id,
+        )
+    )
+    bank_label = name or "A question bank"
+    title = (
+        f"{bank_label}: a question needs review" if count == 1
+        else f"{bank_label}: {count} questions need review"
+    )
+    told = 0
+    for uid in await company_super_admin_ids(db, company_id=company_id):
+        if await create_notification(
+            db, user_id=uid, kind="bank_question_review_requested", title=title,
+            body="Questions must be approved by a second reviewer before they can be used in an exam.",
+            link=REVIEW_QUEUE_LINK,
+        ):
+            told += 1
+    return told
 
 
 async def withdraw(db: AsyncSession, *, company_id: uuid.UUID, qid: uuid.UUID, actor: uuid.UUID) -> BankQuestion:

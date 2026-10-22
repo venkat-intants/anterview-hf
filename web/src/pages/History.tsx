@@ -10,12 +10,12 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { useCandidateFormat } from '@/lib/candidateCopy';
 
 import { listSessions } from '@/api/sessions';
 import type { SessionListItem } from '@/api/sessions';
 import { LoadErrorPanel } from '@/components/candidate/LoadErrorPanel';
 import { cn } from '@/lib/utils';
-import { formatDate, formatDuration, statusProps } from '@/lib/formatters';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Page, PageHeader, EmptyState } from '@/design/components/page';
@@ -107,7 +107,8 @@ const TH = 'px-4 py-3 text-left text-[12px] font-semibold uppercase tracking-[0.
 /** Desktop table row */
 function SessionRow({ session }: { session: SessionListItem }) {
   const { t } = useTranslation();
-  const { label } = statusProps(session.status);
+  const fmt = useCandidateFormat();
+  const label = fmt.status(session.status);
   const tone = statusTone(session.status);
   const langKey = LANGUAGE_LABEL_KEYS[session.language];
   const langLabel = langKey ? t(langKey) : session.language.toUpperCase();
@@ -132,7 +133,7 @@ function SessionRow({ session }: { session: SessionListItem }) {
         </div>
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-[13px] tabular-nums text-[var(--ui-soft)]">
-        {formatDate(session.created_at)}
+        {fmt.date(session.created_at)}
       </td>
       <td className="px-4 py-3">
         <StatusTag tone={tone} dot>
@@ -140,7 +141,7 @@ function SessionRow({ session }: { session: SessionListItem }) {
         </StatusTag>
       </td>
       <td className="whitespace-nowrap px-4 py-3 text-right text-[13px] tabular-nums text-muted-foreground">
-        {formatDuration(session.duration_seconds)}
+        {fmt.duration(session.duration_seconds)}
       </td>
       <td className="px-4 py-3 text-right">
         {session.scorecard_id ? (
@@ -165,7 +166,8 @@ function SessionRow({ session }: { session: SessionListItem }) {
 /** Mobile card */
 function SessionCard({ session }: { session: SessionListItem }) {
   const { t } = useTranslation();
-  const { label } = statusProps(session.status);
+  const fmt = useCandidateFormat();
+  const label = fmt.status(session.status);
   const tone = statusTone(session.status);
   const langKey = LANGUAGE_LABEL_KEYS[session.language];
   const langLabel = langKey ? t(langKey) : session.language.toUpperCase();
@@ -181,7 +183,7 @@ function SessionCard({ session }: { session: SessionListItem }) {
           <div className="min-w-0">
             <p className="truncate text-[14px] font-semibold text-foreground">{session.job_title}</p>
             <p className="mt-0.5 text-[12.5px] tabular-nums text-muted-foreground">
-              {formatDate(session.created_at)}
+              {fmt.date(session.created_at)}
             </p>
           </div>
         </div>
@@ -197,7 +199,7 @@ function SessionCard({ session }: { session: SessionListItem }) {
         </span>
         <span className="flex items-center gap-1 tabular-nums">
           <Clock className="h-3 w-3" aria-hidden="true" />
-          {formatDuration(session.duration_seconds)}
+          {fmt.duration(session.duration_seconds)}
         </span>
       </div>
 

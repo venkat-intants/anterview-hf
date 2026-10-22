@@ -5,6 +5,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { useCandidateFormat } from '@/lib/candidateCopy';
 import {
   FileText,
   Download,
@@ -24,7 +25,6 @@ import type { ResumeVersionItem } from '@/api/resume';
 import FileUploadZone from '@/components/FileUploadZone';
 import { toast } from '@/lib/toast';
 import { LoadErrorPanel } from '@/components/candidate/LoadErrorPanel';
-import { formatDate } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { downloadUrl } from '@/lib/safeUrl';
 import { StatusTag } from '@/design/components/primitives';
@@ -154,6 +154,7 @@ function ResumeVersionRow({
   isDeleting,
 }: ResumeVersionRowProps) {
   const { t } = useTranslation();
+  const fmt = useCandidateFormat();
   return (
     <li
       className={cn(
@@ -193,7 +194,7 @@ function ResumeVersionRow({
             )}
           </div>
           <p className="mt-0.5 text-[13px] text-muted-foreground">
-            {t('resume.uploaded')} {formatDate(item.uploaded_at)} ·{' '}
+            {t('resume.uploaded')} {fmt.date(item.uploaded_at)} ·{' '}
             {t('resume.charactersExtracted', { count: item.text_length })}
           </p>
         </div>
@@ -242,6 +243,7 @@ function ResumeVersionRow({
 
 export default function Resume() {
   const { t } = useTranslation();
+  const fmt = useCandidateFormat();
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<ResumeVersionItem | null>(null);
 
@@ -371,7 +373,7 @@ export default function Resume() {
                     </p>
                     <p className="text-[13px] text-muted-foreground">
                       {t('resume.charactersExtracted', { count: currentResume.text_length })} ·{' '}
-                      {t('resume.uploaded')} {formatDate(currentResume.uploaded_at)}
+                      {t('resume.uploaded')} {fmt.date(currentResume.uploaded_at)}
                     </p>
                   </div>
                 </div>

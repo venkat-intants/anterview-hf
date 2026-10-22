@@ -149,4 +149,17 @@ describe('History page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect((await screen.findAllByText('Junior Java Developer')).length).toBeGreaterThan(0);
   });
+  // Audit CA-M19: status, duration and date follow the UI language.
+  it('shows status and duration in Hindi on a Hindi page', async () => {
+    await i18n.changeLanguage('hi');
+    try {
+      renderHistory();
+      expect((await screen.findAllByText('पूरा हुआ')).length).toBeGreaterThan(0);
+      expect(screen.getAllByText('12 मि 34 से').length).toBeGreaterThan(0);
+      expect(screen.queryByText('Completed')).not.toBeInTheDocument();
+      expect(screen.queryByText('12m 34s')).not.toBeInTheDocument();
+    } finally {
+      await i18n.changeLanguage('en');
+    }
+  });
 });

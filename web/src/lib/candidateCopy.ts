@@ -13,6 +13,7 @@ import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { errorMessage, isNetworkError } from '@/lib/errorMessage';
+import { MISSING, formatDate, uiLocale } from '@/lib/formatters';
 
 export type CandidateLanguage = 'en' | 'hi' | 'te';
 
@@ -76,4 +77,43 @@ export function levelLabel(t: TFunction, level: string | null | undefined): stri
     default:
       return level ?? '';
   }
+}
+
+/** Interview-session status as candidates read it ("In progress", not the code). */
+export function sessionStatusText(t: TFunction, status: string): string {
+  switch (status) {
+    case 'completed':
+      return t('history.statusCompleted');
+    case 'in_progress':
+      return t('history.statusInProgress');
+    case 'abandoned':
+      return t('history.statusAbandoned');
+    case 'failed':
+      return t('history.statusFailed');
+    default:
+      return status;
+  }
+}
+
+/**
+ * Dates, durations and session statuses on candidate pages, in the UI
+ * language (audit CA-M19). The shared formatters default to English, which is
+ * right for staff screens and wrong on a Hindi or Telugu page.
+ */
+export function useCandidateFormat(): {
+  date: (iso: string | null | undefined) => string;
+  duration: (seconds: number | null) => string;
+  status: (status: string) => string;
+} {
+  const { t, i18n } = useTranslation();
+  const locale = uiLocale(i18n.language);
+  return {
+    date: (iso) => formatDate(iso, locale),
+    duration: (seconds) => {
+      if (seconds === null) return MISSING;
+      const whole = Math.max(0, Math.round(seconds));
+      return t('history.durationMinSec', { m: Math.floor(whole / 60), s: whole % 60 });
+    },
+    status: (status) => sessionStatusText(t, status),
+  };
 }

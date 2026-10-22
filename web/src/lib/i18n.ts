@@ -597,6 +597,11 @@ const en = {
     },
     // History
     history: {
+      durationMinSec: '{{m}}m {{s}}s',
+      statusFailed: 'Failed',
+      statusAbandoned: 'Abandoned',
+      statusInProgress: 'In progress',
+      statusCompleted: 'Completed',
       pageTitle: 'Interview history',
       pageDesc: 'All your past interview sessions, newest first.',
       noInterviewsTitle: 'No interviews yet',
@@ -1837,6 +1842,7 @@ const en = {
       saveChanges: 'Save changes',
     },
     applications: {
+      examOpenElsewhere: 'This assessment is already open in another tab. Opening it here will close it there; your answers so far and your time remaining are unaffected.',
       historyLoadError: "Could not load this application's history.",
       title: 'My applications',
       subtitle: 'Where you stand on every role you have applied for.',
@@ -2410,6 +2416,11 @@ const hi = {
       evProctorError: 'कैमरा पहचान उपलब्ध नहीं',
     },
     history: {
+      durationMinSec: '{{m}} मि {{s}} से',
+      statusFailed: 'विफल',
+      statusAbandoned: 'छोड़ दिया गया',
+      statusInProgress: 'जारी है',
+      statusCompleted: 'पूरा हुआ',
       pageTitle: 'इंटरव्यू इतिहास',
       pageDesc: 'आपके सभी पिछले interview sessions, नए से पुराने क्रम में।',
       noInterviewsTitle: 'अभी तक कोई इंटरव्यू नहीं',
@@ -3557,6 +3568,7 @@ const hi = {
       saveChanges: 'बदलाव सहेजें',
     },
     applications: {
+      examOpenElsewhere: 'यह आकलन पहले से किसी दूसरे टैब में खुला है। इसे यहाँ खोलने से वहाँ बंद हो जाएगा; अब तक के आपके उत्तर और बचा हुआ समय नहीं बदलेगा।',
       historyLoadError: 'इस आवेदन का इतिहास लोड नहीं हो सका।',
       title: 'मेरे आवेदन',
       subtitle: 'आपने जिन-जिन भूमिकाओं के लिए आवेदन किया है, उनमें आप कहाँ हैं।',
@@ -4134,6 +4146,11 @@ const te = {
       evProctorError: 'కెమెరా గుర్తింపు అందుబాటులో లేదు',
     },
     history: {
+      durationMinSec: '{{m}} ని {{s}} సె',
+      statusFailed: 'విఫలమైంది',
+      statusAbandoned: 'వదిలివేయబడింది',
+      statusInProgress: 'కొనసాగుతోంది',
+      statusCompleted: 'పూర్తయింది',
       pageTitle: 'ఇంటర్వ్యూ చరిత్ర',
       pageDesc: 'మీ అన్ని గత interview sessions, కొత్తవి ముందు.',
       noInterviewsTitle: 'ఇంకా ఇంటర్వ్యూలు లేవు',
@@ -5290,6 +5307,7 @@ const te = {
       saveChanges: 'మార్పులను సేవ్ చేయండి',
     },
     applications: {
+      examOpenElsewhere: 'ఈ అంచనా ఇప్పటికే మరో ట్యాబ్‌లో తెరిచి ఉంది. ఇక్కడ తెరిస్తే అక్కడ మూసివేయబడుతుంది; ఇప్పటివరకు మీ సమాధానాలు, మిగిలిన సమయం మారవు.',
       historyLoadError: 'ఈ దరఖాస్తు చరిత్రను లోడ్ చేయలేకపోయాం.',
       title: 'నా దరఖాస్తులు',
       subtitle: 'మీరు దరఖాస్తు చేసిన ప్రతి పాత్రలో మీరు ఎక్కడ ఉన్నారు.',

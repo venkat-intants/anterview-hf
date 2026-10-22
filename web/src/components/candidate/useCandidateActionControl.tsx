@@ -24,6 +24,7 @@ import { useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { mintMyExamLink, mintMyInterviewLink, mintMyTaskLink } from '@/api/applications';
 import { getMyOfferLink } from '@/api/offers';
 import { ApiError } from '@/api/client';
@@ -60,6 +61,7 @@ export function useCandidateActionControl(
   { onApplicationsPage = false }: Options = {},
 ): CandidateActionControl {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<string | null>(null);
   const { target } = action;
@@ -101,10 +103,11 @@ export function useCandidateActionControl(
     onSuccess: (url) => window.location.assign(url),
     onError: (e: unknown) => {
       if (target.type === 'mint_exam' && e instanceof ApiError && e.status === 409) {
-        setConfirming(e.message);
+        // The server's question, in the candidate's language (audit CA-M21).
+        setConfirming(t('applications.examOpenElsewhere'));
         return;
       }
-      setError(e instanceof Error && e.message ? e.message : t('error.generic'));
+      setError(errText(e, t('error.generic')));
     },
   });
 

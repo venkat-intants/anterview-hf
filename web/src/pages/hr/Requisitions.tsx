@@ -36,6 +36,7 @@ import { Page, PageHeader, EmptyState, Toolbar } from '@/design/components/page'
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LIVE_POLL_MS } from '@/lib/polling';
+import { errorMessage } from '@/lib/errorMessage';
 import { APPROVAL_LABEL } from '@/lib/openingSetup';
 import {
   isAcceptingApplications,
@@ -65,6 +66,22 @@ const TABS = [
   { key: 'all', label: 'All' },
 ];
 
+/** HR-L2: the empty state per tab ("Nothing all" read as a typo). */
+const EMPTY_TITLE: Record<string, string> = {
+  open: 'No open roles',
+  paused: 'No paused openings',
+  closed: 'No closed openings',
+  all: 'No openings yet',
+};
+
+/**
+ * HR-M7: the server returns at most this many openings per request (its
+ * _MAX_PAGE). Search, sort and the counts below run on what was fetched, so
+ * when a full page comes back the page says so instead of letting the rest
+ * vanish without a hint.
+ */
+const OPENINGS_PAGE_LIMIT = 200;
+
 const SORTS: { key: OpeningSort; label: string }[] = [
   { key: 'needs-you', label: 'Needs you first' },
   { key: 'newest', label: 'Newest first' },
@@ -82,8 +99,9 @@ const APPROVAL_TONE: Record<ApprovalStatus, 'neutral' | 'amber' | 'forest' | 'em
 const GRID =
   'md:grid md:grid-cols-[minmax(0,2fr)_104px_minmax(0,1.15fr)_minmax(0,1.4fr)_minmax(0,1.1fr)_minmax(0,1.8fr)] md:items-center md:gap-x-4';
 
+/** The shared error copy (errorMessage), with this page's period-less fallbacks. */
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, `${fallback}.`);
 }
 
 /* ── The five setup dots ─────────────────────────────────────────────────── */
@@ -351,7 +369,12 @@ export default function Requisitions(): JSX.Element {
 
   const list = useQuery({
     queryKey: ['hr', 'requisitions', tab],
-    queryFn: () => listRequisitions(tab === 'all' ? {} : { status: tab as RequisitionStatus }),
+    queryFn: () =>
+      listRequisitions(
+        tab === 'all'
+          ? { limit: OPENINGS_PAGE_LIMIT }
+          : { status: tab as RequisitionStatus, limit: OPENINGS_PAGE_LIMIT },
+      ),
     refetchInterval: LIVE_POLL_MS,
   });
 
@@ -367,6 +390,7 @@ export default function Requisitions(): JSX.Element {
     (review.data?.merge_candidates.length ?? 0);
 
   const all = list.data;
+  const truncated = (all?.length ?? 0) >= OPENINGS_PAGE_LIMIT;
   const rows = useMemo(
     () => sortOpenings((all ?? []).filter((r) => matchesQuery(r, query)), sort),
     [all, query, sort],
@@ -444,11 +468,22 @@ export default function Requisitions(): JSX.Element {
               className="ml-auto text-[13px] tabular-nums text-muted-foreground"
               aria-live="polite"
             >
-              {rows.length} opening{rows.length === 1 ? '' : 's'}
+              {rows.length}
+              {truncated && !query.trim() ? '+' : ''} opening{rows.length === 1 ? '' : 's'}
             </span>
           ) : null}
         </Toolbar>
       </div>
+
+      {truncated ? (
+        <p
+          data-testid="openings-truncated"
+          className="rounded-[12px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn-wash)] px-4 py-2.5 text-[13px] text-foreground"
+        >
+          Showing the first {OPENINGS_PAGE_LIMIT} openings. Search, sorting and the totals cover
+          these only - pick a status tab to narrow the list.
+        </p>
+      ) : null}
 
       {list.isLoading ? (
         <div className="flex flex-col gap-2" role="status">
@@ -468,7 +503,7 @@ export default function Requisitions(): JSX.Element {
         <EmptyState
           size="page"
           icon={Briefcase}
-          title={tab === 'open' ? 'No open roles' : `Nothing ${tab}`}
+          title={EMPTY_TITLE[tab] ?? 'No openings yet'}
           description="Create an opening to give a role its own workflow, funnel and decision queue."
           action={
             <Button type="button" variant="outline" onClick={() => setCreating(true)}>

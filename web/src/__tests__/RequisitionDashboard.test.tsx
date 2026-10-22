@@ -158,7 +158,7 @@ beforeEach(() => {
 describe('the per-opening dashboard (E1)', () => {
   it('shows status, key job information and the workflow state', async () => {
     renderPage();
-    expect(await screen.findByText('Python Developer')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Python Developer' })).toBeTruthy();
     expect(screen.getByText('Hyderabad')).toBeTruthy();
     expect(screen.getByText('Engineering')).toBeTruthy();
     expect(screen.getByTestId('workflow-state').textContent).toBe('workflow v2 live · v3 draft');
@@ -167,9 +167,17 @@ describe('the per-opening dashboard (E1)', () => {
     expect(screen.queryByText('open')).toBeNull();
   });
 
+  it('names the opening in the breadcrumb, not a generic "Opening dashboard" (HR-L8)', async () => {
+    renderPage();
+    await screen.findByRole('heading', { name: 'Python Developer' });
+    const current = document.querySelector('nav [aria-current="page"]');
+    expect(current?.textContent).toBe('Python Developer');
+    expect(screen.queryByText('Opening dashboard')).toBeNull();
+  });
+
   it('reads hires against the target and counts who is where', async () => {
     renderPage();
-    await screen.findByText('Python Developer');
+    await screen.findByRole('heading', { name: 'Python Developer' });
     expect(screen.getByText('1 of 4')).toBeTruthy();
     expect(screen.getByLabelText('Hiring progress: 1 of 4')).toBeTruthy();
     expect(screen.getByText('In a round now')).toBeTruthy();
@@ -257,7 +265,7 @@ describe('the per-opening dashboard (E1)', () => {
 
   it('links to the workflow editor and the decision queue, and drops the status list', async () => {
     renderPage();
-    await screen.findByText('Python Developer');
+    await screen.findByRole('heading', { name: 'Python Developer' });
     expect(screen.getByRole('link', { name: 'Workflow' }).getAttribute('href')).toBe(
       '/hr/requisitions/req-1/workflow',
     );
@@ -271,7 +279,7 @@ describe('the per-opening dashboard (E1)', () => {
   it("gives the company super admin the same numbers, with nothing to change (E3)", async () => {
     getCompanyRequisitionDashboard.mockResolvedValue(dash());
     renderPage(true);
-    expect(await screen.findByText('Python Developer')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Python Developer' })).toBeTruthy();
     expect(getCompanyRequisitionDashboard).toHaveBeenCalledWith('req-1');
     expect(mocks.getRequisitionDashboard).not.toHaveBeenCalled();
     expect(screen.getByText('Read-only')).toBeTruthy();

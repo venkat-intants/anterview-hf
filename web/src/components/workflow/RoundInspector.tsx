@@ -76,6 +76,8 @@ interface Props {
   returnTo?: string;
   onPatch: (fields: RoundPatch) => void;
   onCriteria: (criteria: CriterionInput[]) => void;
+  /** Bumped by the builder when a save fails, so number fields drop a refused value. */
+  resetKey?: number;
 }
 
 /* ── Exam picker ─────────────────────────────────────────────────────────────
@@ -681,6 +683,7 @@ export default function RoundInspector({
   returnTo,
   onPatch,
   onCriteria,
+  resetKey,
 }: Props): JSX.Element {
   const meta = ROUND_KIND_META[round.kind];
   const Icon = meta.icon;
@@ -767,6 +770,7 @@ export default function RoundInspector({
               onCommit={(n) => {
                 if (n !== null) onPatch({ deadline_days: n });
               }}
+              resetKey={resetKey}
             />
           </div>
           <div>
@@ -786,6 +790,7 @@ export default function RoundInspector({
               }
               rangeMessage="Enter whole minutes from 1 to 1440, or leave it empty for no limit."
               onCommit={(n) => onPatch({ time_limit_seconds: n === null ? null : n * 60 })}
+              resetKey={resetKey}
             />
           </div>
         </div>
@@ -925,6 +930,7 @@ export default function RoundInspector({
                 value={round.pass_threshold}
                 placeholder="required"
                 onCommit={(n) => onPatch({ pass_threshold: n })}
+                resetKey={resetKey}
                 className="w-28"
               />
               <span className="text-[14px] text-muted-foreground">%</span>

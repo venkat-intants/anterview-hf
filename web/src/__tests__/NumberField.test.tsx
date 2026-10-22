@@ -87,4 +87,49 @@ describe('NumberField', () => {
     );
     expect(input).toHaveValue(14);
   });
+
+  it('shows the saved value again after a save fails', async () => {
+    // The parent's saved value stays 7 because the server refused 99; the
+    // builder bumps resetKey from the mutation's onError.
+    const user = userEvent.setup();
+    const onCommit = vi.fn();
+    const ui = (resetKey: number) => (
+      <>
+        <label htmlFor="days">Days to complete</label>
+        <NumberField
+          id="days"
+          value={7}
+          min={1}
+          max={365}
+          onCommit={onCommit}
+          resetKey={resetKey}
+        />
+      </>
+    );
+    const view = render(ui(0));
+    const input = screen.getByLabelText('Days to complete');
+    await user.clear(input);
+    await user.type(input, '99');
+    await user.tab();
+    expect(onCommit).toHaveBeenCalledWith(99);
+    expect(input).toHaveValue(99);
+    view.rerender(ui(1));
+    expect(input).toHaveValue(7);
+  });
+
+  it('does not wipe a new edit when a reset arrives mid-typing', async () => {
+    const user = userEvent.setup();
+    const ui = (resetKey: number) => (
+      <>
+        <label htmlFor="days">Days to complete</label>
+        <NumberField id="days" value={7} min={1} max={365} onCommit={vi.fn()} resetKey={resetKey} />
+      </>
+    );
+    const view = render(ui(0));
+    const input = screen.getByLabelText('Days to complete');
+    await user.clear(input);
+    await user.type(input, '42');
+    view.rerender(ui(1));
+    expect(input).toHaveValue(42);
+  });
 });

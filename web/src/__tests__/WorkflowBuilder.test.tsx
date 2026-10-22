@@ -1118,6 +1118,21 @@ describe('WorkflowBuilder - automation number fields', () => {
     await waitFor(() => expect(updateSettings).toHaveBeenCalledWith('wf-draft', { hold_band: 15 }));
     expect(updateSettings).toHaveBeenCalledTimes(1);
   });
+
+  it('puts the saved value back when the server refuses the save', async () => {
+    const user = userEvent.setup();
+    updateSettings.mockRejectedValueOnce(new Error('hold_band refused'));
+    await openAutomation(user);
+
+    const field = screen.getByLabelText('Mark near misses within');
+    await user.clear(field);
+    await user.type(field, '15');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith('wf-draft', { hold_band: 15 }));
+    // The saved band is still 10; the field must not keep showing 15 as if kept.
+    await waitFor(() => expect(field).toHaveValue(10));
+  });
 });
 
 // ── Review fixes: the toggle mirrors every rule the server enforces ─────────

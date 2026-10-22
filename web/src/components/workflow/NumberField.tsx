@@ -12,6 +12,12 @@
 // blur or Enter, after checking the range here. Escape puts the saved value
 // back. A value the server changes underneath (another tab, a refetch) shows
 // up as long as the person is not mid-edit.
+//
+// A save the server refuses leaves the saved value as it was, so nothing
+// above would notice and the field would keep showing the refused number as
+// if it had been kept. The caller bumps `resetKey` when a save fails, and the
+// field then shows the saved value again (unless the person is already typing
+// a new one).
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Input } from '@/components/ui/input';
@@ -36,6 +42,11 @@ export interface NumberFieldProps {
   className?: string;
   /** Overrides the default "Enter a whole number from min to max." */
   rangeMessage?: string;
+  /**
+   * Change this when a save fails. The field then drops its draft and shows
+   * the saved value, so a refused number is not left on screen as if kept.
+   */
+  resetKey?: number;
 }
 
 /** Why `raw` cannot be saved, or null when it can. */
@@ -80,18 +91,20 @@ export function NumberField({
   placeholder,
   className,
   rangeMessage,
+  resetKey,
 }: NumberFieldProps): JSX.Element {
   const [draft, setDraft] = useState(show(value));
   const [error, setError] = useState<string | null>(null);
   const editing = useRef(false);
 
-  // Follow the saved value while nobody is typing in this field.
+  // Follow the saved value while nobody is typing in this field, and come
+  // back to it after a failed save (resetKey changes).
   useEffect(() => {
     if (!editing.current) {
       setDraft(show(value));
       setError(null);
     }
-  }, [value]);
+  }, [value, resetKey]);
 
   function commit(): void {
     const problem = numberFieldError(draft, { min, max, allowEmpty, step, decimal, rangeMessage });

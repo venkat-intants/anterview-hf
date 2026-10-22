@@ -221,10 +221,13 @@ function SettingsPanel({
   workflow,
   editable,
   onPatch,
+  resetKey,
 }: {
   workflow: Workflow;
   editable: boolean;
   onPatch: (fields: Partial<WorkflowSettings>) => void;
+  /** Bumped when a save fails, so number fields drop a refused value. */
+  resetKey: number;
 }) {
   const s = workflow.settings;
   return (
@@ -268,6 +271,7 @@ function SettingsPanel({
             onCommit={(n) => {
               if (n !== null) onPatch({ hold_band: n });
             }}
+            resetKey={resetKey}
             className="w-24"
           />
           <span className="text-[13px] text-muted-foreground">points</span>
@@ -303,6 +307,7 @@ function SettingsPanel({
                 : 'Enter 10, 20 and so on up to 100, or leave it empty to turn suggestions off.'
             }
             onCommit={(n) => onPatch({ shortlist_ats_threshold: n === null ? null : n / 10 })}
+            resetKey={resetKey}
             className="w-24"
           />
           <span className="text-[13px] text-muted-foreground">/ 100</span>
@@ -556,10 +561,17 @@ export default function WorkflowBuilder(): JSX.Element {
     void qc.invalidateQueries({ queryKey: ['hr', 'workflows', requisitionId] });
   };
 
+  // Counts refused saves. A refused PATCH leaves the cached workflow as it
+  // was, so the number fields would not otherwise notice and would keep
+  // showing the refused value; bumping this puts the saved one back.
+  const [failedSaves, setFailedSaves] = useState(0);
   const mutating = useMutation({
     mutationFn: async (op: () => Promise<Workflow>) => op(),
     onSuccess: applyWorkflow,
-    onError: (e) => toast.error(errText(e, 'That change did not save')),
+    onError: (e) => {
+      setFailedSaves((n) => n + 1);
+      toast.error(errText(e, 'That change did not save'));
+    },
   });
 
   const run = (op: () => Promise<Workflow>) => mutating.mutate(op);
@@ -1194,6 +1206,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     workflow={workflow}
                     editable={editable}
                     onPatch={(fields) => run(() => updateSettings(workflow.id, fields))}
+                    resetKey={failedSaves}
                   />
                 ) : activeTab === 'assistant' && copilotAvailable ? null : selected ? (
                   <RoundInspector
@@ -1209,6 +1222,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     )}
                     returnTo={`/hr/requisitions/${requisitionId}/workflow`}
                     onPatch={(fields) => run(() => updateRound(workflow.id, selected.id, fields))}
+                    resetKey={failedSaves}
                     onCriteria={(criteria: CriterionInput[]) =>
                       run(() => setRoundCriteria(workflow.id, selected.id, criteria))
                     }

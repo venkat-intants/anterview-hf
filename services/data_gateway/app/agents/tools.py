@@ -454,8 +454,10 @@ async def _get_funnel_analytics(args: dict[str, Any], ctx: ToolContext) -> ToolO
                 id="funnel",
                 label="Hiring funnel",
                 # No record to open (CITATION_ROUTES["analytics"] is None), but
-                # the console that SHOWS this aggregate is a declared view.
-                href=citation_href("analytics", view="hr"),
+                # the console that SHOWS this aggregate is a declared view, and
+                # which console depends on who asked: this tool is offered to
+                # super_admin too, whose route guard bounces /hr/* (AD-F2).
+                href=citation_href_for_role("analytics", "", role=ctx.role),
             )
         ],
     )
@@ -532,7 +534,12 @@ async def _get_exam_question_stats(args: dict[str, Any], ctx: ToolContext) -> To
         seen_exam_ids.add(exam_id)
         citations.append(
             Citation(
-                kind="exam", id=exam_id, label=r.title, href=citation_href("exam", exam_id)
+                kind="exam",
+                id=exam_id,
+                label=r.title,
+                # Role-aware: the exam screen exists only in the HR console, so
+                # a super admin's chip is unlinked rather than bounced (AD-F2).
+                href=citation_href_for_role("exam", exam_id, role=ctx.role),
             )
         )
 
@@ -798,6 +805,88 @@ async def _get_score_distribution(args: dict[str, Any], ctx: ToolContext) -> Too
 # Draft tools — produce proposals, never effects
 # ---------------------------------------------------------------------------
 
+# A draft is about one APPLICATION (B5), not one person: both endpoints a draft
+# commits to refuse a person with several live applications unless the body
+# names one ("choose which one"), and a shortlist or an exam pass for one
+# opening says nothing about another. So the drafts read the same per-
+# application view the pipeline board and the interview screen read, and every
+# proposal carries the enrolment_id it is about. The company filter is on the
+# view's own company_id, so an id from another tenant simply does not come back.
+_DRAFT_TARGETS_SQL = text(
+    """
+SELECT p.applicant_id AS id, p.full_name, a.email, p.enrolment_id, p.opening_title,
+       p.stored_status, COALESCE(p.exam_passed, false) AS exam_passed,
+       p.has_active_invite, p.live_applications
+  FROM application_progress p
+  JOIN applicants a ON a.id = p.applicant_id AND a.company_id = p.company_id
+ WHERE p.company_id = :cid
+   AND p.applicant_id = ANY(CAST(:ids AS uuid[]))
+ ORDER BY p.full_name, p.applied_at
+"""
+)
+
+# Why a shortlist is not drafted for an application in this stored status.
+# 'new' and 'held' are the two a shortlist legitimately moves on from.
+_SHORTLIST_SKIP_REASON: dict[str, str] = {
+    "shortlisted": "already shortlisted",
+    "interviewed": "already interviewed",
+    "hired": "already hired",
+    "rejected": "already rejected",
+}
+
+
+def _requested_ids(args: dict[str, Any]) -> list[str]:
+    """The model's applicant ids, de-duplicated, capped, and valid UUIDs only.
+
+    A malformed id is dropped here rather than handed to ``CAST(... AS uuid[])``,
+    where one bad string would fail the whole query (and the transaction it
+    runs in) instead of just not being found.
+    """
+    raw = args.get("applicant_ids")
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        value = str(item).strip()
+        try:
+            canonical = str(uuid.UUID(value))
+        except ValueError:
+            continue
+        if canonical not in out:
+            out.append(canonical)
+    return out[:MAX_ROWS]
+
+
+async def _draft_targets(ctx: ToolContext, ids: list[str]) -> dict[str, list[Any]]:
+    """Every application of each requested applicant in this company, grouped
+    by applicant id (in name order). Absent key = not found in this company."""
+    rows = (await _db(ctx).execute(_DRAFT_TARGETS_SQL, {"cid": ctx.company_id, "ids": ids})).all()
+    people: dict[str, list[Any]] = {}
+    for row in rows:
+        people.setdefault(str(row.id), []).append(row)
+    return people
+
+
+def _interview_eligible(row: Any) -> bool:
+    """POST /hr/interviews' funnel gate for one application, plus the terminal
+    statuses ``eligible-applicants`` already leaves out."""
+    if row.stored_status in ("hired", "rejected"):
+        return False
+    return row.stored_status == "shortlisted" or bool(row.exam_passed)
+
+
+def _opening(row: Any) -> str:
+    return str(row.opening_title) if row.opening_title else "no opening"
+
+
+def _draft_title(action: str, row: Any) -> str:
+    """Name the opening in the title only when the person has several, which is
+    exactly when two cards for the same person would otherwise read the same."""
+    title = f"{action} - {row.full_name}"
+    if (row.live_applications or 0) > 1:
+        title += f" ({_opening(row)})"
+    return title
+
 
 @registry.tool(
     name="draft_interview_invites",
@@ -827,8 +916,7 @@ async def _get_score_distribution(args: dict[str, Any], ctx: ToolContext) -> Too
     allowed_roles=CANDIDATE_PII_ROLES,
 )
 async def _draft_interview_invites(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
-    raw_ids = args.get("applicant_ids")
-    ids = [str(i).strip() for i in raw_ids if str(i).strip()][:MAX_ROWS] if isinstance(raw_ids, list) else []
+    ids = _requested_ids(args)
     if not ids:
         return ToolOutput(data={"error": "applicant_ids must be a non-empty list"})
 
@@ -837,61 +925,65 @@ async def _draft_interview_invites(args: dict[str, Any], ctx: ToolContext) -> To
         language = "en"
     reason = str(args.get("reason", "")).strip()
 
-    # Re-read the names from the DB rather than trusting anything the model
-    # supplied, and let the company filter drop any id that is not ours. An id
-    # from another tenant simply does not come back, so it cannot be drafted.
-    rows = (
-        await _db(ctx).execute(
-            text(
-                """
-                SELECT id, full_name, email, target_job_title
-                FROM applicants
-                WHERE company_id = :cid AND deleted_at IS NULL
-                  AND id = ANY(CAST(:ids AS uuid[]))
-                """
-            ),
-            {"cid": ctx.company_id, "ids": ids},
-        )
-    ).all()
+    people = await _draft_targets(ctx, ids)
 
     proposals: list[Proposal] = []
     skipped: list[str] = []
-    for row in rows:
-        if not row.email:
+    for apps in people.values():
+        first = apps[0]
+        if not first.email:
             # An invite is delivered by email; drafting one for a candidate
             # with no address would produce a button that fails on click.
-            skipped.append(f"{row.full_name} (no email on file)")
+            skipped.append(f"{first.full_name} (no email on file)")
             continue
-        proposals.append(
-            Proposal(
-                kind="interview_invite",
-                title=f"Interview invite - {row.full_name}",
-                summary=f"{row.target_job_title} · {language.upper()} · emailed to the candidate",
-                commit=CommitSpec(
-                    method="POST",
-                    path="/hr/interviews",
-                    body={"applicant_id": str(row.id), "language": language},
-                    label="Send invite",
-                ),
-                rationale=reason,
-                risk_note="Sends a real email to the candidate. This cannot be unsent.",
-                citations=[_applicant_citation(row)],
+        # The endpoint's own funnel gate (shortlisted, or passed an exam, for
+        # THIS application), applied here too: a draft the endpoint is bound
+        # to refuse is a button that can only fail.
+        eligible = [r for r in apps if _interview_eligible(r)]
+        if not eligible:
+            skipped.append(f"{first.full_name} (not shortlisted and no exam passed)")
+            continue
+        for row in eligible:
+            opening = _opening(row)
+            if row.has_active_invite:
+                # Committing would revoke the link the candidate already holds
+                # and email them a second one (POST /hr/interviews rotates any
+                # active invite), so a candidate with a live invite is never
+                # drafted.
+                skipped.append(f"{first.full_name}, {opening} (already has an active invite)")
+                continue
+            body: dict[str, Any] = {"applicant_id": str(row.id), "language": language}
+            if row.enrolment_id is not None:
+                body["enrolment_id"] = str(row.enrolment_id)
+            proposals.append(
+                Proposal(
+                    kind="interview_invite",
+                    title=_draft_title("Interview invite", row),
+                    summary=f"{opening} · {language.upper()} · emailed to the candidate",
+                    commit=CommitSpec(
+                        method="POST",
+                        path="/hr/interviews",
+                        body=body,
+                        label="Send invite",
+                    ),
+                    rationale=reason,
+                    risk_note="Sends a real email to the candidate. This cannot be unsent.",
+                    citations=[_applicant_citation(row)],
+                )
             )
-        )
 
-    found = {str(r.id) for r in rows}
     return ToolOutput(
         data={
             "drafted": len(proposals),
             "skipped": skipped,
-            "not_found_in_this_company": [i for i in ids if i not in found],
+            "not_found_in_this_company": [i for i in ids if i not in people],
             "note": "Nothing has been sent. The user must review and approve each draft.",
         },
         proposals=proposals,
         # Also lifted to the run level: the console renders run citations as the
         # "sources" strip, and a draft with no visible source gives the reviewer
         # nothing to click through to before approving.
-        citations=[_applicant_citation(r) for r in rows],
+        citations=[_applicant_citation(apps[0]) for apps in people.values()],
     )
 
 
@@ -914,58 +1006,63 @@ async def _draft_interview_invites(args: dict[str, Any], ctx: ToolContext) -> To
     allowed_roles=CANDIDATE_PII_ROLES,
 )
 async def _draft_shortlist(args: dict[str, Any], ctx: ToolContext) -> ToolOutput:
-    raw_ids = args.get("applicant_ids")
-    ids = [str(i).strip() for i in raw_ids if str(i).strip()][:MAX_ROWS] if isinstance(raw_ids, list) else []
+    ids = _requested_ids(args)
     if not ids:
         return ToolOutput(data={"error": "applicant_ids must be a non-empty list"})
 
-    rows = (
-        await _db(ctx).execute(
-            text(
-                """
-                SELECT id, full_name, status FROM applicants
-                WHERE company_id = :cid AND deleted_at IS NULL
-                  AND id = ANY(CAST(:ids AS uuid[]))
-                """
-            ),
-            {"cid": ctx.company_id, "ids": ids},
-        )
-    ).all()
+    people = await _draft_targets(ctx, ids)
+    reason = str(args.get("reason", "")).strip()
 
-    proposals = [
-        Proposal(
-            kind="shortlist",
-            title=f"Shortlist {row.full_name}",
-            summary=f"Status {row.status} → shortlisted",
-            commit=CommitSpec(
-                method="PATCH",
-                path=f"/hr/applicants/{row.id}",
-                body={"status": "shortlisted"},
-                label="Shortlist",
-            ),
-            rationale=str(args.get("reason", "")).strip(),
-            # A shortlist is NOT a silent internal change: the PATCH handler
-            # calls email_applicant_decision on any real status transition, so
-            # committing this reaches the candidate's inbox. Verified against
-            # hr_applicants.update_applicant_status — worth re-checking if that
-            # handler's email behaviour ever changes.
-            risk_note=(
-                "Emails the candidate that they have been shortlisted. "
-                "This cannot be unsent."
-            ),
-            citations=[_applicant_citation(row)],
-        )
-        for row in rows
-        if row.status not in ("hired", "rejected")
-    ]
+    proposals: list[Proposal] = []
+    skipped: list[str] = []
+    for apps in people.values():
+        for row in apps:
+            opening = _opening(row)
+            why_not = _SHORTLIST_SKIP_REASON.get(row.stored_status)
+            if why_not is not None:
+                skipped.append(f"{row.full_name}, {opening} ({why_not})")
+                continue
+            body: dict[str, Any] = {"status": "shortlisted"}
+            if row.enrolment_id is not None:
+                # Without it, PATCH /hr/applicants/{id} refuses anyone with
+                # more than one live application ("choose which one"), and the
+                # card has no way to choose.
+                body["enrolment_id"] = str(row.enrolment_id)
+            proposals.append(
+                Proposal(
+                    kind="shortlist",
+                    title=_draft_title("Shortlist", row),
+                    summary=f"{opening} · status {row.stored_status} → shortlisted",
+                    commit=CommitSpec(
+                        method="PATCH",
+                        path=f"/hr/applicants/{row.id}",
+                        body=body,
+                        label="Shortlist",
+                    ),
+                    rationale=reason,
+                    # A shortlist is NOT a silent internal change: the PATCH
+                    # handler calls email_applicant_decision on any real status
+                    # transition, so committing this reaches the candidate's
+                    # inbox. Verified against hr_applicants.update_applicant_status;
+                    # worth re-checking if that handler's email behaviour ever
+                    # changes.
+                    risk_note=(
+                        "Emails the candidate that they have been shortlisted. "
+                        "This cannot be unsent."
+                    ),
+                    citations=[_applicant_citation(row)],
+                )
+            )
 
     return ToolOutput(
         data={
             "drafted": len(proposals),
+            "skipped": skipped,
+            "not_found_in_this_company": [i for i in ids if i not in people],
             "note": "No statuses have changed. The user must approve each draft.",
         },
         proposals=proposals,
-        citations=[_applicant_citation(r) for r in rows],
+        citations=[_applicant_citation(apps[0]) for apps in people.values()],
     )
 
 

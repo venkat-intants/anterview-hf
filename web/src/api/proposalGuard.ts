@@ -88,3 +88,44 @@ export function assertSafeProposalRequest(
   }
   return { method: method as ProposalMethod, path };
 }
+
+/** One path segment that is a record id (the backend's ids are UUIDs). */
+const ID = '[0-9A-Za-z-]+';
+
+/**
+ * The exact endpoints each proposal kind may fire, as (method, path pattern).
+ *
+ * The checks above keep a proposal on the API and under `/hr/`; this one keeps
+ * it on the endpoint its kind is ABOUT, so an "Interview invite" card can only
+ * ever create an interview invite, whatever a mis-written server tool put in
+ * its CommitSpec (audit CP-L4). Each entry mirrors one CommitSpec constructor
+ * in services/data_gateway/app/agents/{tools,workflow_tools}.py. A kind with
+ * no entry has no drafting tool today and is refused; adding a drafting tool
+ * means adding its endpoint here, deliberately.
+ */
+const KIND_ENDPOINTS: Readonly<Record<string, ReadonlyArray<readonly [ProposalMethod, RegExp]>>> = {
+  interview_invite: [['POST', /^\/hr\/interviews$/]],
+  shortlist: [['PATCH', new RegExp(`^/hr/applicants/${ID}$`)]],
+  workflow: [['POST', new RegExp(`^/hr/requisitions/${ID}/workflows/apply$`)]],
+  workflow_round: [
+    ['POST', new RegExp(`^/hr/workflows/${ID}/rounds$`)],
+    ['PUT', new RegExp(`^/hr/workflows/${ID}/rounds/${ID}/criteria$`)],
+  ],
+  workflow_settings: [['PATCH', new RegExp(`^/hr/workflows/${ID}$`)]],
+};
+
+/**
+ * Refuse a proposal whose request is not one its kind is allowed to make.
+ * Run after `assertSafeProposalRequest`, on the method and path it returned.
+ */
+export function assertProposalMatchesKind(kind: string, method: ProposalMethod, path: string): void {
+  const allowed = Object.prototype.hasOwnProperty.call(KIND_ENDPOINTS, kind)
+    ? KIND_ENDPOINTS[kind]
+    : undefined;
+  if (!allowed) {
+    throw new ProposalRejectedError('this kind of proposal cannot be sent from here');
+  }
+  if (!allowed.some(([m, pattern]) => m === method && pattern.test(path))) {
+    throw new ProposalRejectedError('the request does not match what this proposal is for');
+  }
+}

@@ -117,6 +117,27 @@ def test_a_document_citation_points_into_the_readers_own_console() -> None:
     )
 
 
+def test_company_scoped_chips_never_send_a_super_admin_into_the_hr_console() -> None:
+    """AD-F2 / CP-F11: exam, job and analytics citations reach super_admin
+    (company_scoped tools are offered to both company consoles), and ``/hr/*``
+    admits hr_manager only. Each kind either opens the super admin's own view
+    or is unlinked; none of them is a link their route guard bounces."""
+    assert citation_href_for_role("exam", "x-1", role="hr_manager") == "/hr/exams/x-1"
+    assert citation_href_for_role("exam", "x-1", role="super_admin") is None
+    assert citation_href_for_role("job", "r-1", role="hr_manager") == "/hr/requisitions/r-1"
+    assert citation_href_for_role("job", "r-1", role="super_admin") == (
+        "/superadmin/requisitions/r-1"
+    )
+    assert citation_href_for_role("analytics", "", role="hr_manager") == "/hr/analytics"
+    assert citation_href_for_role("analytics", "", role="super_admin") == "/superadmin"
+
+
+def test_the_decision_route_does_not_put_the_enrolment_id_in_the_query() -> None:
+    """CP-L6: one id fills every ``{id}``, so a ``?decision={id}`` suffix put
+    the ENROLMENT's UUID where a decision id belongs."""
+    assert citation_href("decision", "en-1") == "/hr/enrolments/en-1/evidence"
+
+
 def test_the_role_aware_helper_falls_back_to_the_base_route() -> None:
     """Two fallbacks, both deliberate: a role with no console view of its own,
     and a kind that exists in only one console. The helper is therefore safe to

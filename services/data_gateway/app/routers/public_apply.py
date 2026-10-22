@@ -60,7 +60,9 @@ from sqlalchemy.exc import IntegrityError
 from app import application_drafts as draft_store
 from app import rediscovery
 from app.application_questions import (
+    MAX_QUESTIONS_PER_OPENING,
     AnswerError,
+    bound_draft_answers,
     list_questions,
     store_answers,
     validate_answers,
@@ -463,7 +465,9 @@ class DraftFieldsIn(BaseModel):
     linkedin_url: str | None = Field(default=None, max_length=500)
     github_url: str | None = Field(default=None, max_length=500)
     language: Literal["en", "hi", "te"] | None = None
-    answers: dict[str, Any] | None = None
+    # Bounded here (a form renders at most this many questions) and again in
+    # update_draft, against the opening's live question ids and value shapes.
+    answers: dict[str, Any] | None = Field(default=None, max_length=MAX_QUESTIONS_PER_OPENING)
 
 
 class ParsedDetails(BaseModel):
@@ -739,6 +743,16 @@ async def update_draft(
     row = await _draft_or_404(db, token)
     fields = body.model_dump(exclude_unset=True)
     answers = fields.pop("answers", None)
+    if answers is not None:
+        # The draft column holds only answers to this opening's questions, in
+        # shapes the form produces. Submission validates them fully later.
+        questions = await list_questions(
+            db, requisition_id=uuid.UUID(str(row["requisition_id"]))
+        )
+        try:
+            answers = bound_draft_answers(questions, answers)
+        except AnswerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
     # An edit to a confirmed detail undoes the confirmation. submit_draft builds
     # the application from these columns and stamps it with confirmed_at, so a
     # save that changed the name after "these details are correct" would

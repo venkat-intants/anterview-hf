@@ -153,3 +153,28 @@ async def test_changing_only_the_email_language_keeps_the_confirmation(
     out = await update_draft(body=DraftFieldsIn(language="te"), db=db, token=token)  # type: ignore[arg-type]
     assert out.language == "te"
     assert out.confirmed is True
+
+
+@pytest.mark.asyncio
+async def test_a_saved_draft_holds_only_bounded_answers_to_its_questions(
+    db: AsyncSession,
+) -> None:
+    """PATCH /apply/draft is the live write path for answers (CA-H1), so it must
+    not store keys that are not this opening's questions or values the form
+    could never produce (CWE-770)."""
+    token, question_id = await _draft_with_required_question(db)
+    saved = await update_draft(
+        body=DraftFieldsIn(answers={question_id: True, "not-a-question": "x" * 50}),
+        db=db, token=token,  # type: ignore[arg-type]
+    )
+    assert saved.answers == {question_id: True}
+
+    with pytest.raises(HTTPException) as refused:
+        await update_draft(
+            body=DraftFieldsIn(answers={question_id: {"nested": ["object"]}}),
+            db=db, token=token,  # type: ignore[arg-type]
+        )
+    assert refused.value.status_code == 422
+    await db.rollback()
+    still = await resume_draft(db=db, token=token)  # type: ignore[arg-type]
+    assert still.answers == {question_id: True}

@@ -27,6 +27,7 @@ VALIDATION IS SERVER-SIDE AND SHAPED BY THE KIND
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from typing import Any
 
@@ -388,6 +389,47 @@ def validate_answers(
                 )
             continue
         out.append((question["id"], value))
+    return out
+
+
+def bound_draft_answers(
+    questions: list[dict[str, Any]], answers: dict[str, Any]
+) -> dict[str, Any]:
+    """Bound what a saved draft may hold before it is written.
+
+    A draft is allowed to be incomplete, so this is NOT ``validate_answers``:
+    a half-typed number or an unanswered required question still saves. It
+    only stops the draft column being a store for anything the token holder
+    cares to send. Keys must be this opening's live question ids (others are
+    dropped, as ``validate_answers`` ignores them: a form loaded before HR
+    retired a question must still save), so there are never more entries than
+    questions. A value must be a shape the form can produce: text (cut to the
+    length submission keeps), a yes/no, a number, nothing, or a list of short
+    choices. Anything else raises ``AnswerError``.
+    """
+    by_id = {str(q["id"]): q for q in questions}
+    out: dict[str, Any] = {}
+    for key, raw in answers.items():
+        question = by_id.get(str(key))
+        if question is None:
+            continue
+        qid = str(question["id"])
+        # bool is an int; a non-finite float would not survive the jsonb cast.
+        if raw is None or (isinstance(raw, int | float) and math.isfinite(raw)):
+            out[qid] = raw
+        elif isinstance(raw, str):
+            out[qid] = raw[:MAX_ANSWER_CHARS]
+        elif isinstance(raw, list):
+            if len(raw) > MAX_OPTIONS or not all(isinstance(c, str) for c in raw):
+                raise AnswerError(
+                    f"'{question['prompt']}' takes at most {MAX_OPTIONS} choices.",
+                    question_id=qid,
+                )
+            out[qid] = [c[:MAX_ANSWER_CHARS] for c in raw]
+        else:
+            raise AnswerError(
+                f"'{question['prompt']}' cannot take that answer.", question_id=qid
+            )
     return out
 
 

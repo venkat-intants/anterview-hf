@@ -157,6 +157,10 @@ describe('YourInterviews - choosing a time', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Choose a time' }));
     await user.click(await screen.findByRole('button', { name: /\d{2}:\d{2}/ }));
+    // Picking a time does not book it: the booking is final (audit CA-M10).
+    expect(api.bookMySlot).not.toHaveBeenCalled();
+    expect(screen.getByTestId('book-confirm')).toHaveTextContent(/only the hiring team can change it/);
+    await user.click(screen.getByRole('button', { name: 'Book this time' }));
 
     await waitFor(() =>
       expect(api.bookMySlot).toHaveBeenCalledWith('loop-1', {
@@ -189,6 +193,7 @@ describe('YourInterviews - choosing a time', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Choose a time' }));
     await user.click(await screen.findByRole('button', { name: /\d{2}:\d{2}/ }));
+    await user.click(screen.getByRole('button', { name: 'Book this time' }));
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith('This schedule is not open for choosing times.'),
@@ -196,6 +201,30 @@ describe('YourInterviews - choosing a time', () => {
     // Both the offered times and the loop list are refreshed after a refusal.
     await waitFor(() => expect(api.getMySessionSlots).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(api.listMyInterviewLoops).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe('YourInterviews - confirming a time (CA-M10)', () => {
+  it('lets the candidate back out of a picked time without booking', async () => {
+    api.listMyInterviewLoops.mockResolvedValue([awaitingLoop()]);
+    api.getMySessionSlots.mockResolvedValue(['2026-09-25T05:00:00.000Z']);
+    const user = userEvent.setup();
+    renderComp();
+    await user.click(await screen.findByRole('button', { name: 'Choose a time' }));
+    await user.click(await screen.findByRole('button', { name: /\d{2}:\d{2}/ }));
+    await user.click(screen.getByRole('button', { name: 'Choose another' }));
+    expect(screen.queryByTestId('book-confirm')).not.toBeInTheDocument();
+    expect(api.bookMySlot).not.toHaveBeenCalled();
+  });
+});
+
+describe('YourInterviews - one time zone (CA-L11)', () => {
+  it('names the zone in words instead of printing the raw IANA id', async () => {
+    api.listMyInterviewLoops.mockResolvedValue([loop()]);
+    renderComp();
+    await screen.findByText('Backend Engineer');
+    expect(screen.getByText(/^Times shown in your time zone/)).toBeInTheDocument();
+    expect(screen.queryByText(/^[A-Z][a-z]+\/[A-Za-z_]+$/)).not.toBeInTheDocument();
   });
 });
 

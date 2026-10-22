@@ -1388,6 +1388,12 @@ const en = {
     // deliberately no reschedule/cancel copy here — A2 #23: only HR can move
     // a booked session, and this page never offers to.
     myInterviews: {
+      timesInYourZone: 'Times shown in your time zone ({{zone}})',
+      chooseAnother: 'Choose another',
+      booking: 'Booking…',
+      bookThisTime: 'Book this time',
+      confirmBook: 'Book {{when}}? Once booked, only the hiring team can change it.',
+      confirmBookAria: 'Confirm this time',
       heading: 'Your interviews',
       loading: 'Loading your interviews…',
       loadError: 'Could not load your interviews.',
@@ -3136,6 +3142,12 @@ const hi = {
         'मैं यह भी चाहता/चाहती हूँ कि {{company}} मेरे CV और इस आवेदन के आधार पर मुझ पर भविष्य की अन्य भूमिकाओं के लिए भी विचार करे, अधिकतम {{months}} महीनों तक। यह ऊपर दिए गए मेरे आवेदन से अलग है, और मैं इसे अपने खाते से कभी भी बंद कर सकता/सकती हूँ।',
     },
     myInterviews: {
+      timesInYourZone: 'समय आपके टाइम ज़ोन ({{zone}}) में दिखाए गए हैं',
+      chooseAnother: 'दूसरा चुनें',
+      booking: 'बुक हो रहा है…',
+      bookThisTime: 'यह समय बुक करें',
+      confirmBook: '{{when}} बुक करें? बुक होने के बाद इसे केवल भर्ती टीम बदल सकती है।',
+      confirmBookAria: 'इस समय की पुष्टि करें',
       heading: 'आपके इंटरव्यू',
       loading: 'आपके इंटरव्यू लोड हो रहे हैं…',
       loadError: 'आपके इंटरव्यू लोड नहीं हो सके।',
@@ -4850,6 +4862,12 @@ const te = {
         '{{company}} నా CVని మరియు ఈ దరఖాస్తును భవిష్యత్తులో ఇతర ఉద్యోగాల కోసం కూడా పరిశీలించడానికి ఉపయోగించుకోవచ్చని నేను అంగీకరిస్తున్నాను, గరిష్ఠంగా {{months}} నెలల వరకు. ఇది పైన ఉన్న నా దరఖాస్తు నుండి వేరుగా ఉంటుంది, మరియు నేను దీన్ని నా ఖాతా నుండి ఎప్పుడైనా ఆపివేయవచ్చు.',
     },
     myInterviews: {
+      timesInYourZone: 'సమయాలు మీ టైమ్ జోన్ ({{zone}}) లో చూపబడ్డాయి',
+      chooseAnother: 'మరొకటి ఎంచుకోండి',
+      booking: 'బుక్ అవుతోంది…',
+      bookThisTime: 'ఈ సమయం బుక్ చేయండి',
+      confirmBook: '{{when}} బుక్ చేయాలా? బుక్ అయిన తర్వాత నియామక బృందం మాత్రమే దాన్ని మార్చగలదు.',
+      confirmBookAria: 'ఈ సమయాన్ని నిర్ధారించండి',
       heading: 'మీ ఇంటర్వ్యూలు',
       loading: 'మీ ఇంటర్వ్యూలు లోడ్ అవుతున్నాయి…',
       loadError: 'మీ ఇంటర్వ్యూలను లోడ్ చేయలేకపోయాము.',

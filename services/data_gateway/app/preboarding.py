@@ -370,7 +370,7 @@ async def _after_upload(db: AsyncSession, *, offer: dict[str, Any], req: Any, do
         await create_notification(
             db, user_id=who, kind="document_uploaded",
             title=f"Document to review: {offer['candidate_name']}", body=req["name"],
-            link="/hr/offers", dedupe_key=f"doc-uploaded:{doc_id}:{who}",
+            link=f"/hr/offers/{offer['id']}", dedupe_key=f"doc-uploaded:{doc_id}:{who}",
         )
     # Every upload is told to the candidate's own inbox, so a document someone
     # else supplied through their link is noticed (security review H1).
@@ -447,7 +447,22 @@ async def review(db: AsyncSession, *, company_id: uuid.UUID, document_id: uuid.U
         raise OfferError(404, "Document not found.")
     if doc["superseded_at"] is not None:
         raise OfferError(409, "A newer version of this document has been uploaded.")
-    allowed = {"submitted": {"verified", "rejected", "replacement_requested"},
+    # Review is part of preboarding, and preboarding has an end. Once it is
+    # complete (or the offer is no longer accepted) the candidate can neither
+    # open their documents nor upload, so a replacement asked for now would be
+    # an email they cannot act on (audit OF-F5).
+    parent = await db.execute(
+        text("SELECT status, preboarding_completed_at FROM offers WHERE id = :o AND company_id = :c"),
+        {"o": doc["offer_id"], "c": company_id},
+    )
+    offer_state = parent.mappings().first()
+    if offer_state is None or offer_state["status"] != "accepted":
+        raise OfferError(409, "Documents are reviewed only while an accepted offer is in "
+                              "preboarding.")
+    if offer_state["preboarding_completed_at"] is not None:
+        raise OfferError(409, "Preboarding is complete, so its documents can no longer be "
+                              "reviewed.")
+    allowed ={"submitted": {"verified", "rejected", "replacement_requested"},
                "verified": {"replacement_requested"}}
     if target not in allowed.get(doc["status"], set()):
         raise OfferError(409, f"This document is {doc['status'].replace('_', ' ')}; it cannot be "

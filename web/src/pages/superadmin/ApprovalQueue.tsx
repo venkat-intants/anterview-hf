@@ -12,6 +12,12 @@
 // THE BUDGET LEADS THE CARD. "Should this opening exist?" is not answerable
 // without knowing what it costs, which is why budget and approval landed in one
 // story rather than two.
+//
+// THE DECISION IS THE SHARED DecisionPanel (audit AD-F12), as on the workflow,
+// offer and question queues: Approve is two steps with an optional note,
+// sending back needs a reason of CHANGES_NOTE_MIN characters, and the two notes
+// are separate (a half-typed rejection note used to become the approval note).
+// The API itself does not require the reason; the UI asks for one.
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -23,15 +29,19 @@ import {
   type PendingApproval,
 } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
 import { GlassCard } from '@/design/components/primitives';
 import { DataList, Page, PageHeader } from '@/design/components/page';
-import { Button } from '@/components/ui/button';
-import { AlertCircle, CheckCircle2, XCircle } from '@/design/components/icons';
-import { ReviewQueueState } from '@/components/superadmin/ReviewParts';
+import { AlertCircle, Loader2 } from '@/design/components/icons';
+import {
+  DecisionPanel,
+  ReviewQueueState,
+  type DecisionMode,
+} from '@/components/superadmin/ReviewParts';
 import { waitingText } from '@/components/superadmin/waitingText';
 
-const INPUT =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+/** Same minimum as the workflow and offer queues. */
+const CHANGES_NOTE_MIN = 10;
 
 const BASIS_LABEL: Record<string, string> = {
   per_hire: 'per hire',
@@ -62,25 +72,28 @@ function budgetLine(row: PendingApproval): string | null {
 function Row({ row }: { row: PendingApproval }): JSX.Element {
   const client = useQueryClient();
   const [note, setNote] = useState('');
-  const [rejecting, setRejecting] = useState(false);
+  const [mode, setMode] = useState<DecisionMode>(null);
+  // Set once a decision succeeds. The row stays locked until the refetch takes
+  // it off the list (audit AD-F22): the buttons used to come back in between,
+  // so a second click reached the server and earned a 409.
+  const [decided, setDecided] = useState<string | null>(null);
 
-  function done(message: string): void {
+  function done(message: string, verdict: string): void {
+    setDecided(verdict);
     void client.invalidateQueries({ queryKey: ['pending-approvals'] });
     toast.success(message);
   }
 
   const approve = useMutation({
-    mutationFn: () => approveRequisition(row.id, note || undefined),
-    onSuccess: () => done(`${row.title} approved.`),
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not approve this opening.'),
+    mutationFn: () => approveRequisition(row.id, note.trim() || undefined),
+    onSuccess: () => done(`${row.title} approved`, 'Approved'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not approve this opening.')),
   });
 
   const reject = useMutation({
-    mutationFn: () => rejectRequisition(row.id, note || undefined),
-    onSuccess: () => done(`${row.title} sent back.`),
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not send this back.'),
+    mutationFn: () => rejectRequisition(row.id, note.trim() || undefined),
+    onSuccess: () => done(`${row.title} sent back`, 'Sent back'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not send this back.')),
   });
 
   const budget = budgetLine(row);
@@ -132,58 +145,30 @@ function Row({ row }: { row: PendingApproval }): JSX.Element {
         </p>
       ) : null}
 
-      <div className="mt-3">
-        <label htmlFor={`note-${row.id}`} className="sr-only">
-          Note for {row.title}
-        </label>
-        <input
-          id={`note-${row.id}`}
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder={rejecting ? 'What needs to change? (optional)' : 'Note (optional)'}
-          maxLength={1000}
-          className={INPUT}
-        />
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-border pt-4">
-        <Button
-          type="button"
-          onClick={() => approve.mutate()}
-          disabled={approve.isPending || reject.isPending}
-        >
-          <CheckCircle2 aria-hidden="true" />
-          {approve.isPending ? 'Approving…' : 'Approve'}
-        </Button>
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          {rejecting && !reject.isPending ? (
-            <Button type="button" variant="ghost" onClick={() => setRejecting(false)}>
-              Cancel
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            variant={rejecting ? 'destructive' : 'outline'}
-            onClick={() => {
-              // Two clicks, on purpose: sending an opening back is the action
-              // that costs somebody a week, and it deserves a beat in which to
-              // write down why.
-              if (!rejecting) {
-                setRejecting(true);
-                return;
-              }
-              reject.mutate();
-            }}
-            disabled={approve.isPending || reject.isPending}
+      <div className="mt-4">
+        {decided ? (
+          <p
+            role="status"
+            className="flex items-center gap-2 rounded-[12px] bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[13px] text-foreground"
           >
-            {!rejecting ? <XCircle aria-hidden="true" /> : null}
-            {reject.isPending
-              ? 'Sending back…'
-              : rejecting
-                ? 'Confirm - send back'
-                : 'Request changes'}
-          </Button>
-        </div>
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            {decided}. Updating the queue…
+          </p>
+        ) : (
+          <DecisionPanel
+            mode={mode}
+            onMode={setMode}
+            note={note}
+            onNote={setNote}
+            noteId={`note-${row.id}`}
+            rejectNoteMin={CHANGES_NOTE_MIN}
+            rejectLabel="Request changes"
+            approvePending={approve.isPending}
+            rejectPending={reject.isPending}
+            onApprove={() => approve.mutate()}
+            onReject={() => reject.mutate()}
+          />
+        )}
       </div>
     </GlassCard>
   );

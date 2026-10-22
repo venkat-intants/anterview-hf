@@ -371,32 +371,68 @@ describe('the approval queue', () => {
     expect(await screen.findByText(/Waiting \d+ days/)).toBeInTheDocument();
   });
 
-  it('approves in one click', async () => {
+  // AD-F12: the same decision pattern as the workflow, offer and question
+  // queues - approve in two steps, send back with a reason.
+  it('approves in two steps, like every other review queue', async () => {
     listPendingApprovals.mockResolvedValue([pending()]);
     approveRequisition.mockResolvedValue(requisition());
     renderQueue();
     await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    expect(approveRequisition).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
     await waitFor(() => expect(approveRequisition).toHaveBeenCalledWith('req-9', undefined));
   });
 
-  it('takes two clicks to send something back', async () => {
+  it('needs a reason of at least 10 characters to send something back', async () => {
     // Sending an opening back costs somebody a week. It deserves a beat in
     // which to write down why.
     listPendingApprovals.mockResolvedValue([pending()]);
     rejectRequisition.mockResolvedValue(requisition());
     renderQueue();
     await userEvent.click(await screen.findByRole('button', { name: /Request changes/ }));
-    expect(rejectRequisition).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: /Confirm - send back/ }));
-    await waitFor(() => expect(rejectRequisition).toHaveBeenCalledWith('req-9', undefined));
+    await userEvent.type(screen.getByLabelText(/what needs to change/i), 'too short');
+    expect(screen.getByRole('button', { name: 'Send back' })).toBeDisabled();
+    await userEvent.type(screen.getByLabelText(/what needs to change/i), ' - add a budget');
+    await userEvent.click(screen.getByRole('button', { name: 'Send back' }));
+    await waitFor(() =>
+      expect(rejectRequisition).toHaveBeenCalledWith('req-9', 'too short - add a budget'),
+    );
   });
 
   it('sends the note with the decision', async () => {
     listPendingApprovals.mockResolvedValue([pending()]);
     approveRequisition.mockResolvedValue(requisition());
     renderQueue();
-    await userEvent.type(await screen.findByLabelText(/Note for Data Engineer/), 'Go ahead');
-    await userEvent.click(screen.getByRole('button', { name: /^Approve$/ }));
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    await userEvent.type(screen.getByLabelText(/note \(optional\)/i), 'Go ahead');
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
     await waitFor(() => expect(approveRequisition).toHaveBeenCalledWith('req-9', 'Go ahead'));
+  });
+
+  it('does not carry a half-typed rejection note into an approval', async () => {
+    listPendingApprovals.mockResolvedValue([pending()]);
+    approveRequisition.mockResolvedValue(requisition());
+    renderQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /Request changes/ }));
+    await userEvent.type(screen.getByLabelText(/what needs to change/i), 'No, because');
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Approve$/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
+    await waitFor(() => expect(approveRequisition).toHaveBeenCalledWith('req-9', undefined));
+  });
+
+  it('keeps the row locked after a decision until the queue refetches (AD-F22)', async () => {
+    listPendingApprovals.mockResolvedValue([pending()]);
+    approveRequisition.mockResolvedValue(requisition());
+    renderQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    // The refetch is held, as if the network were slow.
+    listPendingApprovals.mockImplementation(() => new Promise(() => undefined));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    expect(await screen.findByText(/Approved\. Updating the queue/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Approve$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirm approval' })).not.toBeInTheDocument();
+    expect(approveRequisition).toHaveBeenCalledTimes(1);
   });
 });

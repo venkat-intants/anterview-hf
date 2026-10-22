@@ -40,7 +40,7 @@ import type { IntegrityReport } from '@/api/integrity';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { GRID_STROKE, TOOLTIP_STYLE } from '@/lib/chartTheme';
-import { buttonVariants } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Breadcrumbs, PageHeader, SectionCard } from '@/design/components/page';
 import { ScoreRing, StatusTag, type TagTone } from '@/design/components/primitives';
@@ -93,7 +93,15 @@ function scoreBand(score: number): { ink: string; wash: string; fill: string } {
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
-function ErrorState() {
+function ErrorState({
+  isGuest,
+  onRetry,
+  retrying,
+}: {
+  isGuest: boolean;
+  onRetry: () => void;
+  retrying: boolean;
+}) {
   const { t } = useTranslation();
   return (
     <main className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -108,9 +116,17 @@ function ErrorState() {
           <p className="text-[17px] font-bold text-foreground">{t('scorecard.notAvailableTitle')}</p>
           <p className="mt-1.5 text-[14px] text-muted-foreground">{t('scorecard.notAvailableDesc')}</p>
         </div>
-        <Link to="/history" className={buttonVariants({ variant: 'outline' })}>
-          {t('scorecard.backToHistory')}
-        </Link>
+        <div className="flex flex-wrap justify-center gap-2.5">
+          <Button type="button" onClick={onRetry} disabled={retrying}>
+            {t('scorecard.tryAgain')}
+          </Button>
+          {/* History refuses a guest token, so a guest is not sent there (audit CA-M14). */}
+          {!isGuest && (
+            <Link to="/history" className={buttonVariants({ variant: 'outline' })}>
+              {t('scorecard.backToHistory')}
+            </Link>
+          )}
+        </div>
       </div>
     </main>
   );
@@ -465,7 +481,7 @@ export default function Scorecard() {
   const isGuest = isGuestOnly(user?.roles);
 
   // Live query — preserved exactly: key ['scorecard',id], enabled guard, staleTime, retry:false
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['scorecard', scorecardId],
     queryFn: () => {
       if (!scorecardId || !accessToken) {
@@ -499,7 +515,11 @@ export default function Scorecard() {
   }, [isError, t]);
 
   if (isLoading) return <ScorecardSkeleton />;
-  if (isError || !data) return <ErrorState />;
+  if (isError || !data) {
+    return (
+      <ErrorState isGuest={isGuest} onRetry={() => void refetch()} retrying={isFetching} />
+    );
+  }
 
   // Scale conversion: live data is 0–10; ScoreRing expects 0–100.
   const compositeScore100 = Math.round(data.composite_score * 10);
@@ -508,17 +528,20 @@ export default function Scorecard() {
 
   // https only (see downloadUrl) — a server string is never trusted as an href.
   const pdfHref = data.report_pdf_url ? downloadUrl(data.report_pdf_url) : null;
-  const pdfLink = pdfHref ? (
-    <a
-      href={pdfHref}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={buttonVariants()}
-    >
-      <Download aria-hidden="true" />
-      {t('scorecard.downloadPdf')}
-    </a>
-  ) : null;
+  // One primary per page (audit CA-L13): the header's link is the primary one,
+  // the footer repeats it as an outline for someone who read to the end.
+  const pdfLink = (variant: 'default' | 'outline') =>
+    pdfHref ? (
+      <a
+        href={pdfHref}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={buttonVariants({ variant })}
+      >
+        <Download aria-hidden="true" />
+        {t('scorecard.downloadPdf')}
+      </a>
+    ) : null;
 
   return (
     <main className="min-h-screen bg-background px-4 py-8">
@@ -538,7 +561,7 @@ export default function Scorecard() {
           }
           eyebrow={t('scorecard.badge')}
           title={t('scorecard.title')}
-          actions={pdfLink}
+          actions={pdfLink('default')}
         />
 
         {/* Row 1: ScoreRing (left) + Radar (right) */}
@@ -627,20 +650,34 @@ export default function Scorecard() {
         {integrity && integrity.integrity_score !== null && <IntegrityPanel report={integrity} />}
 
         {/* CTA footer */}
+        {/* A guest has no practice interviews or roles to browse, so the
+            "improve your score" pitch is for account holders only (audit
+            CA-M14); a guest gets just the copy to keep, when there is one. */}
+        {(!isGuest || pdfHref) && (
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-card border border-border bg-card p-6 shadow-card">
           <div>
-            <div className="text-[17px] font-bold text-foreground">{t('scorecard.improveTitle')}</div>
-            <p className="mt-1 text-[14px] text-muted-foreground">{t('scorecard.improveDesc')}</p>
+            <div className="text-[17px] font-bold text-foreground">
+              {isGuest ? t('scorecard.keepCopyTitle') : t('scorecard.improveTitle')}
+            </div>
+            <p className="mt-1 text-[14px] text-muted-foreground">
+              {isGuest ? t('scorecard.keepCopyDesc') : t('scorecard.improveDesc')}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
             {!isGuest && (
-              <Link to="/jobs" className={buttonVariants({ variant: 'outline' })}>
-                {t('scorecard.browseRoles')}
-              </Link>
+              <>
+                <Link to="/start" className={buttonVariants({ variant: 'outline' })}>
+                  {t('scorecard.practiseAgain')}
+                </Link>
+                <Link to="/jobs" className={buttonVariants({ variant: 'outline' })}>
+                  {t('scorecard.browseRoles')}
+                </Link>
+              </>
             )}
-            {pdfLink}
+            {pdfLink('outline')}
           </div>
         </div>
+        )}
       </div>
     </main>
   );

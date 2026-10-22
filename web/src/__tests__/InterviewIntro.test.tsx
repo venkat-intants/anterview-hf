@@ -87,6 +87,26 @@ describe('InterviewIntro', () => {
     expect(onDone).toHaveBeenCalledOnce();
   });
 
+  // ── Camera consent (audit CA-M1) ──────────────────────────────────────────
+
+  it('starts with the camera consent unticked, and reports no consent untouched', async () => {
+    const onDone = vi.fn();
+    render(<InterviewIntro language="en" onDone={onDone} />);
+
+    expect(screen.getByTestId('camera-consent-checkbox')).not.toBeChecked();
+    await userEvent.click(screen.getByTestId('skip-button'));
+    expect(onDone).toHaveBeenCalledWith(false);
+  });
+
+  it('reports consent only once the candidate ticks the box', async () => {
+    const onDone = vi.fn();
+    render(<InterviewIntro language="en" onDone={onDone} />);
+
+    await userEvent.click(screen.getByTestId('camera-consent-checkbox'));
+    await userEvent.click(screen.getByTestId('skip-button'));
+    expect(onDone).toHaveBeenCalledWith(true);
+  });
+
   // ── Skip button ───────────────────────────────────────────────────────────
 
   it('"Skip" calls onDone immediately without playing the video', async () => {

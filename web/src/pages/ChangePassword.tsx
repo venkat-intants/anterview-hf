@@ -1,13 +1,15 @@
 // ChangePassword — forced bootstrap-password reset (HR workflow).
 // Shown when the account has must_change_password=true (e.g. an HR manager who
-// just logged in with the default '1234'). Standalone page (no shell, no escape).
+// just logged in with the default '1234'). Standalone page (no shell). The one
+// way out is signing out (audit CA-L15): on a shared device the next person
+// must not be stuck on someone else's forced reset.
 // Design: CenteredCard + PasswordField + strength meter. Logic UNCHANGED.
 
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useMutation } from '@tanstack/react-query';
-import { changePassword } from '@/api/auth';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { changePassword, logout } from '@/api/auth';
 import { homePathFor } from '@/components/layout/navSections';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from '@/lib/toast';
@@ -18,7 +20,8 @@ import { ShieldCheck, Lock } from '@/design/components/icons';
 export default function ChangePassword() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const { accessToken, user, setAuth } = useAuth();
+  const { accessToken, user, setAuth, clearAuth } = useAuth();
+  const queryClient = useQueryClient();
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +37,17 @@ export default function ChangePassword() {
     },
     onError: (err: unknown) => {
       setError(err instanceof Error ? err.message : t('changePassword.errGeneric'));
+    },
+  });
+
+  const signOut = useMutation({
+    mutationFn: () => logout(),
+    // Signed out locally whatever the server said: this tab must stop acting
+    // as the account either way.
+    onSettled: () => {
+      queryClient.clear();
+      clearAuth();
+      void navigate('/login', { replace: true });
     },
   });
 
@@ -103,6 +117,17 @@ export default function ChangePassword() {
           {mutation.isPending ? t('changePassword.saving') : t('changePassword.submit')}
         </Pill>
       </form>
+
+      <p className="mt-6 text-center text-[13px] text-muted-foreground">
+        <button
+          type="button"
+          onClick={() => signOut.mutate()}
+          disabled={signOut.isPending}
+          className="inline-flex min-h-10 items-center rounded font-semibold text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
+        >
+          {t('nav.logout')}
+        </button>
+      </p>
     </CenteredCard>
   );
 }

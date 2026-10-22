@@ -1,6 +1,8 @@
 // NotFound — 404 page rendered for any unmatched route.
 // Design: calm centred card on the canvas, one primary action.
-// Unauthenticated users get a link to /; authenticated users get /dashboard.
+// Unauthenticated users (and invited guests, who have no home in the app) get
+// a link to /; everyone else gets their role's home, not the candidate
+// dashboard (audit CA-L16).
 
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -8,11 +10,14 @@ import { BrandMark } from '@/components/layout/AuthLayout';
 import { PRIMARY_LINK_CLASS, TEXT_LINK_CLASS } from '@/components/layout/authStyles';
 import { Home, ArrowLeft } from '@/design/components/icons';
 import { useAuth } from '@/context/AuthContext';
+import { homePathFor } from '@/components/layout/navSections';
+import { isGuestOnly } from '@/lib/guest';
 
 export default function NotFound() {
   const { t } = useTranslation();
-  const { isAuthenticated } = useAuth();
-  const homePath = isAuthenticated ? '/dashboard' : '/';
+  const { isAuthenticated, user } = useAuth();
+  const roles = user?.roles ?? [];
+  const homePath = !isAuthenticated || isGuestOnly(roles) ? '/' : homePathFor(roles);
 
   return (
     <main

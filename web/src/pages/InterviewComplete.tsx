@@ -27,6 +27,7 @@ import {
 import { listSessions } from '@/api/sessions';
 import { useAuth } from '@/context/AuthContext';
 import { isGuestOnly } from '@/lib/guest';
+import { SUPPORT_EMAIL } from '@/lib/contact';
 import { cn } from '@/lib/utils';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { StatusTag } from '@/design/components/primitives';
@@ -260,7 +261,10 @@ export default function InterviewComplete() {
                   {t('interviewComplete.earlyExitTitle')}
                 </StatusTag>
                 <p className="mt-1 text-[14px] text-muted-foreground">
-                  {t('interviewComplete.earlyExitDesc')}
+                  {/* A guest has no "new interview" to start (audit CA-H5). */}
+                  {isGuest
+                    ? t('interviewComplete.earlyExitDescGuest', { supportEmail: SUPPORT_EMAIL })
+                    : t('interviewComplete.earlyExitDesc')}
                 </p>
               </div>
             </div>
@@ -305,7 +309,10 @@ export default function InterviewComplete() {
                         {t('interviewComplete.scorecardTimeout')}
                       </p>
                       <p className="mt-1 text-[14px] text-muted-foreground">
-                        {t('interviewComplete.scorecardTimeoutDesc')}
+                        {/* A guest cannot open interview history. */}
+                        {isGuest
+                          ? t('interviewComplete.scorecardTimeoutDescGuest')
+                          : t('interviewComplete.scorecardTimeoutDesc')}
                       </p>
                     </div>
                     <Button type="button" variant="outline" onClick={handleCheckAgain}>

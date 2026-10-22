@@ -10,7 +10,7 @@
 // Mounted by Interview.tsx AFTER the intro gate (so the connect() call and the
 // mic permission prompt are user-gesture initiated).
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
@@ -183,7 +183,18 @@ export default function LiveKitInterview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Ending is irreversible and forfeits the scorecard, and the button sits in
+  // the dock under the candidate's thumb. One tap only ARMS it (audit CA-H5);
+  // the second, on a button that says what it does, ends the interview.
+  const [confirmingEnd, setConfirmingEnd] = useState(false);
+  const keepGoingRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    // Arming focuses the SAFE choice, so a second Enter or Space keeps going.
+    if (confirmingEnd) keepGoingRef.current?.focus();
+  }, [confirmingEnd]);
+
   const handleEnd = useCallback(async () => {
+    setConfirmingEnd(false);
     setEnding(true);
     await disconnect();
     void navigate(`/interview/${sessionId}/complete`, {
@@ -368,8 +379,8 @@ export default function LiveKitInterview({
               )}
               title={
                 proctoringReady
-                  ? 'Interview integrity monitoring is active (on-device).'
-                  : 'Starting integrity monitoring…'
+                  ? t('interview.proctoringOnTitle')
+                  : t('interview.proctoringStartingTitle')
               }
             >
               <ShieldCheck
@@ -441,6 +452,42 @@ export default function LiveKitInterview({
           'p-4 sm:p-8 flex items-center justify-center',
         )}
       >
+        {confirmingEnd && !ending ? (
+          <div
+            role="alertdialog"
+            aria-labelledby="end-confirm-text"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setConfirmingEnd(false);
+            }}
+            className={cn(
+              'absolute inset-x-4 bottom-24 mx-auto max-w-md rounded-2xl',
+              'bg-obsidian/90 backdrop-blur-md border border-white/10 shadow-elevated p-4',
+            )}
+          >
+            <p id="end-confirm-text" className="text-body-sm text-white">
+              {t('interview.endConfirm')}
+            </p>
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <Button
+                ref={keepGoingRef}
+                variant="ghost"
+                className="rounded-full text-white hover:bg-white/10 hover:text-white"
+                onClick={() => setConfirmingEnd(false)}
+              >
+                {t('interview.endConfirmNo')}
+              </Button>
+              <Button
+                variant="destructive"
+                className="rounded-full"
+                onClick={() => void handleEnd()}
+              >
+                <PhoneOff className="h-4 w-4" aria-hidden="true" />
+                {t('interview.endConfirmYes')}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         {/* Floating glassy dock pill */}
         <div
           className={cn(
@@ -497,10 +544,11 @@ export default function LiveKitInterview({
           {/* Divider */}
           <div className="h-6 w-px bg-white/10" aria-hidden="true" />
 
-          {/* End interview */}
+          {/* End interview: the first press arms the confirmation above */}
           <Button
-            onClick={() => void handleEnd()}
-            disabled={ending}
+            onClick={() => setConfirmingEnd(true)}
+            disabled={ending || confirmingEnd}
+            aria-expanded={confirmingEnd}
             variant="destructive"
             size="lg"
             className="rounded-full"

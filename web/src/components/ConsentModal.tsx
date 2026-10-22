@@ -45,7 +45,9 @@ export default function ConsentModal({
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLDivElement>) => {
       if (e.key === 'Escape') {
-        onDecline();
+        // Not while the consent is being saved: the pending agree would still
+        // land and start the session after a decline banner (audit CA-L17).
+        if (!isSubmitting) onDecline();
         return;
       }
 
@@ -71,7 +73,7 @@ export default function ConsentModal({
         }
       }
     },
-    [onDecline],
+    [onDecline, isSubmitting],
   );
 
   function handleAgreeClick() {
@@ -186,7 +188,7 @@ export default function ConsentModal({
             // Keep the accessible name stable across idle/submitting states
             // so screen readers (and tests) can always locate the button by
             // its semantic intent. Visible text still swaps to "Saving…".
-            aria-label="I Agree"
+            aria-label={t('consent.agree')}
             className="w-full sm:w-auto"
           >
             {isSubmitting ? (

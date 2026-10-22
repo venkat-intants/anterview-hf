@@ -147,6 +147,21 @@ describe('InterviewComplete page', () => {
     expect(note).not.toHaveTextContent(/practice/i);
   });
 
+  // Audit CA-H5: a guest was told to "start a new interview", which they cannot.
+  it('gives an invited guest an early-exit next step they can actually take', () => {
+    authState.roles = ['guest_candidate'];
+    renderCompleteWithState('sess-abc-123', { endedEarly: true });
+    const card = screen.getByTestId('early-exit-card');
+    expect(card).toHaveTextContent(/contact the hiring team/i);
+    expect(card).toHaveTextContent('support@intants.com');
+    expect(card).not.toHaveTextContent(/start a new interview/i);
+  });
+
+  it('still tells an account holder they can start a new interview after an early exit', () => {
+    renderCompleteWithState('sess-abc-123', { endedEarly: true });
+    expect(screen.getByTestId('early-exit-card')).toHaveTextContent(/start a new interview/i);
+  });
+
   it('does not promise feedback after an early exit', () => {
     renderCompleteWithState('sess-abc-123', { endedEarly: true });
     expect(screen.queryByTestId('not-a-decision')).not.toBeInTheDocument();

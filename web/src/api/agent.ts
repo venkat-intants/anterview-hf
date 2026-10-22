@@ -251,10 +251,12 @@ export function commitProposal<T = unknown>(proposal: Proposal): Promise<T> {
   } catch (err) {
     return Promise.reject(err instanceof Error ? err : new Error('Proposal refused'));
   }
-  // The proposal's id names this one approval. Sent on every attempt, so an
-  // endpoint that honours it can recognise a second firing of the same card
-  // (a retry after a dropped connection, a reopened panel) as the same request
-  // rather than a new one (audit CP-F1).
+  // The proposal's id names this one approval and is sent on every attempt.
+  // No endpoint reads it yet: the header is forward-looking, so the server
+  // does NOT dedupe on it today. What stops a second invite now is the card's
+  // committed state held by the conversation, the draft-time skip of anyone
+  // with a live invite, and POST /hr/interviews' own 10-minute identical
+  // invite dedupe plus its replace_existing gate (audit CP-F1).
   return apiRequest<T>(safe.method, safe.path, body, {
     headers: { 'Idempotency-Key': proposal.id },
   });

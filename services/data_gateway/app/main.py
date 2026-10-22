@@ -637,9 +637,10 @@ app.add_middleware(
         # PH4-D4: a job-simulation or portfolio task link -- open, save,
         # upload an artifact, submit.
         "X-Task-Token",
-        # Sent by the copilot on every proposal commit (the proposal's id), so
-        # an approval fired twice can be recognised as one. Without it here a
-        # split-origin deploy would fail every commit at preflight.
+        # Sent by the copilot on every proposal commit (the proposal's id).
+        # No endpoint reads it yet, so it is not a replay control; it is
+        # allowed here only because a split-origin deploy would otherwise fail
+        # every commit at preflight.
         "Idempotency-Key",
         # Only ever sent by the local browser-test runner. Inert in a
         # deployment: the router that reads it is mounted only under

@@ -10,11 +10,16 @@
 //
 //   useFragmentToken()          memory only, for the component's lifetime. For
 //                               a page that spends the token at once (verify
-//                               email), where a reload has nothing to resume.
+//                               email), and for any token that SETS A PASSWORD
+//                               (reset password, account activation): a
+//                               reopened tab on a shared lab machine must not
+//                               hand the next person a working form for
+//                               somebody else's account, so a reload there
+//                               costs a short form and the emailed link again.
 //   useFragmentToken(key)       memory AND this tab's sessionStorage under
 //                               `key`. For a page somebody works on (a saved
 //                               application, a multi-hour task, an offer, an
-//                               invite, a password form): a reload, or the
+//                               invite): a reload, or the
 //                               browser restoring the tab, would otherwise
 //                               land on "this link no longer works" because the
 //                               address bar no longer has the token in it
@@ -25,7 +30,8 @@
 //                               page calls `forgetFragmentToken(key)` once the
 //                               link reaches a terminal state, so a spent
 //                               credential does not sit in storage for the rest
-//                               of the tab's life.
+//                               of the tab's life, and signing out clears
+//                               every one of them (clearFragmentTokens).
 //
 // The read is a PURE useState initialiser and the scrub is an effect, on
 // purpose. React 18 StrictMode invokes initialisers twice and mounts effects
@@ -38,6 +44,7 @@
 // every emailed link in the app uses today.
 
 import { useEffect, useState } from 'react';
+import { EXAM_PROGRESS_PREFIX } from '@/pages/exam/examProgress';
 
 /**
  * The per-tab storage keys, one per page that keeps its token across a reload.
@@ -48,8 +55,7 @@ export const FRAGMENT_TOKEN_KEYS = {
   task: 'anthire.task.token',
   offer: 'anthire.offer.token',
   invite: 'anthire.invite.token',
-  activate: 'anthire.activate.token',
-  resetPassword: 'anthire.reset.token',
+  exam: 'anthire.exam.token',
 } as const;
 
 function readFragment(): string {
@@ -88,6 +94,25 @@ export function forgetFragmentToken(storageKey: string): void {
     sessionStorage.removeItem(storageKey);
   } catch {
     // Blocked or unavailable: it was never written either.
+  }
+}
+
+/**
+ * Drop every per-tab link credential and the exam progress kept beside them.
+ * Called on sign-out: the next person at a shared machine must not reopen the
+ * tab, or navigate back, into somebody else's draft, offer, task or exam.
+ */
+export function clearFragmentTokens(): void {
+  try {
+    for (const key of Object.values(FRAGMENT_TOKEN_KEYS)) sessionStorage.removeItem(key);
+    const progress: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(EXAM_PROGRESS_PREFIX)) progress.push(key);
+    }
+    for (const key of progress) sessionStorage.removeItem(key);
+  } catch {
+    // Blocked or unavailable: nothing was written either.
   }
 }
 

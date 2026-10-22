@@ -37,7 +37,6 @@ vi.mock('../lib/toast', () => ({
 }));
 
 import ActivateAccount from '../pages/ActivateAccount';
-import { ApiError } from '../api/client';
 
 const TARGET = {
   full_name: 'Nadia Newbie',
@@ -72,7 +71,6 @@ async function fillPasswords(
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // The page keeps its token in this tab's storage across reloads (CA-H3).
   sessionStorage.clear();
   setHash('tok-abc-1234567890123456');
   getActivationTarget.mockResolvedValue(TARGET);
@@ -95,20 +93,22 @@ describe('ActivateAccount', () => {
     );
   });
 
-  // Audit CA-H3: a reload while choosing a password used to say "expired".
-  it('still has the link after a reload, and drops it once refused', async () => {
+  // This token sets a password. Kept in tab storage, a reopened tab on a shared
+  // machine would hand the next person a working form for that account.
+  it('keeps the token in memory only, so a remount after leaving has no form', async () => {
     const first = renderPage();
     await screen.findByLabelText('Choose a password');
+    expect(JSON.stringify({ ...sessionStorage, ...localStorage })).not.toContain(
+      'tok-abc-1234567890123456',
+    );
     first.unmount();
     setHash('');
     getActivationTarget.mockClear();
-    getActivationTarget.mockRejectedValue(new ApiError('This link has expired.', 410));
 
     renderPage();
-    await waitFor(() =>
-      expect(getActivationTarget).toHaveBeenCalledWith('tok-abc-1234567890123456'),
-    );
-    await waitFor(() => expect(sessionStorage.length).toBe(0));
+    expect(await screen.findByText('This link has expired')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Choose a password')).not.toBeInTheDocument();
+    expect(getActivationTarget).not.toHaveBeenCalled();
   });
 
   it('checks the link exactly once', async () => {

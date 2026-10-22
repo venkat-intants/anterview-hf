@@ -14,7 +14,8 @@
 
 import type { CodingAnswer } from '@/api/publicExam';
 
-const PREFIX = 'intants:exam-progress:';
+export const EXAM_PROGRESS_PREFIX = 'intants:exam-progress:';
+const PREFIX = EXAM_PROGRESS_PREFIX;
 
 export interface ExamProgress {
   attemptId: string;

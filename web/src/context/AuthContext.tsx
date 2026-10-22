@@ -25,6 +25,7 @@ import { attemptRefresh } from '../api/client';
 import { getMe } from '../api/auth';
 import { openAuthSync, type AuthSync } from '../lib/authSync';
 import { clearCollapsibleKeysFor } from '../lib/collapsibleKeys';
+import { clearFragmentTokens } from '../hooks/useFragmentToken';
 
 const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true';
 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
@@ -147,6 +148,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const sync = openAuthSync((event) => {
       if (event.type !== 'logout') return;
       // Another tab signed out: this tab's token is now for a revoked session.
+      // Its emailed-link credentials go too: sign-out ends this machine's use.
+      clearFragmentTokens();
       ownTokenRef.current = null;
       clearToken();
       setAccessToken(null);
@@ -246,6 +249,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const clearAuth = useCallback(() => {
     // Remembered open/closed choices belong to the person who made them.
     clearCollapsibleKeysFor(userRef.current?.user_id);
+    // So do the emailed-link credentials this tab kept (draft, offer, task,
+    // invite, exam): on a shared machine they would otherwise outlive the
+    // session, including across a reopened tab.
+    clearFragmentTokens();
     ownTokenRef.current = null;
     clearToken();
     setAccessToken(null);

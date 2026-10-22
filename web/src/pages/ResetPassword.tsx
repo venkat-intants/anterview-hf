@@ -14,19 +14,18 @@ import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
 import { Pill } from '@/design/components/primitives';
 import { Lock, KeyRound, AlertCircle } from '@/design/components/icons';
 import { useCandidateError } from '@/lib/candidateCopy';
-import {
-  FRAGMENT_TOKEN_KEYS,
-  forgetFragmentToken,
-  useFragmentToken,
-} from '@/hooks/useFragmentToken';
+import { useFragmentToken } from '@/hooks/useFragmentToken';
 
 export default function ResetPassword() {
   const { t } = useTranslation();
   const errorText = useCandidateError();
   const navigate = useNavigate();
-  // Read once, then removed from the address bar and history entry. Kept for
-  // this tab so a reload while typing does not lose the link (audit CA-H3).
-  const token = useFragmentToken(FRAGMENT_TOKEN_KEYS.resetPassword);
+  // Read once, then removed from the address bar and history entry, and held
+  // in memory only. This token sets a password: kept in tab storage, a
+  // reopened tab on a shared machine would hand the next person a working form
+  // for somebody else's account. A reload costs the form; the emailed link
+  // still works until it is used.
+  const token = useFragmentToken();
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +33,6 @@ export default function ResetPassword() {
   const mutation = useMutation({
     mutationFn: () => resetPassword(token, pw),
     onSuccess: () => {
-      forgetFragmentToken(FRAGMENT_TOKEN_KEYS.resetPassword);
       toast.success(t('auth.resetSuccess'));
       void navigate('/login', { replace: true });
     },

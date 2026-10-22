@@ -59,6 +59,7 @@ import {
   saveProgress,
 } from '@/pages/exam/examProgress';
 import { useCandidateError } from '@/lib/candidateCopy';
+import { FRAGMENT_TOKEN_KEYS } from '@/hooks/useFragmentToken';
 
 function fmt(totalSec: number): string {
   const s = Math.max(0, totalSec);
@@ -176,7 +177,7 @@ function SectionStepper({ sections, currentIndex }: SectionStepperProps) {
 // Per tab, and only for as long as the tab lives. Holding the exam token here
 // is what lets the address bar be cleared without a reload costing a candidate
 // their attempt.
-const EXAM_TOKEN_KEY = 'anthire.exam.token';
+const EXAM_TOKEN_KEY = FRAGMENT_TOKEN_KEYS.exam;
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PublicExam() {

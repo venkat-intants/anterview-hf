@@ -127,6 +127,21 @@ describe('ResetPassword', () => {
     expect(screen.getByRole('heading', { name: /set a new password/i })).toBeInTheDocument();
   });
 
+  // This token sets a password. Kept in tab storage, a reopened tab on a shared
+  // machine would hand the next person a working form for that account.
+  it('keeps the token in memory only, so a remount after leaving has no form', () => {
+    setHash('#tok-abandoned');
+    const first = renderPage(<ResetPassword />);
+    expect(screen.getByRole('form', { name: /reset password form/i })).toBeInTheDocument();
+    expect(JSON.stringify({ ...sessionStorage, ...localStorage })).not.toContain('tok-abandoned');
+    first.unmount();
+    setHash('');
+
+    renderPage(<ResetPassword />);
+    expect(screen.getByRole('heading', { name: /reset link no longer works/i })).toBeInTheDocument();
+    expect(screen.queryByRole('form', { name: /reset password form/i })).not.toBeInTheDocument();
+  });
+
   it('will not submit a password under 8 characters', async () => {
     setHash('#tok-abc');
     const user = userEvent.setup();

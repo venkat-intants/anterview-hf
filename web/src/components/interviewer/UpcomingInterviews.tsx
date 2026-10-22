@@ -7,12 +7,10 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Calendar, Loader2, MapPin } from '@/design/components/icons';
 import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { getMySessions, type SessionStatus } from '@/api/scheduling';
 import { formatDayTime, browserTimezone } from '@/lib/timezone';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+import { statusLabel } from '@/lib/statusLabel';
 
 const STATUS_TONE: Record<SessionStatus, TagTone> = {
   awaiting_slot: 'amber',
@@ -23,7 +21,7 @@ const STATUS_TONE: Record<SessionStatus, TagTone> = {
 };
 
 export default function UpcomingInterviews(): JSX.Element {
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['interviewer', 'sessions'],
     queryFn: () => getMySessions(),
   });
@@ -32,9 +30,11 @@ export default function UpcomingInterviews(): JSX.Element {
 
   return (
     <section>
-      <h2 className="text-[16px] font-semibold text-foreground">Upcoming interviews</h2>
+      {/* The list starts yesterday, so it holds sessions that just finished,
+          were missed or were cancelled too (AD-F30): the heading says so. */}
+      <h2 className="text-[16px] font-semibold text-foreground">Your interview sessions</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        Sessions you are on - in your own local time ({browserTimezone()}).
+        Sessions you are on, from yesterday onward - in your own local time ({browserTimezone()}).
       </p>
 
       {isLoading ? (
@@ -43,9 +43,13 @@ export default function UpcomingInterviews(): JSX.Element {
           Loading…
         </div>
       ) : isError ? (
-        <GlassCard className="mt-3 p-4 text-[13px] text-[var(--ui-danger)]">
-          {errText(error, 'Could not load your interviews')}
-        </GlassCard>
+        <QueryErrorPanel
+          className="mt-3"
+          title="Could not load your interview sessions."
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       ) : rows.length === 0 ? (
         <GlassCard className="mt-3 p-6 text-center text-[13px] text-muted-foreground">
           Nothing scheduled right now.
@@ -78,7 +82,7 @@ export default function UpcomingInterviews(): JSX.Element {
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-2">
                     <StatusTag tone={STATUS_TONE[s.status]} dot>
-                      {s.status.replace('_', ' ')}
+                      {statusLabel(s.status, 'session')}
                     </StatusTag>
                     {s.scorecard_id ? (
                       <Link

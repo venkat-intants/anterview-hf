@@ -21,10 +21,8 @@ import {
 } from '@/api/interviewer';
 import UpcomingInterviews from '@/components/interviewer/UpcomingInterviews';
 import MyAvailability from '@/components/interviewer/MyAvailability';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+import { QueryErrorPanel } from '@/components/QueryState';
+import { formatDateTime } from '@/lib/formatters';
 
 const STATE_META: Record<
   ScorecardState,
@@ -72,10 +70,10 @@ function AssignmentRow({ a }: { a: InterviewerAssignment }) {
           </div>
           <div className="shrink-0 text-right text-[12px] text-muted-foreground">
             {a.submitted_at ? (
-              <span>Submitted {new Date(a.submitted_at).toLocaleString()}</span>
+              <span>Submitted {formatDateTime(a.submitted_at)}</span>
             ) : a.due_at ? (
               <span className={a.state === 'late' ? 'text-[var(--ui-danger)]' : undefined}>
-                Due {new Date(a.due_at).toLocaleString()}
+                Due {formatDateTime(a.due_at)}
               </span>
             ) : null}
           </div>
@@ -86,7 +84,7 @@ function AssignmentRow({ a }: { a: InterviewerAssignment }) {
 }
 
 export default function InterviewerConsole(): JSX.Element {
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['interviewer', 'assignments'],
     queryFn: listAssignments,
     refetchInterval: LIVE_POLL_MS,
@@ -104,15 +102,21 @@ export default function InterviewerConsole(): JSX.Element {
         />
       </Reveal>
 
+      {/* The assignments list gets a heading of its own (AD-F30), like the two
+          sections below it. */}
+      <h2 className="-mb-3 text-[16px] font-semibold text-foreground">Scorecards to write</h2>
       {isLoading ? (
         <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           Loading your interviews…
         </div>
       ) : isError ? (
-        <GlassCard className="p-6 text-[14px] text-[var(--ui-danger)]">
-          <span role="alert">{errText(error, 'Could not load your interviews')}</span>
-        </GlassCard>
+        <QueryErrorPanel
+          title="Could not load your interviews."
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       ) : rows.length === 0 ? (
         <GlassCard className="p-4">
           <EmptyState

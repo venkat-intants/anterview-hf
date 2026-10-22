@@ -12,10 +12,19 @@
 // endpoints, and a version cannot be approved by the person who wrote it —
 // enforced server-side, surfaced here as a 403 if it is ever reached anyway.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, ChevronDown, XCircle } from '@/design/components/icons';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  RefreshCw,
+  XCircle,
+} from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { ApiError } from '@/api/client';
+import { errorMessage } from '@/lib/errorMessage';
 import { StatusTag } from '@/design/components/primitives';
 import { Breadcrumbs, DataList, Page, PageHeader } from '@/design/components/page';
 import { Section, Well } from '@/design/components/rows';
@@ -49,11 +58,21 @@ import {
   type WorkflowReviewDetail,
 } from '@/api/workflowReview';
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
-
 const CHANGES_NOTE_MIN = 10;
+
+/**
+ * The validation errors a 422 "no longer validates" carries in
+ * `detail.validation.errors`, or null when the error is anything else.
+ */
+function validationFailures(e: unknown): string[] | null {
+  if (!(e instanceof ApiError) || e.status !== 422) return null;
+  const detail = e.detail;
+  if (typeof detail !== 'object' || detail === null || !('validation' in detail)) return null;
+  const validation = (detail as { validation: unknown }).validation;
+  if (typeof validation !== 'object' || validation === null) return null;
+  const errors = (validation as { errors?: unknown }).errors;
+  return Array.isArray(errors) ? errors.filter((x): x is string => typeof x === 'string') : [];
+}
 
 /* ── The queue ──────────────────────────────────────────────────────────── */
 
@@ -115,7 +134,10 @@ function SimulationReadout({ simulation }: { simulation: SimulationResult | null
   return (
     <div className="flex flex-col gap-3">
       {simulation.stale ? (
-        <Well role="status" className="flex items-center gap-1.5 py-2 text-[12px] text-[var(--ui-soft)]">
+        <Well
+          role="status"
+          className="flex items-center gap-1.5 py-2 text-[12px] text-[var(--ui-soft)]"
+        >
           <AlertTriangle
             className="h-3.5 w-3.5 shrink-0 text-[var(--ui-warn)]"
             aria-hidden="true"
@@ -226,40 +248,87 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
   const [mode, setMode] = useState<DecisionMode>(null);
   const historyKey = useScopedPersistKey('workflow-review-history');
 
+  // No refetch on window focus (audit AD-F1): coming back to the tab must not
+  // swap the content under an approver who is halfway through reading it.
   const detail = useQuery({
     queryKey: ['admin', 'workflow-reviews', workflowId],
     queryFn: () => getWorkflowReviewDetail(workflowId),
+    refetchOnWindowFocus: false,
   });
+
+  // The version the approver is actually reading. Captured on first load and
+  // replaced only when the content is the same (a status change), after this
+  // approver's own decision, or when they choose to reload. A background
+  // refetch that brings a DIFFERENT fingerprint leaves this alone and raises
+  // the "this version changed" banner instead, so Approve always sends the
+  // fingerprint of what is on screen and the server refuses a stale one.
+  const [reviewed, setReviewed] = useState<WorkflowReviewDetail | null>(null);
+  const adoptNext = useRef(false);
+  const latest = detail.data;
+  useEffect(() => {
+    if (!latest) return;
+    setReviewed((prev) => {
+      if (
+        prev === null ||
+        adoptNext.current ||
+        prev.review_fingerprint === latest.review_fingerprint
+      ) {
+        adoptNext.current = false;
+        return latest;
+      }
+      return prev;
+    });
+  }, [latest]);
+  const [failures, setFailures] = useState<string[] | null>(null);
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['admin', 'workflow-reviews', workflowId] });
     void qc.invalidateQueries({ queryKey: ['admin', 'workflow-reviews'] });
   };
 
+  const afterDecision = () => {
+    setMode(null);
+    setNote('');
+    setFailures(null);
+    adoptNext.current = true;
+    invalidate();
+  };
+
+  // A 409 means the version moved on (withdrawn, decided by someone else, or
+  // resubmitted): refetch so the page stops offering a decision it will refuse.
+  const onDecisionError = (e: unknown, fallback: string) => {
+    if (e instanceof ApiError && e.status === 409) invalidate();
+    setFailures(validationFailures(e));
+    toast.error(errorMessage(e, fallback));
+  };
+
   const approveMut = useMutation({
     // The fingerprint of the version on screen, so the server can refuse an
     // approval of something that changed after this page loaded.
-    mutationFn: () =>
-      approveWorkflowReview(workflowId, note, detail.data?.review_fingerprint ?? null),
+    mutationFn: () => approveWorkflowReview(workflowId, note, reviewed?.review_fingerprint ?? null),
     onSuccess: () => {
-      setMode(null);
-      setNote('');
-      invalidate();
+      afterDecision();
       toast.success('Approved - HR can publish it now');
     },
-    onError: (e) => toast.error(errText(e, 'Could not approve this version')),
+    onError: (e) => onDecisionError(e, 'Could not approve this version.'),
   });
 
   const changesMut = useMutation({
     mutationFn: () => requestWorkflowChanges(workflowId, note),
     onSuccess: () => {
-      setMode(null);
-      setNote('');
-      invalidate();
+      afterDecision();
       toast.success('Sent back with your note');
     },
-    onError: (e) => toast.error(errText(e, 'Could not send this back')),
+    onError: (e) => onDecisionError(e, 'Could not send this back.'),
   });
+
+  const reloadLatest = () => {
+    if (!latest) return;
+    setReviewed(latest);
+    setMode(null);
+    setNote('');
+    setFailures(null);
+  };
 
   const crumbs = (
     <Breadcrumbs
@@ -270,7 +339,7 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
     />
   );
 
-  if (detail.isLoading) {
+  if (detail.isLoading || (detail.data && !reviewed)) {
     return (
       <Page width="default">
         {crumbs}
@@ -278,7 +347,7 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
       </Page>
     );
   }
-  if (detail.isError || !detail.data) {
+  if (!reviewed) {
     return (
       <Page width="default">
         {crumbs}
@@ -291,8 +360,29 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
     );
   }
 
-  const wf: WorkflowReviewDetail = detail.data;
-  const canDecide = wf.review.review_status === 'in_review';
+  const wf: WorkflowReviewDetail = reviewed;
+  const changed = latest !== undefined && latest.review_fingerprint !== wf.review_fingerprint;
+  const canDecide = wf.review.review_status === 'in_review' && !changed;
+  const changedBanner = changed ? (
+    <div
+      role="alert"
+      data-testid="review-version-changed"
+      className="flex flex-wrap items-start gap-3 rounded-[12px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn)]/[0.08] p-3"
+    >
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[var(--ui-warn)]" aria-hidden="true" />
+      <div className="min-w-0 flex-1 text-[13px] leading-relaxed text-foreground">
+        <p className="font-semibold">This version changed after you opened it.</p>
+        <p className="mt-1 text-muted-foreground">
+          HR withdrew or resubmitted it while you were reading. What is on screen is no longer what
+          you would be approving, so the decision is paused until you reload.
+        </p>
+      </div>
+      <Button type="button" variant="outline" size="sm" onClick={reloadLatest}>
+        <RefreshCw aria-hidden="true" />
+        Reload to see changes
+      </Button>
+    </div>
+  ) : null;
   const newestEntry = wf.review.history.reduce<(typeof wf.review.history)[number] | null>(
     (n, h) => (n === null || h.at > n.at ? h : n),
     null,
@@ -305,10 +395,12 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
       title={`${wf.opening_title} · v${wf.version}`}
       description={`${wf.rounds.length} round${wf.rounds.length === 1 ? '' : 's'} to review before this version can go live.`}
       whatChanges={
-        canDecide ? (
+        changed ? (
+          changedBanner
+        ) : canDecide ? (
           <WhatChanges>
-            approving lets HR publish this version, and every candidate in this opening is routed
-            by the rounds below
+            approving lets HR publish this version, and every candidate in this opening is routed by
+            the rounds below
             {shortlistSettings(wf.settings).auto
               ? ' - including applicants above the ATS bar, who will start round 1 without anyone confirming them'
               : ''}
@@ -447,7 +539,10 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
             )}
           </Section>
 
-          <Section title="Dry run" description="The result HR saw when they submitted this version.">
+          <Section
+            title="Dry run"
+            description="The result HR saw when they submitted this version."
+          >
             <SimulationReadout simulation={wf.simulation} />
           </Section>
 
@@ -514,21 +609,47 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
         </>
       }
       decision={
-        canDecide ? (
-          <DecisionPanel
-            sticky
-            mode={mode}
-            onMode={setMode}
-            note={note}
-            onNote={setNote}
-            noteId="review-decision-note"
-            rejectNoteMin={CHANGES_NOTE_MIN}
-            rejectLabel="Request changes"
-            approvePending={approveMut.isPending}
-            rejectPending={changesMut.isPending}
-            onApprove={() => approveMut.mutate()}
-            onReject={() => changesMut.mutate()}
-          />
+        changed ? (
+          <NothingToDecide>Reload to see the current version before deciding.</NothingToDecide>
+        ) : canDecide ? (
+          <>
+            {failures !== null ? (
+              <div
+                role="alert"
+                data-testid="review-no-longer-validates"
+                className="rounded-card border border-[var(--ui-danger)]/35 bg-[var(--ui-danger-wash)] p-4 text-[13px] text-[var(--ui-danger)]"
+              >
+                <p className="font-semibold">
+                  This version no longer validates, so it cannot be approved. Send it back so HR can
+                  fix it.
+                </p>
+                {failures.length > 0 ? (
+                  <ul className="mt-2 flex flex-col gap-1">
+                    {failures.map((f) => (
+                      <li key={f} className="flex items-start gap-1.5">
+                        <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+            <DecisionPanel
+              sticky
+              mode={mode}
+              onMode={setMode}
+              note={note}
+              onNote={setNote}
+              noteId="review-decision-note"
+              rejectNoteMin={CHANGES_NOTE_MIN}
+              rejectLabel="Request changes"
+              approvePending={approveMut.isPending}
+              rejectPending={changesMut.isPending}
+              onApprove={() => approveMut.mutate()}
+              onReject={() => changesMut.mutate()}
+            />
+          </>
         ) : (
           <NothingToDecide>
             This version is {wf.review.review_status.replace('_', ' ')} - nothing for you to decide
@@ -574,10 +695,7 @@ function ShortlistingSection({ settings }: { settings: Record<string, unknown> }
   const barPct = bar === null ? null : bar * 10;
 
   return (
-    <Section
-      title="Shortlisting"
-      description="Who decides that an applicant starts round 1."
-    >
+    <Section title="Shortlisting" description="Who decides that an applicant starts round 1.">
       {auto ? (
         <div
           role="alert"
@@ -593,8 +711,8 @@ function ShortlistingSection({ settings }: { settings: Record<string, unknown> }
             <p className="mt-1 text-muted-foreground">
               Applicants who applied through the careers page, scored{' '}
               <strong className="text-foreground">{barPct ?? '-'}/100 or higher</strong> and
-              confirmed their email start round 1 with no one confirming them. Everyone else -
-              below that score, uploaded by HR, or not yet confirmed - stays in HR&rsquo;s queue to
+              confirmed their email start round 1 with no one confirming them. Everyone else - below
+              that score, uploaded by HR, or not yet confirmed - stays in HR&rsquo;s queue to
               shortlist by hand. The final hire or reject is still a person.
             </p>
           </div>
@@ -602,7 +720,9 @@ function ShortlistingSection({ settings }: { settings: Record<string, unknown> }
       ) : (
         <p className="text-[13px] text-muted-foreground" data-testid="review-manual-shortlist">
           A person confirms every shortlist.
-          {barPct !== null ? ` Applicants scoring ${barPct}/100 or higher are suggested for it.` : ''}
+          {barPct !== null
+            ? ` Applicants scoring ${barPct}/100 or higher are suggested for it.`
+            : ''}
         </p>
       )}
     </Section>

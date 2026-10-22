@@ -36,6 +36,8 @@ const SHORTLISTED: PipelineRow = {
   exam_passed: true,
   interview_status: 'invited',
   interview_score: null,
+  // Shortlisted and sitting a round: not a decision yet (HR-H1).
+  can_hire: false,
 };
 
 const NEW: PipelineRow = {
@@ -49,6 +51,7 @@ const NEW: PipelineRow = {
   exam_passed: null,
   interview_status: null,
   interview_score: null,
+  can_hire: false,
 };
 
 const HIRED: PipelineRow = {
@@ -61,11 +64,28 @@ const HIRED: PipelineRow = {
   exam_passed: true,
   interview_status: 'completed',
   interview_score: 8.4,
+  can_hire: false,
+};
+
+// Held just under a round's pass mark: waiting for a person, so hireable.
+const HELD: PipelineRow = {
+  ...ROW_BASE,
+  applicant_id: 'ap-4',
+  enrolment_id: 'en-4',
+  requisition_id: 'req-1',
+  full_name: 'Esha Rao',
+  status: 'held',
+  ats_overall: 66,
+  best_exam_percent: 58,
+  exam_passed: false,
+  interview_status: null,
+  interview_score: null,
+  can_hire: true,
 };
 
 const RESPONSE: PipelineResponse = {
-  items: [SHORTLISTED, NEW, HIRED],
-  count: 3,
+  items: [SHORTLISTED, NEW, HIRED, HELD],
+  count: 4,
   limit: 50,
   offset: 0,
 };
@@ -172,7 +192,7 @@ describe('HRPipeline - listing', () => {
 
   it('counts the candidates in the section heading', async () => {
     renderPipeline();
-    expect(await screen.findByRole('heading', { name: /candidates \(3\)/i })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /candidates \(4\)/i })).toBeInTheDocument();
   });
 
   it('requests the chosen stage from the server and resets paging', async () => {
@@ -203,79 +223,89 @@ describe('HRPipeline - listing', () => {
 });
 
 describe('HRPipeline - hire / reject', () => {
+  async function expand(user: ReturnType<typeof userEvent.setup>, name: string) {
+    await screen.findByText(name);
+    await user.click(within(cardFor(name)).getByRole('button', { name: /expand details/i }));
+    return cardRootFor(name);
+  }
+
   // A hire/reject write now always needs a reason code (O4), which has no
   // affordance on the collapsed row — Expand details is the one way in.
   it('has no one-click decision on the collapsed row any more', async () => {
     renderPipeline();
-    await screen.findByText('Bhavya Nair');
-    expect(within(cardFor('Bhavya Nair')).queryByRole('button', { name: /^hire$/i })).not.toBeInTheDocument();
-    expect(within(cardFor('Bhavya Nair')).queryByRole('button', { name: /^reject$/i })).not.toBeInTheDocument();
+    await screen.findByText('Esha Rao');
+    expect(within(cardFor('Esha Rao')).queryByRole('button', { name: /^hire$/i })).not.toBeInTheDocument();
+    expect(within(cardFor('Esha Rao')).queryByRole('button', { name: /^reject$/i })).not.toBeInTheDocument();
   });
 
-  it('will not decide without a reason code chosen', async () => {
+  it('will not confirm without a reason code chosen', async () => {
     const user = userEvent.setup();
     renderPipeline();
-
-    await screen.findByText('Bhavya Nair');
-    await user.click(within(cardFor('Bhavya Nair')).getByRole('button', { name: /expand details/i }));
-    const card = cardRootFor('Bhavya Nair');
+    const card = await expand(user, 'Esha Rao');
     await user.click(within(card).getByRole('button', { name: /^hire$/i }));
 
+    expect(within(card).getByRole('button', { name: 'Confirm hire' })).toBeDisabled();
+    expect(within(card).getByText('Choose a reason.')).toBeInTheDocument();
     expect(setApplicantDecision).not.toHaveBeenCalled();
-    expect(within(card).getByText('Choose a reason first.')).toBeInTheDocument();
   });
 
-  it('sends the decision for the candidate whose button was pressed, with the reason code chosen', async () => {
+  it('needs at least three characters of why, as every other decision path does (HR-H1)', async () => {
     const user = userEvent.setup();
     renderPipeline();
-
-    await screen.findByText('Bhavya Nair');
-    await user.click(within(cardFor('Bhavya Nair')).getByRole('button', { name: /expand details/i }));
-    const card = cardRootFor('Bhavya Nair');
-    await user.selectOptions(within(card).getByLabelText('Reason'), 'strong-fit');
+    const card = await expand(user, 'Esha Rao');
     await user.click(within(card).getByRole('button', { name: /^hire$/i }));
+    await user.selectOptions(within(card).getByLabelText('Reason'), 'strong-fit');
+    await user.type(within(card).getByLabelText(/why\?/i), 'ok');
+
+    expect(within(card).getByRole('button', { name: 'Confirm hire' })).toBeDisabled();
+    expect(within(card).getByText('Write at least 3 characters explaining why.')).toBeInTheDocument();
+  });
+
+  it('sends the decision for the candidate whose card it is, with the reason and the why', async () => {
+    const user = userEvent.setup();
+    renderPipeline();
+    const card = await expand(user, 'Esha Rao');
+    await user.click(within(card).getByRole('button', { name: /^hire$/i }));
+    await user.selectOptions(within(card).getByLabelText('Reason'), 'strong-fit');
+    await user.type(within(card).getByLabelText(/why\?/i), 'Strong system-design answers');
+    await user.click(within(card).getByRole('button', { name: 'Confirm hire' }));
 
     await waitFor(() =>
       // With the application the card is about (B5).
-      expect(setApplicantDecision).toHaveBeenCalledWith('ap-1', 'hired', 'strong-fit', '', 'en-1'),
-    );
-    expect(toastSuccess).toHaveBeenCalledWith('Applicant hired');
-  });
-
-  it('carries the rationale typed on that card into the audit-logged write', async () => {
-    const user = userEvent.setup();
-    renderPipeline();
-
-    await screen.findByText('Bhavya Nair');
-    await user.click(
-      within(cardFor('Bhavya Nair')).getByRole('button', { name: /expand details/i }),
-    );
-    const card = cardRootFor('Bhavya Nair');
-    await user.selectOptions(within(card).getByLabelText('Reason'), 'weak-signals');
-    await user.type(
-      within(card).getByLabelText(/decision rationale/i),
-      'Strong system-design answers',
-    );
-    await user.click(within(card).getByRole('button', { name: /^reject$/i }));
-
-    await waitFor(() =>
       expect(setApplicantDecision).toHaveBeenCalledWith(
-        'ap-1',
-        'rejected',
-        'weak-signals',
+        'ap-4',
+        'hired',
+        'strong-fit',
         'Strong system-design answers',
-        'en-1',
+        'en-4',
       ),
     );
+    expect(toastSuccess).toHaveBeenCalledWith('Esha Rao hired');
+  });
+
+  it('offers only the reasons that apply to the chosen outcome (HR-M1)', async () => {
+    const user = userEvent.setup();
+    renderPipeline();
+    const card = await expand(user, 'Esha Rao');
+    await user.click(within(card).getByRole('button', { name: /^reject$/i }));
+    const select = within(card).getByLabelText('Reason');
+    expect(within(select).queryByRole('option', { name: 'Strong fit' })).not.toBeInTheDocument();
+    expect(within(select).getByRole('option', { name: 'Weak signals' })).toBeInTheDocument();
+  });
+
+  it('does not offer Hire to someone still inside the workflow, and says why (HR-H1)', async () => {
+    const user = userEvent.setup();
+    renderPipeline();
+    const card = await expand(user, 'Bhavya Nair');
+    expect(within(card).queryByRole('button', { name: /^hire$/i })).not.toBeInTheDocument();
+    expect(within(card).getByText(/hire becomes available once they finish the workflow/i)).toBeInTheDocument();
+    expect(within(card).getByRole('button', { name: /^reject$/i })).toBeInTheDocument();
   });
 
   it('does not offer Hire before a candidate has been shortlisted', async () => {
     const user = userEvent.setup();
     renderPipeline();
-
-    await screen.findByText('Chetan Iyer');
-    await user.click(within(cardFor('Chetan Iyer')).getByRole('button', { name: /expand details/i }));
-    const card = cardRootFor('Chetan Iyer');
+    const card = await expand(user, 'Chetan Iyer');
     expect(within(card).queryByRole('button', { name: /^hire$/i })).not.toBeInTheDocument();
     // Rejecting an unscreened applicant is still allowed.
     expect(within(card).getByRole('button', { name: /^reject$/i })).toBeInTheDocument();
@@ -284,27 +314,45 @@ describe('HRPipeline - hire / reject', () => {
   it('offers neither decision once one has been recorded', async () => {
     const user = userEvent.setup();
     renderPipeline();
-
-    await screen.findByText('Deepa Menon');
-    await user.click(within(cardFor('Deepa Menon')).getByRole('button', { name: /expand details/i }));
-    const card = cardRootFor('Deepa Menon');
+    const card = await expand(user, 'Deepa Menon');
     expect(within(card).queryByRole('button', { name: /^hire$/i })).not.toBeInTheDocument();
     expect(within(card).queryByRole('button', { name: /^reject$/i })).not.toBeInTheDocument();
+  });
+
+  it('marks a held candidate and links to the decision queue (HR-M11)', async () => {
+    const user = userEvent.setup();
+    renderPipeline();
+    await screen.findByText('Esha Rao');
+    expect(within(cardFor('Esha Rao')).getByText('Held')).toBeInTheDocument();
+    const card = await expand(user, 'Esha Rao');
+    expect(within(card).getByRole('link', { name: 'Decide in the decision queue' })).toHaveAttribute(
+      'href',
+      '/hr/requisitions/req-1/decisions',
+    );
   });
 
   it('surfaces a rejected decision write instead of implying it succeeded', async () => {
     setApplicantDecision.mockRejectedValue(new Error('Applicant already decided'));
     const user = userEvent.setup();
     renderPipeline();
-
-    await screen.findByText('Bhavya Nair');
-    await user.click(within(cardFor('Bhavya Nair')).getByRole('button', { name: /expand details/i }));
-    const card = cardRootFor('Bhavya Nair');
-    await user.selectOptions(within(card).getByLabelText('Reason'), 'strong-fit');
+    const card = await expand(user, 'Esha Rao');
     await user.click(within(card).getByRole('button', { name: /^hire$/i }));
+    await user.selectOptions(within(card).getByLabelText('Reason'), 'strong-fit');
+    await user.type(within(card).getByLabelText(/why\?/i), 'Strong panel');
+    await user.click(within(card).getByRole('button', { name: 'Confirm hire' }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Applicant already decided'));
     expect(toastSuccess).not.toHaveBeenCalled();
+  });
+});
+
+describe('HRPipeline - a failed load', () => {
+  it('says the pipeline could not load instead of showing an empty one (HR-M5)', async () => {
+    getPipeline.mockRejectedValue(new Error('boom'));
+    renderPipeline();
+    expect(await screen.findByText('Could not load the pipeline.')).toBeInTheDocument();
+    expect(screen.queryByText(/no candidates yet/i)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 });
 

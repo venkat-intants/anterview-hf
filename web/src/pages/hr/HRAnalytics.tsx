@@ -30,6 +30,8 @@
 
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { getHrAnalytics, type HrAnalytics } from '@/api/pipeline';
 import { SegTabs } from '@/design/components/primitives';
 import { PageHeader, SectionCard, Page } from '@/design/components/page';
@@ -136,11 +138,12 @@ function FunnelBars({ f }: { f: HrAnalytics['funnel'] }) {
 
 // ── Default export: embeddable panel (used by HRPipeline) ─────────────────────
 export default function HRAnalytics() {
-  const { data, isLoading } = useQuery({
+  const analyticsQuery = useQuery({
     queryKey: ['hr', 'analytics'],
     queryFn: () => getHrAnalytics(),
     staleTime: 60_000,
   });
+  const { data, isLoading } = analyticsQuery;
   const f = data?.funnel;
   const avg = data?.averages;
   const conv = data?.conversion;
@@ -161,7 +164,25 @@ export default function HRAnalytics() {
             </div>
           ) : f ? (
             <FunnelBars f={f} />
+          ) : analyticsQuery.isError ? (
+            // HR-M5: a failed load used to render nothing at all.
+            <QueryErrorPanel
+              title="Could not load the hiring funnel."
+              error={analyticsQuery.error}
+              onRetry={() => void analyticsQuery.refetch()}
+              retrying={analyticsQuery.isFetching}
+            />
           ) : null}
+          {/* HR-L15: this panel is the quick summary; the governed funnel,
+              with cohorts and definitions for every number, is its own page. */}
+          <p className="mt-4 text-[13px]">
+            <Link
+              to="/hr/analytics"
+              className="font-semibold text-[var(--accent)] underline-offset-2 hover:underline"
+            >
+              Open full analytics
+            </Link>
+          </p>
           {/* Conversion rates subtitle — the governed `conversion.pct_*`
               fields from this same response (PH5-C2), each a share of
               applications. Never derived from `f` here: a client-side
@@ -286,6 +307,18 @@ function CohortControls({
   openings: Requisition[];
   sourceOptions: { value: string; label: string }[];
 }): JSX.Element {
+  // HR-L14: the dates are edited here and reach the queries only while From is
+  // on or before To. An inverted range used to be sent as-is and came back as
+  // an empty funnel, which reads as "nobody applied" rather than as a typo.
+  const [dates, setDates] = useState({ from: filters.from, to: filters.to });
+  const rangeInverted = Boolean(dates.from && dates.to && dates.from > dates.to);
+
+  function changeDate(patch: Partial<typeof dates>): void {
+    const next = { ...dates, ...patch };
+    setDates(next);
+    if (!(next.from && next.to && next.from > next.to)) onChange(next);
+  }
+
   return (
     <SectionCard title="Cohort">
       <div>
@@ -322,8 +355,10 @@ function CohortControls({
           <input
             id="an-from"
             type="date"
-            value={filters.from}
-            onChange={(e) => onChange({ from: e.target.value })}
+            value={dates.from}
+            onChange={(e) => changeDate({ from: e.target.value })}
+            aria-invalid={rangeInverted || undefined}
+            aria-describedby={rangeInverted ? 'an-range-error' : undefined}
             className={FIELD_CLS}
           />
         </div>
@@ -334,8 +369,10 @@ function CohortControls({
           <input
             id="an-to"
             type="date"
-            value={filters.to}
-            onChange={(e) => onChange({ to: e.target.value })}
+            value={dates.to}
+            onChange={(e) => changeDate({ to: e.target.value })}
+            aria-invalid={rangeInverted || undefined}
+            aria-describedby={rangeInverted ? 'an-range-error' : undefined}
             className={FIELD_CLS}
           />
         </div>
@@ -390,6 +427,11 @@ function CohortControls({
           />
         </div>
       </div>
+      {rangeInverted ? (
+        <p id="an-range-error" role="alert" className="mt-2 text-[13px] text-[var(--ui-danger)]">
+          From must be on or before To. The figures below still use the last valid range.
+        </p>
+      ) : null}
     </SectionCard>
   );
 }

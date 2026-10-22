@@ -1,7 +1,8 @@
 // HRPipeline — single-table hiring funnel: resume → exam → interview → decision.
 // Layout: design screen HRPipeline.tsx card visual styling (GlassCard, StatusTag, Avatar).
 // Behavior: all live logic — server-paginated TABLE, persisted setApplicantDecision
-//           (hired/rejected + rationale), canHire/canReject gating, embedded analytics.
+//           (hired/rejected + reason + rationale), Hire gated on the server's can_hire
+//           (the same rule record_final_decision enforces), embedded analytics.
 // NOTE: design's drag-drop Kanban is NOT used — no stage-transition API endpoint exists.
 
 import { useState } from 'react';
@@ -25,7 +26,9 @@ import {
   type ApplicantDecision,
 } from '@/api/pipeline';
 import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
-import { MIN_REASON_EXPLAINED, useDecisionReasons } from '@/lib/decisionReasons';
+import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
+import { errorMessage } from '@/lib/errorMessage';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { toast } from '@/lib/toast';
 import CandidateDrawer from '@/components/CandidateDrawer';
 import { applicationKey } from '@/lib/applicationKey';
@@ -36,6 +39,7 @@ import { StatusTag, Avatar, SegTabs, type TagTone } from '@/design/components/pr
 import { PageHeader, EmptyState, Toolbar, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import HRAnalytics from './HRAnalytics';
 import { LIVE_POLL_MS } from '../../lib/polling';
 
@@ -101,10 +105,15 @@ function statusBadge(s: Row['status']): BadgeInfo | null {
       return { label: 'Rejected', tone: 'ember' };
     case 'interviewed':
       return { label: 'Interviewed', tone: 'amber' };
+    case 'held':
+      return { label: 'Held', tone: 'amber' };
     default:
       return null;
   }
 }
+
+/** Statuses a reject may still be recorded from (anything not yet decided). */
+const OPEN_STATUSES: ReadonlySet<Row['status']> = new Set(['new', 'shortlisted', 'interviewed', 'held']);
 
 /* ── Stage tabs ─────────────────────────────────────────────────────────────── */
 
@@ -142,42 +151,65 @@ function StageScore({
 function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  // HR-M1: the outcome is chosen first, then a reason that applies to it, as
+  // on the decision queue. Offering every reason for both buttons let a
+  // reject reason be sent with Hire, which the server refuses.
+  const [outcome, setOutcome] = useState<ApplicantDecision | null>(null);
   const [rationale, setRationale] = useState('');
-
   const [reasonCode, setReasonCode] = useState('');
   const reasonsQuery = useDecisionReasons();
-  // Both outcomes are offered from the same control here (there is no
-  // separate "which decision am I about to make" step, unlike the decision
-  // queue) — so every active reason is shown rather than filtering by
-  // applies_to. Unlike the decision queue, the free-text rationale here is
-  // OPTIONAL unless the chosen reason itself demands an explanation — that
-  // policy is this screen's own, so it is not folded into minReasonLength.
-  const chosenReason = (reasonsQuery.data ?? []).find((r) => r.code === reasonCode) ?? null;
-  const rationaleReady =
-    !chosenReason?.requires_explanation || rationale.trim().length >= MIN_REASON_EXPLAINED;
-  // O4: a reason code is now required for every hire/reject write.
-  const canDecide = Boolean(reasonCode) && rationaleReady;
+  const reasonOptions = reasonsFor(reasonsQuery.data, outcome);
+  const chosenReason = reasonOptions.find((r) => r.code === reasonCode) ?? null;
+  // HR-H1: the same minimum every other decision path enforces (the server
+  // refuses fewer than three characters, ten when the reason asks for it).
+  const minReason = minReasonLength(chosenReason);
+  const rationaleReady = rationale.trim().length >= minReason;
+  const canDecide = outcome !== null && Boolean(reasonCode) && rationaleReady;
 
   const decideMut = useMutation({
     mutationFn: (decision: ApplicantDecision) =>
       setApplicantDecision(a.applicant_id, decision, reasonCode, rationale, a.enrolment_id),
     onSuccess: (_res, decision) => {
-      toast.success(decision === 'hired' ? 'Applicant hired' : 'Applicant rejected');
+      toast.success(decision === 'hired' ? `${a.full_name} hired` : `${a.full_name} rejected`);
+      setOutcome(null);
       setReasonCode('');
       setRationale('');
-      void qc.invalidateQueries({ queryKey: ['hr', 'pipeline'] });
-      void qc.invalidateQueries({ queryKey: ['hr', 'analytics'] });
+      void invalidateAfterHrMutation(qc);
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : 'Decision failed'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not record the decision.')),
   });
+
+  function chooseOutcome(next: ApplicantDecision): void {
+    // A reason and a "why" belong to the outcome they were written for.
+    if (next !== outcome) {
+      setReasonCode('');
+      setRationale('');
+    }
+    setOutcome(next);
+  }
 
   const rec = recBadge(a.ats_recommendation);
   const iv = interviewBadge(a.interview_status);
   const pill = statusBadge(a.status);
   const offerTag = offerOutcomeTag(a.offer_outcome);
 
-  const canHire = a.status === 'shortlisted' || a.status === 'interviewed';
-  const canReject = a.status === 'new' || a.status === 'shortlisted' || a.status === 'interviewed';
+  // HR-H1: Hire is offered exactly when the server would record it: the
+  // candidate has finished the workflow, is held, or is on a human review
+  // round (or is on no workflow and shortlisted). The server says which.
+  const canHire = a.can_hire === true;
+  const canReject = OPEN_STATUSES.has(a.status);
+  const stillInWorkflow =
+    !canHire && (a.status === 'shortlisted' || a.status === 'interviewed');
+  const rationaleId = `rationale-${applicationKey(a)}`;
+  const hintId = `decision-hint-${applicationKey(a)}`;
+  const hint =
+    outcome === null
+      ? 'Choose hire or reject first.'
+      : !reasonCode
+        ? 'Choose a reason.'
+        : !rationaleReady
+          ? `Write at least ${minReason} characters explaining why.`
+          : '';
 
   return (
     <div
@@ -331,72 +363,108 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
             </div>
           </div>
 
-          {/* Reason + rationale + decision buttons (persisted — audit trail) */}
+          {/* HR-M11: a held candidate scored just under a round's pass mark and
+              waits for a person. Say so, and where the full picture is. */}
+          {a.status === 'held' && (
+            <p className="text-[13px] text-muted-foreground">
+              Held for you: they scored just under a round&apos;s pass mark.
+              {a.requisition_id ? (
+                <>
+                  {' '}
+                  <Link
+                    to={`/hr/requisitions/${a.requisition_id}/decisions`}
+                    className="font-semibold text-[var(--accent)] underline-offset-2 hover:underline"
+                  >
+                    Decide in the decision queue
+                  </Link>{' '}
+                  to see their round results, or record a decision here.
+                </>
+              ) : null}
+            </p>
+          )}
+
+          {/* Outcome, then reason, then why: persisted and audit-logged. */}
           {(canHire || canReject) && (
             <div className="rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
-              <DecisionReasonSelect
-                id={`reason-code-${a.applicant_id}`}
-                reasons={reasonsQuery.data ?? []}
-                value={reasonCode}
-                onChange={setReasonCode}
-              />
-
-              <label className="mb-2 mt-3 block text-[13px] font-semibold text-foreground">
-                Hire decision{' '}
-                <span className="font-normal text-muted-foreground">
-                  {chosenReason?.requires_explanation
-                    ? '- this reason needs at least 10 characters of explanation'
-                    : '- rationale is optional but logged for audit'}
-                </span>
-              </label>
-              <textarea
-                className="min-h-[44px] w-full resize-y rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] transition-colors focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
-                placeholder="Why this decision? (optional)…"
-                value={rationale}
-                onChange={(e) => setRationale(e.target.value)}
-                aria-label="Decision rationale"
-              />
-              <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <div role="group" aria-label="Decision" className="flex flex-wrap items-center gap-2">
                 {canHire && (
                   <Button
                     type="button"
-                    disabled={decideMut.isPending || !canDecide}
-                    onClick={() => decideMut.mutate('hired')}
-                    aria-busy={decideMut.isPending && decideMut.variables === 'hired'}
+                    variant={outcome === 'hired' ? 'default' : 'outline'}
+                    aria-pressed={outcome === 'hired'}
+                    onClick={() => chooseOutcome('hired')}
+                    disabled={decideMut.isPending}
                   >
-                    {decideMut.isPending && decideMut.variables === 'hired' ? (
-                      <Loader2 className="animate-spin" aria-hidden="true" />
-                    ) : (
-                      <CheckCircle2 aria-hidden="true" />
-                    )}
+                    <CheckCircle2 aria-hidden="true" />
                     Hire
                   </Button>
                 )}
                 {canReject && (
                   <Button
                     type="button"
-                    variant="outline"
-                    className="border-[var(--ui-danger)]/40 text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]"
-                    disabled={decideMut.isPending || !canDecide}
-                    onClick={() => decideMut.mutate('rejected')}
-                    aria-busy={decideMut.isPending && decideMut.variables === 'rejected'}
+                    variant={outcome === 'rejected' ? 'destructive' : 'outline'}
+                    aria-pressed={outcome === 'rejected'}
+                    onClick={() => chooseOutcome('rejected')}
+                    disabled={decideMut.isPending}
                   >
-                    {decideMut.isPending && decideMut.variables === 'rejected' ? (
-                      <Loader2 className="animate-spin" aria-hidden="true" />
-                    ) : (
-                      <XCircle aria-hidden="true" />
-                    )}
+                    <XCircle aria-hidden="true" />
                     Reject
                   </Button>
                 )}
-                {!canDecide ? (
-                  <span className="text-[13px] text-[var(--ui-warn)]">
-                    {!reasonCode
-                      ? 'Choose a reason first.'
-                      : 'Write at least 10 characters explaining why.'}
-                  </span>
-                ) : null}
               </div>
+              {stillInWorkflow && (
+                <p className="mt-2 text-[13px] text-muted-foreground">
+                  Hire becomes available once they finish the workflow or are held for you.
+                </p>
+              )}
+
+              {outcome !== null && (
+                <>
+                  <div className="mt-3">
+                    <DecisionReasonSelect
+                      id={`reason-code-${applicationKey(a)}`}
+                      reasons={reasonOptions}
+                      value={reasonCode}
+                      onChange={setReasonCode}
+                    />
+                  </div>
+                  <label
+                    htmlFor={rationaleId}
+                    className="mb-2 mt-3 block text-[13px] font-semibold text-foreground"
+                  >
+                    Why?{' '}
+                    <span className="font-normal text-muted-foreground">
+                      At least {minReason} characters, recorded against your name
+                    </span>
+                  </label>
+                  <textarea
+                    id={rationaleId}
+                    className="min-h-[44px] w-full resize-y rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] transition-colors focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
+                    value={rationale}
+                    onChange={(e) => setRationale(e.target.value)}
+                    aria-describedby={hint ? hintId : undefined}
+                  />
+                  <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant={outcome === 'rejected' ? 'destructive' : 'default'}
+                      disabled={decideMut.isPending || !canDecide}
+                      onClick={() => decideMut.mutate(outcome)}
+                      aria-busy={decideMut.isPending}
+                    >
+                      {decideMut.isPending ? (
+                        <Loader2 className="animate-spin" aria-hidden="true" />
+                      ) : null}
+                      {outcome === 'hired' ? 'Confirm hire' : 'Confirm reject'}
+                    </Button>
+                    {hint ? (
+                      <span id={hintId} className="text-[13px] text-[var(--ui-warn)]">
+                        {hint}
+                      </span>
+                    ) : null}
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -436,13 +504,14 @@ export default function HRPipeline() {
     }
   }
 
-  const { data, isLoading } = useQuery({
+  const pipelineQuery = useQuery({
     queryKey: ['hr', 'pipeline', stage, offset],
     // A5: candidates advance between stages unattended.
     refetchInterval: LIVE_POLL_MS,
     queryFn: () => getPipeline({ stage, limit: PAGE_SIZE, offset }),
   });
 
+  const { data, isLoading } = pipelineQuery;
   const items = data?.items ?? [];
   const count = data?.count ?? 0;
 
@@ -505,7 +574,15 @@ export default function HRPipeline() {
           </div>
         </Toolbar>
 
-        {isLoading ? (
+        {pipelineQuery.isError && data === undefined ? (
+          // HR-M5: a failed load is not an empty pipeline.
+          <QueryErrorPanel
+            title="Could not load the pipeline."
+            error={pipelineQuery.error}
+            onRetry={() => void pipelineQuery.refetch()}
+            retrying={pipelineQuery.isFetching}
+          />
+        ) : isLoading ? (
           <div className="space-y-3" aria-busy="true" aria-label="Loading candidates">
             {[0, 1, 2].map((i) => (
               <Skeleton key={i} className="h-[68px] w-full rounded-card" />

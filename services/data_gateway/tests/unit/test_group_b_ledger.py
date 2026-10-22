@@ -106,19 +106,22 @@ async def test_a_pipeline_decision_that_cannot_name_an_opening_is_refused(
 
 
 @pytest.mark.asyncio
-async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
+async def test_a_pipeline_decision_on_one_application_goes_through_the_one_writer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """HR-H1: the pipeline board's decision is recorded by ``record_final_decision``,
+    the writer the decision queue and the applicant board use, so its rules, its
+    reason, its ledger entry, its audit row and its email are theirs."""
     from datetime import UTC, datetime
 
     import app.routers.hr_pipeline as hrp
     from app.models import Applicant
 
-    eid, hr = uuid.uuid4(), uuid.uuid4()
+    eid, hr, company = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     applicant = Applicant(id=uuid.uuid4(), status="interviewed", full_name="Asha",
                           target_job_title="Staff Nurse", target_level="mid",
                           pending_enrichment=False, created_at=datetime.now(tz=UTC))
-    moves: list[dict] = []
+    calls: list[dict] = []
 
     async def _owned(*_: object) -> Applicant:
         return applicant
@@ -126,64 +129,140 @@ async def test_a_pipeline_decision_on_one_application_goes_through_the_ledger(
     async def _one(*_: object, **__: object) -> ApplicationChoice:
         return ApplicationChoice(eid, "interviewed", "Staff Nurse", [eid])
 
-    async def _transition(_db: object, **kw: object) -> str:
-        moves.append(kw)
-        return "interviewed"
-
-    async def _no_email(*_: object, **__: object) -> None:
-        return None
+    async def _decide(_db: object, **kw: object) -> dict:
+        calls.append(kw)
+        return {"status": kw["decision"]}
 
     monkeypatch.setattr(hrp, "_get_owned", _owned)
     monkeypatch.setattr(hrp, "choose_application", _one)
-    monkeypatch.setattr(hrp, "record_transition", _transition)
-    monkeypatch.setattr(hrp, "email_applicant_decision", _no_email)
-
-    from app.decision_reasons import ResolvedReason
-
-    async def _resolve(_db: object, **kw: object) -> ResolvedReason:
-        assert kw["code"] == "skills_fit" and kw["decision"] == "hired"
-        return ResolvedReason(code="skills_fit", label="Skills / competency fit",
-                              requires_explanation=False)
-
-    monkeypatch.setattr(hrp, "resolve_reason", _resolve)
-    import app.interview_scheduling as sch
-
-    closed: list[dict] = []
-
-    async def _close(_db: object, **kw: object) -> int:
-        closed.append(kw)
-        return 0
-
-    monkeypatch.setattr(sch, "close_for_decision", _close)
-    import app.job_tasks as tasks
-
-    tasks_closed: list[dict] = []
-
-    async def _close_tasks(_db: object, **kw: object) -> int:
-        tasks_closed.append(kw)
-        return 0
-
-    monkeypatch.setattr(tasks, "close_for_decision", _close_tasks)
+    monkeypatch.setattr(hrp, "record_final_decision", _decide)
     db = _db()
-    db.add = MagicMock()
+    db.refresh = AsyncMock()
     await hrp.decide_applicant(uuid.uuid4(),
                                hrp.DecisionIn(decision="hired", rationale="strong panel",
                                               reason_code="skills_fit"),
-                               MagicMock(), (hr, uuid.uuid4()), db)
+                               MagicMock(), (hr, company), db)
 
-    # PH4-A2: the pipeline board's decision frees the panel too.
-    assert closed and closed[0]["enrolment_id"] == eid and closed[0]["decision"] == "hired"
-    # PH4-D4 NEW-4: and closes the application's open task links, as
-    # final_decision does — this board used to skip it, so a rejected
-    # candidate's draft was later auto-submitted by the deadline sweep.
-    assert tasks_closed and tasks_closed[0]["enrolment_id"] == eid
-    assert tasks_closed[0]["actor"] == hr
-    assert moves[0]["enrolment_id"] == eid and moves[0]["to_status"] == "hired"
-    assert moves[0]["automated"] is False and moves[0]["actor_user_id"] == hr
-    assert moves[0]["reason"] == "strong panel"
-    # PH4-O4: the category AND its label snapshot reach the ledger.
-    assert moves[0]["reason_code"] == "skills_fit"
-    assert moves[0]["reason_label"] == "Skills / competency fit"
+    assert len(calls) == 1
+    call = calls[0]
+    assert call["enrolment_id"] == eid and call["company_id"] == company
+    assert call["decision"] == "hired" and call["actor_user_id"] == hr
+    assert call["reason"] == "strong panel" and call["reason_code"] == "skills_fit"
+    db.commit.assert_awaited_once()
+    db.refresh.assert_awaited_once_with(applicant)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_pipeline_decision_is_rolled_back_and_says_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.routers.hr_pipeline as hrp
+    from app.final_decision import DecisionRefusedError
+    from app.models import Applicant
+
+    eid = uuid.uuid4()
+    applicant = Applicant(id=uuid.uuid4(), status="shortlisted", full_name="Asha")
+
+    async def _owned(*_: object) -> Applicant:
+        return applicant
+
+    async def _one(*_: object, **__: object) -> ApplicationChoice:
+        return ApplicationChoice(eid, "shortlisted", "Welder", [eid])
+
+    async def _refuse(_db: object, **_kw: object) -> dict:
+        raise DecisionRefusedError(409, "They have not reached a decision yet.")
+
+    monkeypatch.setattr(hrp, "_get_owned", _owned)
+    monkeypatch.setattr(hrp, "choose_application", _one)
+    monkeypatch.setattr(hrp, "record_final_decision", _refuse)
+    db = _db()
+    with pytest.raises(HTTPException) as exc:
+        await hrp.decide_applicant(
+            uuid.uuid4(), hrp.DecisionIn(decision="hired", rationale="Looks great"),
+            MagicMock(), (uuid.uuid4(), uuid.uuid4()), db,
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail == "They have not reached a decision yet."
+    db.rollback.assert_awaited_once()
+    db.commit.assert_not_awaited()
+
+
+def _state_db(**row: object) -> AsyncMock:
+    """A session whose decision-state read returns ``row`` (final_decision._STATE_SQL)."""
+    db = _db()
+    result = MagicMock()
+    result.mappings.return_value.first.return_value = {
+        "applicant_id": uuid.uuid4(), "current_round_id": uuid.uuid4(),
+        "workflow_id": uuid.uuid4(), "requisition_id": uuid.uuid4(), "title": "Welder",
+        "round_title": "Round 1", **row,
+    }
+    db.execute = AsyncMock(return_value=result)
+    db.add = MagicMock()
+    return db
+
+
+@pytest.mark.asyncio
+async def test_the_pipeline_cannot_hire_someone_still_in_the_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """HR-H1: shortlisted and sitting round 1 is not a decision yet. The pipeline
+    board used to hire them anyway; the decision queue always refused."""
+    import app.routers.hr_pipeline as hrp
+    from app.models import Applicant
+
+    eid = uuid.uuid4()
+    applicant = Applicant(id=uuid.uuid4(), status="shortlisted", full_name="Asha")
+
+    async def _owned(*_: object) -> Applicant:
+        return applicant
+
+    async def _one(*_: object, **__: object) -> ApplicationChoice:
+        return ApplicationChoice(eid, "shortlisted", "Welder", [eid])
+
+    monkeypatch.setattr(hrp, "_get_owned", _owned)
+    monkeypatch.setattr(hrp, "choose_application", _one)
+    db = _state_db(status="shortlisted", awaits_human=False)
+    with pytest.raises(HTTPException) as exc:
+        await hrp.decide_applicant(
+            uuid.uuid4(),
+            hrp.DecisionIn(decision="hired", rationale="Strong CV", reason_code="skills_fit"),
+            MagicMock(), (uuid.uuid4(), uuid.uuid4()), db,
+        )
+    assert exc.value.status_code == 409
+    assert "still in the workflow" in str(exc.value.detail)
+    assert not db.add.called and not db.commit.called
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("rationale", [None, "", "  ", "ok"])
+async def test_the_pipeline_needs_a_reason_like_every_other_path(
+    monkeypatch: pytest.MonkeyPatch, rationale: str | None,
+) -> None:
+    """HR-H1: the board said "rationale is optional"; every other decision path
+    refuses one under three characters."""
+    import app.routers.hr_pipeline as hrp
+    from app.models import Applicant
+
+    eid = uuid.uuid4()
+    applicant = Applicant(id=uuid.uuid4(), status="held", full_name="Asha")
+
+    async def _owned(*_: object) -> Applicant:
+        return applicant
+
+    async def _one(*_: object, **__: object) -> ApplicationChoice:
+        return ApplicationChoice(eid, "held", "Welder", [eid])
+
+    monkeypatch.setattr(hrp, "_get_owned", _owned)
+    monkeypatch.setattr(hrp, "choose_application", _one)
+    db = _state_db(status="held", awaits_human=True)
+    with pytest.raises(HTTPException) as exc:
+        await hrp.decide_applicant(
+            uuid.uuid4(),
+            hrp.DecisionIn(decision="rejected", rationale=rationale, reason_code="other"),
+            MagicMock(), (uuid.uuid4(), uuid.uuid4()), db,
+        )
+    assert exc.value.status_code == 422
+    assert not db.add.called and not db.commit.called
 
 
 @pytest.mark.asyncio
@@ -191,13 +270,14 @@ async def test_a_named_application_is_guarded_on_its_own_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """B5: the person's row mirrors their LATEST application. Hiring someone
-    for an older one they are shortlisted in must not be refused because the
-    newer one is still 'new' — nor allowed because the newer one is shortlisted."""
+    for an older one that is still 'new' is refused on that application's own
+    state, whatever the newer one says."""
     import app.routers.hr_pipeline as hrp
     from app.models import Applicant
 
     older, newer = uuid.uuid4(), uuid.uuid4()
     applicant = Applicant(id=uuid.uuid4(), status="shortlisted", full_name="Asha")
+    asked: list[uuid.UUID] = []
 
     async def _owned(*_: object) -> Applicant:
         return applicant
@@ -207,12 +287,23 @@ async def test_a_named_application_is_guarded_on_its_own_status(
 
     monkeypatch.setattr(hrp, "_get_owned", _owned)
     monkeypatch.setattr(hrp, "choose_application", _older_is_new)
+    db = _state_db(status="new", awaits_human=False, current_round_id=None)
+    original = db.execute
+
+    async def _execute(stmt: object, params: dict | None = None) -> object:
+        if params and "e" in params:
+            asked.append(params["e"])
+        return await original(stmt, params)
+
+    db.execute = _execute
     with pytest.raises(HTTPException) as exc:
         await hrp.decide_applicant(
-            uuid.uuid4(), hrp.DecisionIn(decision="hired", enrolment_id=older), MagicMock(),
-            (uuid.uuid4(), uuid.uuid4()), _db(),
+            uuid.uuid4(),
+            hrp.DecisionIn(decision="hired", rationale="Strong CV", enrolment_id=older),
+            MagicMock(), (uuid.uuid4(), uuid.uuid4()), db,
         )
     assert exc.value.status_code == 409, "an application still 'new' cannot be hired"
+    assert asked == [older], "the decision read the named application's own state"
     assert applicant.status == "shortlisted", "the mirror (latest application) is untouched"
 
 

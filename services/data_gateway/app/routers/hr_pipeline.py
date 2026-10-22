@@ -17,7 +17,6 @@ or scorecard summaries — only scores/statuses/ids.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated, Any
 
 import structlog
@@ -26,18 +25,16 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.database import DbSessionDep
-from app.decision_reasons import ReasonError
-from app.decision_reasons import resolve as resolve_reason
 from app.dependencies import HrCtxDep
-from app.interviewer_scorecards import RequestMeta
+from app.final_decision import DECISIONS, DecisionRefusedError, record_final_decision
 from app.metrics.compute import CohortWindow, FunnelFilters, compute_funnel
-from app.models import AuditLog
-from app.requisitions import ambiguous_decision_detail, choose_application, record_transition
+from app.requisitions import ambiguous_decision_detail, choose_application
 from app.routers.hr_applicants import (
     ApplicantOut,
+    StatusUpdate,
+    _decide_without_application,
     _get_owned,
     _to_out,
-    email_applicant_decision,
 )
 from app.utils.request_ip import extract_client_ip, extract_user_agent
 
@@ -45,7 +42,6 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/hr", tags=["hr-pipeline"])
 
-_VALID_DECISIONS = {"hired", "rejected"}
 _VALID_STAGES = {"all", "shortlisted", "exam_passed", "interviewed", "decided"}
 _VALID_STATUS_FILTERS = {"new", "shortlisted", "rejected", "interviewed", "hired", "held"}
 _PIPELINE_MAX_LIMIT = 200
@@ -83,6 +79,11 @@ class PipelineRow(BaseModel):
     updated_at: str
     # PH4-A3 — offer_accepted | offer_declined | offer_expired | offer_withdrawn.
     offer_outcome: str | None = None
+    # HR-H1 — a hire may be recorded on this application now: it has reached a
+    # person (held, finished every round, on a human review round) or is on no
+    # workflow and shortlisted/interviewed. The same rule record_final_decision
+    # enforces; the board reads it rather than guessing from ``status``.
+    can_hire: bool = False
 
 
 class PipelineResponse(BaseModel):
@@ -283,6 +284,14 @@ SELECT *,
        -- application, not in the shared view (the copilot reads that).
        (SELECT e.offer_outcome FROM enrolments e
          WHERE e.id = application_progress.enrolment_id) AS offer_outcome,
+       -- HR-H1: whether a hire may be recorded now, by the rule
+       -- final_decision.refusal applies, so the board offers Hire exactly when
+       -- the server would accept it. NULL for someone filed under no opening.
+       (SELECT e.status NOT IN ('hired', 'rejected')
+               AND (enrolment_awaits_human(e.status, e.current_round_id)
+                    OR (e.workflow_id IS NULL AND e.status IN ('shortlisted', 'interviewed')))
+          FROM enrolments e
+         WHERE e.id = application_progress.enrolment_id) AS can_hire,
        COUNT(*) OVER () AS total_count
 FROM application_progress
 WHERE company_id = :cid
@@ -299,6 +308,15 @@ ORDER BY ats_overall DESC NULLS LAST, updated_at DESC
 LIMIT :limit OFFSET :offset
 """
 )
+
+
+def _can_hire(row: Any) -> bool:
+    """The row's ``can_hire``. A person filed under no opening has no enrolment
+    to ask, so their own status decides, as ``_decide_without_application``
+    does (an application on no workflow)."""
+    if row["enrolment_id"] is None:
+        return row["status"] in ("shortlisted", "interviewed")
+    return bool(row["can_hire"])
 
 
 @router.get("/pipeline", response_model=PipelineResponse)
@@ -347,6 +365,7 @@ async def get_pipeline(
             scorecard_id=str(r["scorecard_id"]) if r["scorecard_id"] else None,
             updated_at=r["updated_at"].isoformat(),
             offer_outcome=r["offer_outcome"],
+            can_hire=_can_hire(r),
         )
         for r in rows
     ]
@@ -540,11 +559,20 @@ async def decide_applicant(
     ctx: HrCtxDep,
     db: DbSessionDep,
 ) -> ApplicantOut:
-    """Record a hire/reject decision on an applicant (company-scoped, audited)."""
+    """Record a hire/reject decision on an applicant (company-scoped, audited).
+
+    This board used to keep its own rules: it hired any shortlisted or
+    interviewed application, even one still inside round 1, and took an empty
+    rationale, so the same hire was refused on the decision queue and allowed
+    here — the one path around D-05's "finish the workflow first". It now goes
+    through the same writer the decision queue and the applicant board use
+    (``record_final_decision``), so the rules, the reason, the audit row and the
+    email are the same wherever a decision is recorded.
+    """
     hr_uid, company_id = ctx
-    if body.decision not in _VALID_DECISIONS:
+    if body.decision not in DECISIONS:
         raise HTTPException(
-            status_code=400, detail=f"decision must be one of {sorted(_VALID_DECISIONS)}"
+            status_code=400, detail=f"decision must be one of {sorted(DECISIONS)}"
         )
 
     a = await _get_owned(db, company_id, applicant_id)  # 404 cross-tenant
@@ -564,108 +592,47 @@ async def decide_applicant(
             status_code=409, detail=ambiguous_decision_detail(a.full_name, len(app_.live))
         )
 
-    # Guarded on the application's own status — the person's row describes
-    # only their latest application, which may not be this one.
-    current = app_.status if app_.enrolment_id is not None else a.status
-
-    if body.decision == "hired":
-        if current == "hired":
-            raise HTTPException(status_code=409, detail="Applicant is already hired.")
-        if current not in ("shortlisted", "interviewed"):
-            raise HTTPException(
-                status_code=409,
-                detail="Only shortlisted or interviewed applicants can be hired.",
-            )
-    # 'rejected' is reachable from any non-terminal state AND from 'hired'
-    # (an audited reversal — details.reversal=true).
-
-    # PH4-O4. After the guards above, before anything is written: a decision
-    # blocked for its own reasons should say why ("already hired"), not complain
-    # about a missing category — the order record_final_decision uses.
-    try:
-        chosen = await resolve_reason(
-            db, company_id=company_id, code=body.reason_code, decision=body.decision,
-            reason=body.rationale or "",
-        )
-    except ReasonError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-
-    now = datetime.now(tz=UTC)
-    prev = current
-    # The person-level mirror moves only when this is the application it
-    # mirrors (their latest), or when they have no application at all.
-    if app_.enrolment_id is None or app_.is_latest:
-        a.status = body.decision
-        a.updated_at = now
-    if app_.enrolment_id is not None:
-        await record_transition(
+    if app_.enrolment_id is None:
+        # A person filed under no opening (a row that predates openings): the
+        # applicant board's path for the same case, so the same guarantees.
+        await _decide_without_application(
             db,
-            enrolment_id=app_.enrolment_id,
+            applicant=a,
             company_id=company_id,
-            to_status=body.decision,
-            actor_user_id=hr_uid,
-            automated=False,
-            reason=body.rationale or f"{body.decision} from the pipeline board",
-            reason_code=chosen.code,
-            reason_label=chosen.label,
-        )
-        # PH4-A2: the same as a decision from the decision queue — interviews
-        # not yet held are no longer needed, so the panel's calendar is freed.
-        from app.interview_scheduling import close_for_decision  # noqa: PLC0415 — import cycle
-
-        await close_for_decision(
-            db, company_id=company_id, enrolment_id=app_.enrolment_id, actor=hr_uid,
-            decision=body.decision,
-        )
-        # PH4-D4 M5, as app/final_decision.py does: an open task link must not
-        # outlive the application. This board records its decision without
-        # going through final_decision, so it has to close tasks itself —
-        # otherwise a rejected candidate's draft was later auto-submitted by
-        # the deadline sweep and they were emailed about it (NEW-4).
-        from app.job_tasks import close_for_decision as close_tasks_for_decision  # noqa: PLC0415
-
-        await close_tasks_for_decision(
-            db, company_id=company_id, enrolment_id=app_.enrolment_id, actor=hr_uid,
-            meta=RequestMeta(
-                ip_address=extract_client_ip(request), user_agent=extract_user_agent(request),
+            body=StatusUpdate(
+                status=body.decision,
+                reason=body.rationale,
+                reason_code=body.reason_code or None,
             ),
+            actor_user_id=hr_uid,
+            request=request,
         )
+        await db.commit()
+        return _to_out(a)
 
-    db.add(
-        AuditLog(
-            actor_id=hr_uid,
-            actor_type="user",
-            action=f"applicant.decision.{body.decision}",
-            resource_type="applicant",
-            resource_id=applicant_id,
-            details={
-                "company_id": str(company_id),
-                "enrolment_id": str(app_.enrolment_id) if app_.enrolment_id else None,
-                "decision": body.decision,
-                "previous_status": prev,
-                "rationale": body.rationale,
-                "reason_code": chosen.code,
-                "reason_label": chosen.label,
-                "reversal": prev == "hired",
-            },
+    try:
+        await record_final_decision(
+            db,
+            company_id=company_id,
+            enrolment_id=app_.enrolment_id,
+            decision=body.decision,
+            reason=body.rationale,
+            reason_code=body.reason_code,
+            actor_user_id=hr_uid,
             ip_address=extract_client_ip(request),
             user_agent=extract_user_agent(request),
-            event_ts=now,
         )
-    )
-    # Email the candidate their hire/reject decision (staged on this transaction →
-    # atomic with the decision + audit row, then delivered by the outbox worker).
-    if body.decision != prev:
-        await email_applicant_decision(
-            db, applicant=a, decision=body.decision, company_id=company_id,
-            job_title=app_.title,
-        )
+    except DecisionRefusedError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     await db.commit()
+    # record_transition moved the person-level mirror in SQL.
+    await db.refresh(a)
     log.info(
         "hr.applicant.decided",
         applicant_id=str(applicant_id),
         company_id=str(company_id),
+        enrolment_id=str(app_.enrolment_id),
         decision=body.decision,
-        previous=prev,
     )
     return _to_out(a)

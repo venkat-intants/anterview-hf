@@ -37,7 +37,8 @@ import { invalidateAfterHrMutation, queryKeys } from '@/lib/queryKeys';
 import { errorMessage } from '@/lib/errorMessage';
 import { statusLabel } from '@/lib/statusLabel';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
-import { GlassCard, Pill } from '@/design/components/primitives';
+import { GlassCard } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
 import { AlertCircle } from '@/design/components/icons';
 import { formatDateTime } from '@/lib/formatters';
 
@@ -288,14 +289,14 @@ export default function GovernancePanel({
             </div>
 
             <div className="mt-4">
-              <Pill
+              <Button
+                type="button"
                 variant="outline"
                 onClick={() => saveBudget.mutate()}
                 disabled={saveBudget.isPending}
-                className="px-4 py-2"
               >
                 {saveBudget.isPending ? 'Saving…' : 'Save budget'}
-              </Pill>
+              </Button>
             </div>
 
             {/* ── Approval ───────────────────────────────────────────────── */}
@@ -315,13 +316,13 @@ export default function GovernancePanel({
                     className={INPUT}
                   />
                   <div className="mt-3">
-                    <Pill
+                    <Button
+                      type="button"
                       onClick={() => submit.mutate()}
                       disabled={submit.isPending}
-                      className="px-4 py-2"
                     >
                       {submit.isPending ? 'Submitting…' : 'Submit for approval'}
-                    </Pill>
+                    </Button>
                   </div>
                 </>
               ) : (
@@ -398,7 +399,11 @@ export default function GovernancePanel({
                   </p>
                 ) : null}
                 <div className="mt-3">
-                  <Pill
+                  {/* Primary only once it can act: before approval, Submit for
+                      approval is the one primary action on this card. */}
+                  <Button
+                    type="button"
+                    variant={approved ? 'default' : 'outline'}
                     onClick={() => setSchedule.mutate()}
                     disabled={
                       setSchedule.isPending ||
@@ -407,10 +412,9 @@ export default function GovernancePanel({
                       Boolean(schedule.data?.public_apply_enabled)
                     }
                     aria-describedby={!approved ? 'schedule-gate' : undefined}
-                    className="px-4 py-2"
                   >
                     {setSchedule.isPending ? 'Scheduling…' : 'Schedule'}
-                  </Pill>
+                  </Button>
                 </div>
                 {!approved ? (
                   <p

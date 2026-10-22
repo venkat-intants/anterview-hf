@@ -34,7 +34,8 @@ import {
   withdrawScorecard,
   type EnrolmentScorecard,
 } from '@/api/scorecards';
-import { formatDate } from '@/lib/formatters';
+import { formatDate, formatDateTime } from '@/lib/formatters';
+import { errorMessage } from '@/lib/errorMessage';
 import { describeMove } from '@/lib/stageHistory';
 import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
@@ -282,7 +283,7 @@ function AssignInterviewersForm({
       setSelected([]);
       onAssigned();
     },
-    onError: (e) => toast.error(e instanceof Error ? e.message : 'Could not assign interviewers'),
+    onError: (e) => toast.error(errorMessage(e, 'Could not assign interviewers.')),
   });
 
   return (
@@ -426,7 +427,7 @@ function HumanInterviewSection({
       invalidate();
     },
     onError: (e) =>
-      toast.error(e instanceof Error ? e.message : 'Could not withdraw this assignment'),
+      toast.error(errorMessage(e, 'Could not withdraw this assignment.')),
   });
 
   const rounds = scorecards.data?.rounds ?? [];
@@ -1023,7 +1024,7 @@ export default function CandidateDrawer({
                     noun="move"
                     latest={
                       newestMove
-                        ? `${describeMove(newestMove)}, ${new Date(newestMove.occurred_at).toLocaleDateString()}`
+                        ? `${describeMove(newestMove)}, ${formatDate(newestMove.occurred_at)}`
                         : undefined
                     }
                     persistKey={historyKey}
@@ -1078,7 +1079,7 @@ export default function CandidateDrawer({
                               ) : null}
                             </p>
                             <p className="text-[12px] text-muted-foreground">
-                              {new Date(h.occurred_at).toLocaleString()}
+                              {formatDateTime(h.occurred_at)}
                               {/* O4: the structured reason label, when this move recorded
                                   one, alongside the free-text reason. Historical rows
                                   have neither and render exactly as before. */}

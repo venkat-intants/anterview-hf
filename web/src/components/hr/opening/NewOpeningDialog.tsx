@@ -53,6 +53,7 @@ import {
   type NewOpeningValues,
 } from './newOpeningSchema';
 import { errorMessage } from '@/lib/errorMessage';
+import { formatMoney } from '@/lib/formatters';
 
 type StepKey = 'basics' | 'budget' | 'review';
 
@@ -430,7 +431,7 @@ function DialogBody({
                   label="Budget"
                   value={
                     hasBudget(v)
-                      ? `${v.budgetCurrency.trim().toUpperCase()} ${Number(v.budgetAmount).toLocaleString('en-IN')}, ${
+                      ? `${formatMoney(v.budgetAmount, v.budgetCurrency)}, ${
                           v.budgetBasis ? BASIS_WORD[v.budgetBasis].toLowerCase() : ''
                         }, ${v.budgetPeriod ? PERIOD_WORD[v.budgetPeriod].toLowerCase() : ''}`
                       : ''

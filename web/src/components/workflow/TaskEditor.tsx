@@ -37,6 +37,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { errorMessage } from '@/lib/errorMessage';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 
 const MAX_ITEMS = 20;
 const ITEM_KEY_RE = /^[a-z0-9_]{1,80}$/;
@@ -197,7 +198,10 @@ function MaterialsEditor({ roundId, editable }: { roundId: string; editable: boo
 
   const removeMut = useMutation({
     mutationFn: (materialId: string) => removeRoundTaskMaterial(roundId, materialId),
-    onSuccess: invalidate,
+    onSuccess: () => {
+      toast.success('Material removed');
+      invalidate();
+    },
     onError: (e: unknown) => toast.error(errText(e, 'Could not remove that material')),
   });
 
@@ -262,16 +266,13 @@ function MaterialsEditor({ roundId, editable }: { roundId: string; editable: boo
                   Download
                 </Button>
                 {editable ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => removeMut.mutate(m.id)}
-                    disabled={removeMut.isPending}
-                    aria-label={`Remove ${m.title}`}
-                    className="text-[var(--ui-danger)] hover:text-[var(--ui-danger)]"
-                  >
-                    Remove
-                  </Button>
+                  // Audit B3: removing deletes the stored file, so it asks first.
+                  <ConfirmDeleteButton
+                    title={`Remove ${m.title}`}
+                    confirmText="Remove"
+                    onConfirm={() => removeMut.mutate(m.id)}
+                    pending={removeMut.isPending && removeMut.variables === m.id}
+                  />
                 ) : null}
               </div>
             </li>

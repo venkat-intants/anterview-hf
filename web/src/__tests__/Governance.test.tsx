@@ -158,6 +158,23 @@ describe('approval state', () => {
     ).toBeInTheDocument();
   });
 
+  it('keeps one primary action: Schedule is primary only once approved (audit A5)', async () => {
+    renderPanel();
+    const submit = await screen.findByRole('button', { name: /Submit for approval/ });
+    expect(submit.className).toMatch(/(^|\s)bg-primary(\s|$)/);
+    expect(screen.getByRole('button', { name: /^Schedule$/ }).className).not.toMatch(
+      /(^|\s)bg-primary(\s|$)/,
+    );
+  });
+
+  it('makes Schedule the primary action on an approved opening', async () => {
+    renderPanel(requisition({ approval_status: 'approved' }));
+    await screen.findByText('Approved');
+    expect(
+      (await screen.findByRole('button', { name: /^Schedule$/ })).className,
+    ).toMatch(/(^|\s)bg-primary(\s|$)/);
+  });
+
   it('offers no approve button to HR at all', async () => {
     // Not hidden conditionally — absent. Approving requires the super_admin
     // role and a user holds exactly one, so this console could never do it.

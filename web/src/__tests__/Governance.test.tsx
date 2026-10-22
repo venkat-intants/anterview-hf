@@ -136,9 +136,9 @@ beforeEach(() => {
 describe('approval state', () => {
   it.each([
     ['draft', 'Not submitted'],
-    ['pending_approval', 'Waiting for approval'],
+    ['pending_approval', 'Awaiting approval'],
     ['approved', 'Approved'],
-    ['rejected', 'Changes requested'],
+    ['rejected', 'Sent back'],
   ] as const)('reads %s as "%s"', async (status, label) => {
     renderPanel(requisition({ approval_status: status }));
     expect(await screen.findByText(label)).toBeInTheDocument();
@@ -162,7 +162,7 @@ describe('approval state', () => {
     // Not hidden conditionally — absent. Approving requires the super_admin
     // role and a user holds exactly one, so this console could never do it.
     renderPanel(requisition({ approval_status: 'pending_approval' }));
-    await screen.findByText('Waiting for approval');
+    await screen.findByText('Awaiting approval');
     expect(screen.queryByRole('button', { name: /^Approve/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Request changes/ })).not.toBeInTheDocument();
   });
@@ -247,6 +247,9 @@ describe('scheduled publishing', () => {
     await userEvent.click(
       await screen.findByRole('button', { name: /Cancel scheduled publication/ }),
     );
+    // It asks first: a cancelled schedule is not restored by itself.
+    expect(cancelPublishSchedule).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel publication' }));
     await waitFor(() => expect(cancelPublishSchedule).toHaveBeenCalledWith('req-1'));
   });
 
@@ -398,5 +401,22 @@ describe('the approval queue', () => {
     await userEvent.type(await screen.findByLabelText(/Note for Data Engineer/), 'Go ahead');
     await userEvent.click(screen.getByRole('button', { name: /^Approve$/ }));
     await waitFor(() => expect(approveRequisition).toHaveBeenCalledWith('req-9', 'Go ahead'));
+  });
+});
+
+describe('submitting refreshes every view of the opening (HR-L12)', () => {
+  it('invalidates the whole HR console, not only this opening', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(client, 'invalidateQueries');
+    render(
+      <QueryClientProvider client={client}>
+        <GovernancePanel requisition={requisition()} />
+      </QueryClientProvider>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /Submit for approval/ }));
+    await waitFor(() => expect(submitRequisitionForApproval).toHaveBeenCalled());
+    // ['hr'] is the prefix of ['hr', 'requisitions', ...], which the HR
+    // home's "Openings in setup" badge reads.
+    await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ['hr'] }));
   });
 });

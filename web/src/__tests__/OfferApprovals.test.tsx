@@ -4,10 +4,10 @@
 // enforces the same 10-character minimum as the server.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import type { OfferDetail, OfferOut } from '../api/offers';
 
 const listOfferApprovals = vi.fn();
@@ -37,6 +37,7 @@ vi.mock('react-router-dom', async () => {
 });
 
 import OfferApprovals from '../pages/superadmin/OfferApprovals';
+import { ApiError } from '../api/client';
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -183,6 +184,31 @@ describe('OfferApprovals - one offer in full', () => {
         'An offer is approved by someone other than the person who wrote or submitted it.',
       ),
     );
+  });
+
+  it('does not refetch the offer when the tab regains focus (AD-F1)', async () => {
+    renderPage();
+    await screen.findByText('Kiran Rao · Backend Engineer');
+    expect(getAdminOffer).toHaveBeenCalledTimes(1);
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getAdminOffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('refetches after a 409 so a decided offer stops offering a decision', async () => {
+    const user = userEvent.setup();
+    approveOffer.mockRejectedValue(new ApiError('This offer is no longer pending approval.', 409));
+    renderPage();
+    await screen.findByText('Kiran Rao · Backend Engineer');
+    getAdminOffer.mockResolvedValue({ ...DETAIL, status: 'approved' });
+
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    expect(await screen.findByText(/nothing for you to decide/)).toBeInTheDocument();
   });
 
   it('offers no decision once an offer is no longer pending', async () => {

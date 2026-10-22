@@ -413,3 +413,32 @@ def rate_limit_task(bucket: str, per_token: int, per_ip: int) -> Callable[..., A
     docstring for why a token beats an IP here.
     """
     return rate_limit_link(bucket, "X-Task-Token", per_token, per_ip)
+
+
+async def enforce_key_budget(
+    *, bucket: str, key: str, limit: int, window_seconds: int, detail: str,
+) -> None:
+    """Charge one use against an arbitrary ``key`` within ``bucket``; 429 once
+    more than ``limit`` uses fall in one fixed ``window_seconds`` window.
+
+    For a budget a route-level dependency cannot express because the key is
+    only known after the handler has resolved and authorised its target, such
+    as "set-password resends to THIS account" (``admin_hr._resend_invite``).
+    ``key`` must not be a credential or an email address; use an id. Fails OPEN
+    on any Redis error, like every other limiter in this module; see the module
+    docstring.
+    """
+    try:
+        redis = get_redis()
+        redis_key = f"rl:{bucket}:{key}"
+        count: int = await redis.incr(redis_key)
+        if count == 1:
+            await redis.expire(redis_key, window_seconds)
+    except Exception as exc:  # noqa: BLE001 - Redis down / any error: fail open
+        _rate_limit_skipped.labels(bucket=bucket, error_type=type(exc).__name__).inc()
+        log.warning("rate_limit.skipped", bucket=bucket, error_type=type(exc).__name__)
+        return
+    if count > limit:
+        _rate_limit_exceeded.labels(bucket=bucket).inc()
+        log.warning("rate_limit.exceeded", bucket=bucket, keyed="key")
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=detail)

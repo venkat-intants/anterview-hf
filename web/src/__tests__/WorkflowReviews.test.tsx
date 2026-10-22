@@ -8,10 +8,10 @@
 // rule on "request changes" is enforced client-side the same as the server.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, focusManager } from '@tanstack/react-query';
 import type { PendingWorkflowReview, WorkflowReviewDetail } from '../api/workflowReview';
 
 const listPendingWorkflowReviews = vi.fn();
@@ -43,9 +43,11 @@ vi.mock('react-router-dom', async () => {
 });
 
 import WorkflowReviews from '../pages/superadmin/WorkflowReviews';
+import { ApiError } from '../api/client';
 
+let client: QueryClient;
 function renderPage() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
@@ -379,3 +381,95 @@ describe('WorkflowReviews - the approver sees whether shortlisting is automatic'
   });
 });
 
+describe('WorkflowReviews - the approver approves the version they read (AD-F1)', () => {
+  beforeEach(() => {
+    paramWorkflowId = 'wf-1';
+  });
+
+  const RESUBMITTED: WorkflowReviewDetail = {
+    ...DETAIL,
+    review_fingerprint: 'fp-new',
+    settings: { auto_shortlist: true, shortlist_ats_threshold: 7 },
+  };
+
+  it('does not refetch when the tab regains focus', async () => {
+    renderPage();
+    await screen.findByText('Fundamentals');
+    expect(getWorkflowReviewDetail).toHaveBeenCalledTimes(1);
+
+    getWorkflowReviewDetail.mockResolvedValue(RESUBMITTED);
+    act(() => {
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getWorkflowReviewDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the reviewed version on screen and pauses the decision when a refetch brings a new one', async () => {
+    const user = userEvent.setup();
+    approveWorkflowReview.mockResolvedValue({ review_status: 'approved' });
+    renderPage();
+    await screen.findByText('Fundamentals');
+    expect(screen.getByTestId('review-manual-shortlist')).toBeTruthy();
+
+    getWorkflowReviewDetail.mockResolvedValue(RESUBMITTED);
+    await act(async () => {
+      await client.invalidateQueries({ queryKey: ['admin', 'workflow-reviews', 'wf-1'] });
+    });
+
+    // The content the approver was reading stays, the change is announced and
+    // nothing can be approved until they reload.
+    expect(await screen.findByTestId('review-version-changed')).toBeTruthy();
+    expect(screen.getByTestId('review-manual-shortlist')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Reload to see changes' }));
+    expect(screen.queryByTestId('review-version-changed')).toBeNull();
+    expect(screen.getByTestId('review-auto-shortlist')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
+    await waitFor(() =>
+      expect(approveWorkflowReview).toHaveBeenCalledWith('wf-1', '', 'fp-new'),
+    );
+  });
+
+  it('refetches after a 409 so a stale page stops offering the decision', async () => {
+    const user = userEvent.setup();
+    approveWorkflowReview.mockRejectedValue(
+      new ApiError('Only a version waiting for review can be approved.', 409),
+    );
+    renderPage();
+    await screen.findByText('Fundamentals');
+    getWorkflowReviewDetail.mockResolvedValue({
+      ...DETAIL,
+      review: { ...DETAIL.review, review_status: 'approved' },
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    expect(await screen.findByText(/nothing for you to decide/)).toBeTruthy();
+    expect(getWorkflowReviewDetail.mock.calls.length).toBeGreaterThan(1);
+    expect(toastError).toHaveBeenCalledWith('Only a version waiting for review can be approved.');
+  });
+
+  it('lists the validation errors when the version no longer validates', async () => {
+    const user = userEvent.setup();
+    approveWorkflowReview.mockRejectedValue(
+      new ApiError('This version no longer validates.', 422, {
+        message: 'This version no longer validates.',
+        validation: { publishable: false, errors: ['Round 2 has no criteria'], warnings: [] },
+      }),
+    );
+    renderPage();
+    await screen.findByText('Fundamentals');
+
+    await user.click(screen.getByRole('button', { name: 'Approve' }));
+    await user.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    const panel = await screen.findByTestId('review-no-longer-validates');
+    expect(panel.textContent).toContain('Round 2 has no criteria');
+  });
+});

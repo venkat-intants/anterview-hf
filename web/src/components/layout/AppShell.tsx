@@ -489,6 +489,20 @@ function MobileSidebar() {
   );
 }
 
+// ── Skip link ─────────────────────────────────────────────────────────────────
+
+function SkipToContent() {
+  const { t } = useTranslation();
+  return (
+    <a
+      href="#main-content"
+      className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-[10px] focus:bg-card focus:px-4 focus:py-2 focus:text-[14px] focus:font-semibold focus:text-foreground focus:shadow-elevated focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+    >
+      {t('shell.skipToContent')}
+    </a>
+  );
+}
+
 // ── Notifications bell (live — backed by data_gateway /notifications) ──────────
 
 /** Compact relative-time label, e.g. "5m", "3h", "2d". */
@@ -511,13 +525,16 @@ function NotificationsBell() {
   const queryClient = useQueryClient();
 
   // retry:false + graceful defaults so a missing endpoint/table never breaks the shell.
-  const { data } = useQuery({
+  const notifications = useQuery({
     queryKey: ['notifications'],
     queryFn: () => listNotifications(30),
     refetchInterval: 60_000,
     staleTime: 30_000,
     retry: false,
   });
+  const { data } = notifications;
+  // A failed load with nothing cached is not "all caught up" (audit AD-F18).
+  const failed = notifications.isError && data === undefined;
 
   const items = data?.items ?? [];
   const unread = data?.unread_count ?? 0;
@@ -568,14 +585,31 @@ function NotificationsBell() {
             <button
               type="button"
               onClick={() => readAllMutation.mutate()}
-              className="rounded text-[12.5px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              // Locked while in flight so a second click cannot race the first.
+              disabled={readAllMutation.isPending}
+              aria-busy={readAllMutation.isPending}
+              className="rounded text-[12.5px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
             >
               {t('shell.markAllRead')}
             </button>
           )}
         </div>
         <div className="max-h-80 overflow-y-auto p-1">
-          {items.length === 0 ? (
+          {failed ? (
+            <div role="alert" className="flex flex-col items-center gap-2 px-4 py-8 text-center">
+              <p className="text-[13.5px] text-muted-foreground">
+                {t('shell.notificationsFailed')}
+              </p>
+              <button
+                type="button"
+                onClick={() => void notifications.refetch()}
+                disabled={notifications.isFetching}
+                className="rounded text-[12.5px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
+              >
+                {t('shell.notificationsRetry')}
+              </button>
+            </div>
+          ) : items.length === 0 ? (
             <p className="px-4 py-10 text-center text-[13.5px] text-muted-foreground">
               {t('shell.allCaughtUp')}
             </p>
@@ -711,6 +745,9 @@ export default function AppShell({ children }: AppShellProps) {
 
   return (
     <div className="relative min-h-screen bg-background text-foreground">
+      {/* Skip link (audit AD-F33): the staff sidebar is long, so keyboard users
+          can jump straight to the page. Hidden until focused. */}
+      <SkipToContent />
       {/* Desktop fixed sidebar (collapsible to an icon rail) */}
       <aside
         className="fixed inset-y-0 left-0 z-40 hidden border-r border-border bg-card transition-[width] duration-200 lg:block"
@@ -731,7 +768,11 @@ export default function AppShell({ children }: AppShellProps) {
         {/* pb-28 reserves a lane under the last card for the floating
             "Ask assistant" button (bottom-6, ~44px tall), so whatever sits at
             the bottom of a page can always be scrolled clear of it. */}
-        <main className="mx-auto w-full max-w-[1440px] px-4 pb-28 pt-8 sm:px-6 lg:px-10">
+        <main
+          id="main-content"
+          tabIndex={-1}
+          className="mx-auto w-full max-w-[1440px] px-4 pb-28 pt-8 focus:outline-none sm:px-6 lg:px-10"
+        >
           <AnimatePresence mode="wait">
             <motion.div
               key={location.pathname}

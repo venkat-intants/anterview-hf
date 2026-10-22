@@ -382,3 +382,16 @@ describe('SubmissionPanel - nothing renders before the candidate submits', () =>
     expect(screen.queryByText(/evidence, not a verdict/i)).not.toBeInTheDocument();
   });
 });
+
+// Consistency C1: a failed load reads as a sentence, never the client's
+// status placeholder.
+describe('SubmissionPanel - load errors', () => {
+  it('shows readable copy for a server failure, not raw status text', async () => {
+    const { ApiError } = await import('../api/client');
+    getScorecardSubmission.mockRejectedValue(new ApiError('HTTP 500', 500, undefined, false));
+    renderPanel();
+
+    expect(await screen.findByText(/could not load this submission/i)).toBeInTheDocument();
+    expect(screen.queryByText('HTTP 500')).not.toBeInTheDocument();
+  });
+});

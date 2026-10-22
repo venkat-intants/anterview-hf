@@ -40,6 +40,7 @@ import {
   type OfferOut,
 } from '@/api/offers';
 import { formatDate, formatDateTime, formatMoney } from '@/lib/formatters';
+import { ApiError } from '@/api/client';
 
 const REJECT_NOTE_MIN = 10;
 
@@ -92,14 +93,24 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
   const [mode, setMode] = useState<DecisionMode>(null);
   const historyKey = useScopedPersistKey('offer-approval-history');
 
+  // No refetch on window focus (audit AD-F1): the terms an approver is reading
+  // must not change under them when they come back to the tab.
   const detail = useQuery({
     queryKey: ['admin', 'offer-approvals', offerId],
     queryFn: () => getAdminOffer(offerId),
+    refetchOnWindowFocus: false,
   });
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['admin', 'offer-approvals', offerId] });
     void qc.invalidateQueries({ queryKey: ['admin', 'offer-approvals'] });
+  };
+
+  // A 409 means the offer moved on (withdrawn or decided elsewhere): refetch so
+  // the page stops offering a decision the server will refuse.
+  const onDecisionError = (e: unknown, fallback: string) => {
+    if (e instanceof ApiError && e.status === 409) invalidate();
+    toast.error(errorMessage(e, fallback));
   };
 
   const approveMut = useMutation({
@@ -110,7 +121,7 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
       invalidate();
       toast.success('Approved - HR can send it now');
     },
-    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not approve this offer.')),
+    onError: (e: unknown) => onDecisionError(e, 'Could not approve this offer.'),
   });
 
   const rejectMut = useMutation({
@@ -121,7 +132,7 @@ function ApprovalDetailView({ offerId }: { offerId: string }): JSX.Element {
       invalidate();
       toast.success('Sent back with your note');
     },
-    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not send this offer back.')),
+    onError: (e: unknown) => onDecisionError(e, 'Could not send this offer back.'),
   });
 
   const crumbs = (

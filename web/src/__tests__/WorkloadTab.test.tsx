@@ -47,6 +47,8 @@ function workload(over: Partial<WorkloadResponse> = {}): WorkloadResponse {
         overdue_scorecards: 1,
         max_per_day: 4,
         max_per_week: 15,
+        custom_max_per_day: null,
+        custom_max_per_week: null,
         over_allocated_days: ['2026-09-21'],
         over_allocated_weeks: [],
         outside_availability: 2,
@@ -79,7 +81,8 @@ describe('WorkloadTab - states', () => {
   it('shows an error state', async () => {
     schedulingApi.getWorkload.mockRejectedValue(new Error('boom'));
     renderTab();
-    expect(await screen.findByText('boom')).toBeInTheDocument();
+    expect(await screen.findByText('Could not load the panel workload.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   it('shows an empty state', async () => {
@@ -98,7 +101,7 @@ describe('WorkloadTab - flags in words', () => {
     // (Intl.DateTimeFormat), not a typo — isoDateLabel is a thin wrapper
     // around it, so the test asserts what it actually produces.
     expect(await screen.findByText('Over the daily limit on 21 Sept')).toBeInTheDocument();
-    expect(screen.getByText('2 sessions outside their availability')).toBeInTheDocument();
+    expect(screen.getByText('2 interviews outside their availability')).toBeInTheDocument();
     expect(screen.getByText('1 overdue scorecard')).toBeInTheDocument();
     // The colour-coded badge still carries a count in words alongside it.
     expect(screen.getByText('3 flags')).toBeInTheDocument();
@@ -151,17 +154,25 @@ describe('WorkloadTab - capacity edit', () => {
     await user.type(dayInput, '6');
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
+    // The weekly field was blank (the default) and stays blank: saving the
+    // daily limit does not pin the weekly default as an override (IV-M13).
     await waitFor(() =>
       expect(schedulingApi.setInterviewerCapacity).toHaveBeenCalledWith('iv-1', {
         max_sessions_per_day: 6,
-        max_sessions_per_week: 15,
+        max_sessions_per_week: null,
       }),
     );
     expect(toastSuccess).toHaveBeenCalled();
   });
 
-  it('resets to the company default (blank = default)', async () => {
-    schedulingApi.getWorkload.mockResolvedValue(workload());
+  it('resets an override to the company default', async () => {
+    schedulingApi.getWorkload.mockResolvedValue(
+      workload({
+        interviewers: [
+          { ...workload().interviewers[0], max_per_day: 2, custom_max_per_day: 2 },
+        ],
+      }),
+    );
     schedulingApi.setInterviewerCapacity.mockResolvedValue({
       user_id: 'iv-1',
       max_sessions_per_day: null,
@@ -171,7 +182,8 @@ describe('WorkloadTab - capacity edit', () => {
     renderTab();
 
     await screen.findByText('Rekha Iyer');
-    expect(screen.getByText(/Blank uses the company default \(daily 4, weekly 15\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Custom limits: daily 2, weekly 15/)).toBeInTheDocument();
+    expect(screen.getByLabelText<HTMLInputElement>('Daily limit for Rekha Iyer').value).toBe('2');
     await user.click(screen.getByRole('button', { name: 'Reset to company default' }));
 
     await waitFor(() =>
@@ -180,5 +192,43 @@ describe('WorkloadTab - capacity edit', () => {
         max_sessions_per_week: null,
       }),
     );
+  });
+});
+
+describe('WorkloadTab - default versus override (IV-M13)', () => {
+  it('leaves the fields blank when the company default applies, and Save idle', async () => {
+    schedulingApi.getWorkload.mockResolvedValue(workload());
+    renderTab();
+
+    const day = await screen.findByLabelText<HTMLInputElement>('Daily limit for Rekha Iyer');
+    expect(day.value).toBe('');
+    expect(day).toHaveAttribute('placeholder', 'Default (4)');
+    expect(screen.getByText(/Using the company default/)).toBeInTheDocument();
+    // Nothing changed, so there is nothing to save (and no default to pin).
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Reset to company default' })).not.toBeInTheDocument();
+  });
+
+  it('explains a limit out of range beside the field instead of sending it', async () => {
+    schedulingApi.getWorkload.mockResolvedValue(workload());
+    const user = userEvent.setup();
+    renderTab();
+
+    await user.type(await screen.findByLabelText('Weekly limit for Rekha Iyer'), '0');
+    expect(screen.getByText(/Weekly limit must be a whole number from 1 to 100/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  });
+});
+
+describe('WorkloadTab - period and labels (IV-L11, IV-L14)', () => {
+  it('groups the period buttons as pressed toggles, not a tablist', async () => {
+    schedulingApi.getWorkload.mockResolvedValue(workload());
+    renderTab();
+
+    await screen.findByText('Rekha Iyer');
+    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Period' })).toBeInTheDocument();
+    expect(screen.getByText('Open scorecards (now)')).toBeInTheDocument();
+    expect(screen.getByText(/counted in India time \(IST\)/)).toBeInTheDocument();
   });
 });

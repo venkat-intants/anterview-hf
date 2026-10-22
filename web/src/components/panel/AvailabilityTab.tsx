@@ -2,7 +2,7 @@
 // availability — what `addSession`/`rescheduleSession` check "outside
 // availability" against, and what "Show free times" searches.
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   addInterviewerAvailability,
@@ -10,15 +10,28 @@ import {
   removeInterviewerAvailability,
 } from '@/api/scheduling';
 import { listInterviewers } from '@/api/scorecards';
-import { localInputToIso } from '@/lib/localDatetime';
+import { localInputToIso, toLocalInputValue } from '@/lib/localDatetime';
 import { formatDayTime, browserTimezone } from '@/lib/timezone';
 import { toast } from '@/lib/toast';
-import { Loader2, Trash2 } from '@/design/components/icons';
+import { errorMessage } from '@/lib/errorMessage';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
+import { Loader2 } from '@/design/components/icons';
 import { GlassCard } from '@/design/components/primitives';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+/** How far ahead the list reaches. The server caps a read at 92 days. */
+const RANGES = [
+  { weeks: 4, label: 'Next 4 weeks' },
+  { weeks: 8, label: 'Next 8 weeks' },
+  { weeks: 12, label: 'Next 12 weeks' },
+] as const;
+
+type RangeWeeks = (typeof RANGES)[number]['weeks'];
+
+const fieldCls =
+  'mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
 
 export default function AvailabilityTab(): JSX.Element {
   const qc = useQueryClient();
@@ -26,15 +39,25 @@ export default function AvailabilityTab(): JSX.Element {
   const [userId, setUserId] = useState('');
   const [startLocal, setStartLocal] = useState('');
   const [endLocal, setEndLocal] = useState('');
+  const [weeks, setWeeks] = useState<RangeWeeks>(4);
+  const tz = browserTimezone();
+
+  // Memoised on the range alone, for the same reason as WorkloadTab: a fresh
+  // `new Date()` on every render would put a new key in the query each time.
+  const range = useMemo(() => {
+    const start = new Date();
+    const end = new Date(start.getTime() + weeks * 7 * 24 * 60 * 60 * 1000);
+    return { start: start.toISOString(), end: end.toISOString() };
+  }, [weeks]);
 
   const windows = useQuery({
-    queryKey: ['hr', 'panel', 'availability', userId],
-    queryFn: () => getInterviewerAvailability(userId),
+    queryKey: ['hr', 'panel', 'availability', userId, weeks],
+    queryFn: () => getInterviewerAvailability(userId, range),
     enabled: Boolean(userId),
   });
 
-  const invalidate = () =>
-    void qc.invalidateQueries({ queryKey: ['hr', 'panel', 'availability', userId] });
+  // Availability feeds the workload flags and the free-time search too.
+  const invalidate = () => void invalidateAfterHrMutation(qc);
 
   const addMut = useMutation({
     mutationFn: () =>
@@ -43,26 +66,34 @@ export default function AvailabilityTab(): JSX.Element {
         ends_at: localInputToIso(endLocal),
       }),
     onSuccess: () => {
-      toast.success('Availability added');
+      // A window that starts after the period shown is saved but would not
+      // appear below, which read as "it did not save".
+      const beyond = new Date(localInputToIso(startLocal)).getTime() >= Date.parse(range.end);
+      toast.success(
+        beyond
+          ? 'Availability added. It starts after the period shown; choose a longer range to see it.'
+          : 'Availability added',
+      );
       setStartLocal('');
       setEndLocal('');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not add that window')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not add the window.')),
   });
 
   const removeMut = useMutation({
     mutationFn: (windowId: string) => removeInterviewerAvailability(windowId),
     onSuccess: () => {
-      toast.success('Removed');
+      toast.success('Window removed');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not remove that window')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not remove the window.')),
   });
 
   const rows = windows.data ?? [];
   const ready = Boolean(userId) && Boolean(startLocal) && Boolean(endLocal);
   const chosen = (interviewers.data ?? []).find((iv) => iv.user_id === userId);
+  const nowLocal = toLocalInputValue(new Date().toISOString());
 
   return (
     <div>
@@ -76,6 +107,7 @@ export default function AvailabilityTab(): JSX.Element {
         id="panel-avail-who"
         value={userId}
         onChange={(e) => setUserId(e.target.value)}
+        disabled={interviewers.isError && !interviewers.data}
         className="mt-1 w-full max-w-[320px] rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       >
         <option value="">Choose an interviewer…</option>
@@ -86,14 +118,23 @@ export default function AvailabilityTab(): JSX.Element {
         ))}
       </select>
 
-      {!userId ? (
+      {interviewers.isError && !interviewers.data ? (
+        // A failed list is not an empty one (IV-L10).
+        <QueryErrorPanel
+          className="mt-3"
+          title="Could not load interviewers."
+          error={interviewers.error}
+          onRetry={() => void interviewers.refetch()}
+          retrying={interviewers.isFetching}
+        />
+      ) : !userId ? (
         <p className="mt-3 text-[13px] text-muted-foreground">
           Choose an interviewer to see and edit their availability.
         </p>
       ) : (
         <GlassCard className="mt-3 p-4">
           <p className="text-[12.5px] text-muted-foreground">
-            Times below are shown in your own local time ({browserTimezone()}).
+            Times below are shown in your own local time ({tz}).
           </p>
           <form
             className="mt-2 flex flex-wrap items-end gap-2.5"
@@ -112,9 +153,10 @@ export default function AvailabilityTab(): JSX.Element {
               <input
                 id="panel-avail-start"
                 type="datetime-local"
+                min={nowLocal}
                 value={startLocal}
                 onChange={(e) => setStartLocal(e.target.value)}
-                className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                className={fieldCls}
               />
             </div>
             <div>
@@ -127,19 +169,37 @@ export default function AvailabilityTab(): JSX.Element {
               <input
                 id="panel-avail-end"
                 type="datetime-local"
+                min={startLocal || nowLocal}
                 value={endLocal}
                 onChange={(e) => setEndLocal(e.target.value)}
-                className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                className={fieldCls}
               />
             </div>
-            <button
-              type="submit"
-              disabled={!ready || addMut.isPending}
-              className="rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
-            >
+            <Button type="submit" size="sm" disabled={!ready || addMut.isPending}>
               {addMut.isPending ? 'Adding…' : `Add window for ${chosen?.full_name ?? 'them'}`}
-            </button>
+            </Button>
           </form>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <label
+              htmlFor="panel-avail-range"
+              className="text-[12px] font-medium text-[var(--ui-soft)]"
+            >
+              Showing
+            </label>
+            <select
+              id="panel-avail-range"
+              value={weeks}
+              onChange={(e) => setWeeks(Number(e.target.value) as RangeWeeks)}
+              className="rounded-[10px] border border-border bg-secondary px-2 py-1 text-[12.5px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            >
+              {RANGES.map((r) => (
+                <option key={r.weeks} value={r.weeks}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </div>
 
           {windows.isLoading ? (
             <div className="mt-3 flex items-center gap-2 text-[13px] text-muted-foreground">
@@ -147,33 +207,36 @@ export default function AvailabilityTab(): JSX.Element {
               Loading…
             </div>
           ) : windows.isError ? (
-            <p className="mt-3 text-[13px] text-[var(--ui-danger)]">
-              {errText(windows.error, 'Could not load their availability')}
-            </p>
+            <QueryErrorPanel
+              className="mt-3"
+              title="Could not load their availability."
+              error={windows.error}
+              onRetry={() => void windows.refetch()}
+              retrying={windows.isFetching}
+            />
           ) : rows.length === 0 ? (
-            <p className="mt-3 text-[13px] text-muted-foreground">No windows set yet.</p>
+            <p className="mt-3 text-[13px] text-muted-foreground">
+              No windows set in the {RANGES.find((r) => r.weeks === weeks)?.label.toLowerCase()}.
+            </p>
           ) : (
             <ul className="mt-3 flex flex-col gap-1.5">
-              {rows.map((w) => (
-                <li
-                  key={w.id}
-                  className="flex items-center justify-between gap-2 rounded-[9px] border border-border px-3 py-2 text-[12.5px] text-foreground"
-                >
-                  <span>
-                    {formatDayTime(w.starts_at, browserTimezone())} &rarr;{' '}
-                    {formatDayTime(w.ends_at, browserTimezone())}
-                  </span>
-                  <button
-                    type="button"
-                    aria-label="Remove this window"
-                    disabled={removeMut.isPending}
-                    onClick={() => removeMut.mutate(w.id)}
-                    className="shrink-0 rounded-[7px] p-1 text-muted-foreground hover:text-[var(--ui-danger)] disabled:opacity-40"
+              {rows.map((w) => {
+                const label = `${formatDayTime(w.starts_at, tz)} to ${formatDayTime(w.ends_at, tz)}`;
+                return (
+                  <li
+                    key={w.id}
+                    className="flex items-center justify-between gap-2 rounded-[9px] border border-border px-3 py-1 text-[12.5px] text-foreground"
                   >
-                    <Trash2 size={14} aria-hidden="true" />
-                  </button>
-                </li>
-              ))}
+                    <span>{label}</span>
+                    <ConfirmDeleteButton
+                      title={`Remove the window ${label}`}
+                      confirmText="Remove window"
+                      pending={removeMut.isPending && removeMut.variables === w.id}
+                      onConfirm={() => removeMut.mutate(w.id)}
+                    />
+                  </li>
+                );
+              })}
             </ul>
           )}
         </GlassCard>

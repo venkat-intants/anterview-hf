@@ -499,6 +499,25 @@ async def _outside_availability(
     return [uid for uid, ws in windows.items() if not covered(start, end, ws)]
 
 
+def _outside_message(outside: int, total: int) -> str:
+    """The availability refusal, in grammatical English for any count.
+
+    The frontend matches "has not marked that time as available" /
+    "have not marked that time as available" to offer "Schedule anyway", so the
+    phrase "not marked that time as available" must stay in every variant.
+    """
+    if total == 1:
+        who = "The interviewer has"
+    elif outside == 1:
+        who = "1 of the interviewers has"
+    else:
+        who = f"{outside} of the interviewers have"
+    return (
+        f"{who} not marked that time as available. Choose a time inside their "
+        "availability, or schedule it anyway."
+    )
+
+
 async def add_session(
     db: AsyncSession, *, company_id: uuid.UUID, loop_id: uuid.UUID, round_id: uuid.UUID,
     title: str | None, duration_minutes: int, interviewer_ids: list[uuid.UUID],
@@ -557,10 +576,7 @@ async def add_session(
         if not allow_outside_availability:
             outside = await _outside_availability(db, company_id, ids, start, end)
             if outside:
-                raise SchedulingError(
-                    409, f"{len(outside)} of the interviewers has not marked that time as "
-                         "available. Choose a time inside their availability, or schedule it anyway."
-                )
+                raise SchedulingError(409, _outside_message(len(outside), len(ids)))
         status = LIVE_SESSION
 
     # Scorecards first: A1's rules (eligible, independent, not the candidate,
@@ -630,9 +646,20 @@ async def add_session(
                     "round_id": str(round_id), "interviewer_count": len(ids),
                     "starts_at": _iso(start), "duration_minutes": duration_minutes,
                     "outside_availability": bool(allow_outside_availability and start)})
-    if loop["sent_at"] is not None and start is not None:
-        await _notify_interviewers(db, company_id=company_id, loop=loop, session_id=session_id,
-                                   user_ids=ids, what="scheduled")
+    if loop["sent_at"] is not None:
+        # The candidate already has this loop, so a session added now is part
+        # of their schedule too (IV-M8). It used to reach only the interviewers,
+        # while the card still read "sent to the candidate". The itinerary is
+        # re-sent at a new version (calendar SEQUENCE), or the request to pick a
+        # time when the new session has none.
+        await _bump_itinerary(db, [loop_id])
+        loop = await _load_loop(db, company_id=company_id, loop_id=loop_id)
+        await _tell_candidate_loop(
+            db, loop=loop, kind="itinerary" if start is not None else "slot_request",
+        )
+        if start is not None:
+            await _notify_interviewers(db, company_id=company_id, loop=loop,
+                                       session_id=session_id, user_ids=ids, what="scheduled")
     await _refresh_loop_status(db, loop_id)
     return {"session_id": str(session_id), "status": status}
 
@@ -690,10 +717,7 @@ async def reschedule_session(
     if not allow_outside_availability:
         outside = await _outside_availability(db, company_id, ids, start, end)
         if outside:
-            raise SchedulingError(
-                409, f"{len(outside)} of the interviewers has not marked that time as available. "
-                     "Choose a time inside their availability, or schedule it anyway."
-            )
+            raise SchedulingError(409, _outside_message(len(outside), len(ids)))
     sp = await db.begin_nested()
     try:
         await db.execute(
@@ -1294,7 +1318,13 @@ async def hr_ics(db: AsyncSession, *, company_id: uuid.UUID, loop_id: uuid.UUID)
     loop = await _load_loop(db, company_id=company_id, loop_id=loop_id)
     who = await _candidate_contact(db, loop)
     sessions = await _sessions(db, loop_id)
-    return ics(_events(loop, sessions, who.get("job_title") or ""), now=datetime.now(tz=UTC))
+    events = _events(loop, sessions, who.get("job_title") or "")
+    if not events:
+        # An empty VCALENDAR imports as nothing and looks like a broken file.
+        raise SchedulingError(
+            409, "This loop has no session with a time yet, so there is nothing to add to a calendar."
+        )
+    return ics(events, now=datetime.now(tz=UTC))
 
 
 # ---------------------------------------------------------------------------

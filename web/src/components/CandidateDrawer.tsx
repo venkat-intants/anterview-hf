@@ -40,6 +40,8 @@ import { describeMove } from '@/lib/stageHistory';
 import { toast } from '@/lib/toast';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import AccommodationsSection from '@/components/hr/AccommodationsSection';
 import TaskSubmissionSection from '@/components/hr/TaskSubmissionSection';
 import CodeEvidenceCounts from '@/components/hr/CodeEvidenceCounts';
@@ -49,7 +51,6 @@ import OfferSection from '@/components/OfferSection';
 import CheckinSection from '@/components/hr/CheckinSection';
 import { getMetricDefinitions, sourceLabel } from '@/api/metrics';
 import { AlertTriangle, ChevronRight, Info, XCircle } from '@/design/components/icons';
-import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { DataList } from '@/design/components/page';
@@ -311,6 +312,14 @@ function AssignInterviewersForm({
         <legend className="text-[13px] font-semibold text-foreground">Interviewers</legend>
         {interviewers.isLoading ? (
           <span className="text-[12px] text-muted-foreground">Loading…</span>
+        ) : interviewers.isError ? (
+          // A failed fetch is not "nobody set up yet" (IV-L10).
+          <QueryErrorPanel
+            title="Could not load interviewers."
+            error={interviewers.error}
+            onRetry={() => void interviewers.refetch()}
+            retrying={interviewers.isFetching}
+          />
         ) : (interviewers.data ?? []).length === 0 ? (
           <span className="text-[12px] text-muted-foreground">No interviewers set up yet.</span>
         ) : (
@@ -417,8 +426,10 @@ function HumanInterviewSection({
           ? "This opening's published workflow has no human interview round. Add one in the workflow builder to assign interviewers."
           : null;
 
-  const invalidate = () =>
-    void qc.invalidateQueries({ queryKey: ['hr', 'enrolment', enrolmentId, 'scorecards'] });
+  // The whole HR prefix, not only this section's key: a withdrawn or newly
+  // assigned scorecard also shows on the interview schedule's rows (its
+  // per-interviewer status) and in the panel workload (IV-M9).
+  const invalidate = () => void invalidateAfterHrMutation(qc);
 
   const withdrawMut = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason?: string }) => withdrawScorecard(id, reason),
@@ -913,6 +924,7 @@ export default function CandidateDrawer({
                 <InterviewLoopsSection
                   enrolmentId={enrolmentId}
                   requisitionId={app?.requisition_id ?? null}
+                  applicationStatus={candidate.status}
                 />
               ) : null}
 

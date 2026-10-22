@@ -166,6 +166,12 @@ def workload_rows(
             "by_day": dict(sorted(per_day.items())),
             "open_scorecards": len(owed), "overdue_scorecards": overdue,
             "max_per_day": per_day_max, "max_per_week": per_week_max,
+            # The stored override, or None when the company default applies.
+            # The effective limits above are what the flags use; these let the
+            # editor show "default" as blank, so saving an untouched row does
+            # not pin the default as a custom limit (IV-M13).
+            "custom_max_per_day": cap.get("max_sessions_per_day"),
+            "custom_max_per_week": cap.get("max_sessions_per_week"),
             "over_allocated_days": over_days, "over_allocated_weeks": over_weeks,
             "outside_availability": len(outside), "conflicts": overlaps,
             "flags": [f for f, on in (

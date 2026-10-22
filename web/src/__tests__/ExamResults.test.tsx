@@ -107,11 +107,13 @@ const getAttemptBreakdown = vi.fn();
 // its own AttemptProctoringSummary.test.tsx — stub it to a quiet "nothing to
 // report" fixture here so it never errors against this file's fixtures.
 const getAttemptProctoring = vi.fn();
+const listCodingQuestions = vi.fn();
 vi.mock('../api/exams', () => ({
   getExam: (...a: unknown[]) => getExam(...a) as unknown,
   listAttempts: (...a: unknown[]) => listAttempts(...a) as unknown,
   getAttemptBreakdown: (...a: unknown[]) => getAttemptBreakdown(...a) as unknown,
   getAttemptProctoring: (...a: unknown[]) => getAttemptProctoring(...a) as unknown,
+  listCodingQuestions: (...a: unknown[]) => listCodingQuestions(...a) as unknown,
   CODING_LANGUAGES: ['python', 'javascript'],
 }));
 
@@ -175,7 +177,7 @@ describe('ExamResults', () => {
     expect(
       await screen.findByRole('heading', { name: /python fundamentals screening · results/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/3 attempts · 1 passed · pass ≥ 60%/)).toBeInTheDocument();
+    expect(screen.getByText(/3 attempts · 1 passed · pass mark 60%/)).toBeInTheDocument();
   });
 
   it('shows one row per attempt with its own outcome', async () => {
@@ -220,7 +222,7 @@ describe('ExamResults', () => {
 
     // Kept: they scope the number above to the right tile.
     expect(screen.getByText('1 passed')).toBeInTheDocument();
-    expect(screen.getByText(/≥ 60% threshold/)).toBeInTheDocument();
+    expect(screen.getByText('of 2 graded')).toBeInTheDocument();
   });
 
   it('hides the CSV export when there is nothing to export', async () => {
@@ -238,6 +240,62 @@ describe('ExamResults', () => {
     const hrefs = screen.getAllByRole('link', { name: /view/i }).map((a) => a.getAttribute('href'));
     expect(hrefs).toContain('/hr/exams/e-1/attempts/a-fail');
     expect(hrefs).toContain('/hr/exams/e-1/attempts/a-pass');
+  });
+});
+
+describe('ExamResults - rounds (audit E8, E9, E27)', () => {
+  const R1_FAIL: AttemptResult = {
+    ...FAILED,
+    score_percent: 65,
+    round_id: 'r-2',
+    round_number: 2,
+    round_title: 'Coding',
+    round_pass_threshold: 75,
+  };
+  const R1_PASS: AttemptResult = {
+    ...PASSED,
+    round_id: 'r-1',
+    round_number: 1,
+    round_title: 'Aptitude',
+    round_pass_threshold: 60,
+  };
+
+  it('shows each attempt with its round and that round pass mark', async () => {
+    listAttempts.mockResolvedValue([R1_PASS, R1_FAIL]);
+    renderResults();
+
+    const row = (await screen.findByText('Chetan Iyer')).closest('tr') as HTMLElement;
+    // A 65% "Failed" makes sense next to ITS round's 75%, not the exam's 60%.
+    expect(within(row).getByText('Round 2 · Coding')).toBeInTheDocument();
+    expect(within(row).getByText('pass mark 75%')).toBeInTheDocument();
+    expect(screen.getByText(/each round has its own pass mark/)).toBeInTheDocument();
+    expect(screen.queryByText(/pass ≥/)).not.toBeInTheDocument();
+  });
+
+  it('computes the pass rate over graded attempts only', async () => {
+    // 1 passed of 2 graded = 50%; dividing by all 3 would read 33%.
+    renderResults();
+
+    await screen.findByText('Bhavya Nair');
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(screen.getByText('of 2 graded')).toBeInTheDocument();
+  });
+
+  it('never calls an ungraded finished attempt a fail', async () => {
+    listAttempts.mockResolvedValue([{ ...FAILED, passed: null }]);
+    renderResults();
+
+    const row = (await screen.findByText('Chetan Iyer')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Not graded')).toBeInTheDocument();
+    expect(within(row).queryByText('Failed')).not.toBeInTheDocument();
+  });
+
+  it('renders View as one link, not a button inside a link', async () => {
+    renderResults();
+
+    const link = await screen.findByRole('link', { name: 'View attempt by Chetan Iyer' });
+    expect(link.querySelector('button')).toBeNull();
+    expect(link.closest('button')).toBeNull();
   });
 });
 
@@ -274,6 +332,41 @@ describe('ExamAttemptDetail', () => {
     const card = mcq.parentElement as HTMLElement;
     expect(within(card).getByText('1/1 pts')).toBeInTheDocument();
     expect(within(card).getByText('0/2 pts')).toBeInTheDocument();
+  });
+
+  it('uses the round pass mark and says an in-progress attempt is not graded (E8, E24)', async () => {
+    listAttempts.mockResolvedValue([
+      { ...IN_PROGRESS, attempt_id: 'a-fail', round_number: 2, round_pass_threshold: 80 },
+    ]);
+    renderAttempt();
+
+    expect(await screen.findByText('80%')).toBeInTheDocument();
+    expect(screen.getByText('not graded yet')).toBeInTheDocument();
+    expect(screen.queryByText('did not pass')).not.toBeInTheDocument();
+  });
+
+  it('names a coding question by its prompt (E24)', async () => {
+    getAttemptBreakdown.mockResolvedValue({
+      ...BREAKDOWN,
+      per_question: {},
+      coding: { 'cq-1': { points: 10, raw: 10, language: 'python' } },
+    });
+    listCodingQuestions.mockResolvedValue([
+      {
+        id: 'cq-1',
+        prompt: 'Reverse a linked list\nInput: a list',
+        allowed_languages: ['python'],
+        starter_code: null,
+        reference_solution: null,
+        test_cases: [],
+        time_limit_ms: 1000,
+        points: 10,
+        position: 0,
+      },
+    ]);
+    renderAttempt();
+
+    expect(await screen.findByText('Reverse a linked list')).toBeInTheDocument();
   });
 
   it('explains an unloadable attempt instead of rendering an empty shell', async () => {

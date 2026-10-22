@@ -24,6 +24,7 @@ import { Download, Loader2, Sparkles, Upload } from '@/design/components/icons';
 import { SectionCard } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { toGenerationFailure } from '@/lib/generationError';
 import { GenerationError } from '@/components/bank/GenerationError';
@@ -53,10 +54,6 @@ const GROUP_TITLE = 'text-[15px] font-bold text-foreground';
 
 const DIFFICULTIES: BankDifficulty[] = ['easy', 'medium', 'hard'];
 const LANGUAGES: ExamLanguage[] = ['en', 'hi', 'te'];
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 export interface BankFillPanelProps {
   bankId: string;
@@ -132,7 +129,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
       invalidate();
       onAdded?.(saved.length);
     },
-    onError: (e) => toast.error(errText(e, 'Could not save those questions')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not save those questions.')),
   });
 
   const importMut = useMutation({
@@ -153,12 +150,12 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
         toast.warning('No rows could be imported - see the list below');
       }
     },
-    onError: (e) => toast.error(errText(e, 'Could not import that file')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not import that file.')),
   });
 
   const templateMut = useMutation({
     mutationFn: downloadBankQuestionTemplate,
-    onError: (e) => toast.error(errText(e, 'Could not download the template')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not download the template.')),
   });
 
   const submitAllMut = useMutation({
@@ -173,7 +170,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
         toast.warning('Nothing was sent for review');
       }
     },
-    onError: (e) => toast.error(errText(e, 'Could not submit these for review')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not submit these for review.')),
   });
 
   const approveAllMut = useMutation({
@@ -190,7 +187,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
         toast.warning('Nothing could be approved by you - another reviewer must');
       }
     },
-    onError: (e) => toast.error(errText(e, 'Could not approve these')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not approve these.')),
   });
 
   const busy =

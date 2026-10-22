@@ -83,6 +83,10 @@ export interface PoolLimits {
 export interface PoolsListResponse {
   pools: PoolOut[];
   limits: PoolLimits;
+  /** Every live pool, archived included, whatever the list was asked to
+   *  show. Archived pools count toward `limits.max_per_company`. */
+  pool_count?: number;
+  archived_count?: number;
 }
 
 export type PoolMemberSource = 'manual' | 'rediscovery';

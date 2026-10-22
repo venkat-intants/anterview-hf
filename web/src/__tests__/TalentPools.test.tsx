@@ -145,10 +145,35 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('TalentPools - list', () => {
-  it('shows an empty state that mentions hidden archived pools', async () => {
+  it('shows an empty state that names how many archived pools are hidden', async () => {
+    api.listPools.mockResolvedValue({
+      pools: [],
+      limits: { max_per_company: 100, max_members: 2000 },
+      pool_count: 3,
+      archived_count: 3,
+    });
     renderPage();
     expect(await screen.findByText('No active pools')).toBeInTheDocument();
-    expect(screen.getByText(/Archived pools are hidden/)).toBeInTheDocument();
+    expect(screen.getByText(/tick Show archived to see 3 archived pools/)).toBeInTheDocument();
+  });
+
+  it('does not mention archived pools when there are none', async () => {
+    renderPage();
+    expect(await screen.findByText('No active pools')).toBeInTheDocument();
+    expect(screen.queryByText(/archived pool/)).not.toBeInTheDocument();
+  });
+
+  it('stops offering New pool at the company limit, counting archived pools', async () => {
+    api.listPools.mockResolvedValue({
+      pools: [pool()],
+      limits: { max_per_company: 2, max_members: 2000 },
+      pool_count: 2,
+      archived_count: 1,
+    });
+    renderPage();
+    await screen.findByText('Fitters, Vizag');
+    expect(screen.getByRole('button', { name: 'New pool' })).toBeDisabled();
+    expect(screen.getByText(/reached its limit of 2 pools, and archived pools count/)).toBeInTheDocument();
   });
 
   it('says "No pools yet" once archived pools are included and there are none', async () => {

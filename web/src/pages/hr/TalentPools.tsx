@@ -329,6 +329,14 @@ function PoolsList(): JSX.Element {
     onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not delete this pool.')),
   });
 
+  // The server refuses a pool past the company limit, archived pools
+  // included; say so up front instead of letting New pool lead to a 409
+  // (audit F20).
+  const maxPools = list.data?.limits.max_per_company;
+  const poolCount = list.data?.pool_count;
+  const atLimit = maxPools !== undefined && poolCount !== undefined && poolCount >= maxPools;
+  const archivedCount = list.data?.archived_count ?? 0;
+
   return (
     <Page width="default">
       <PageHeader
@@ -339,13 +347,25 @@ function PoolsList(): JSX.Element {
           // One primary action per view (consistency A5): while the form is
           // open its own Create pool button is the primary, so this one goes.
           newOpen ? undefined : (
-            <Button type="button" onClick={() => setNewOpen(true)}>
+            <Button
+              type="button"
+              onClick={() => setNewOpen(true)}
+              disabled={atLimit}
+              aria-describedby={atLimit ? 'pool-limit-note' : undefined}
+            >
               <Plus aria-hidden="true" />
               New pool
             </Button>
           )
         }
       />
+
+      {atLimit ? (
+        <p id="pool-limit-note" role="status" className="text-[12.5px] text-muted-foreground">
+          Your company has reached its limit of {maxPools} pools, and archived pools count. Delete
+          one you no longer need to make a new one.
+        </p>
+      ) : null}
 
       {newOpen ? (
         <Reveal delay={0.05}>
@@ -434,7 +454,11 @@ function PoolsList(): JSX.Element {
                 // (PL-L10/F20).
                 <EmptyState
                   title="No active pools"
-                  description="Create one with New pool. Archived pools are hidden; tick Show archived to see them."
+                  description={
+                    archivedCount > 0
+                      ? `Create one with New pool, or tick Show archived to see ${plural(archivedCount, 'archived pool')}.`
+                      : 'Create one with New pool, or add candidates from Rediscovery.'
+                  }
                 />
               )
             }

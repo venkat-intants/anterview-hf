@@ -178,6 +178,29 @@ async def test_creating_a_pool_past_the_per_company_limit_is_refused(
     assert caught.value.code == "pool_limit_reached"
 
 
+@pytest.mark.asyncio
+async def test_the_pool_list_counts_archived_pools_even_when_it_hides_them(
+    db: AsyncSession,
+) -> None:
+    """Archived pools count toward the limit, so the list reports them even
+    when it is listing only the active ones (audit F20)."""
+    f = await _seed(db)
+    await _create_pool(db, f, name="Active")
+    archived = await _create_pool(db, f, name="Old")
+    await pools.update_pool(
+        db, company_id=f.company_a, actor=f.hr_a, pool_id=uuid.UUID(archived), name=None,
+        description=None, archived=True, name_given=False, description_given=False, meta=META,
+    )
+
+    active_only = await pools.list_pools(db, company_id=f.company_a)
+    assert [p["name"] for p in active_only["pools"]] == ["Active"]
+    assert active_only["pool_count"] == 2
+    assert active_only["archived_count"] == 1
+
+    other = await pools.list_pools(db, company_id=f.company_b)
+    assert other["pool_count"] == 0
+
+
 # ===========================================================================
 # Members: add, skip reasons, soft removal + re-add, member_count
 # ===========================================================================

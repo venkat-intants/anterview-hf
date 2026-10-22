@@ -81,6 +81,11 @@ class PoolLimits(BaseModel):
 class PoolListOut(BaseModel):
     pools: list[PoolOut]
     limits: PoolLimits
+    # Every live pool (archived included) and the archived share of it,
+    # whatever include_archived asked to list: archived pools count toward
+    # limits.max_per_company.
+    pool_count: int = 0
+    archived_count: int = 0
 
 
 class PoolDeleteOut(BaseModel):

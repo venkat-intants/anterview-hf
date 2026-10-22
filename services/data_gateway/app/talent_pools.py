@@ -347,12 +347,28 @@ async def list_pools(
             {"c": company_id},
         )
     ).mappings().all()
+    # Counted over every live pool, archived or not, the same set create_pool
+    # checks against the limit, so the screen can say "N archived pools" and
+    # stop offering New pool at the limit (audit F20) even when it is only
+    # listing the active ones.
+    counts = (
+        await db.execute(
+            text(
+                "SELECT count(*) AS total,"
+                " count(*) FILTER (WHERE archived_at IS NOT NULL) AS archived"
+                "  FROM talent_pools WHERE company_id = :c AND deleted_at IS NULL"
+            ),
+            {"c": company_id},
+        )
+    ).mappings().one()
     return {
         "pools": [_pool_out(r) for r in rows],
         "limits": {
             "max_per_company": int(settings.talent_pool_max_per_company),
             "max_members": int(settings.talent_pool_max_members),
         },
+        "pool_count": int(counts["total"] or 0),
+        "archived_count": int(counts["archived"] or 0),
     }
 
 

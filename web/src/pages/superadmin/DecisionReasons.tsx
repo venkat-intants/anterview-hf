@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { StatusTag } from '@/design/components/primitives';
 import { Page, PageHeader, SectionCard } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
@@ -172,7 +173,11 @@ export default function DecisionReasons(): JSX.Element {
 
       <SectionCard title="Reasons" description="What HR sees in the hire and reject dropdowns.">
         {isLoading ? (
-          <p className="text-[13px] text-muted-foreground">Loading…</p>
+          <div className="flex flex-col gap-2" role="status" aria-label="Loading the decision reasons">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-10 w-full" />
+          </div>
         ) : isError ? (
           <QueryErrorPanel
             title="Could not load the decision reasons."

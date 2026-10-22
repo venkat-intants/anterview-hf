@@ -18,6 +18,7 @@ import { AlertTriangle, Check, CheckCircle2, Info, Lock, Loader2 } from '@/desig
 import { GlassCard, SegTabs, StatusTag, ToggleSwitch } from '@/design/components/primitives';
 import { Breadcrumbs, PageHeader, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { errorMessage } from '@/lib/errorMessage';
@@ -119,9 +120,10 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
 
   if (kit.isLoading) {
     return (
-      <div className="flex items-center gap-2 py-10 text-[13px] text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-        Loading the interview kit…
+      <div className="flex flex-col gap-3 py-2" role="status" aria-label="Loading the interview kit">
+        <Skeleton className="h-5 w-48" />
+        <Skeleton className="h-20 w-full rounded-card" />
+        <Skeleton className="h-20 w-full rounded-card" />
       </div>
     );
   }
@@ -626,9 +628,11 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
   if (detailQuery.isLoading) {
     return (
       <Page width="form">
-        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading scorecard…
+        <div className="flex flex-col gap-4 py-4" role="status" aria-label="Loading scorecard">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-32 w-full rounded-card" />
+          <Skeleton className="h-32 w-full rounded-card" />
+          <span className="sr-only">Loading scorecard…</span>
         </div>
       </Page>
     );

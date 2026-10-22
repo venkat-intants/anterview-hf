@@ -113,7 +113,7 @@ describe('AdminOverview page', () => {
     renderOverview();
     await waitFor(() => {
       expect(
-        screen.getByRole('heading', { name: /admin overview/i }),
+        screen.getByRole('heading', { name: /^overview$/i }),
       ).toBeInTheDocument();
     });
   });
@@ -200,6 +200,7 @@ describe('AdminOverview page', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
     });
-    expect(screen.getByText(/failed to load overview/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not load the platform numbers/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
   });
 });

@@ -184,8 +184,8 @@ export default function ApprovalQueue(): JSX.Element {
   return (
     <Page width="form">
       <PageHeader
-        title="Openings awaiting approval"
-        description="An opening cannot accept public applications until it is approved. Oldest request first."
+        title="Approvals"
+        description="Openings awaiting approval. An opening cannot accept public applications until it is approved. Oldest request first."
       />
       <ReviewQueueState
         loading={queue.isLoading}

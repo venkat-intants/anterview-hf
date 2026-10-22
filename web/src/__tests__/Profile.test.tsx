@@ -378,4 +378,17 @@ describe('Profile - avatar upload', () => {
       expect(updateProfile).toHaveBeenCalledWith({ avatar_url: 'data:image/jpeg;base64,AAAA' }),
     );
   });
+
+  it('reports an unreadable image with the translated message, not the helper text', async () => {
+    imageFileToDataUrl.mockRejectedValueOnce(new Error('Canvas not supported.'));
+    const user = userEvent.setup();
+    await renderHydrated();
+    const png = new File(['x'], 'me.png', { type: 'image/png' });
+    const input = document.body.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, png);
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not read that image.'));
+    expect(toastError).not.toHaveBeenCalledWith('Canvas not supported.');
+    expect(updateProfile).not.toHaveBeenCalled();
+  });
 });

@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2 } from '@/design/components/icons';
+import { Skeleton } from '@/components/ui/skeleton';
 import { GlassCard } from '@/design/components/primitives';
 import { EmptyState, Page, PageHeader, Toolbar } from '@/design/components/page';
 import { QueryErrorPanel } from '@/components/QueryState';
@@ -86,9 +86,10 @@ export default function HiringBoard(): JSX.Element {
       ) : null}
 
       {board.isLoading ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading the board…
+        <div className="flex flex-col gap-3" role="status" aria-label="Loading the board">
+          <Skeleton className="h-24 w-full rounded-card" />
+          <Skeleton className="h-24 w-full rounded-card" />
+          <Skeleton className="h-24 w-full rounded-card" />
         </div>
       ) : board.isError && !board.data ? (
         <QueryErrorPanel

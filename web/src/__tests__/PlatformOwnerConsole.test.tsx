@@ -573,7 +573,7 @@ describe('PlatformOwnerConsole - a wrong-role user sees nothing', () => {
       // a candidate that home genuinely is /dashboard, hence the branch.
       const expected = homePathFor([role]) === '/dashboard' ? 'dashboard page' : 'home page';
       expect(await screen.findByText(expected)).toBeInTheDocument();
-      expect(screen.queryByRole('heading', { name: /platform owner/i })).not.toBeInTheDocument();
+      expect(screen.queryByTestId('page-title')).not.toBeInTheDocument();
       // Not merely hidden — the console never mounted, so it never fetched.
       expect(api.listCompanies).not.toHaveBeenCalled();
     },
@@ -582,7 +582,7 @@ describe('PlatformOwnerConsole - a wrong-role user sees nothing', () => {
   it('lets a platform_owner through to the console', async () => {
     renderGuarded(['platform_owner', 'admin']);
 
-    expect(await screen.findByRole('heading', { name: /platform owner/i })).toBeInTheDocument();
+    expect(await screen.findByTestId('page-title')).toHaveTextContent('Companies');
     await waitFor(() => expect(api.listCompanies).toHaveBeenCalled());
   });
 });

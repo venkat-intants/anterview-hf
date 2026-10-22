@@ -685,8 +685,8 @@ export default function PlatformOwnerConsole() {
     <Page width="default">
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <PageHeader
-        title={<span data-testid="page-title">Platform owner</span>}
-        description="Tenants, company super admins and platform governance."
+        title={<span data-testid="page-title">Companies</span>}
+        description="Tenants, their super admins, feature flags and the platform audit log."
         actions={
           <Button type="button" onClick={openCompanyDialog}>
             <Plus aria-hidden="true" />

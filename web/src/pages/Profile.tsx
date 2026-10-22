@@ -284,8 +284,10 @@ export default function Profile() {
     try {
       const dataUrl = await imageFileToDataUrl(file, 256);
       avatarMutation.mutate(dataUrl);
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('profile.photoUnreadable'));
+    } catch {
+      // The helper's reasons are English-only; the candidate gets the
+      // translated message in their own language.
+      toast.error(t('profile.photoUnreadable'));
     }
   };
 

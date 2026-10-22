@@ -285,3 +285,70 @@ describe('saving', () => {
     );
   });
 });
+
+// HR-H3: "Publish vN" used to publish the draft as last saved and then throw
+// away anything typed since. It now publishes what is on screen.
+describe('publishing never loses unsaved edits', () => {
+  const withDraft = () =>
+    history([
+      version(),
+      version({ id: 'v-2', version: 2, status: 'draft', jd_text: 'Saved draft.', published_at: null }),
+    ]);
+
+  it('saves the typed text first, then publishes the version that save returned', async () => {
+    getJdHistory.mockResolvedValue(withDraft());
+    saveJdDraft.mockResolvedValue(version({ id: 'v-2b', version: 2, status: 'draft' }));
+    renderPanel();
+    const box = await screen.findByLabelText(/Draft \(v2\)/);
+    await waitFor(() => expect(box).toHaveValue('Saved draft.'));
+    await userEvent.type(box, ' Plus the on-call rota.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save and publish v2' }));
+
+    await waitFor(() => expect(publishJdVersion).toHaveBeenCalledWith('req-1', 'v-2b'));
+    expect(saveJdDraft).toHaveBeenCalledWith('req-1', {
+      jd_text: 'Saved draft. Plus the on-call rota.',
+      change_note: null,
+    });
+    expect(saveJdDraft.mock.invocationCallOrder[0]).toBeLessThan(
+      publishJdVersion.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('publishes nothing, and keeps the text, when the save fails', async () => {
+    getJdHistory.mockResolvedValue(withDraft());
+    saveJdDraft.mockRejectedValue(new Error('Could not save that.'));
+    renderPanel();
+    const box = await screen.findByLabelText(/Draft \(v2\)/);
+    await waitFor(() => expect(box).toHaveValue('Saved draft.'));
+    await userEvent.type(box, ' More.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save and publish v2' }));
+
+    await waitFor(() => expect(saveJdDraft).toHaveBeenCalled());
+    expect(publishJdVersion).not.toHaveBeenCalled();
+    expect(box).toHaveValue('Saved draft. More.');
+  });
+
+  it('publishes the saved draft directly when nothing was typed', async () => {
+    getJdHistory.mockResolvedValue(withDraft());
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: 'Publish v2' }));
+    await waitFor(() => expect(publishJdVersion).toHaveBeenCalledWith('req-1', 'v-2'));
+    expect(saveJdDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe('discarding a draft (HR-M2)', () => {
+  it('asks before discarding', async () => {
+    getJdHistory.mockResolvedValue(
+      history([version(), version({ id: 'v-2', version: 2, status: 'draft', published_at: null })]),
+    );
+    renderPanel();
+    await userEvent.click(await screen.findByRole('button', { name: 'Discard draft' }));
+    expect(discardJdDraft).not.toHaveBeenCalled();
+    const armed = screen.getAllByRole('button', { name: 'Discard draft' });
+    await userEvent.click(armed[armed.length - 1]);
+    await waitFor(() => expect(discardJdDraft).toHaveBeenCalled());
+  });
+});

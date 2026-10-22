@@ -31,9 +31,12 @@ import {
   type Requisition,
 } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
-import { queryKeys } from '@/lib/queryKeys';
-import { GlassCard, Pill } from '@/design/components/primitives';
-import { AlertCircle } from '@/design/components/icons';
+import { errorMessage } from '@/lib/errorMessage';
+import { invalidateAfterHrMutation, queryKeys } from '@/lib/queryKeys';
+import { GlassCard } from '@/design/components/primitives';
+import { AlertCircle, XCircle } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 import { formatDate } from '@/lib/formatters';
@@ -91,10 +94,12 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
   // The textarea starts from the draft if there is one, otherwise from the
   // live advert — editing one field must not silently blank the document.
   const text = draftText ?? draft?.jd_text ?? requisition.jd_text ?? '';
+  // HR-H3: typed but not saved. Publishing used to send the draft as last
+  // saved and then throw the typed text away; now Publish saves it first.
+  const unsaved = draftText !== null && draftText !== (draft?.jd_text ?? requisition.jd_text ?? '');
 
   function refresh(): void {
-    void client.invalidateQueries({ queryKey: queryKeys.jdHistory(requisition.id) });
-    void client.invalidateQueries({ queryKey: queryKeys.requisition(requisition.id) });
+    void invalidateAfterHrMutation(client, queryKeys.jdHistory(requisition.id));
   }
 
   const save = useMutation({
@@ -105,19 +110,39 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
       refresh();
       toast.success('Draft saved. Candidates still see the published version.');
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not save the draft.'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not save the draft.')),
   });
 
-  const publish = useMutation({
-    mutationFn: (versionId: string) => publishJdVersion(requisition.id, versionId),
+  // Publishing the draft publishes what is on screen: unsaved edits are saved
+  // as the draft first, and the version that save returns is the one
+  // published. If the save fails nothing is published and the text stays.
+  const publishDraft = useMutation({
+    mutationFn: async (draftId: string) => {
+      const id = unsaved
+        ? (await saveJdDraft(requisition.id, { jd_text: text, change_note: note || null })).id
+        : draftId;
+      return publishJdVersion(requisition.id, id);
+    },
     onSuccess: (v) => {
       setDraftText(null);
+      setNote('');
       refresh();
       toast.success(`Version ${v.version} is now the published job description.`);
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not publish that version.'),
+    onError: (e: unknown) => {
+      refresh();
+      toast.error(errorMessage(e, 'Could not publish the draft.'));
+    },
+  });
+
+  // Restoring an earlier version leaves the draft and anything typed alone.
+  const restore = useMutation({
+    mutationFn: (versionId: string) => publishJdVersion(requisition.id, versionId),
+    onSuccess: (v) => {
+      refresh();
+      toast.success(`Version ${v.version} is now the published job description.`);
+    },
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not restore that version.')),
   });
 
   const discard = useMutation({
@@ -127,8 +152,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
       refresh();
       toast.success('Draft discarded. The published version is unchanged.');
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not discard the draft.'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not discard the draft.')),
   });
 
   return (
@@ -182,29 +206,45 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
-          <Pill onClick={() => save.mutate()} disabled={save.isPending} className="px-4 py-2">
+          {/* One primary action: Publish when there is a draft, Save otherwise. */}
+          <Button
+            type="button"
+            variant={draft ? 'outline' : 'default'}
+            onClick={() => save.mutate()}
+            disabled={save.isPending || publishDraft.isPending}
+          >
             {save.isPending ? 'Saving…' : 'Save draft'}
-          </Pill>
+          </Button>
           {draft ? (
             <>
-              <Pill
-                onClick={() => publish.mutate(draft.id)}
-                disabled={publish.isPending}
-                className="px-4 py-2"
-              >
-                {publish.isPending ? 'Publishing…' : `Publish v${draft.version}`}
-              </Pill>
-              <button
+              <Button
                 type="button"
-                onClick={() => discard.mutate()}
-                disabled={discard.isPending}
-                className="rounded-[10px] border border-border px-3 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
+                onClick={() => publishDraft.mutate(draft.id)}
+                disabled={publishDraft.isPending || save.isPending || discard.isPending}
+                aria-busy={publishDraft.isPending}
               >
-                Discard draft
-              </button>
+                {publishDraft.isPending
+                  ? 'Publishing…'
+                  : unsaved
+                    ? `Save and publish v${draft.version}`
+                    : `Publish v${draft.version}`}
+              </Button>
+              {/* HR-M2: a draft cannot be brought back once discarded. */}
+              <ConfirmDeleteButton
+                label="Discard draft"
+                confirmText="Discard draft"
+                icon={XCircle}
+                onConfirm={() => discard.mutate()}
+                pending={discard.isPending}
+              />
             </>
           ) : null}
         </div>
+        {draft && unsaved ? (
+          <p className="mt-2 text-[12px] text-muted-foreground">
+            You have unsaved edits. Publishing saves them as v{draft.version} first.
+          </p>
+        ) : null}
 
         {draft ? (
           <p className="mt-2.5 flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]">
@@ -265,8 +305,8 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
                     {v.status === 'archived' ? (
                       <button
                         type="button"
-                        onClick={() => publish.mutate(v.id)}
-                        disabled={publish.isPending}
+                        onClick={() => restore.mutate(v.id)}
+                        disabled={restore.isPending}
                         className="inline-flex min-h-10 shrink-0 items-center rounded-[10px] border border-border px-3 text-[12px] text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
                       >
                         Restore

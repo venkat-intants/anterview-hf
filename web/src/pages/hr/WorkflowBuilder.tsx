@@ -94,6 +94,7 @@ import SubmitBlockers from '@/components/workflow/SubmitBlockers';
 import ReviewPanel from '@/components/workflow/ReviewPanel';
 import DryRunPanel from '@/components/workflow/DryRunPanel';
 import StageSettings from '@/components/workflow/StageSettings';
+import { NumberField } from '@/components/workflow/NumberField';
 import { applicationsWarning, nextAction, publishImpact } from '@/lib/workflowLifecycle';
 import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
 
@@ -191,7 +192,7 @@ function AutoShortlistToggle({
         <div className="text-[13px] text-foreground">Shortlist without my confirmation</div>
         <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
           {!hasBar
-            ? 'Set an ATS score of at least 1 above first - without one, every applicant would be shortlisted.'
+            ? 'Set an ATS score of at least 10 above first - without one, every applicant would be shortlisted.'
             : !autoAssign
               ? 'Turn on “Send the first round automatically” first - otherwise applicants would be shortlisted and then left with nothing started.'
               : on
@@ -255,18 +256,17 @@ function SettingsPanel({
           rejected automatically.
         </p>
         <div className="mt-2 flex items-center gap-2">
-          <input
+          {/* HR-H2: saved on blur or Enter, after a range check, not per keystroke. */}
+          <NumberField
             id="hold-band"
-            type="number"
             min={0}
             max={100}
             disabled={!editable}
-            value={s.hold_band ?? ''}
-            onChange={(e) => {
-              const v = e.target.value.trim();
-              onPatch({ hold_band: v === '' ? null : Number(v) });
+            value={s.hold_band}
+            onCommit={(n) => {
+              if (n !== null) onPatch({ hold_band: n });
             }}
-            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
+            className="w-24"
           />
           <span className="text-[13px] text-muted-foreground">points</span>
         </div>
@@ -282,21 +282,28 @@ function SettingsPanel({
             : 'Applicants at or above this are flagged to you as ready to shortlist. You confirm, and that starts their first round.'}
         </p>
         <div className="mt-2 flex items-center gap-2">
-          <input
+          {/* HR-L7: entered out of 100 like every other ATS figure in the
+              console; the workflow stores tenths (0-10), so it moves in tens.
+              With automatic shortlisting on, the bar cannot be cleared: the
+              server refuses that combination, so say so before saving. */}
+          <NumberField
             id="ats-threshold"
-            type="number"
             min={0}
-            max={10}
+            max={100}
+            step={10}
+            allowEmpty={!s.auto_shortlist}
             disabled={!editable}
-            value={s.shortlist_ats_threshold ?? ''}
+            value={s.shortlist_ats_threshold === null ? null : s.shortlist_ats_threshold * 10}
             placeholder="off"
-            onChange={(e) => {
-              const v = e.target.value.trim();
-              onPatch({ shortlist_ats_threshold: v === '' ? null : Number(v) });
-            }}
-            className="w-24 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
+            rangeMessage={
+              s.auto_shortlist
+                ? 'Enter 10, 20 and so on up to 100. Turn off automatic shortlisting to clear it.'
+                : 'Enter 10, 20 and so on up to 100, or leave it empty to turn suggestions off.'
+            }
+            onCommit={(n) => onPatch({ shortlist_ats_threshold: n === null ? null : n / 10 })}
+            className="w-24"
           />
-          <span className="text-[13px] text-muted-foreground">/ 10</span>
+          <span className="text-[13px] text-muted-foreground">/ 100</span>
         </div>
 
         <AutoShortlistToggle

@@ -15,6 +15,7 @@ import {
   type BankDifficulty,
 } from '@/api/questionBanks';
 import type { ExamLanguage } from '@/api/exams';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { Loader2 } from '@/design/components/icons';
@@ -23,10 +24,6 @@ import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { QuestionBadges } from '@/components/bank/QuestionBadges';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 // A native <select> keeps the filter row keyboard- and test-driven the way it was;
 // the look matches the shared Input.
@@ -102,7 +99,7 @@ export function BankQuestionPicker({
         toast.error('Nothing was added - see the reasons below.');
       }
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not add these questions')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not add these questions.')),
   });
 
   function toggle(id: string, on: boolean) {

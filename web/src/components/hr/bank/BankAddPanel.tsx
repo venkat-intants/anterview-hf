@@ -32,6 +32,7 @@ import BankFillPanel from '@/components/bank/BankFillPanel';
 import { BankQuestionEditor } from '@/components/bank/BankQuestionEditor';
 import type { UnsavedGuard } from '@/components/bank/useUnsavedGuard';
 import { CodingQuestionGenerator } from '@/components/hr/bank/CodingQuestionGenerator';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { kindTally, type BankFacts } from '@/lib/bankFlow';
 import { createBankQuestion, type BankQuestion, type BankQuestionInput } from '@/api/questionBanks';
@@ -73,10 +74,6 @@ const ADD_METHODS: readonly MethodSpec[] = [
 ];
 
 const METHOD_TITLE = { write: 'Write a question' } as const;
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 /** Focus the first heading in a freshly opened method, so the change is announced. */
 function useFocusFirstHeading(active: unknown): React.RefObject<HTMLDivElement> {
@@ -133,7 +130,7 @@ export function BankAddPanel({
       setWriteKey((k) => k + 1);
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not create this question')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not create this question.')),
   });
 
   function open(next: AddMethod): void {

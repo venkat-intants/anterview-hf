@@ -93,4 +93,50 @@ describe('i18n - EN / HI / TE parity', () => {
     }
     expect(mismatched, `${lng} placeholder mismatch`).toEqual([]);
   });
+
+  // Audit CA-M20: a HI or TE value that is still the English text reads as
+  // translated to every check above, yet shows English to the candidate. The
+  // allowlist is for values that are the same in every language on purpose:
+  // the brand, language names (each written in its own script), English-only
+  // staff labels, profile links, and placeholders that are not prose.
+  const SAME_IN_EVERY_LANGUAGE = new Set([
+    'app.name',
+    'interviewIntro.brand',
+    'nav.adminOverview',
+    'nav.adminInterviews',
+    'nav.adminAnalytics',
+    'nav.adminJd',
+    'dashboard.adminJdUpload',
+    'lang.en',
+    'lang.hi',
+    'lang.te',
+    'resumeApply.linkedin',
+    'resumeApply.github',
+    'apply.linkedin',
+    'apply.github',
+    'careers.salaryRange',
+    'task.linkPlaceholder',
+    'profile.desiredRolesPh',
+  ]);
+
+  it.each(DAY_ONE_LANGUAGES)('%s has no candidate string left in English', (lng) => {
+    const en = i18n.getResourceBundle('en', 'translation') as Record<string, unknown>;
+    const other = i18n.getResourceBundle(lng, 'translation') as Record<string, unknown>;
+    const read = (obj: Record<string, unknown>, path: string): unknown =>
+      path.split('.').reduce<unknown>(
+        (acc, part) =>
+          acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[part] : undefined,
+        obj,
+      );
+    const untranslated = bundle('en').filter((path) => {
+      if (SAME_IN_EVERY_LANGUAGE.has(path)) return false;
+      const source = read(en, path);
+      // Placeholders and punctuation only ("{{lo}} - {{hi}}") have nothing to translate.
+      if (typeof source !== 'string' || !/[A-Za-z]{3,}/.test(source.replace(/\{\{\w+\}\}/g, ''))) {
+        return false;
+      }
+      return read(other, path) === source;
+    });
+    expect(untranslated, `${lng} still shows English for these keys`).toEqual([]);
+  });
 });

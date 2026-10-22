@@ -221,6 +221,27 @@ describe('Rediscovery - searching', () => {
   });
 });
 
+describe('Rediscovery - while a search runs', () => {
+  it('holds the results area with skeleton rows until the search answers', async () => {
+    const user = userEvent.setup();
+    let answer: (v: unknown) => void = () => undefined;
+    rediscoveryApi.searchRediscovery.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+
+    await runSearch(user);
+
+    expect(await screen.findByTestId('results-loading')).toBeInTheDocument();
+    answer(searchResponse());
+    await waitFor(() => expect(screen.queryByTestId('results-loading')).not.toBeInTheDocument());
+    expect(await screen.findByText(/1 of 1 matches shown/)).toBeInTheDocument();
+  });
+});
+
 describe('Rediscovery - the unexplained section is separate', () => {
   it('keeps an unexplained row out of the explained list, under its own heading, with no one-click invite', async () => {
     const user = userEvent.setup();

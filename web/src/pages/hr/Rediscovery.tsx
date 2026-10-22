@@ -44,6 +44,7 @@ import { errorMessage } from '@/lib/errorMessage';
 import { formatScore } from '@/lib/formatters';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { QueryErrorPanel } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
 import { PageHeader, Page } from '@/design/components/page';
@@ -289,7 +290,19 @@ export default function Rediscovery(): JSX.Element {
             </div>
           ) : null}
 
-          {searchMut.data ? (
+          {searchMut.isPending ? (
+            // Results are cleared while a search runs, so hold their place with
+            // skeleton rows rather than an empty gap (consistency D3).
+            <GlassCard className="space-y-3 p-5" aria-busy="true" data-testid="results-loading">
+              <span className="sr-only" role="status">
+                Searching…
+              </span>
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </GlassCard>
+          ) : searchMut.data ? (
             <Reveal delay={0.08}>
               <GlassCard className="p-5 space-y-4">
                 <p className="text-[12.5px] text-muted-foreground">

@@ -74,6 +74,8 @@ function renderExam() {
 beforeEach(() => {
   vi.clearAllMocks();
   window.location.hash = '#exam_tok_123456';
+  // Saved progress from a previous test would turn "Start exam" into "Resume exam".
+  sessionStorage.clear();
 });
 
 afterEach(() => {

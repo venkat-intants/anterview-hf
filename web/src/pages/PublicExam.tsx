@@ -52,6 +52,13 @@ import CodingTaking from '@/pages/exam/CodingTaking';
 import { useExamProctor } from '@/pages/exam/useExamProctor';
 import CameraConsentModal from '@/pages/exam/CameraConsentModal';
 import ProctorIndicator from '@/pages/exam/ProctorIndicator';
+import {
+  clearProgress,
+  loadProgress,
+  progressKey,
+  saveProgress,
+} from '@/pages/exam/examProgress';
+import { useCandidateError } from '@/lib/candidateCopy';
 
 function fmt(totalSec: number): string {
   const s = Math.max(0, totalSec);
@@ -63,7 +70,7 @@ type Phase = 'intro' | 'taking' | 'result';
 // ── Shared public frame (loading / error / result states) ──
 function PageWrap({ children, step }: { children: React.ReactNode; step?: React.ReactNode }) {
   return (
-    <PublicFrame width="narrow" hideLanguage privateLink step={step}>
+    <PublicFrame width="narrow" privateLink step={step}>
       {children}
     </PublicFrame>
   );
@@ -174,6 +181,7 @@ const EXAM_TOKEN_KEY = 'anthire.exam.token';
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PublicExam() {
   const { t } = useTranslation();
+  const errorText = useCandidateError();
 
   // SECURITY: token from #fragment — never from a path param.
   //
@@ -244,14 +252,57 @@ export default function PublicExam() {
   const [remaining, setRemaining] = useState<number | null>(null);
   // Per-section countdown.
   const [sectionRemaining, setSectionRemaining] = useState<number | null>(null);
+  // When each section was first entered (epoch ms). Section timers run from
+  // it, so a reload resumes the clock instead of restarting it (audit CA-M2).
+  const [sectionStartedAt, setSectionStartedAt] = useState<Record<string, number>>({});
+  // Leaving a section or submitting cannot be undone, so either one asks
+  // first (audit CA-M3). Time-outs and auto-submits never ask.
+  const [confirming, setConfirming] = useState<'next' | 'submit' | null>(null);
+  const keepWorkingRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (confirming) keepWorkingRef.current?.focus();
+  }, [confirming]);
 
   const submittedRef = useRef(false);
 
   // ── Derive sections (sorted) ────────────────────────────────────────────
   const sections = useMemo<PublicSection[]>(() => {
-    if (!examQ.data?.sections?.length) return [];
-    return [...examQ.data.sections].sort((a, b) => a.position - b.position);
+    const data = examQ.data;
+    if (!data) return [];
+    if (data.sections?.length) {
+      return [...data.sections].sort((a, b) => a.position - b.position);
+    }
+    // An older response carries only the flattened arrays. Without a section
+    // neither Next nor Submit rendered, so the exam could not be finished
+    // (audit CA-L21). Treat each kind present as one implicit section.
+    const implicit: PublicSection[] = [];
+    if (data.questions?.length) {
+      implicit.push({
+        id: 'implicit-mcq',
+        title: data.round_title || data.title,
+        kind: 'mcq',
+        position: 0,
+        time_limit_seconds: null,
+        questions: data.questions,
+        coding_questions: [],
+      });
+    }
+    if (data.coding_questions?.length) {
+      implicit.push({
+        id: 'implicit-coding',
+        title: data.round_title || data.title,
+        kind: 'coding',
+        position: 1,
+        time_limit_seconds: null,
+        questions: [],
+        coding_questions: data.coding_questions,
+      });
+    }
+    return implicit;
   }, [examQ.data]);
+
+  // Where this round's progress is kept for a reload (audit CA-M2).
+  const storeKey = examQ.data ? progressKey(examQ.data.exam_id, examQ.data.round_id) : null;
 
   const currentSection = sections[sectionIndex] ?? null;
 
@@ -276,12 +327,6 @@ export default function PublicExam() {
       }
       return startExam(token);
     },
-    onSuccess: (s) => {
-      setAttemptId(s.attempt_id);
-      setDeadline(s.deadline);
-      setAttemptMaxViolations(s.max_violations);
-      setPhase('taking');
-    },
   });
 
   // ── Submit mutation (unified round submit) ────────────────────────────────
@@ -290,6 +335,7 @@ export default function PublicExam() {
     onSuccess: (r) => {
       setResult(r);
       setPhase('result');
+      if (storeKey) clearProgress(storeKey);
       // The credential has done its job. Leaving it in sessionStorage would
       // keep a live exam token readable by script on any page of this origin
       // for the rest of the tab's life, long after the attempt is graded.
@@ -372,12 +418,29 @@ export default function PublicExam() {
     setAttemptId(s.attempt_id);
     setDeadline(s.deadline);
     setAttemptMaxViolations(s.max_violations);
+    // The server resumes the same attempt after a reload; put back what the
+    // candidate had done in it. A different attempt starts clean.
+    const saved = storeKey ? loadProgress(storeKey) : null;
+    if (saved && saved.attemptId === s.attempt_id) {
+      setAnswers(saved.answers);
+      setSubmissions(saved.submissions);
+      setSectionIndex(Math.min(saved.sectionIndex, Math.max(0, sections.length - 1)));
+      setSectionStartedAt(saved.sectionStartedAt);
+    } else if (storeKey) {
+      clearProgress(storeKey);
+    }
     // Last: flipping to 'taking' is what arms the proctor, so nothing it could
     // record happens before the candidate is actually set up. The remaining
     // start-up signal it waits on — the camera permission prompt — is handled
     // by features/proctoring/useArmed.
     setPhase('taking');
-  }, [startMut, enterFullscreen]);
+  }, [startMut, enterFullscreen, storeKey, sections.length]);
+
+  // Keep the attempt's progress for a reload.
+  useEffect(() => {
+    if (phase !== 'taking' || !attemptId || !storeKey) return;
+    saveProgress(storeKey, { attemptId, answers, submissions, sectionIndex, sectionStartedAt });
+  }, [phase, attemptId, storeKey, answers, submissions, sectionIndex, sectionStartedAt]);
 
   // ── Global countdown ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -396,27 +459,33 @@ export default function PublicExam() {
   }, [remaining, phase]);
 
   // ── Per-section countdown ────────────────────────────────────────────────
+  // A section's clock starts the first time it is entered, and only then.
   useEffect(() => {
-    if (phase !== 'taking' || !currentSection?.time_limit_seconds) {
+    if (phase !== 'taking' || !currentSection) return;
+    const id = currentSection.id;
+    setSectionStartedAt((prev) => (prev[id] !== undefined ? prev : { ...prev, [id]: Date.now() }));
+  }, [phase, currentSection]);
+
+  useEffect(() => {
+    const limitSec = currentSection?.time_limit_seconds;
+    const startedAt = currentSection ? sectionStartedAt[currentSection.id] : undefined;
+    if (phase !== 'taking' || !limitSec || startedAt === undefined) {
       setSectionRemaining(null);
       return;
     }
-    const limitSec = currentSection.time_limit_seconds;
-    let elapsed = 0;
-    const tick = () => {
-      elapsed++;
-      setSectionRemaining(Math.max(0, limitSec - elapsed));
-    };
-    setSectionRemaining(limitSec);
+    // From the recorded start, so a reload does not hand back a full clock.
+    const tick = () =>
+      setSectionRemaining(Math.max(0, limitSec - Math.floor((Date.now() - startedAt) / 1000)));
+    tick();
     const id = setInterval(tick, 1000);
     return () => clearInterval(id);
-    // Reset when the section or phase changes.
-  }, [phase, sectionIndex, currentSection]);
+  }, [phase, currentSection, sectionStartedAt]);
 
   // Advance to next section when section time elapses.
   useEffect(() => {
     if (sectionRemaining !== null && sectionRemaining <= 0) {
       const next = sectionIndex + 1;
+      setConfirming(null);
       if (next < sections.length) {
         setSectionIndex(next);
       } else {
@@ -444,6 +513,15 @@ export default function PublicExam() {
     () => sectionQuestions.filter((q) => answers[q.id] !== undefined).length,
     [sectionQuestions, answers],
   );
+  const unansweredInSection = sectionQuestions.length - answeredCountForSection;
+  const unansweredInExam = useMemo(
+    () =>
+      sections
+        .filter((s) => s.kind === 'mcq')
+        .flatMap((s) => s.questions ?? [])
+        .filter((q) => answers[q.id] === undefined).length,
+    [sections, answers],
+  );
 
   // ── A link that can no longer be used: drop the token it left behind ─────
   // The per-tab token is otherwise removed only by a successful submit, so an
@@ -461,7 +539,8 @@ export default function PublicExam() {
     } catch {
       // Blocked or unavailable: it was never written either.
     }
-  }, [linkUnusable, alreadyCompleted]);
+    if (storeKey) clearProgress(storeKey);
+  }, [linkUnusable, alreadyCompleted, storeKey]);
 
   // ── Error / loading states ───────────────────────────────────────────────
   // Transient failure (network / server hiccup) — the link may be fine.
@@ -601,7 +680,7 @@ export default function PublicExam() {
       roundTitle.length > 0 && roundTitle !== exam.title && !isDefaultRoundTitle;
 
     return (
-      <PublicFrame width="narrow" hideLanguage privateLink step={t('public.step.assessment')}>
+      <PublicFrame width="narrow" privateLink step={t('public.step.assessment')}>
         <div className="w-full">
           <GlassCard className="p-5 sm:p-8">
             {/* Header row */}
@@ -664,7 +743,9 @@ export default function PublicExam() {
                     <span className="text-muted-foreground">
                       {i + 1}. {s.title}
                     </span>
-                    <span className="capitalize text-[var(--ui-soft)]">{s.kind}</span>
+                    <span className="text-[var(--ui-soft)]">
+                      {s.kind === 'coding' ? t('publicExam.kindCoding') : t('publicExam.kindMcq')}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -740,14 +821,14 @@ export default function PublicExam() {
               {startMut.isPending ? (
                 <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
               ) : null}
-              {t('publicExam.startExam')}
+              {storeKey && loadProgress(storeKey)
+                ? t('publicExam.resumeExam')
+                : t('publicExam.startExam')}
             </Button>
 
             {startMut.isError && (
               <p role="alert" className="mt-3 text-center text-[14px] text-[var(--ui-danger)]">
-                {startMut.error instanceof Error
-                  ? startMut.error.message
-                  : t('publicExam.couldNotStart')}
+                {errorText(startMut.error, t('publicExam.couldNotStart'))}
               </p>
             )}
           </GlassCard>
@@ -827,7 +908,7 @@ export default function PublicExam() {
               aria-label={t('publicExam.violationBadgeLabel', { count: violationCount })}
             >
               <AlertTriangle size={11} aria-hidden="true" />
-              {violationCount}/{maxViolations}
+              {maxViolations === null ? violationCount : `${violationCount}/${maxViolations}`}
             </div>
           )}
 
@@ -982,6 +1063,7 @@ export default function PublicExam() {
                   mode="embedded"
                   token={token}
                   questions={currentSection.coding_questions}
+                  initialSubmissions={submissions}
                   onSubmissionsChange={(subs) => setSubmissions((prev) => ({ ...prev, ...subs }))}
                 />
               )}
@@ -1001,16 +1083,26 @@ export default function PublicExam() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Next section button (shown when not on the last section) */}
+            {/* Next section button (shown when not on the last section). The
+                first press asks: there is no way back to a section. */}
             {sectionIndex < sections.length - 1 && (
-              <Button variant="outline" className="h-11" onClick={() => setSectionIndex((i) => i + 1)}>
+              <Button
+                variant="outline"
+                className="h-11"
+                onClick={() => setConfirming('next')}
+                disabled={confirming !== null}
+              >
                 {t('publicExam.nextSection')}
               </Button>
             )}
 
             {/* Submit (shown on last section or when only one section) */}
             {sectionIndex === sections.length - 1 && (
-              <Button className="h-11 px-6" onClick={doSubmit} disabled={submitMut.isPending}>
+              <Button
+                className="h-11 px-6"
+                onClick={() => setConfirming('submit')}
+                disabled={submitMut.isPending || confirming !== null}
+              >
                 {submitMut.isPending ? (
                   <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
                 ) : null}
@@ -1020,11 +1112,53 @@ export default function PublicExam() {
           </div>
         </div>
 
+        {confirming && (
+          <div
+            role="alertdialog"
+            aria-labelledby="exam-confirm-text"
+            data-testid="exam-confirm"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setConfirming(null);
+            }}
+            className="mt-3 rounded-[16px] border border-border bg-card p-4 shadow-card"
+          >
+            <p id="exam-confirm-text" className="text-[14px] text-foreground">
+              {confirming === 'next'
+                ? t('publicExam.confirmNext')
+                : t('publicExam.confirmSubmit')}{' '}
+              {(confirming === 'next' ? unansweredInSection : unansweredInExam) > 0
+                ? t('publicExam.confirmUnanswered', {
+                    count: confirming === 'next' ? unansweredInSection : unansweredInExam,
+                  })
+                : null}
+            </p>
+            <div className="mt-3 flex flex-wrap justify-end gap-2">
+              <Button
+                ref={keepWorkingRef}
+                variant="outline"
+                className="h-11"
+                onClick={() => setConfirming(null)}
+              >
+                {t('publicExam.keepWorking')}
+              </Button>
+              <Button
+                className="h-11 px-6"
+                onClick={() => {
+                  const action = confirming;
+                  setConfirming(null);
+                  if (action === 'next') setSectionIndex((i) => i + 1);
+                  else doSubmit();
+                }}
+              >
+                {confirming === 'next' ? t('publicExam.confirmNextYes') : t('publicExam.submitExam')}
+              </Button>
+            </div>
+          </div>
+        )}
+
         {submitMut.isError && (
           <p role="alert" className="mt-3 text-right text-[14px] text-[var(--ui-danger)]">
-            {submitMut.error instanceof Error
-              ? submitMut.error.message
-              : t('publicExam.submitFailed')}
+            {errorText(submitMut.error, t('publicExam.submitFailed'))}
           </p>
         )}
       </div>
@@ -1039,7 +1173,8 @@ export default function PublicExam() {
       {cameraRequired && cameraConsent === 'granted' && (
         <div
           className={cn(
-            'fixed bottom-6 right-4 z-40 h-28 w-20 overflow-hidden rounded-xl',
+            // Above the sticky footer, where Next and Submit sit (audit CA-M4).
+            'fixed bottom-24 right-4 z-40 h-28 w-20 overflow-hidden rounded-xl',
             'border border-border bg-card shadow-elevated',
             'transition-opacity duration-500',
             cameraAvailable ? 'opacity-100' : 'opacity-0',

@@ -1041,6 +1041,15 @@ const en = {
     },
     // Public exam (applicant magic link)
     publicExam: {
+      confirmNextYes: 'Go to next section',
+      keepWorking: 'Keep working',
+      confirmUnanswered_other: '{{count}} questions are unanswered.',
+      confirmUnanswered_one: '{{count}} question is unanswered.',
+      confirmSubmit: 'Submit the exam? You cannot change your answers after this.',
+      confirmNext: 'Move to the next section? You cannot come back to this one.',
+      resumeExam: 'Resume exam',
+      kindCoding: 'Coding',
+      kindMcq: 'Multiple choice',
       invalidTitle: "This exam link isn't valid",
       invalidDesc:
         'The link may have expired, been revoked, or already been used. Please ask your recruiter for a fresh link.',
@@ -2816,6 +2825,15 @@ const hi = {
       toYourAccount: 'अपने अकाउंट में।',
     },
     publicExam: {
+      confirmNextYes: 'अगले सेक्शन पर जाएँ',
+      keepWorking: 'काम जारी रखें',
+      confirmUnanswered_other: '{{count}} प्रश्नों के उत्तर नहीं दिए गए हैं।',
+      confirmUnanswered_one: '{{count}} प्रश्न का उत्तर नहीं दिया गया है।',
+      confirmSubmit: 'परीक्षा जमा करें? इसके बाद आप अपने उत्तर नहीं बदल सकेंगे।',
+      confirmNext: 'अगले सेक्शन पर जाएँ? आप इस सेक्शन पर वापस नहीं आ सकेंगे।',
+      resumeExam: 'परीक्षा फिर से शुरू करें',
+      kindCoding: 'कोडिंग',
+      kindMcq: 'बहुविकल्पीय',
       invalidTitle: 'यह परीक्षा लिंक मान्य नहीं है',
       invalidDesc:
         'यह लिंक समाप्त हो गया हो, रद्द कर दिया गया हो, या पहले ही उपयोग किया जा चुका हो। कृपया अपने recruiter से नया लिंक मांगें।',
@@ -4523,6 +4541,15 @@ const te = {
       toYourAccount: 'మీ అకౌంట్‌లోకి.',
     },
     publicExam: {
+      confirmNextYes: 'తదుపరి విభాగానికి వెళ్ళండి',
+      keepWorking: 'కొనసాగించండి',
+      confirmUnanswered_other: '{{count}} ప్రశ్నలకు సమాధానం ఇవ్వలేదు.',
+      confirmUnanswered_one: '{{count}} ప్రశ్నకు సమాధానం ఇవ్వలేదు.',
+      confirmSubmit: 'పరీక్షను సమర్పించాలా? దీని తర్వాత మీ సమాధానాలు మార్చలేరు.',
+      confirmNext: 'తదుపరి విభాగానికి వెళ్లాలా? ఈ విభాగానికి మళ్లీ రాలేరు.',
+      resumeExam: 'పరీక్షను కొనసాగించండి',
+      kindCoding: 'కోడింగ్',
+      kindMcq: 'బహుళ ఎంపిక',
       invalidTitle: 'ఈ పరీక్ష లింక్ చెల్లదు',
       invalidDesc:
         'ఈ లింక్ గడువు ముగిసి ఉండవచ్చు, రద్దు చేయబడి ఉండవచ్చు, లేదా ఇప్పటికే ఉపయోగించబడి ఉండవచ్చు. దయచేసి మీ recruiterను కొత్త లింక్ అడగండి.',

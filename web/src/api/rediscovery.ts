@@ -31,6 +31,7 @@
 import type { Citation } from './agent';
 import { apiGet, apiPost, apiPut, ApiError } from './client';
 import { pathId } from './pathId';
+import { errorMessage } from '@/lib/errorMessage';
 
 // ---------------------------------------------------------------------------
 // Shared vocabulary
@@ -315,17 +316,19 @@ export const REDISCOVERY_FAILURE_SENTENCES: Record<string, string> = {
   bad_requisition_id: 'That opening id is not valid.',
   stale_evidence_unreviewed: 'This evidence has not been reviewed recently.',
   consent_not_active: "This person's rediscovery consent is no longer active.",
-  requisition_not_open: 'That opening is not open for new applications.',
+  requisition_not_open: 'That opening is no longer open. Choose another one.',
 };
 
+/** Ours for a code we know, otherwise the shared `errorMessage` rules (a
+ *  server sentence, then status copy, then the fallback), so a validation
+ *  failure never reads "HTTP 422" (audit PL-F12). */
 export function rediscoveryErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) {
-    const detail = error.detail as { failure_code?: string; message?: string } | undefined;
+    const detail = error.detail as { failure_code?: string } | undefined;
     const code = detail?.failure_code;
     if (code && REDISCOVERY_FAILURE_SENTENCES[code]) return REDISCOVERY_FAILURE_SENTENCES[code];
-    return error.message || fallback;
   }
-  return error instanceof Error && error.message ? error.message : fallback;
+  return errorMessage(error, fallback);
 }
 
 // ---------------------------------------------------------------------------

@@ -119,7 +119,7 @@ describe('ProposalCard - commit gate', () => {
   it('renders an approved proposal as done, with no live commit button', () => {
     // The conversation owns the outcome; a card mounted again (the panel was
     // closed and reopened) must not offer "Send invite" a second time.
-    renderCard(PROPOSAL, undefined, { outcome: { state: 'done', link: null }, onOutcome: vi.fn() });
+    renderCard(PROPOSAL, undefined, { outcome: { state: 'done' }, onOutcome: vi.fn() });
     expect(screen.getByText('Completed')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Send invite' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Done' })).toBeDisabled();
@@ -132,10 +132,9 @@ describe('ProposalCard - commit gate', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Send invite' }));
 
     expect(onOutcome).toHaveBeenNthCalledWith(1, 'p-1', { state: 'committing' });
-    expect(onOutcome).toHaveBeenNthCalledWith(2, 'p-1', {
-      state: 'done',
-      link: 'https://app.example/interview-invite#tok',
-    });
+    // The one-time link is a bearer token: it stays in the card and never
+    // reaches the outcome the conversation keeps across close and reopen.
+    expect(onOutcome).toHaveBeenNthCalledWith(2, 'p-1', { state: 'done' });
   });
 
   it('shows the one-time interview link the commit returned, and moves focus to the result', async () => {
@@ -206,8 +205,22 @@ describe('ProposalCard - commit gate', () => {
     expect(commitProposal).not.toHaveBeenCalled();
   });
 
+  it('refuses at click time a draft that expired since the clock last ticked', async () => {
+    const mountedAt = Date.now();
+    renderCard(PROPOSAL, undefined, { receivedAt: mountedAt - PROPOSAL_MAX_AGE_MS + 5_000 });
+    const button = screen.getByRole('button', { name: 'Send invite' });
+    expect(button).toBeEnabled();
+    const later = vi.spyOn(Date, 'now').mockReturnValue(mountedAt + 10_000);
+    try {
+      await userEvent.setup().click(button);
+    } finally {
+      later.mockRestore();
+    }
+    expect(commitProposal).not.toHaveBeenCalled();
+  });
+
   it('keeps the outcome across an unmount when the parent owns it', async () => {
-    commitProposal.mockResolvedValue({});
+    commitProposal.mockResolvedValue({ magic_link: 'https://app.example/interview-invite#tok' });
     function Host(): JSX.Element {
       const [shown, setShown] = useState(true);
       const [outcomes, setOutcomes] = useState<Record<string, CommitOutcome>>({});
@@ -230,10 +243,14 @@ describe('ProposalCard - commit gate', () => {
     render(<Host />);
     await user.click(screen.getByRole('button', { name: 'Send invite' }));
     await screen.findByText('Completed');
+    expect(screen.getByText('https://app.example/interview-invite#tok')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'toggle' }));
     await user.click(screen.getByRole('button', { name: 'toggle' }));
 
     expect(screen.getByText('Completed')).toBeInTheDocument();
+    // The outcome survives the remount; the one-time link does not.
+    expect(screen.queryByText('https://app.example/interview-invite#tok')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy link' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Send invite' })).not.toBeInTheDocument();
     expect(commitProposal).toHaveBeenCalledTimes(1);
   });

@@ -17,6 +17,10 @@
 //      and a second click revoked the link the candidate held and emailed
 //      them twice (audit CP-F1). The local state below is only a fallback for
 //      a card rendered with no conversation around it.
+//   4. The one-time interview link never leaves this card. It is a bearer
+//      token, so it lives in this component's own state only: closing the
+//      panel unmounts the card and drops it, while the conversation keeps
+//      just the "done" state that stops a second commit.
 
 import { useEffect, useRef, useState } from 'react';
 import { commitProposal, type CitationState, type Proposal } from '@/api/agent';
@@ -34,11 +38,7 @@ import EvidenceBanner from './EvidenceBanner';
 /** What happened when the user approved a proposal. Absent = not approved yet. */
 export type CommitOutcome =
   | { state: 'committing' }
-  | {
-      state: 'done';
-      /** A one-time link the endpoint returned (an interview invite's), if any. */
-      link: string | null;
-    }
+  | { state: 'done' }
   | {
       state: 'failed';
       message: string;
@@ -138,12 +138,19 @@ function failureFrom(err: unknown, proposal: Proposal): CommitOutcome {
   };
 }
 
-/** Re-render once a minute so the draft's age (and expiry) stays current. */
-function useMinuteClock(active: boolean): number {
+/**
+ * How often an open card re-reads the clock. Half a minute, so the "Drafted
+ * 4 min ago" label and the expiry notice never lag the real age by more than
+ * that. The commit itself re-checks the age at click time regardless.
+ */
+const DRAFT_AGE_TICK_MS = 30_000;
+
+/** Re-render every DRAFT_AGE_TICK_MS so the draft's age (and expiry) stays current. */
+function useDraftAgeClock(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!active) return undefined;
-    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    const id = window.setInterval(() => setNow(Date.now()), DRAFT_AGE_TICK_MS);
     return () => window.clearInterval(id);
   }, [active]);
   return now;
@@ -158,6 +165,8 @@ export default function ProposalCard({
   receivedAt,
 }: ProposalCardProps): JSX.Element {
   const [localOutcome, setLocalOutcome] = useState<CommitOutcome | undefined>();
+  // Rule 4: held here, never in the outcome the conversation keeps.
+  const [freshLink, setFreshLink] = useState<string | null>(null);
   const controlled = onOutcome !== undefined;
   const outcome = controlled ? controlledOutcome : localOutcome;
   const statusRef = useRef<HTMLParagraphElement>(null);
@@ -168,7 +177,7 @@ export default function ProposalCard({
   const state = outcome?.state ?? 'idle';
   const isDone = state === 'done';
   const draftedAt = receivedAt ?? Date.parse(proposal.created_at);
-  const now = useMinuteClock(!isDone && Number.isFinite(draftedAt));
+  const now = useDraftAgeClock(!isDone && Number.isFinite(draftedAt));
   const age = Number.isFinite(draftedAt) ? Math.max(0, now - draftedAt) : 0;
   const expired = !isDone && state !== 'committing' && age > PROPOSAL_MAX_AGE_MS;
 
@@ -189,11 +198,14 @@ export default function ProposalCard({
 
   async function handleCommit(): Promise<void> {
     if (state === 'committing' || isDone || expired) return;
+    // The rendered clock may be up to one tick behind; the click is what counts.
+    if (Number.isFinite(draftedAt) && Date.now() - draftedAt > PROPOSAL_MAX_AGE_MS) return;
     record({ state: 'committing' });
     focusStatusOnDone.current = true;
     try {
       const response = await commitProposal(proposal);
-      record({ state: 'done', link: linkFrom(response) });
+      setFreshLink(linkFrom(response));
+      record({ state: 'done' });
       toast.success(`${proposal.title} - done`);
       onCommitted?.(proposal);
     } catch (err) {
@@ -216,7 +228,7 @@ export default function ProposalCard({
   }
 
   const failed = outcome?.state === 'failed' ? outcome : null;
-  const link = outcome?.state === 'done' ? outcome.link : null;
+  const link = isDone ? freshLink : null;
 
   return (
     <div role="group" aria-label={`Proposal: ${proposal.title}`}>
@@ -309,7 +321,7 @@ export default function ProposalCard({
             <p className="font-medium text-foreground">Interview link (shown once)</p>
             <p className="text-[12.5px] text-muted-foreground">
               The candidate has been emailed this link. Copy it now if you need to send it another
-              way.
+              way. It disappears when you close the assistant.
             </p>
             <div className="flex items-center gap-2">
               <code className="min-w-0 flex-1 truncate rounded bg-[var(--ui-inset)] px-2 py-1 font-mono text-[12px] text-foreground">

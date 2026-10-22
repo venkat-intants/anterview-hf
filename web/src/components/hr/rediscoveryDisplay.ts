@@ -61,7 +61,14 @@ export const INELIGIBLE_REASON_LABEL: Record<PoolIneligibleReason, string> = {
   erasure_requested: 'Erasure requested',
 };
 
-export function ineligibleReasonLabel(reason: string | undefined): string {
-  if (!reason) return 'Not eligible';
+/**
+ * No reason at all means the person never opted in to being kept for future
+ * openings: the ordinary case for a manually added member (audit PL-F6). Say
+ * that, rather than a bare "Not eligible" that reads like a fault.
+ */
+export const NOT_OPTED_IN_LABEL = 'Not opted in to future openings';
+
+export function ineligibleReasonLabel(reason: string | null | undefined): string {
+  if (!reason) return NOT_OPTED_IN_LABEL;
   return INELIGIBLE_REASON_LABEL[reason as PoolIneligibleReason] ?? reason;
 }

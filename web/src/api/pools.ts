@@ -37,6 +37,7 @@ import type {
 } from './rediscovery';
 import { apiDelete, apiGet, apiPatch, apiPost, ApiError } from './client';
 import { pathId } from './pathId';
+import { errorMessage } from '@/lib/errorMessage';
 
 /**
  * What this CLIENT can know about a match reason: everything except
@@ -99,7 +100,8 @@ export type PoolIneligibleReason = 'consent_withdrawn' | 'consent_expired' | 'er
  * panel, no Review evidence, no Invite) even though the name still renders —
  * HR already holds this person under the APPLICATION consent, a separate
  * purpose from rediscovery (design §4.3). Only `Remove` is ever offered on an
- * ineligible row.
+ * ineligible row, and the server withholds `match_reason`, the freshness band
+ * and the review stamp for it, so the screen has nothing to leak either.
  */
 export interface PoolMemberOut {
   member_id: string;
@@ -115,6 +117,11 @@ export interface PoolMemberOut {
   evidence_freshness?: RediscoveryHeaderFreshness;
   evidence_reviewed_at?: string;
   evidence_reviewed_by_name?: string;
+  /** Whether the review above still clears the invite gate. A review expires
+   *  (`rediscovery_review_valid_days` server-side); once it has, the screen
+   *  says so and offers a new review instead of "re-checked". */
+  review_current?: boolean;
+  review_expires_at?: string;
   eligible: boolean;
   ineligible_reason?: PoolIneligibleReason;
   opted_in_at?: string;
@@ -145,7 +152,30 @@ export interface DeletePoolResult {
   members_removed: number;
 }
 
-export type AddMemberSkipReason = 'already_a_member' | 'not_this_company' | 'pool_full' | 'not_eligible';
+export type AddMemberSkipReason =
+  | 'already_a_member'
+  | 'not_this_company'
+  | 'pool_full'
+  | 'not_eligible'
+  | 'erasure_requested';
+
+/** Why one person was not added, in words HR can act on. Shared by the pools
+ *  page's Add candidates dialog and Rediscovery's Add to pool dialog. */
+export const SKIP_REASON_LABEL: Record<AddMemberSkipReason, string> = {
+  already_a_member: 'Already a member of this pool',
+  not_this_company: "Not one of your company's applicants",
+  pool_full: 'This pool is already full',
+  not_eligible: 'Their rediscovery consent is not active',
+  erasure_requested: 'They have asked for their data to be erased',
+};
+
+export function skipReasonLabel(reason: string): string {
+  return SKIP_REASON_LABEL[reason as AddMemberSkipReason] ?? 'Could not be added';
+}
+
+/** The server takes at most this many applicant ids per add call
+ *  (`schemas/pools.py::MemberAddIn.applicant_ids`). */
+export const MAX_ADD_PER_CALL = 100;
 
 export interface AddMembersResult {
   added: string[];
@@ -275,33 +305,42 @@ export function inviteMember(
 // is the same reading, not a second implementation of it).
 // ---------------------------------------------------------------------------
 
+// `invalid_name` is deliberately NOT mapped: the server raises it for a long
+// note, a long removal reason and a bad applicant id as well as a bad name, and
+// its own sentence says which. Mapping it to one line here showed "Give the
+// pool a name." for a removal reason that was too long.
 export const POOL_FAILURE_SENTENCES: Record<string, string> = {
   pool_name_taken: 'A pool with that name already exists.',
   pool_full: 'This pool already has as many members as it can hold.',
-  pool_limit_reached: "Your company has reached its limit on talent pools.",
+  pool_limit_reached:
+    'Your company has reached its limit on talent pools. Archived pools count, so delete one you no longer need.',
   pool_not_found: 'That pool could not be found.',
+  pool_archived: 'This pool is archived. Restore it before adding or inviting candidates.',
   member_not_found: 'That member could not be found.',
-  not_eligible: 'This candidate cannot be added right now - their rediscovery consent is not active.',
-  invalid_name: 'Give the pool a name.',
-  requisition_not_open: 'That opening is not open for new applications.',
+  not_eligible: "This person's rediscovery consent is not active, so they cannot be contacted.",
+  requisition_not_open: 'That opening is no longer open. Choose another one.',
   stale_evidence_unreviewed: 'This evidence has not been reviewed recently.',
   consent_not_active: "This person's rediscovery consent is no longer active.",
 };
 
+/** The failure code the server put on a structured pools error, if any. */
+export function poolFailureCode(error: unknown): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  const detail = error.detail as { failure_code?: string } | undefined;
+  return detail?.failure_code;
+}
+
+/** A sentence for a pools error: ours for a code we know, otherwise the shared
+ *  `errorMessage` rules (a server sentence, then status copy, then the
+ *  fallback), so a validation failure never reads "HTTP 422". */
 export function poolErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ApiError) {
-    const detail = error.detail as { failure_code?: string; message?: string } | undefined;
-    const code = detail?.failure_code;
-    if (code && POOL_FAILURE_SENTENCES[code]) return POOL_FAILURE_SENTENCES[code];
-    return error.message || fallback;
-  }
-  return error instanceof Error && error.message ? error.message : fallback;
+  const code = poolFailureCode(error);
+  if (code && POOL_FAILURE_SENTENCES[code]) return POOL_FAILURE_SENTENCES[code];
+  return errorMessage(error, fallback);
 }
 
 /** True when an `ApiError` carries the criterion-14 gate's own failure code —
  *  the one 422 `inviteMember`'s caller must treat as "ask, don't fail". */
 export function isStaleEvidenceUnreviewed(error: unknown): boolean {
-  if (!(error instanceof ApiError)) return false;
-  const detail = error.detail as { failure_code?: string } | undefined;
-  return detail?.failure_code === 'stale_evidence_unreviewed';
+  return poolFailureCode(error) === 'stale_evidence_unreviewed';
 }

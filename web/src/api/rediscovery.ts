@@ -196,17 +196,25 @@ export interface RediscoveryUniverseResponse {
  * citation in it carries no `href` — see `RediscoveryCitation`'s own note.
  *
  * `frozen_at` is the moment to show ("Added from a rediscovery search on 24
- * Sep 2026") — never re-derive a date from anything inside `why`.
+ * Sep 2026") — never re-derive a date from anything inside `why`. The server
+ * stamps it on add (`talent_pools._sanitise_match_reason`) and fills it from
+ * the member's `added_at` for rows written before it did.
+ *
+ * What the server STORES is `frozen_at`, `breakdown`, `why`, `searched_at`
+ * and `query_terms` (its field allowlist). The headline fields below are what
+ * the client sends from a live result; they are optional here because the
+ * stored snapshot does not keep them, and a reader must not count on them.
  */
 export interface RediscoveryMatchReasonSnapshot {
   frozen_at: string;
-  score: number;
-  explained: boolean;
-  breakdown: RediscoveryBreakdown;
-  evidence_freshness: RediscoveryHeaderFreshness;
-  requires_review: boolean;
-  review_reasons: string[];
+  score?: number;
+  explained?: boolean;
+  breakdown?: RediscoveryBreakdown | null;
+  evidence_freshness?: RediscoveryHeaderFreshness;
+  requires_review?: boolean;
+  review_reasons?: string[];
   why: RediscoveryWhyItem[];
+  query_terms?: string[];
 }
 
 // ---------------------------------------------------------------------------

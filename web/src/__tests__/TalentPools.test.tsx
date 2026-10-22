@@ -13,7 +13,7 @@
 //      retry), never a client-side guess.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -117,8 +117,10 @@ function applicant(over: Partial<Applicant> = {}): Applicant {
   };
 }
 
+let client: QueryClient;
+
 function renderPage(path = '/hr/pools') {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
@@ -143,9 +145,27 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('TalentPools - list', () => {
-  it('shows an empty state when there are no pools', async () => {
+  it('shows an empty state that mentions hidden archived pools', async () => {
     renderPage();
+    expect(await screen.findByText('No active pools')).toBeInTheDocument();
+    expect(screen.getByText(/Archived pools are hidden/)).toBeInTheDocument();
+  });
+
+  it('says "No pools yet" once archived pools are included and there are none', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('No active pools');
+    await user.click(screen.getByLabelText('Show archived'));
     expect(await screen.findByText('No pools yet')).toBeInTheDocument();
+    expect(api.listPools).toHaveBeenLastCalledWith(true);
+  });
+
+  it('shows a retryable error panel, not an empty list, when the load fails', async () => {
+    api.listPools.mockRejectedValue(new ApiError('Service unavailable', 503));
+    renderPage();
+    expect(await screen.findByText('Could not load your talent pools.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.queryByText('No active pools')).not.toBeInTheDocument();
   });
 
   it('lists a pool with its member count, creator and updated date', async () => {
@@ -164,7 +184,7 @@ describe('TalentPools - list', () => {
     const user = userEvent.setup();
     api.createPool.mockResolvedValue(pool({ id: 'pool-2', name: 'New pool' }));
     renderPage();
-    await screen.findByText('No pools yet');
+    await screen.findByText('No active pools');
 
     await user.click(screen.getByRole('button', { name: 'New pool' }));
     await user.type(screen.getByLabelText('Name'), '  New pool  ');
@@ -197,7 +217,48 @@ describe('TalentPools - list', () => {
     );
   });
 
-  it('archives a pool, and the same control restores it', async () => {
+  // PL-L2: a blank rename said nothing and did nothing; Escape did nothing.
+  it('refuses a blank rename with an inline message, and Escape cancels the edit', async () => {
+    const user = userEvent.setup();
+    api.listPools.mockResolvedValue({
+      pools: [pool()],
+      limits: { max_per_company: 100, max_members: 2000 },
+    });
+    renderPage();
+    await screen.findByText('Fitters, Vizag');
+
+    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    const input = screen.getByLabelText('Rename Fitters, Vizag');
+    expect(input).toHaveAttribute('maxLength', '120');
+    await user.clear(input);
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(screen.getByText('Give the pool a name.')).toBeInTheDocument();
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(api.updatePool).not.toHaveBeenCalled();
+
+    await user.keyboard('{Escape}');
+    expect(screen.queryByLabelText('Rename Fitters, Vizag')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Fitters, Vizag' })).toBeInTheDocument();
+  });
+
+  it('disables Save while a rename is in flight, so it cannot be sent twice', async () => {
+    const user = userEvent.setup();
+    api.listPools.mockResolvedValue({
+      pools: [pool()],
+      limits: { max_per_company: 100, max_members: 2000 },
+    });
+    api.updatePool.mockReturnValue(new Promise(() => undefined));
+    renderPage();
+    await screen.findByText('Fitters, Vizag');
+
+    await user.click(screen.getByRole('button', { name: 'Rename' }));
+    await user.type(screen.getByLabelText('Rename Fitters, Vizag'), ' B');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(api.updatePool).toHaveBeenCalledTimes(1);
+  });
+
+  it('archives a pool without a confirm and offers Restore in the toast', async () => {
     const user = userEvent.setup();
     api.listPools.mockResolvedValue({
       pools: [pool()],
@@ -211,6 +272,13 @@ describe('TalentPools - list', () => {
     await waitFor(() =>
       expect(api.updatePool).toHaveBeenCalledWith('pool-1', { archived: true }),
     );
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    const [message, opts] = toastSuccess.mock.calls[0] as [
+      string,
+      { action?: { label?: string } } | undefined,
+    ];
+    expect(message).toBe('Pool archived');
+    expect(opts?.action?.label).toBe('Restore');
   });
 
   it('names how many members go with the pool before deleting it', async () => {
@@ -225,13 +293,13 @@ describe('TalentPools - list', () => {
     await user.click(screen.getByRole('button', { name: 'Delete' }));
     // MUTATION CHECK: this line is the one this test exists to pin. Deleting
     // the `p.member_count` interpolation from TalentPools.tsx's confirm text
-    // (replacing it with a generic "Are you sure?") turns this query red.
-    // Verified by hand: broken, watched fail, restored, watched pass again.
-    expect(screen.getByText(/Delete this pool and its 7 members\?/)).toBeInTheDocument();
+    // (replacing it with a generic "Delete") turns this query red.
+    const group = screen.getByRole('group', { name: /confirm deleting fitters, vizag/i });
+    const confirm = within(group).getByRole('button', { name: 'Delete pool and 7 members' });
+    expect(api.deletePool).not.toHaveBeenCalled();
 
     api.deletePool.mockResolvedValue({ deleted: true, members_removed: 7 });
-    const group = screen.getByRole('group', { name: /confirm deleting/i });
-    await user.click(within(group).getByRole('button', { name: 'Delete' }));
+    await user.click(confirm);
 
     await waitFor(() => expect(api.deletePool).toHaveBeenCalledWith('pool-1'));
     await waitFor(() =>
@@ -285,15 +353,41 @@ describe('TalentPools - pool detail', () => {
           evidence_freshness: 'ageing',
           evidence_reviewed_at: '2026-09-24T00:00:00Z',
           evidence_reviewed_by_name: 'Priya Nair',
+          review_current: true,
         }),
       ],
     });
     renderPage('/hr/pools/pool-1');
     expect(await screen.findByText(/Evidence re-checked by Priya Nair on/)).toBeInTheDocument();
     expect(screen.queryByText('Evidence not re-checked')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Mark evidence reviewed' }),
+    ).not.toBeInTheDocument();
   });
 
-  it('marks evidence reviewed on request', async () => {
+  // PL-F3: a review expires server-side; the row used to go on saying
+  // "re-checked" and hid the button, so HR could never review again.
+  it('says an expired review has expired and offers a new review', async () => {
+    api.getPool.mockResolvedValue({
+      pool: pool(),
+      members: [
+        member({
+          evidence_freshness: 'stale',
+          evidence_reviewed_at: '2025-01-10T00:00:00Z',
+          evidence_reviewed_by_name: 'Priya Nair',
+          review_current: false,
+        }),
+      ],
+    });
+    renderPage('/hr/pools/pool-1');
+    expect(await screen.findByText(/Review from .* has expired/)).toBeInTheDocument();
+    expect(screen.queryByText(/Evidence re-checked by/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark evidence reviewed' })).toBeInTheDocument();
+  });
+
+  // PL-L6: the review is an attestation in a person's name; one stray click
+  // used to record it.
+  it('marks evidence reviewed only after an explicit confirm', async () => {
     const user = userEvent.setup();
     api.getPool.mockResolvedValue({
       pool: pool(),
@@ -306,7 +400,56 @@ describe('TalentPools - pool detail', () => {
     await screen.findByText('Asha K');
 
     await user.click(screen.getByRole('button', { name: 'Mark evidence reviewed' }));
+    expect(api.markEvidenceReviewed).not.toHaveBeenCalled();
+    const group = screen.getByRole('group', { name: /confirm reviewing evidence for asha k/i });
+    expect(within(group).getByRole('button', { name: 'Cancel' })).toHaveFocus();
+    await user.click(within(group).getByRole('button', { name: 'Confirm review' }));
     await waitFor(() => expect(api.markEvidenceReviewed).toHaveBeenCalledWith('pool-1', 'mem-1'));
+  });
+
+  it('backs out of the review confirm with Escape and returns focus to the trigger', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [member()] });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('button', { name: 'Mark evidence reviewed' }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('group', { name: /confirm reviewing/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Mark evidence reviewed' })).toHaveFocus();
+    expect(api.markEvidenceReviewed).not.toHaveBeenCalled();
+  });
+
+  // PL-F6: "Not eligible" with no reason read like a fault for the ordinary
+  // manual add who simply never opted in.
+  it('labels a member who never opted in as such', async () => {
+    api.getPool.mockResolvedValue({
+      pool: pool(),
+      members: [member({ eligible: false, ineligible_reason: undefined })],
+    });
+    renderPage('/hr/pools/pool-1');
+    expect(await screen.findByText('Not opted in to future openings')).toBeInTheDocument();
+    expect(screen.queryByText('Not eligible')).not.toBeInTheDocument();
+  });
+
+  // PL-L3: an archived pool looked live and still allowed add and invite.
+  it('marks an archived pool and turns off adding', async () => {
+    api.getPool.mockResolvedValue({
+      pool: pool({ archived_at: '2026-09-20T00:00:00Z' }),
+      members: [member()],
+    });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+    expect(screen.getByText(/This pool is archived/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add candidates' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Add to an opening' })).not.toBeInTheDocument();
+  });
+
+  it('shows a retryable error panel when the pool cannot be loaded', async () => {
+    api.getPool.mockRejectedValue(new ApiError('Pool not found.', 404));
+    renderPage('/hr/pools/pool-1');
+    expect(await screen.findByText('Could not load this pool.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------
@@ -362,8 +505,34 @@ describe('TalentPools - pool detail', () => {
       within(row).queryByRole('button', { name: /mark evidence reviewed/i }),
     ).not.toBeInTheDocument();
     expect(
-      within(row).queryByRole('button', { name: /invite to an opening/i }),
+      within(row).queryByRole('button', { name: /add to an opening/i }),
     ).not.toBeInTheDocument();
+  });
+
+  // PL-F1: the evidence chip, the review line and the frozen match panel all
+  // rendered for an ineligible member, because the toggle keyed on
+  // `match_reason` alone. Even if a stale or hostile payload still carries
+  // them, an ineligible row must show none of them.
+  it('shows an ineligible member no evidence band, review line or match details', async () => {
+    api.getPool.mockResolvedValue({
+      pool: pool(),
+      members: [
+        member({
+          source: 'rediscovery',
+          eligible: false,
+          ineligible_reason: 'erasure_requested',
+          evidence_freshness: 'stale',
+          match_reason: { frozen_at: '2026-09-01T00:00:00Z', why: [] },
+        }),
+      ],
+    });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+
+    expect(screen.getByText('Erasure requested')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /why this match/i })).not.toBeInTheDocument();
+    expect(screen.queryByText('Stale')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Evidence not re-checked/)).not.toBeInTheDocument();
   });
 
   it('removes a member after a confirm, with an optional reason', async () => {
@@ -375,12 +544,19 @@ describe('TalentPools - pool detail', () => {
 
     await user.click(screen.getByRole('button', { name: /remove/i }));
     const group = screen.getByRole('group', { name: /confirm removing/i });
-    await user.type(within(group).getByLabelText(/reason for removing/i), 'Duplicate');
+    const reason = within(group).getByLabelText(/reason for removing/i);
+    expect(reason).toHaveFocus();
+    expect(reason).toHaveAttribute('maxLength', '200');
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    await user.type(reason, 'Duplicate');
     await user.click(within(group).getByRole('button', { name: 'Remove' }));
 
     await waitFor(() =>
       expect(api.removePoolMember).toHaveBeenCalledWith('pool-1', 'mem-1', 'Duplicate'),
     );
+    // PL-L1: the pools list's member count must refresh too, so the whole HR
+    // prefix is invalidated, not only this pool's detail key.
+    await waitFor(() => expect(invalidate).toHaveBeenCalledWith({ queryKey: ['hr'] }));
   });
 
   it('cancels a remove without calling the API', async () => {
@@ -395,6 +571,8 @@ describe('TalentPools - pool detail', () => {
 
     expect(screen.queryByRole('group', { name: /confirm removing/i })).not.toBeInTheDocument();
     expect(api.removePoolMember).not.toHaveBeenCalled();
+    // PL-L10/F29: focus goes back to the control that opened the confirm.
+    expect(screen.getByRole('button', { name: /remove/i })).toHaveFocus();
   });
 
   it('opens the frozen match-reason snapshot, labelled as one, never re-computed', async () => {
@@ -441,9 +619,16 @@ describe('TalentPools - pool detail', () => {
     renderPage('/hr/pools/pool-1');
     await screen.findByText('Asha K');
 
-    await user.click(screen.getByRole('button', { name: /why this match/i }));
+    const toggle = screen.getByRole('button', { name: /why this match/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(screen.getByRole('button', { name: /hide match details/i })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+    // PL-F2: the date is the snapshot's own, never "-".
     expect(
-      screen.getByText(/Added from a rediscovery search on/),
+      screen.getByText(/Added from a rediscovery search on 24 Sept? 2026/),
     ).toBeInTheDocument();
     // Facts, not a link — the frozen citation carries no href (design §6.4).
     expect(screen.getByText('Round 2')).toBeInTheDocument();
@@ -476,8 +661,10 @@ describe('TalentPools - pool detail', () => {
 // Invite — the criterion-14 gate reacts to the server's 422, never guesses it
 // ---------------------------------------------------------------------------
 
-describe('TalentPools - invite to an opening', () => {
-  it('invites directly when the server does not ask for an acknowledgement', async () => {
+describe('TalentPools - add to an opening', () => {
+  // PL-F4: the action enrols the candidate and contacts nobody, so the copy
+  // says "Add to an opening" / "Added to <opening>", never "Invited".
+  it('adds directly when the server does not ask for an acknowledgement', async () => {
     const user = userEvent.setup();
     api.getPool.mockResolvedValue({ pool: pool(), members: [member()] });
     api.inviteMember.mockResolvedValue({
@@ -488,9 +675,9 @@ describe('TalentPools - invite to an opening', () => {
     renderPage('/hr/pools/pool-1');
     await screen.findByText('Asha K');
 
-    await user.click(screen.getByRole('button', { name: 'Invite to an opening' }));
+    await user.click(screen.getByRole('button', { name: 'Add to an opening' }));
     await user.selectOptions(await screen.findByLabelText('Opening'), 'req-1');
-    await user.click(screen.getByRole('button', { name: 'Invite' }));
+    await user.click(screen.getByRole('button', { name: 'Add' }));
 
     await waitFor(() =>
       expect(api.inviteMember).toHaveBeenCalledWith('pool-1', 'mem-1', {
@@ -498,6 +685,76 @@ describe('TalentPools - invite to an opening', () => {
         acknowledgedStale: false,
       }),
     );
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Added to Maintenance Fitter'));
+    expect(listRequisitions).toHaveBeenCalledWith({ status: 'open', limit: 200 });
+  });
+
+  it('says "Already in" rather than "Already invited" for an existing enrolment', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [member()] });
+    api.inviteMember.mockResolvedValue({
+      enrolment_id: 'enr-1',
+      requisition_id: 'req-1',
+      already_enrolled: true,
+    });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('button', { name: 'Add to an opening' }));
+    await user.selectOptions(await screen.findByLabelText('Opening'), 'req-1');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith('Already in Maintenance Fitter'),
+    );
+  });
+
+  // PL-L4: an empty select and a dead button, with no word as to why.
+  it('says so when no openings are open', async () => {
+    const user = userEvent.setup();
+    listRequisitions.mockResolvedValue([]);
+    api.getPool.mockResolvedValue({ pool: pool(), members: [member()] });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('button', { name: 'Add to an opening' }));
+    expect(await screen.findByText(/No openings are open right now/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Opening')).not.toBeInTheDocument();
+  });
+
+  it('refreshes the openings after the chosen one has closed', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [member()] });
+    api.inviteMember.mockRejectedValue(
+      new ApiError('That opening is not open for applications.', 409, {
+        failure_code: 'requisition_not_open',
+        message: 'That opening is not open for applications.',
+      }),
+    );
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('button', { name: 'Add to an opening' }));
+    await user.selectOptions(await screen.findByLabelText('Opening'), 'req-1');
+    expect(listRequisitions).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('That opening is no longer open. Choose another one.'),
+    );
+    await waitFor(() => expect(listRequisitions).toHaveBeenCalledTimes(2));
+  });
+
+  it('closes the panel on Escape and returns focus to its trigger', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [member()] });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('button', { name: 'Add to an opening' }));
+    expect(await screen.findByLabelText('Opening')).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByLabelText('Opening')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Add to an opening' })).toHaveFocus();
   });
 
   it('asks for an acknowledgement on a 422, then retries with it - never pre-guessed client-side', async () => {
@@ -513,19 +770,19 @@ describe('TalentPools - invite to an opening', () => {
     renderPage('/hr/pools/pool-1');
     await screen.findByText('Asha K');
 
-    await user.click(screen.getByRole('button', { name: 'Invite to an opening' }));
+    await user.click(screen.getByRole('button', { name: 'Add to an opening' }));
     await user.selectOptions(await screen.findByLabelText('Opening'), 'req-1');
-    await user.click(screen.getByRole('button', { name: 'Invite' }));
+    await user.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(
-      await screen.findByText(/This evidence has not been reviewed recently/),
+      await screen.findByText(/This candidate has no recently reviewed evidence/),
     ).toBeInTheDocument();
     // MUTATION CHECK performed by hand: temporarily hard-coded `needsAck` to
     // `false` after the catch (i.e. swallowed the 422 silently) — this
     // assertion went red (no acknowledgement text ever appeared). Reverted.
     expect(api.inviteMember).toHaveBeenCalledTimes(1);
 
-    await user.click(screen.getByRole('button', { name: 'Invite anyway' }));
+    await user.click(screen.getByRole('button', { name: 'Add anyway' }));
     await waitFor(() =>
       expect(api.inviteMember).toHaveBeenLastCalledWith('pool-1', 'mem-1', {
         requisitionId: 'req-1',
@@ -638,8 +895,70 @@ describe('TalentPools - add candidates manually', () => {
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith('1 candidate could not be added'),
     );
-    // The dialog stays open on a partial skip — Cancel is still there.
-    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    // The dialog stays open on a partial skip, and its footer now offers
+    // Close instead of Cancel (the dialog's own corner X is also "Close").
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Close' }).length).toBeGreaterThanOrEqual(2);
+  });
+
+  // PL-F5: the server refuses a person with a pending erasure request; the
+  // dialog names that reason rather than a generic one.
+  it('names an erasure request as the reason a candidate was not added', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [] });
+    listApplicants.mockResolvedValue([applicant({ id: 'app-2', full_name: 'Zara Khan' })]);
+    api.addPoolMembers.mockResolvedValue({
+      added: [],
+      skipped: [{ applicant_id: 'app-2', reason: 'erasure_requested' }],
+    });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText(/No members yet/);
+    await user.click(screen.getByRole('button', { name: 'Add candidates' }));
+    await user.click(await screen.findByRole('checkbox', { name: /Zara Khan/i }));
+    await user.click(screen.getByRole('button', { name: /Add 1 candidate/i }));
+
+    const notAdded = await screen.findByRole('status');
+    expect(
+      within(notAdded).getByText(/Zara Khan: They have asked for their data to be erased/),
+    ).toBeInTheDocument();
+  });
+
+  // PL-F6: warn before adding that only opted-in candidates can be put
+  // forward later.
+  it('explains up front that only opted-in candidates can later go to an opening', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [] });
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText(/No members yet/);
+    await user.click(screen.getByRole('button', { name: 'Add candidates' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(
+      within(dialog).getByText(/Only candidates who opted in to future openings/),
+    ).toBeInTheDocument();
+  });
+
+  // PL-F12: the server takes at most 100 ids per call; picking a 101st used
+  // to come back as a validation error.
+  it('stops the selection at 100 candidates', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({ pool: pool(), members: [] });
+    listApplicants.mockResolvedValue(
+      Array.from({ length: 101 }, (_, i) =>
+        applicant({ id: `app-${i}`, full_name: `Person ${String(i).padStart(3, '0')}` }),
+      ),
+    );
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText(/No members yet/);
+    await user.click(screen.getByRole('button', { name: 'Add candidates' }));
+    const dialog = await screen.findByRole('dialog');
+    const boxes = await within(dialog).findAllByRole('checkbox');
+    expect(boxes).toHaveLength(101);
+    for (const box of boxes.slice(0, 100)) fireEvent.click(box);
+
+    expect(within(dialog).getByText(/You can add up to 100 at a time/)).toBeInTheDocument();
+    expect(boxes[100]).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Add 100 candidates' })).toBeEnabled();
   });
 
   it('does not offer applicants already in this pool as a fresh choice', async () => {

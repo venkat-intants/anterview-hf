@@ -149,7 +149,8 @@ export default function HRConsole() {
       note: weekDelta ?? (a?.avg_ats != null ? `avg ATS ${formatScore('resume', a.avg_ats)}` : undefined),
       to: '/hr/applicants',
     },
-    { label: 'Shortlisted', value: f?.shortlisted, to: '/hr/applicants' },
+    // HR-L9: each tile opens the list it counts, already filtered.
+    { label: 'Shortlisted', value: f?.shortlisted, to: '/hr/applicants?status=shortlisted' },
     {
       label: 'Exam passed',
       value: f?.exam_passed,
@@ -157,7 +158,7 @@ export default function HRConsole() {
         a?.avg_exam_percent != null
           ? `${formatScore('exam', a.avg_exam_percent)} avg`
           : undefined,
-      to: '/hr/applicants',
+      to: '/hr/pipeline?stage=exam_passed',
     },
     {
       label: 'Interviewed',
@@ -189,19 +190,23 @@ export default function HRConsole() {
       <PageHeader
         title={
           <span data-testid="page-title">
-            {meLoading ? 'HR Console' : name ? `Welcome, ${name}` : 'HR Console'}
+            {/* HR-L8: the nav calls this page "Hiring". */}
+            {meLoading ? 'Hiring' : name ? `Welcome, ${name}` : 'Hiring'}
           </span>
         }
         description="Start with what needs you today, then check how the pipeline is moving."
         actions={
           <>
+            {/* HR-L9 / HR-M10: labelled for where they go. The exams page
+                lists exams (creating one is a step there), and the applicants
+                page uploads resumes; it has no invite flow. */}
             <Button asChild variant="outline">
-              <Link to="/hr/exams">
-                <Plus aria-hidden="true" /> Create exam
-              </Link>
+              <Link to="/hr/exams">Exams</Link>
             </Button>
             <Button asChild>
-              <Link to="/hr/applicants">Invite applicant</Link>
+              <Link to="/hr/applicants">
+                <Plus aria-hidden="true" /> Upload resumes
+              </Link>
             </Button>
           </>
         }

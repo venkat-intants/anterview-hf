@@ -6,6 +6,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import StageSettings from '../components/workflow/StageSettings';
+import { ApiError } from '../api/client';
 
 const getStages = vi.fn();
 const listStageOwners = vi.fn();
@@ -123,6 +124,24 @@ describe('StageSettings', () => {
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith('An SLA is between 1 and 8760 hours.'),
+    );
+  });
+
+  it('says what failed in plain words when the server sent no sentence (audit C1)', async () => {
+    getStages.mockResolvedValue([
+      { round_id: 'r-1', stage: 'Fundamentals', kind: 'mcq', owner_user_id: null, owner_name: null, sla_hours: null },
+    ]);
+    setStage.mockRejectedValue(new ApiError('HTTP 503', 503, undefined, false));
+    const user = userEvent.setup();
+    renderPanel('r-1', 'Fundamentals');
+    await screen.findByText('Priya HR');
+
+    await user.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        'Could not save this stage. Try again in a moment.',
+      ),
     );
   });
 });

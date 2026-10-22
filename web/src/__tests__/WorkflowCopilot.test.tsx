@@ -364,7 +364,7 @@ describe('WorkflowCopilot - what it sends', () => {
       note: '',
     });
     renderBuilder();
-    await screen.findByText('Backend Engineer');
+    await screen.findByRole('heading', { name: 'Backend Engineer' });
 
     expect(screen.queryByLabelText('Ask the design assistant')).toBeNull();
   });

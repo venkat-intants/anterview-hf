@@ -23,6 +23,7 @@ import CitationChips, { CitedText } from '@/components/agent/CitationChips';
 import EvidenceBanner from '@/components/agent/EvidenceBanner';
 import { AlertTriangle, Loader2, Send, Sparkles } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
+import { errorMessage } from '@/lib/errorMessage';
 
 interface Turn {
   role: 'user' | 'assistant';
@@ -116,10 +117,7 @@ export default function WorkflowCopilot({
         ...prev,
         {
           role: 'assistant',
-          text:
-            err instanceof Error
-              ? `I could not answer that: ${err.message}`
-              : 'I could not reach the assistant. Try again in a moment.',
+          text: errorMessage(err, 'I could not answer that.'),
         },
       ]);
     } finally {

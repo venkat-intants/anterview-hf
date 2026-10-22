@@ -15,12 +15,29 @@ import { AlertTriangle, Copy, ExternalLink, Globe } from '@/design/components/ic
 import { SectionCard } from '@/design/components/page';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import { queryKeys } from '@/lib/queryKeys';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
+import { errorMessage } from '@/lib/errorMessage';
+import { closingDatePassed } from '@/lib/openingList';
 import { updateRequisition, type Requisition } from '@/api/requisitions';
 import GovernancePanel from '@/components/workflow/GovernancePanel';
 
+/** The shared error copy (errorMessage), with this file's period-less fallbacks. */
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, `${fallback}.`);
+}
+
+/**
+ * HR-L11: copy, and say so only when it worked. The toast used to fire even
+ * with no clipboard API (a non-HTTPS origin) or a refused write.
+ */
+async function copyLink(link: string): Promise<void> {
+  try {
+    if (!navigator.clipboard) throw new Error('no clipboard');
+    await navigator.clipboard.writeText(link);
+    toast.success('Link copied');
+  } catch {
+    toast.error('Could not copy the link. Select it and copy it yourself.');
+  }
 }
 
 /** The apply switch. Same look as `ToggleSwitch`, which cannot be disabled. */
@@ -68,6 +85,7 @@ export function PublicApplyCard({
   status,
   approved,
   hasWorkflow,
+  closesAt = null,
 }: {
   requisitionId: string;
   enabled: boolean;
@@ -76,19 +94,21 @@ export function PublicApplyCard({
   approved: boolean;
   /** No published workflow: the link refuses applications until there is one. */
   hasWorkflow: boolean;
+  /** HR-M9: past this date the public gate refuses applications. */
+  closesAt?: string | null;
 }): JSX.Element {
   const qc = useQueryClient();
   const gateId = useId();
   const link = `${window.location.origin}/apply/${requisitionId}`;
   const gated = !enabled && !approved;
+  const datePassed = closingDatePassed({ closes_at: closesAt });
 
   const mut = useMutation({
     mutationFn: (next: boolean) => updateRequisition(requisitionId, { public_apply_enabled: next }),
     onSuccess: (_r, next) => {
-      toast.success(next ? 'Applications are open' : 'Applications closed');
-      void qc.invalidateQueries({ queryKey: ['hr', 'requisition-dashboard', requisitionId] });
-      void qc.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
-      void qc.invalidateQueries({ queryKey: queryKeys.requisition(requisitionId) });
+      // HR-L11: "Applications closed" read as the opening's Closed status.
+      toast.success(next ? 'Public applications switched on' : 'Public applications switched off');
+      void invalidateAfterHrMutation(qc);
     },
     onError: (e) => toast.error(errText(e, 'Could not change that')),
   });
@@ -134,6 +154,17 @@ export function PublicApplyCard({
             The link will not accept applications until a workflow is published, so nobody is taken
             into a process that does not exist yet.
           </p>
+        ) : status === 'open' && datePassed ? (
+          // HR-M9: the header already says "not live · closing date passed";
+          // offering the link to copy here contradicted it.
+          <p
+            className="mt-3 flex items-start gap-1.5 text-[13px] text-[var(--ui-warn)]"
+            data-testid="apply-closing-date-passed"
+          >
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            The closing date has passed, so the link will not accept applications. Set a new closing
+            date in Opening details to take applications again.
+          </p>
         ) : status === 'open' ? (
           <div className="mt-3 flex items-center gap-1 rounded-[12px] bg-[var(--ui-inset)] py-1 pl-3 pr-1">
             <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-[var(--ui-soft)]">
@@ -141,10 +172,7 @@ export function PublicApplyCard({
             </span>
             <button
               type="button"
-              onClick={() => {
-                void navigator.clipboard?.writeText(link);
-                toast.success('Link copied');
-              }}
+              onClick={() => void copyLink(link)}
               className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-inset-strong)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               aria-label="Copy the application link"
             >
@@ -189,6 +217,7 @@ export default function GoLivePanel({
         status={requisition.status}
         approved={requisition.approval_status === 'approved'}
         hasWorkflow={hasWorkflow}
+        closesAt={requisition.closes_at}
       />
       <GovernancePanel requisition={requisition} section="schedule" />
     </div>

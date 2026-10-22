@@ -22,8 +22,8 @@ import {
   ChevronRight,
   GripVertical,
   Plus,
-  Trash2,
 } from '@/design/components/icons';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { StatusTag } from '@/design/components/primitives';
 import { cn } from '@/lib/utils';
 import type { Round, RoundKind } from '@/api/workflows';
@@ -235,14 +235,15 @@ function RoundNode({
           >
             <ChevronDown className="h-4 w-4" aria-hidden="true" />
           </button>
-          <button
-            type="button"
-            onClick={onRemove}
-            aria-label={`Remove ${round.title}`}
-            className="ml-2 rounded-[8px] p-2.5 text-muted-foreground sm:p-2 hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:bg-[var(--ui-danger-wash)] focus-visible:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            <Trash2 className="h-4 w-4" aria-hidden="true" />
-          </button>
+          {/* HR-M2: removing a round drops its criteria and settings, so it
+              asks first. */}
+          <span className="ml-2">
+            <ConfirmDeleteButton
+              title={`Remove ${round.title}`}
+              confirmText="Remove round"
+              onConfirm={onRemove}
+            />
+          </span>
         </span>
       ) : null}
     </div>

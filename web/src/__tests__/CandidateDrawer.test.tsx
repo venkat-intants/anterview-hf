@@ -514,6 +514,13 @@ describe('CandidateDrawer', () => {
     expect(screen.getByText('Yes')).toBeInTheDocument();
   });
 
+  it('says the answers could not load instead of "no questions" (HR-M5)', async () => {
+    listAnswers.mockRejectedValue(new Error('boom'));
+    renderDrawer({ enrolmentId: 'en-1' });
+    expect(await screen.findByText('Could not load the application answers.')).toBeInTheDocument();
+    expect(screen.queryByText('This opening did not ask any questions.')).not.toBeInTheDocument();
+  });
+
   it('does not look up answers when it has no application to look them up for', async () => {
     // "No answers" and "we cannot look" are different statements, and the
     // second must not be rendered as the first.
@@ -1182,6 +1189,9 @@ describe('CandidateDrawer', () => {
       // one decision — the trail page's own picker handles more than one.
       const trailLink = await screen.findByRole('link', { name: /Evidence trail/ });
       expect(trailLink).toHaveAttribute('href', '/hr/enrolments/en-1/evidence');
+      // HR-L13: an in-app link, so no external-link icon.
+      expect(trailLink.querySelector('.lucide-external-link')).toBeNull();
+      expect(trailLink.querySelector('.lucide-chevron-right')).not.toBeNull();
       expect(document.getElementById('history')).toBeInTheDocument();
     });
 

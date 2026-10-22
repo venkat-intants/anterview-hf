@@ -33,8 +33,12 @@ import {
   type Requisition,
 } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
-import { queryKeys } from '@/lib/queryKeys';
-import { GlassCard, Pill } from '@/design/components/primitives';
+import { invalidateAfterHrMutation, queryKeys } from '@/lib/queryKeys';
+import { errorMessage } from '@/lib/errorMessage';
+import { statusLabel } from '@/lib/statusLabel';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { GlassCard } from '@/design/components/primitives';
+import { Button } from '@/components/ui/button';
 import { AlertCircle } from '@/design/components/icons';
 import { formatDateTime } from '@/lib/formatters';
 
@@ -42,11 +46,13 @@ const INPUT =
   'w-full rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
 const LABEL = 'mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]';
 
+// HR-L3: the shared approval labels, so this panel, the openings list and the
+// HR home say the same words ("Sent back", "Awaiting approval") for one state.
 const APPROVAL_LABEL: Record<ApprovalStatus, string> = {
-  draft: 'Not submitted',
-  pending_approval: 'Waiting for approval',
-  approved: 'Approved',
-  rejected: 'Changes requested',
+  draft: statusLabel('draft', 'approval'),
+  pending_approval: statusLabel('pending_approval', 'approval'),
+  approved: statusLabel('approved', 'approval'),
+  rejected: statusLabel('rejected', 'approval'),
 };
 
 // Never colour alone — the label carries the meaning and the tone reinforces it.
@@ -116,9 +122,10 @@ export default function GovernancePanel({
     enabled: showSchedule,
   });
 
+  // HR-L12: by prefix, so the openings list and the HR home's "Openings in
+  // setup" badge refresh too, not only this opening's record.
   function refresh(): void {
-    void client.invalidateQueries({ queryKey: queryKeys.requisition(requisition.id) });
-    void client.invalidateQueries({ queryKey: queryKeys.publishSchedule(requisition.id) });
+    void invalidateAfterHrMutation(client, queryKeys.publishSchedule(requisition.id));
   }
 
   const saveBudget = useMutation({
@@ -137,8 +144,7 @@ export default function GovernancePanel({
       client.setQueryData(queryKeys.requisition(requisition.id), updated);
       toast.success('Budget saved.');
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not save the budget.'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not save the budget.')),
   });
 
   const submit = useMutation({
@@ -148,8 +154,7 @@ export default function GovernancePanel({
       refresh();
       toast.success('Sent to your company admin for approval.');
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not submit for approval.'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not submit for approval.')),
   });
 
   const setSchedule = useMutation({
@@ -163,8 +168,7 @@ export default function GovernancePanel({
       refresh();
       toast.success('Scheduled.');
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not schedule publication.'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not schedule publication.')),
   });
 
   const cancel = useMutation({
@@ -173,8 +177,7 @@ export default function GovernancePanel({
       refresh();
       toast.success('Scheduled publication cancelled.');
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not cancel the schedule.'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not cancel the schedule.')),
   });
 
   const canSubmit = status === 'draft' || status === 'rejected';
@@ -286,14 +289,14 @@ export default function GovernancePanel({
             </div>
 
             <div className="mt-4">
-              <Pill
+              <Button
+                type="button"
                 variant="outline"
                 onClick={() => saveBudget.mutate()}
                 disabled={saveBudget.isPending}
-                className="px-4 py-2"
               >
                 {saveBudget.isPending ? 'Saving…' : 'Save budget'}
-              </Pill>
+              </Button>
             </div>
 
             {/* ── Approval ───────────────────────────────────────────────── */}
@@ -313,13 +316,13 @@ export default function GovernancePanel({
                     className={INPUT}
                   />
                   <div className="mt-3">
-                    <Pill
+                    <Button
+                      type="button"
                       onClick={() => submit.mutate()}
                       disabled={submit.isPending}
-                      className="px-4 py-2"
                     >
                       {submit.isPending ? 'Submitting…' : 'Submit for approval'}
-                    </Pill>
+                    </Button>
                   </div>
                 </>
               ) : (
@@ -366,14 +369,15 @@ export default function GovernancePanel({
                 <p className="mt-0.5 text-[12px] text-[var(--ui-soft)]">
                   {schedule.data.tolerance}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => cancel.mutate()}
-                  disabled={cancel.isPending}
-                  className="mt-3 rounded-[10px] border border-border px-3 py-1.5 text-[12px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
-                >
-                  Cancel scheduled publication
-                </button>
+                <div className="mt-3">
+                  <ConfirmDeleteButton
+                    label="Cancel scheduled publication"
+                    confirmText="Cancel publication"
+                    icon={null}
+                    onConfirm={() => cancel.mutate()}
+                    pending={cancel.isPending}
+                  />
+                </div>
               </>
             ) : (
               <>
@@ -395,7 +399,11 @@ export default function GovernancePanel({
                   </p>
                 ) : null}
                 <div className="mt-3">
-                  <Pill
+                  {/* Primary only once it can act: before approval, Submit for
+                      approval is the one primary action on this card. */}
+                  <Button
+                    type="button"
+                    variant={approved ? 'default' : 'outline'}
                     onClick={() => setSchedule.mutate()}
                     disabled={
                       setSchedule.isPending ||
@@ -404,10 +412,9 @@ export default function GovernancePanel({
                       Boolean(schedule.data?.public_apply_enabled)
                     }
                     aria-describedby={!approved ? 'schedule-gate' : undefined}
-                    className="px-4 py-2"
                   >
                     {setSchedule.isPending ? 'Scheduling…' : 'Schedule'}
-                  </Pill>
+                  </Button>
                 </div>
                 {!approved ? (
                   <p

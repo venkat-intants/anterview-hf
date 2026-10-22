@@ -31,7 +31,9 @@ import {
 import { toast } from '@/lib/toast';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { EmptyState } from '@/design/components/page';
-import { AlertCircle, Lock, Plus, Trash2 } from '@/design/components/icons';
+import { AlertCircle, Archive, Lock, Plus } from '@/design/components/icons';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { errorMessage } from '@/lib/errorMessage';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -66,7 +68,7 @@ function QuestionRow({
     mutationFn: (body: Parameters<typeof updateQuestion>[1]) => updateQuestion(question.id, body),
     onSuccess: (list) => client.setQueryData(['questions', requisitionId], list),
     onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : 'Could not save that change.'),
+      toast.error(errorMessage(err, 'Could not save that change.')),
   });
 
   const retire = useMutation({
@@ -75,6 +77,8 @@ function QuestionRow({
       void client.invalidateQueries({ queryKey: ['questions', requisitionId] });
       toast.success('Question retired. Existing answers are still on file.');
     },
+    // HR-M2: this used to fail silently.
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not retire that question.')),
   });
 
   return (
@@ -111,14 +115,16 @@ function QuestionRow({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => retire.mutate()}
-          aria-label={`Retire question: ${question.prompt}`}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-        >
-          <Trash2 size={16} aria-hidden="true" />
-        </button>
+        {/* HR-M2: asks first, and is busy while the retire is in flight. */}
+        <span className="shrink-0">
+          <ConfirmDeleteButton
+            title={`Retire question: ${question.prompt}`}
+            confirmText="Retire question"
+            icon={Archive}
+            onConfirm={() => retire.mutate()}
+            pending={retire.isPending}
+          />
+        </span>
       </div>
 
       {/* Said before anyone types, not after they press save. */}
@@ -171,7 +177,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
       setOpen(false);
     },
     onError: (err: unknown) =>
-      toast.error(err instanceof Error ? err.message : 'Could not add that question.'),
+      toast.error(errorMessage(err, 'Could not add that question.')),
   });
 
   if (!open) {

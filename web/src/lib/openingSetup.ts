@@ -25,6 +25,7 @@ import type { ApprovalStatus, BudgetBasis, BudgetPeriod, RequisitionStatus } fro
 import type { JourneyStage, JourneySubstep, SubstepState } from '@/design/components/journey-rail';
 import { stepStates, type StepState } from '@/lib/workflowLifecycle';
 import { MISSING, formatDate } from '@/lib/formatters';
+import { statusLabel } from '@/lib/statusLabel';
 
 export type StageKey = 'role' | 'process' | 'approval' | 'golive' | 'documents';
 
@@ -115,11 +116,12 @@ export interface OpeningSetupInput {
   documentCount?: number;
 }
 
+// HR-L3: one word per approval state across the console (lib/statusLabel).
 export const APPROVAL_LABEL: Record<ApprovalStatus, string> = {
-  draft: 'Not submitted',
-  pending_approval: 'Awaiting approval',
-  approved: 'Approved',
-  rejected: 'Changes requested',
+  draft: statusLabel('draft', 'approval'),
+  pending_approval: statusLabel('pending_approval', 'approval'),
+  approved: statusLabel('approved', 'approval'),
+  rejected: statusLabel('rejected', 'approval'),
 };
 
 /** A stage fact's date, or nothing when there is none to show. */
@@ -322,7 +324,7 @@ function approvalStage(i: OpeningSetupInput): OpeningStage {
       return {
         ...base,
         state: 'active',
-        fact: `Changes requested${note}`,
+        fact: `${APPROVAL_LABEL.rejected}${note}`,
         actor: i.decidedByName ? `Sent back by ${i.decidedByName}` : undefined,
         at: factDate(i.decidedAt),
         action: { label: 'Revise and resubmit', to: null },

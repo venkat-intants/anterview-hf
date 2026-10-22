@@ -671,7 +671,7 @@ describe('the read-only view', () => {
   it('shows the approval pill too', async () => {
     useData(dash({ approval_status: 'rejected' }));
     renderHub('', true);
-    expect((await screen.findByTestId('approval-state')).textContent).toBe('Changes requested');
+    expect((await screen.findByTestId('approval-state')).textContent).toBe('Sent back');
   });
 });
 
@@ -680,7 +680,7 @@ describe('approval statuses are all worded', () => {
     ['draft', 'Not submitted'],
     ['pending_approval', 'Awaiting approval'],
     ['approved', 'Approved'],
-    ['rejected', 'Changes requested'],
+    ['rejected', 'Sent back'],
   ];
   it.each(words)('%s', async (status, word) => {
     useData(dash({ approval_status: status }));

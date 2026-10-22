@@ -182,7 +182,7 @@ describe('HRConsole - greeting', () => {
   it('shows a neutral title rather than a half-rendered greeting while loading', () => {
     getMe.mockImplementation(() => new Promise(() => undefined));
     renderConsole();
-    expect(screen.getByRole('heading', { name: /^hr console$/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^hiring$/i })).toBeInTheDocument();
   });
 });
 
@@ -296,7 +296,7 @@ describe('HRConsole - shortcuts', () => {
     expect(hrefsOf(/open hiring pipeline/i)).toEqual(['/hr/pipeline']);
     expect(new Set(hrefsOf(/review applicants/i))).toEqual(new Set(['/hr/applicants']));
     expect(hrefsOf(/view analytics/i)).toEqual(['/hr/analytics']);
-    expect(hrefsOf(/create exam/i)).toEqual(['/hr/exams']);
+    expect(hrefsOf(/^exams$/i)).toEqual(['/hr/exams']);
   });
 });
 
@@ -508,8 +508,8 @@ describe('HRConsole - pipeline stat group', () => {
     const hrefOf = (name: RegExp) => within(group).getByRole('link', { name }).getAttribute('href');
     expect(hrefOf(/^Open roles/)).toBe('/hr/requisitions');
     expect(hrefOf(/^Applicants/)).toBe('/hr/applicants');
-    expect(hrefOf(/^Shortlisted/)).toBe('/hr/applicants');
-    expect(hrefOf(/^Exam passed/)).toBe('/hr/applicants');
+    expect(hrefOf(/^Shortlisted/)).toBe('/hr/applicants?status=shortlisted');
+    expect(hrefOf(/^Exam passed/)).toBe('/hr/pipeline?stage=exam_passed');
     expect(hrefOf(/^Interviewed/)).toBe('/hr/interviews');
     expect(hrefOf(/^Hired/)).toBe('/hr/pipeline');
   });
@@ -519,5 +519,19 @@ describe('HRConsole - pipeline stat group', () => {
     renderConsole();
     await screen.findByRole('heading', { name: /welcome/i });
     expect(screen.queryByText('Shortlisted')).not.toBeInTheDocument();
+  });
+});
+
+describe('HRConsole - header actions say where they go (HR-M10, HR-L9)', () => {
+  it('offers resume upload and the exams list, not an invite flow that does not exist', async () => {
+    renderConsole();
+    await screen.findByRole('heading', { name: /welcome/i });
+    expect(screen.getByRole('link', { name: /upload resumes/i })).toHaveAttribute(
+      'href',
+      '/hr/applicants',
+    );
+    expect(screen.getByRole('link', { name: 'Exams' })).toHaveAttribute('href', '/hr/exams');
+    expect(screen.queryByText(/invite applicant/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/create exam/i)).not.toBeInTheDocument();
   });
 });

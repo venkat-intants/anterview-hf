@@ -52,6 +52,10 @@ import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import CandidateDrawer from '@/components/CandidateDrawer';
 import { codeEvidenceLabel, hasCodeEvidence } from '@/lib/codeEvidenceLabel';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
+import { formatDateTime } from '@/lib/formatters';
+import { statusLabel } from '@/lib/statusLabel';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
 import { useIsDesktop } from '@/hooks/useIsDesktop';
@@ -67,8 +71,9 @@ import {
 import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
 import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
 
+/** The shared error copy (errorMessage), with this page's period-less fallbacks. */
 function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+  return errorMessage(e, `${fallback}.`);
 }
 
 /**
@@ -81,7 +86,8 @@ function slaBadge(
 ): { tone: 'ember' | 'amber' | 'forest'; text: string } | null {
   const sla = row.sla;
   if (!sla) return null;
-  const due = new Date(sla.due_at).toLocaleString();
+  // HR-L16: the console's one date-time format, zone included, no seconds.
+  const due = formatDateTime(sla.due_at);
   const owner = row.stage_owner_name ? ` · ${row.stage_owner_name}` : '';
   if (sla.state === 'overdue') {
     return { tone: 'ember', text: `Overdue since ${due}${owner}` };
@@ -259,7 +265,6 @@ function actionIsLegal(action: Action, row: DecisionQueueRow): boolean {
 
 function DecisionPanel({
   row,
-  requisitionId,
   onOpenEvidence,
   onDone,
   focusOnMount,
@@ -269,7 +274,6 @@ function DecisionPanel({
   onDiscardAndSwitch,
 }: {
   row: DecisionQueueRow;
-  requisitionId: string;
   onOpenEvidence: (row: DecisionQueueRow) => void;
   /** Called once an action has been recorded; `outcome` is the sentence for the live region. */
   onDone: (row: DecisionQueueRow, outcome: string) => void;
@@ -302,10 +306,9 @@ function DecisionPanel({
   const canConfirm = final ? reasonReady && Boolean(reasonCode) : true;
 
   const invalidate = () => {
-    void qc.invalidateQueries({ queryKey: ['hr', 'decision-queue', requisitionId] });
-    void qc.invalidateQueries({ queryKey: ['hr', 'requisition', requisitionId] });
-    void qc.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
-    void qc.invalidateQueries({ queryKey: ['hr', 'requisition-dashboard'] });
+    // HR-L12: by prefix, so the attention panel, stage SLAs, analytics and the
+    // applicant list move with the decision, not only this opening's views.
+    void invalidateAfterHrMutation(qc);
   };
 
   const decideMut = useMutation({
@@ -451,7 +454,7 @@ function DecisionPanel({
           <h2 className="text-[17px] font-bold text-foreground">{row.full_name}</h2>
           {row.held ? (
             <StatusTag tone="amber" dot>
-              held
+              {statusLabel('held', 'candidate')}
             </StatusTag>
           ) : row.awaiting_review ? (
             <StatusTag tone="amber" dot>
@@ -954,7 +957,6 @@ export default function DecisionQueue(): JSX.Element {
     <DecisionPanel
       key={selected.enrolment_id}
       row={selected}
-      requisitionId={requisitionId}
       onOpenEvidence={setOpen}
       onDone={afterDecision}
       focusOnMount={advanced}

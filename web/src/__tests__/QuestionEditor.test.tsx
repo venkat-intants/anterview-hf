@@ -232,3 +232,27 @@ describe('QuestionEditor - the empty state', () => {
     expect(await screen.findByText('1 of 2 required.')).toBeInTheDocument();
   });
 });
+
+describe('QuestionEditor - retiring a question (HR-M2)', () => {
+  it('asks before retiring', async () => {
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      await screen.findByRole('button', { name: 'Retire question: Why are you interested in this role?' }),
+    );
+    expect(retireQuestion).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Retire question' }));
+    await waitFor(() => expect(retireQuestion).toHaveBeenCalledWith('q-1'));
+  });
+
+  it('says so when the retire fails, instead of failing silently', async () => {
+    retireQuestion.mockRejectedValue(new Error('Could not retire it right now.'));
+    const user = userEvent.setup();
+    renderEditor();
+    await user.click(
+      await screen.findByRole('button', { name: 'Retire question: Why are you interested in this role?' }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Retire question' }));
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not retire it right now.'));
+  });
+});

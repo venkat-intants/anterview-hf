@@ -16,7 +16,7 @@
 //   • nothing in the copy says or implies rejection (D-05).
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -108,6 +108,12 @@ function dash(over: Partial<RequisitionDashboard['requisition']> = {}): Requisit
   };
 }
 
+/** Close, then confirm it (HR-L16: closing takes the listing down, so it asks). */
+async function closeOpening(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(await screen.findByRole('button', { name: 'Close' }));
+  await user.click(await screen.findByRole('button', { name: 'Close opening' }));
+}
+
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
@@ -138,7 +144,7 @@ describe('closing an opening (AC-12)', () => {
       new UnresolvedCandidatesError(3, '3 candidate(s) are still in this opening.'),
     );
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Close' }));
+    await closeOpening(user);
 
     expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
     expect(screen.getByText(/3 candidates still undecided/)).toBeInTheDocument();
@@ -148,7 +154,7 @@ describe('closing an opening (AC-12)', () => {
     const user = userEvent.setup();
     setRequisitionStatus.mockRejectedValue(new UnresolvedCandidatesError(3, 'x'));
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Close' }));
+    await closeOpening(user);
 
     const review = await screen.findByRole('link', { name: /Review 3/ });
     expect(review).toHaveAttribute('href', '/hr/requisitions/req-1/decisions');
@@ -160,7 +166,7 @@ describe('closing an opening (AC-12)', () => {
     const user = userEvent.setup();
     setRequisitionStatus.mockRejectedValue(new UnresolvedCandidatesError(3, 'x'));
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Close' }));
+    await closeOpening(user);
 
     const dialog = await screen.findByRole('alertdialog');
     expect(dialog.textContent).toMatch(/does not reject them/i);
@@ -173,7 +179,7 @@ describe('closing an opening (AC-12)', () => {
       .mockRejectedValueOnce(new UnresolvedCandidatesError(3, 'x'))
       .mockResolvedValueOnce({ ...dash().requisition, status: 'closed' });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Close' }));
+    await closeOpening(user);
     await user.click(await screen.findByRole('button', { name: /Close anyway/ }));
 
     await waitFor(() =>
@@ -187,7 +193,7 @@ describe('closing an opening (AC-12)', () => {
     const user = userEvent.setup();
     setRequisitionStatus.mockRejectedValue(new UnresolvedCandidatesError(3, 'x'));
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Close' }));
+    await closeOpening(user);
     await user.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     await waitFor(() =>
@@ -201,7 +207,7 @@ describe('closing an opening (AC-12)', () => {
     getRequisitionDashboard.mockResolvedValue(dash({ awaiting_decision: 0 }));
     setRequisitionStatus.mockResolvedValue({ ...dash().requisition, status: 'closed' });
     renderPage();
-    await user.click(await screen.findByRole('button', { name: 'Close' }));
+    await closeOpening(user);
 
     await waitFor(() => expect(setRequisitionStatus).toHaveBeenCalled());
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
@@ -212,5 +218,64 @@ describe('closing an opening (AC-12)', () => {
     renderPage();
     expect(await screen.findByRole('button', { name: 'Reopen' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
+  });
+});
+
+describe('closing an opening - what the count means (HR-M6)', () => {
+  it('separates those waiting on a decision from those still in progress', async () => {
+    const user = userEvent.setup();
+    setRequisitionStatus.mockRejectedValue(new UnresolvedCandidatesError(5, 'x'));
+    renderPage();
+    await closeOpening(user);
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog.textContent).toMatch(/3 waiting on your decision/);
+    expect(dialog.textContent).toMatch(/2 still in progress/);
+    expect(dialog.textContent).toMatch(/continue their rounds/);
+    // The queue lists the three, so the button says three, not five.
+    expect(screen.getByRole('link', { name: /Review 3/ })).toBeInTheDocument();
+  });
+
+  it('offers no queue link when nobody is waiting on a decision', async () => {
+    const user = userEvent.setup();
+    getRequisitionDashboard.mockResolvedValue(dash({ awaiting_decision: 0 }));
+    setRequisitionStatus.mockRejectedValue(new UnresolvedCandidatesError(2, 'x'));
+    renderPage();
+    await closeOpening(user);
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).queryByRole('link', { name: /Review/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('closing asks first (HR-L16)', () => {
+  it('sends nothing until the close is confirmed, and Keep open backs out', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Close' }));
+    expect(setRequisitionStatus).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Keep open' }));
+    expect(screen.queryByRole('button', { name: 'Close opening' })).not.toBeInTheDocument();
+    expect(setRequisitionStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('reopening after the closing date (HR-M8)', () => {
+  it('disables Reopen and says a new closing date comes first', async () => {
+    getRequisitionDashboard.mockResolvedValue(
+      dash({ status: 'closed', closes_at: '2020-01-01T00:00:00Z' }),
+    );
+    renderPage();
+    const reopen = await screen.findByRole('button', { name: 'Reopen' });
+    expect(reopen).toBeDisabled();
+    expect(screen.getByText(/Set a new closing date in Opening details/)).toBeInTheDocument();
+  });
+
+  it('leaves Reopen live while the closing date is still ahead', async () => {
+    getRequisitionDashboard.mockResolvedValue(
+      dash({ status: 'closed', closes_at: '2999-01-01T00:00:00Z' }),
+    );
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'Reopen' })).toBeEnabled();
   });
 });

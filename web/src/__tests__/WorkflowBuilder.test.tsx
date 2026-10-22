@@ -533,6 +533,36 @@ describe('WorkflowBuilder - publishing', () => {
     expect(toastError).toHaveBeenCalledWith('This workflow is not ready to publish');
   });
 
+  it('disables the confirm button while the publish is in flight (HR-M3)', async () => {
+    const user = userEvent.setup();
+    validateWorkflow.mockResolvedValue(REPORT_READY);
+    publishWorkflow.mockImplementation(() => new Promise(() => undefined));
+    getWorkflow.mockResolvedValue(APPROVED_DRAFT);
+    getReview.mockResolvedValue({
+      review_status: 'approved',
+      submitted_at: null,
+      submitted_by_name: null,
+      reviewed_at: null,
+      reviewed_by_name: 'A Reviewer',
+      note: null,
+      history: [],
+    });
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    await waitFor(() =>
+      expect((screen.getByText('Publish').closest('button') as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
+
+    await user.click(screen.getByText('Publish'));
+    const confirm = screen.getByTestId('confirm-publish');
+    await user.click(confirm);
+    await waitFor(() => expect(confirm).toBeDisabled());
+    await user.click(confirm);
+    expect(publishWorkflow).toHaveBeenCalledTimes(1);
+  });
+
   it('disables the header Publish button when validation still finds issues, and says why', async () => {
     // Approved, but validation (re-checked live) still finds the coverage gap —
     // the header must not let this be clicked regardless.
@@ -1040,6 +1070,71 @@ describe('WorkflowBuilder - auto-shortlist', () => {
   });
 });
 
+// ── HR-H2 / HR-L7: number settings save once, on the console's ATS scale ────
+
+describe('WorkflowBuilder - automation number fields', () => {
+  it('shows the ATS bar out of 100 and saves it once, on blur, in tenths', async () => {
+    const user = userEvent.setup();
+    updateSettings.mockResolvedValue({ ...DRAFT, settings: { ...SETTINGS, shortlist_ats_threshold: 8 } });
+    await openAutomation(user);
+
+    const field = screen.getByLabelText('Suggest shortlisting at ATS score');
+    expect(field).toHaveValue(70);
+    expect(screen.getByText('/ 100')).toBeInTheDocument();
+    await user.clear(field);
+    await user.type(field, '80');
+    // Nothing is sent while typing: "8" on the way to "80" never reaches the server.
+    expect(updateSettings).not.toHaveBeenCalled();
+    await user.tab();
+
+    await waitFor(() =>
+      expect(updateSettings).toHaveBeenCalledWith('wf-draft', { shortlist_ats_threshold: 8 }),
+    );
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a value off the scale before saving it', async () => {
+    const user = userEvent.setup();
+    await openAutomation(user);
+
+    const field = screen.getByLabelText('Suggest shortlisting at ATS score');
+    await user.clear(field);
+    await user.type(field, '85{Enter}');
+
+    expect(await screen.findByText(/enter 10, 20 and so on up to 100/i)).toBeInTheDocument();
+    expect(field).toHaveAttribute('aria-invalid', 'true');
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+
+  it('lets the near-miss band be cleared to retype, and saves only the final value', async () => {
+    const user = userEvent.setup();
+    await openAutomation(user);
+
+    const field = screen.getByLabelText('Mark near misses within');
+    await user.clear(field);
+    await user.type(field, '15');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith('wf-draft', { hold_band: 15 }));
+    expect(updateSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('puts the saved value back when the server refuses the save', async () => {
+    const user = userEvent.setup();
+    updateSettings.mockRejectedValueOnce(new Error('hold_band refused'));
+    await openAutomation(user);
+
+    const field = screen.getByLabelText('Mark near misses within');
+    await user.clear(field);
+    await user.type(field, '15');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(updateSettings).toHaveBeenCalledWith('wf-draft', { hold_band: 15 }));
+    // The saved band is still 10; the field must not keep showing 15 as if kept.
+    await waitFor(() => expect(field).toHaveValue(10));
+  });
+});
+
 // ── Review fixes: the toggle mirrors every rule the server enforces ─────────
 //
 // The server refuses auto-shortlist without a bar of at least 1, and without
@@ -1089,5 +1184,20 @@ describe('WorkflowBuilder - auto-shortlist follows the server rules', () => {
     // The preview used to promise "nothing more happens until you shortlist
     // them" whatever the setting — false on an auto-shortlisting version.
     expect(await screen.findByText(/start round one on their own/i)).toBeInTheDocument();
+  });
+});
+
+describe('WorkflowBuilder - discarding a draft (HR-M2)', () => {
+  it('asks before deleting the draft', async () => {
+    const user = userEvent.setup();
+    discardDraft.mockResolvedValue(undefined);
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+
+    await user.click(screen.getByRole('button', { name: 'Discard draft' }));
+    expect(discardDraft).not.toHaveBeenCalled();
+    const armed = screen.getByRole('group', { name: 'Confirm: Discard draft' });
+    await user.click(within(armed).getByRole('button', { name: 'Discard draft' }));
+    await waitFor(() => expect(discardDraft).toHaveBeenCalledWith('wf-draft'));
   });
 });

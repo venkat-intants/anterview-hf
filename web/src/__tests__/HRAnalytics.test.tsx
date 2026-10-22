@@ -11,6 +11,7 @@
 import { analyticsDefaults } from './analyticsFixture';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { HrAnalytics as HrAnalyticsData } from '../api/pipeline';
 
@@ -68,7 +69,11 @@ import HRAnalytics from '../pages/hr/HRAnalytics';
 
 function renderWith(node: JSX.Element) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+  return render(
+    <QueryClientProvider client={client}>
+      <MemoryRouter>{node}</MemoryRouter>
+    </QueryClientProvider>,
+  );
 }
 
 beforeEach(() => {
@@ -179,5 +184,22 @@ describe('HRAnalytics - averages summary', () => {
     expect(await screen.findByText(/avg ATS score/i)).toBeInTheDocument();
     expect(screen.queryByText(/avg exam score/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/avg interview score/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('HRAnalytics - a failed load (HR-M5)', () => {
+  it('says the funnel could not load instead of showing nothing', async () => {
+    getHrAnalytics.mockRejectedValue(new Error('boom'));
+    renderWith(<HRAnalytics />);
+    expect(await screen.findByText('Could not load the hiring funnel.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
+
+  it('links to the governed analytics page (HR-L15)', async () => {
+    renderWith(<HRAnalytics />);
+    expect(await screen.findByRole('link', { name: 'Open full analytics' })).toHaveAttribute(
+      'href',
+      '/hr/analytics',
+    );
   });
 });

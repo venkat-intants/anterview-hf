@@ -26,6 +26,7 @@ import { applicationKey } from '@/lib/applicationKey';
 import { offerOutcomeTag } from '@/lib/offerOutcome';
 import { Avatar, StatusTag, type TagTone } from '@/design/components/primitives';
 import { formatScore } from '@/lib/formatters';
+import { statusLabel } from '@/lib/statusLabel';
 
 /**
  * The columns, in the order a candidate passes through them.
@@ -35,11 +36,12 @@ import { formatScore } from '@/lib/formatters';
  * attention, and a column of rejections is a wall of bad news nobody scans.
  */
 const COLUMNS: { key: string; label: string; statuses: PipelineStatus[] }[] = [
-  // 'held': the automatic shortlist could not decide and a person must — still
-  // at the applied stage, and exactly who needs attention. Without a column it
-  // would silently drop off the board.
-  { key: 'new', label: 'Applied', statuses: ['new', 'held'] },
-  { key: 'shortlisted', label: 'Shortlisted', statuses: ['shortlisted'] },
+  // 'held': they were shortlisted, sat a round and scored just under its pass
+  // threshold, so the workflow paused them for a person. They are past the
+  // applied stage, so they sit with the shortlisted, and their card says
+  // "Held" (HR-M11) so they do not read as one more candidate mid-round.
+  { key: 'new', label: 'Applied', statuses: ['new'] },
+  { key: 'shortlisted', label: 'Shortlisted', statuses: ['shortlisted', 'held'] },
   { key: 'interviewed', label: 'Interviewed', statuses: ['interviewed'] },
   { key: 'decided', label: 'Decided', statuses: ['hired', 'rejected'] },
 ];
@@ -140,8 +142,11 @@ function Card({
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {showOutcome ? (
-          <StatusTag tone={DECIDED_TONE[row.status] ?? 'neutral'}>{row.status}</StatusTag>
+          <StatusTag tone={DECIDED_TONE[row.status] ?? 'neutral'}>
+            {statusLabel(row.status, 'candidate')}
+          </StatusTag>
         ) : null}
+        {row.status === 'held' ? <StatusTag tone="amber">Held</StatusTag> : null}
         {offerTag ? <StatusTag tone={offerTag.tone}>{offerTag.label}</StatusTag> : null}
         {score ? (
           <span className="text-[12px] tabular-nums text-muted-foreground">

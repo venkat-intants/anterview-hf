@@ -111,6 +111,7 @@ const listEligibleApplicants = vi.fn();
 const listInvites = vi.fn();
 const createInvite = vi.fn();
 const revokeInvite = vi.fn();
+const endStartedInterview = vi.fn();
 const rescheduleInvite = vi.fn();
 const setInviteAvatarMode = vi.fn();
 const getInviteResult = vi.fn();
@@ -120,6 +121,7 @@ vi.mock('../api/interviewInvites', () => ({
   listInvites: (...a: unknown[]) => listInvites(...a) as unknown,
   createInvite: (...a: unknown[]) => createInvite(...a) as unknown,
   revokeInvite: (...a: unknown[]) => revokeInvite(...a) as unknown,
+  endStartedInterview: (...a: unknown[]) => endStartedInterview(...a) as unknown,
   rescheduleInvite: (...a: unknown[]) => rescheduleInvite(...a) as unknown,
   setInviteAvatarMode: (...a: unknown[]) => setInviteAvatarMode(...a) as unknown,
 }));
@@ -181,6 +183,7 @@ beforeEach(() => {
   listInvites.mockResolvedValue([INVITED, COMPLETED]);
   createInvite.mockResolvedValue(MINTED);
   revokeInvite.mockResolvedValue({ ...INVITED, status: 'revoked' });
+  endStartedInterview.mockResolvedValue({ ...INVITED, status: 'revoked' });
   rescheduleInvite.mockResolvedValue(INVITED);
 });
 
@@ -668,6 +671,69 @@ describe('HRInterviews - time, window and expiry (IV-H1, IV-M1, IV-M10)', () => 
     expect(
       screen.queryByRole('button', { name: /revoke interview link for bhavya nair/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it('ends a started interview only with a reason and a confirm', async () => {
+    listInvites.mockResolvedValue([{ ...INVITED, status: 'consumed', can_reschedule: false }]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole('button', { name: /end started interview for bhavya nair/i }),
+    );
+    const reason = screen.getByLabelText('Why are you ending this interview?');
+    expect(reason).toHaveFocus();
+    // No reason, no way to confirm: the server requires one too.
+    expect(screen.queryByRole('button', { name: 'End interview' })).not.toBeInTheDocument();
+
+    await user.type(reason, '  Dropped out, will not return  ');
+    await user.click(screen.getByRole('button', { name: 'End interview' }));
+    // One click only arms it.
+    expect(endStartedInterview).not.toHaveBeenCalled();
+    const group = screen.getByRole('group', { name: /end the started interview for bhavya nair/i });
+    await user.click(within(group).getByRole('button', { name: 'End interview' }));
+
+    await waitFor(() =>
+      expect(endStartedInterview).toHaveBeenCalledWith('inv-1', 'Dropped out, will not return'),
+    );
+    expect(revokeInvite).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(
+        'Interview ended for Bhavya Nair. You can now send a new link.',
+      ),
+    );
+  });
+
+  it('offers no way to end an interview that is not in progress', async () => {
+    renderPage();
+
+    await screen.findByText('Bhavya Nair');
+    expect(
+      screen.queryByRole('button', { name: /end started interview/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the server's refusal when the interview has already finished", async () => {
+    listInvites.mockResolvedValue([{ ...INVITED, status: 'consumed', can_reschedule: false }]);
+    endStartedInterview.mockRejectedValue(
+      new Error('This interview has finished, so there is nothing left to end.'),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole('button', { name: /end started interview for bhavya nair/i }),
+    );
+    await user.type(screen.getByLabelText('Why are you ending this interview?'), 'Stuck');
+    await user.click(screen.getByRole('button', { name: 'End interview' }));
+    const group = screen.getByRole('group', { name: /end the started interview/i });
+    await user.click(within(group).getByRole('button', { name: 'End interview' }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(expect.stringMatching(/finished/i)),
+    );
+    // The form stays open with what HR typed.
+    expect(screen.getByLabelText('Why are you ending this interview?')).toHaveValue('Stuck');
   });
 });
 

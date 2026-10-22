@@ -48,7 +48,8 @@ export interface InterviewInvite {
   /** Still `invited`, but the scheduled join window has closed: the candidate
    *  can no longer start until HR gives a new time. */
   missed_slot: boolean;
-  /** The server would accept a reschedule (nobody has started the interview). */
+  /** The server would accept a reschedule: nobody has started the interview,
+   *  no newer invite replaced it, and the application is still open. */
   can_reschedule: boolean;
 }
 
@@ -117,6 +118,17 @@ export function createInvite(input: InviteCreateInput): Promise<InviteResult> {
 
 export function revokeInvite(inviteId: string): Promise<InterviewInvite> {
   return apiPost<InterviewInvite>(`/hr/interviews/${pathId(inviteId)}/revoke`, {});
+}
+
+/** End an interview the candidate has started but will not finish (they
+ *  dropped out, or the link was forwarded). The server refuses a started link
+ *  without `force`, requires a reason, audits it and marks the session
+ *  abandoned. A new link can then be sent. */
+export function endStartedInterview(inviteId: string, reason: string): Promise<InterviewInvite> {
+  return apiPost<InterviewInvite>(`/hr/interviews/${pathId(inviteId)}/revoke`, {
+    force: true,
+    reason,
+  });
 }
 
 export function getInviteResult(inviteId: string): Promise<InterviewOutcome> {

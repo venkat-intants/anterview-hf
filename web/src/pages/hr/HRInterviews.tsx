@@ -3,6 +3,7 @@
 // Behavior: all live logic — listEligibleApplicants + listInvites queries,
 //           createInvite (once-shown magic link + copy; a live link is only
 //           replaced after a confirm), revokeInvite (confirmed, unstarted only),
+//           endStartedInterview (a started one, with a reason, after a confirm),
 //           eligibility gating, status taxonomy, the result read inline.
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -19,6 +20,7 @@ import {
   Pencil,
   Check,
   X,
+  XCircle,
 } from '@/design/components/icons';
 import {
   listEligibleApplicants,
@@ -27,6 +29,7 @@ import {
   getInviteResult,
   setInviteAvatarMode,
   revokeInvite,
+  endStartedInterview,
   rescheduleInvite,
   type InterviewInvite,
   type AvatarMode,
@@ -258,6 +261,8 @@ function InviteRow({
   inv,
   onRevoke,
   revoking,
+  onEnd,
+  ending,
   onReschedule,
   rescheduling,
   onSetMode,
@@ -268,6 +273,9 @@ function InviteRow({
   onRevoke: (id: string) => void;
   /** True while THIS row's revoke is in flight. */
   revoking: boolean;
+  onEnd: (id: string, reason: string, done: () => void) => void;
+  /** True while THIS row's end-interview request is in flight. */
+  ending: boolean;
   onReschedule: (id: string, iso: string, done: () => void) => void;
   /** True while THIS row's reschedule is in flight. */
   rescheduling: boolean;
@@ -280,6 +288,10 @@ function InviteRow({
   const { label, tone, dot } = statusDisplay(inv);
   const initials = initialsOf(inv.applicant_name);
   const [editingSched, setEditingSched] = useState(false);
+  const [endingOpen, setEndingOpen] = useState(false);
+  const [endReason, setEndReason] = useState('');
+  const endInputRef = useRef<HTMLInputElement>(null);
+  const endId = useId();
   const [showResult, setShowResult] = useState(false);
   // toLocalInputValue reads the LOCAL wall-clock fields, unlike
   // toISOString().slice(0, 16) — which is always UTC and, shown in a
@@ -299,8 +311,14 @@ function InviteRow({
   useEffect(() => {
     if (editingSched) schedInputRef.current?.focus();
   }, [editingSched]);
+  useEffect(() => {
+    if (endingOpen) endInputRef.current?.focus();
+  }, [endingOpen]);
 
   const isLive = inv.status === 'invited';
+  // Started and not finished: the link still lets the candidate reconnect, so
+  // it is not revoked like an unused one. It can be ended on purpose instead.
+  const isStarted = inv.status === 'consumed';
   const modeValue = pendingMode ?? inv.avatar_mode;
 
   return (
@@ -430,8 +448,68 @@ function InviteRow({
               onConfirm={() => onRevoke(inv.invite_id)}
             />
           )}
+          {isStarted && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              aria-expanded={endingOpen}
+              aria-label={`End started interview for ${inv.applicant_name}`}
+              onClick={() => {
+                setEndReason('');
+                setEndingOpen((v) => !v);
+              }}
+            >
+              <XCircle aria-hidden="true" /> End interview
+            </Button>
+          )}
         </div>
       </div>
+
+      {/* End a started interview: a reason, then a confirm */}
+      {isStarted && endingOpen && (
+        <div className="mt-3 space-y-1.5 pl-[2.875rem]">
+          <label htmlFor={endId} className={labelCls}>
+            Why are you ending this interview?
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              id={endId}
+              ref={endInputRef}
+              type="text"
+              maxLength={500}
+              value={endReason}
+              onChange={(e) => setEndReason(e.target.value)}
+              placeholder="For example, the candidate dropped out and will not return"
+              className="h-10 min-w-[18rem] flex-1 rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
+              aria-describedby={`${endId}-hint`}
+            />
+            {endReason.trim() ? (
+              <ConfirmDeleteButton
+                label="End interview"
+                confirmGroupLabel={`Confirm: end the started interview for ${inv.applicant_name}. Their link stops working and they cannot reconnect.`}
+                icon={XCircle}
+                pending={ending}
+                onConfirm={() =>
+                  onEnd(inv.invite_id, endReason.trim(), () => setEndingOpen(false))
+                }
+              />
+            ) : null}
+            <button
+              type="button"
+              aria-label="Close end interview"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              onClick={() => setEndingOpen(false)}
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          </div>
+          <p id={`${endId}-hint`} className="text-[12px] text-muted-foreground">
+            Their link stops working at once, so they cannot reconnect. The reason is kept in
+            the audit log. You can then send a new link.
+          </p>
+        </div>
+      )}
 
       {/* Reschedule inline form */}
       {editingSched && (
@@ -553,7 +631,7 @@ export default function HRInterviews() {
         // the email; the server sent nothing new and cannot show the link again.
         setMintedLink(null);
         toast.info(
-          `${res.applicant_name} was sent this interview link a few minutes ago. No new email was sent.`,
+          `${res.applicant_name} was sent this interview link a few minutes ago. No new email was sent. To send a new link, choose Replace interview link.`,
         );
       } else {
         setMintedLink(res.magic_link);
@@ -571,6 +649,16 @@ export default function HRInterviews() {
       void invalidateAfterHrMutation(qc);
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not revoke the link.')),
+  });
+
+  const endMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      endStartedInterview(id, reason),
+    onSuccess: (inv) => {
+      toast.success(`Interview ended for ${inv.applicant_name}. You can now send a new link.`);
+      void invalidateAfterHrMutation(qc);
+    },
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not end the interview.')),
   });
 
   const modeMut = useMutation({
@@ -878,6 +966,10 @@ export default function HRInterviews() {
                         inv={inv}
                         onRevoke={(id) => revokeMut.mutate(id)}
                         revoking={revokeMut.isPending && revokeMut.variables === inv.invite_id}
+                        onEnd={(id, reason, done) =>
+                          endMut.mutate({ id, reason }, { onSuccess: done })
+                        }
+                        ending={endMut.isPending && endMut.variables?.id === inv.invite_id}
                         onReschedule={(id, iso, done) =>
                           rescheduleMut.mutate({ id, scheduledAt: iso }, { onSuccess: done })
                         }

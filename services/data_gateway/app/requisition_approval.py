@@ -49,6 +49,8 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.notifications_util import create_notification
+
 log = structlog.get_logger(__name__)
 
 DRAFT = "draft"
@@ -140,7 +142,8 @@ async def submit_for_approval(
     # Not a refusal: see the module docstring. HR has done its part and the
     # submission is valid; what is missing is somebody to act on it, and that is
     # an operational problem for the platform owner rather than a bad request.
-    if not await _company_has_approver(db, company_id=company_id):
+    approvers = await _approvers(db, company_id=company_id)
+    if not approvers:
         log.warning(
             "requisition.approval.no_approver",
             company_id=str(company_id), requisition_id=str(requisition_id),
@@ -162,6 +165,17 @@ async def submit_for_approval(
         {"s": PENDING, "n": now, "by": actor_user_id, "note": clean_note(note),
          "i": requisition_id, "c": company_id},
     )
+    # Tell every super admin, the way workflow and offer submissions already do
+    # (audit AD-F18). Before this an opening waited in the queue with no alert,
+    # so the approver found it only by opening the console. Staged on the
+    # caller's transaction: no submission, no notification.
+    for uid in approvers:
+        await create_notification(
+            db, user_id=uid, kind="requisition_approval_requested",
+            title=f"{row['title']} needs your approval",
+            body="An opening is waiting for approval before it can be published.",
+            link="/superadmin/approvals",
+        )
     log.info(
         "requisition.approval.submitted",
         requisition_id=str(requisition_id), previous=current,
@@ -211,19 +225,21 @@ async def decide(
     return {**row, "approval_status": target, "previous": current}
 
 
-async def _company_has_approver(db: AsyncSession, *, company_id: uuid.UUID) -> bool:
-    """Whether anybody at this company can act on an approval request."""
-    found = await db.scalar(
-        text(
-            "SELECT 1 FROM users u"
-            "  JOIN user_roles ur ON ur.user_id = u.id"
-            "  JOIN roles r ON r.id = ur.role_id AND r.name = 'super_admin'"
-            " WHERE u.company_id = :c AND u.deleted_at IS NULL"
-            " LIMIT 1"
-        ),
-        {"c": company_id},
+async def _approvers(db: AsyncSession, *, company_id: uuid.UUID) -> list[uuid.UUID]:
+    """Everybody at this company who can act on an approval request."""
+    return list(
+        (
+            await db.execute(
+                text(
+                    "SELECT u.id FROM users u"
+                    "  JOIN user_roles ur ON ur.user_id = u.id"
+                    "  JOIN roles r ON r.id = ur.role_id AND r.name = 'super_admin'"
+                    " WHERE u.company_id = :c AND u.deleted_at IS NULL"
+                ),
+                {"c": company_id},
+            )
+        ).scalars().all()
     )
-    return found is not None
 
 
 async def pending_for_company(

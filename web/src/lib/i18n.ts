@@ -906,6 +906,9 @@ const en = {
       notifications: 'Notifications',
       markAllRead: 'Mark all read',
       allCaughtUp: "You're all caught up.",
+      notificationsFailed: 'Could not load notifications.',
+      notificationsRetry: 'Try again',
+      skipToContent: 'Skip to main content',
       justNow: 'just now',
     },
     googleCallback: {
@@ -2586,6 +2589,9 @@ const hi = {
       notifications: 'सूचनाएँ',
       markAllRead: 'सभी को पढ़ा हुआ चिह्नित करें',
       allCaughtUp: 'आप सब देख चुके हैं।',
+      notificationsFailed: 'सूचनाएं लोड नहीं हो सकीं।',
+      notificationsRetry: 'फिर कोशिश करें',
+      skipToContent: 'मुख्य सामग्री पर जाएं',
       justNow: 'अभी-अभी',
     },
     googleCallback: {
@@ -4195,6 +4201,9 @@ const te = {
       notifications: 'నోటిఫికేషన్లు',
       markAllRead: 'అన్నింటినీ చదివినట్లు గుర్తించండి',
       allCaughtUp: 'మీరు అన్నీ చూసేశారు.',
+      notificationsFailed: 'నోటిఫికేషన్‌లను లోడ్ చేయలేకపోయాము.',
+      notificationsRetry: 'మళ్లీ ప్రయత్నించండి',
+      skipToContent: 'ప్రధాన కంటెంట్‌కు వెళ్లండి',
       justNow: 'ఇప్పుడే',
     },
     googleCallback: {

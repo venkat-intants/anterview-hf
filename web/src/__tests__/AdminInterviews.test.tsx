@@ -4,7 +4,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AdminInterviews from '../pages/admin/AdminInterviews';
 import type { InterviewListResponse } from '../api/admin';
@@ -201,7 +201,50 @@ describe('AdminInterviews page', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument();
     });
-    expect(screen.getByText(/failed to load interviews/i)).toBeInTheDocument();
+    expect(screen.getByText(/could not load the interviews/i)).toBeInTheDocument();
+    expect(screen.queryByText(/HTTP \d+/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /try again|retry/i })).toBeInTheDocument();
+  });
+
+  // AD-F26: filters live in the URL, so coming back from a session restores them.
+  it('reads filters, search and page from the URL', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/admin/interviews?status=completed&q=priya&page=3&language=hi']}>
+          <AdminInterviews />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByText('Priya Sharma');
+    expect(mockListInterviews).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'completed', q: 'priya', page: 3, language: 'hi' }),
+    );
+    expect(screen.getByTestId('filter-search')).toHaveValue('priya');
+  });
+
+  it('writes a filter change to the URL and resets the page', async () => {
+    const user = userEvent.setup();
+    let currentSearch = '';
+    function LocationProbe() {
+      currentSearch = useLocation().search;
+      return null;
+    }
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={['/admin/interviews?page=2']}>
+          <AdminInterviews />
+          <LocationProbe />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    await screen.findByText('Priya Sharma');
+    await user.selectOptions(screen.getByLabelText('Filter by language'), 'te');
+    await waitFor(() => expect(currentSearch).toBe('?language=te'));
+    expect(mockListInterviews).toHaveBeenLastCalledWith(
+      expect.objectContaining({ language: 'te', page: 1 }),
+    );
   });
 
   it('renders the search input', async () => {

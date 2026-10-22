@@ -8,6 +8,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import AdminInterviewDetail from '../pages/admin/AdminInterviewDetail';
 import type { InterviewDetailResponse } from '../api/admin';
+import { ApiError } from '../api/client';
 
 // ---------------------------------------------------------------------------
 // Mock admin API
@@ -52,10 +53,12 @@ const UNSCORED_DETAIL: InterviewDetailResponse = {
 };
 
 const mockGetInterviewDetail = vi.fn();
+const mockGetInterviewTranscript = vi.fn();
 const mockNavigate = vi.fn();
 
 vi.mock('../api/admin', () => ({
   getInterviewDetail: (...args: unknown[]) => mockGetInterviewDetail(...args) as unknown,
+  getInterviewTranscript: (...args: unknown[]) => mockGetInterviewTranscript(...args) as unknown,
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -92,6 +95,7 @@ function renderDetail(sessionId: string) {
 describe('AdminInterviewDetail page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetInterviewTranscript.mockResolvedValue({ session_id: 'x', turns: [] });
   });
 
   describe('scored path', () => {
@@ -172,17 +176,33 @@ describe('AdminInterviewDetail page', () => {
       });
     });
 
-    it('shows "No scorecard yet" message when scorecard is null', async () => {
+    // AD-F27: an abandoned session will never be scored, so it must not be
+    // told that scoring happens when the session completes.
+    it('tells an abandoned session it will not be scored', async () => {
       renderDetail('cccccccc-cccc-cccc-cccc-cccccccccccc');
-      await waitFor(() => {
-        expect(screen.getByText(/no scorecard yet/i)).toBeInTheDocument();
-      });
+      expect(await screen.findByText(/will not be scored/i)).toBeInTheDocument();
+      expect(screen.queryByText(/scoring happens when the session completes/i)).not.toBeInTheDocument();
+    });
+
+    it('tells a live session it is scored when it completes', async () => {
+      mockGetInterviewDetail.mockResolvedValue({ ...UNSCORED_DETAIL, status: 'in_progress' });
+      renderDetail('cccccccc-cccc-cccc-cccc-cccccccccccc');
+      expect(await screen.findByText(/no scorecard yet/i)).toBeInTheDocument();
+      expect(screen.getByText(/scored when it completes/i)).toBeInTheDocument();
+    });
+
+    it('shows an error with retry, not "no transcript", when the transcript fails', async () => {
+      mockGetInterviewTranscript.mockRejectedValue(new ApiError('Server error', 500));
+      renderDetail('cccccccc-cccc-cccc-cccc-cccccccccccc');
+      expect(await screen.findByText(/could not load the transcript/i)).toBeInTheDocument();
+      expect(screen.queryByText(/no transcript recorded/i)).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /try again/i })).toBeInTheDocument();
     });
 
     it('does not render the composite score section', async () => {
       renderDetail('cccccccc-cccc-cccc-cccc-cccccccccccc');
       await waitFor(() => {
-        expect(screen.getByText(/no scorecard yet/i)).toBeInTheDocument();
+        expect(screen.getByText(/will not be scored/i)).toBeInTheDocument();
       });
       // "Overall Score" heading is only rendered inside the scored branch
       expect(screen.queryByText(/overall score/i)).not.toBeInTheDocument();
@@ -197,13 +217,22 @@ describe('AdminInterviewDetail page', () => {
   });
 
   describe('error path', () => {
-    it('renders error state when getInterviewDetail rejects', async () => {
-      mockGetInterviewDetail.mockRejectedValue(new Error('Not found'));
+    it('renders not found when getInterviewDetail returns 404', async () => {
+      mockGetInterviewDetail.mockRejectedValue(new ApiError('Not found', 404));
       renderDetail('nonexistent-session');
       await waitFor(() => {
         expect(screen.getByRole('alert')).toBeInTheDocument();
       });
       expect(screen.getByText(/interview not found/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Back to interviews' })).toBeInTheDocument();
+    });
+
+    it('renders a retryable error, not "not found", for a server failure', async () => {
+      mockGetInterviewDetail.mockRejectedValue(new ApiError('Server error', 500, undefined, false));
+      renderDetail('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa');
+      expect(await screen.findByRole('button', { name: /try again/i })).toBeInTheDocument();
+      expect(screen.queryByText(/interview not found/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/HTTP \d+/)).not.toBeInTheDocument();
     });
   });
 });

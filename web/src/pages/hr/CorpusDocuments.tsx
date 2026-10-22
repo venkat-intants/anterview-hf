@@ -30,7 +30,7 @@
 //
 // English-only by design (CLAUDE.md — staff consoles are not translated).
 
-import { Fragment, useRef, useState, type FormEvent } from 'react';
+import { Fragment, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
@@ -270,6 +270,30 @@ export default function CorpusDocuments(): JSX.Element {
   const [replacing, setReplacing] = useState<{ id: string; file: File } | null>(null);
   const [replaceAttested, setReplaceAttested] = useState(false);
   const [replaceProgress, setReplaceProgress] = useState<number | null>(null);
+  // When the confirm row closes, focus goes back to the Replace control it
+  // came from rather than dropping to the page (audit F29).
+  const replaceInputs = useRef(new Map<string, HTMLInputElement>());
+  const [replaceReturnId, setReplaceReturnId] = useState<string | null>(null);
+  const replaceAttestRef = useRef<HTMLInputElement>(null);
+  const replacingId = replacing?.id ?? null;
+  useEffect(() => {
+    if (!replacingId) return;
+    // Deferred a tick: closing the file picker hands focus back to the file
+    // input after its change event, which would otherwise win.
+    const timer = window.setTimeout(() => replaceAttestRef.current?.focus(), 0);
+    return () => window.clearTimeout(timer);
+  }, [replacingId]);
+  useEffect(() => {
+    if (!replaceReturnId) return;
+    replaceInputs.current.get(replaceReturnId)?.focus();
+    setReplaceReturnId(null);
+  }, [replaceReturnId]);
+
+  function closeReplace(): void {
+    if (replacing) setReplaceReturnId(replacing.id);
+    setReplacing(null);
+    setReplaceAttested(false);
+  }
 
   function pickReplaceFile(id: string, file: File | undefined): void {
     if (!file) return;
@@ -287,8 +311,7 @@ export default function CorpusDocuments(): JSX.Element {
       replaceCorpusDocument(id, file, replaceAttested, setReplaceProgress),
     onSuccess: () => {
       toast.success('New version uploaded');
-      setReplacing(null);
-      setReplaceAttested(false);
+      closeReplace();
       setReplaceProgress(null);
       invalidate();
     },
@@ -705,6 +728,10 @@ export default function CorpusDocuments(): JSX.Element {
                                   type="file"
                                   accept={ACCEPT}
                                   aria-label={`Replace ${d.title}`}
+                                  ref={(el) => {
+                                    if (el) replaceInputs.current.set(d.id, el);
+                                    else replaceInputs.current.delete(d.id);
+                                  }}
                                   className="sr-only"
                                   disabled={replaceMut.isPending}
                                   onChange={(e) => {
@@ -743,6 +770,12 @@ export default function CorpusDocuments(): JSX.Element {
                               <form
                                 className="flex flex-col gap-2"
                                 aria-label={`Upload a new version of ${d.title}`}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Escape' && !replaceMut.isPending) {
+                                    e.stopPropagation();
+                                    closeReplace();
+                                  }
+                                }}
                                 onSubmit={(e) => {
                                   e.preventDefault();
                                   if (!replaceAttested || replaceMut.isPending) return;
@@ -755,6 +788,7 @@ export default function CorpusDocuments(): JSX.Element {
                                 <label className="flex items-start gap-2 text-[12.5px] text-foreground">
                                   <input
                                     type="checkbox"
+                                    ref={replaceAttestRef}
                                     checked={replaceAttested}
                                     onChange={(e) => setReplaceAttested(e.target.checked)}
                                     className="mt-0.5"
@@ -775,7 +809,7 @@ export default function CorpusDocuments(): JSX.Element {
                                     size="sm"
                                     variant="ghost"
                                     disabled={replaceMut.isPending}
-                                    onClick={() => setReplacing(null)}
+                                    onClick={closeReplace}
                                   >
                                     Cancel
                                   </Button>

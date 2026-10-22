@@ -681,6 +681,28 @@ describe('CorpusDocuments - replace takes the attestation', () => {
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('New version uploaded'));
   });
 
+  // F29: the confirm row takes focus, Escape backs out, and focus returns to
+  // the Replace control instead of dropping to the page.
+  it('moves focus into the confirm row and back to Replace on Escape', async () => {
+    const user = userEvent.setup();
+    api.listCorpusDocuments.mockResolvedValue([doc()]);
+    renderPage();
+    await screen.findByText('Employee handbook');
+
+    const input = screen.getByLabelText('Replace Employee handbook');
+    await user.upload(input, new File(['%PDF-1.4'], 'v2.pdf', { type: 'application/pdf' }));
+    const form = screen.getByRole('form', { name: 'Upload a new version of Employee handbook' });
+    await waitFor(() => expect(form).toContainElement(document.activeElement as HTMLElement));
+
+    await user.keyboard('{Escape}');
+
+    expect(
+      screen.queryByRole('form', { name: 'Upload a new version of Employee handbook' }),
+    ).not.toBeInTheDocument();
+    await waitFor(() => expect(input).toHaveFocus());
+    expect(api.replaceCorpusDocument).not.toHaveBeenCalled();
+  });
+
   it('disables Replace while a new version is uploading', async () => {
     const user = userEvent.setup();
     api.listCorpusDocuments.mockResolvedValue([doc()]);

@@ -462,7 +462,7 @@ async def review(db: AsyncSession, *, company_id: uuid.UUID, document_id: uuid.U
     if offer_state["preboarding_completed_at"] is not None:
         raise OfferError(409, "Preboarding is complete, so its documents can no longer be "
                               "reviewed.")
-    allowed ={"submitted": {"verified", "rejected", "replacement_requested"},
+    allowed = {"submitted": {"verified", "rejected", "replacement_requested"},
                "verified": {"replacement_requested"}}
     if target not in allowed.get(doc["status"], set()):
         raise OfferError(409, f"This document is {doc['status'].replace('_', ' ')}; it cannot be "

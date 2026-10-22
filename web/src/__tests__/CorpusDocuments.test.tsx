@@ -114,6 +114,16 @@ function doc(overrides: Partial<CorpusDocument> = {}): CorpusDocument {
 }
 
 const NO_SEMANTIC: CorpusSearchResult = { semantic: false, passages: [] };
+const ATTESTATION = 'This is a company document, not a record about a candidate.';
+
+/** Today as the viewer's calendar day, 'YYYY-MM-DD', offset by `days`. */
+function isoDay(days = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
 
 /**
  * @param path Mounted the way App.tsx mounts it, so `/hr/library/{id}` — the
@@ -203,7 +213,7 @@ describe('CorpusDocuments - failed row', () => {
     renderPage();
     expect(
       await screen.findByText(
-        'Search indexing is unavailable. The document is stored and will be indexed automatically.',
+        'Indexing failed because search was unavailable. The file is stored; press Retry to index it.',
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText('embedding_unavailable')).not.toBeInTheDocument();
@@ -430,14 +440,9 @@ describe('CorpusDocuments - delete', () => {
     await screen.findByText('Employee handbook');
 
     await user.click(screen.getByRole('button', { name: 'Delete' }));
-    expect(
-      screen.getByText(
-        "This removes it from the assistant's search immediately and deletes its text.",
-      ),
-    ).toBeInTheDocument();
-
+    // The confirm button itself says what happens: gone from search at once.
     const group = screen.getByRole('group', { name: /confirm deleting/i });
-    await user.click(within(group).getByRole('button', { name: 'Delete' }));
+    await user.click(within(group).getByRole('button', { name: 'Delete and remove from search' }));
 
     await waitFor(() =>
       expect(api.deleteCorpusDocument).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111'),
@@ -455,8 +460,10 @@ describe('CorpusDocuments - delete', () => {
 
     expect(api.deleteCorpusDocument).not.toHaveBeenCalled();
     expect(
-      screen.queryByText("This removes it from the assistant's search immediately and deletes its text."),
+      screen.queryByRole('button', { name: 'Delete and remove from search' }),
     ).not.toBeInTheDocument();
+    // Focus goes back to the trigger rather than dropping to the page (F29).
+    expect(screen.getByRole('button', { name: 'Delete' })).toHaveFocus();
   });
 });
 
@@ -588,11 +595,15 @@ describe('CorpusDocuments - upload wiring', () => {
 
     const file = new File(['%PDF-1.4'], 'v2.pdf', { type: 'application/pdf' });
     await user.upload(screen.getByLabelText('Replace Employee handbook'), file);
+    // Two attestation checkboxes exist now: the new-version row's (first, in
+    // the table) and the upload form's.
+    await user.click(screen.getAllByRole('checkbox', { name: ATTESTATION })[0]);
+    await user.click(screen.getByRole('button', { name: 'Upload new version' }));
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith('Too many requests. Please wait a minute and try again.'),
     );
-    expect(toastError).not.toHaveBeenCalledWith('Could not upload a new version');
+    expect(toastError).not.toHaveBeenCalledWith('Could not upload a new version.');
   });
 });
 
@@ -635,5 +646,193 @@ describe('CorpusDocuments - polling while indexing', () => {
     await screen.findByText('Ready');
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(api.listCorpusDocuments).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit fixes: PL-F7 (Replace), PL-F8 (expiry), PL-F9, PL-F12, F15, F16, F30
+// ---------------------------------------------------------------------------
+
+describe('CorpusDocuments - replace takes the attestation', () => {
+  // PL-F7: picking a file used to upload it at once, with no attestation and
+  // no pending state, so two picks made two versions.
+  it('does not upload on pick; uploads only once attested, sending the attestation', async () => {
+    const user = userEvent.setup();
+    api.listCorpusDocuments.mockResolvedValue([doc()]);
+    api.replaceCorpusDocument.mockResolvedValue(doc({ version: 2 }));
+    renderPage();
+    await screen.findByText('Employee handbook');
+
+    const file = new File(['%PDF-1.4'], 'v2.pdf', { type: 'application/pdf' });
+    await user.upload(screen.getByLabelText('Replace Employee handbook'), file);
+
+    expect(api.replaceCorpusDocument).not.toHaveBeenCalled();
+    const upload = screen.getByRole('button', { name: 'Upload new version' });
+    expect(upload).toBeDisabled();
+
+    await user.click(screen.getAllByRole('checkbox', { name: ATTESTATION })[0]);
+    await user.click(upload);
+
+    await waitFor(() => expect(api.replaceCorpusDocument).toHaveBeenCalledTimes(1));
+    const [id, sent, attested] = api.replaceCorpusDocument.mock.calls[0] as [string, File, boolean];
+    expect(id).toBe('11111111-1111-4111-8111-111111111111');
+    expect(sent).toBe(file);
+    expect(attested).toBe(true);
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('New version uploaded'));
+  });
+
+  it('disables Replace while a new version is uploading', async () => {
+    const user = userEvent.setup();
+    api.listCorpusDocuments.mockResolvedValue([doc()]);
+    api.replaceCorpusDocument.mockReturnValue(new Promise(() => undefined));
+    renderPage();
+    await screen.findByText('Employee handbook');
+
+    const input = screen.getByLabelText('Replace Employee handbook');
+    await user.upload(input, new File(['%PDF-1.4'], 'v2.pdf', { type: 'application/pdf' }));
+    await user.click(screen.getAllByRole('checkbox', { name: ATTESTATION })[0]);
+    await user.click(screen.getByRole('button', { name: 'Upload new version' }));
+
+    expect(await screen.findByRole('button', { name: 'Uploading…' })).toBeDisabled();
+    expect(input).toBeDisabled();
+  });
+
+  // F15: checked on pick, not after uploading the whole file.
+  it('refuses an oversized replacement before uploading it', async () => {
+    const user = userEvent.setup();
+    api.listCorpusDocuments.mockResolvedValue([doc()]);
+    renderPage();
+    await screen.findByText('Employee handbook');
+
+    const big = new File(['x'], 'big.pdf', { type: 'application/pdf' });
+    Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 });
+    await user.upload(screen.getByLabelText('Replace Employee handbook'), big);
+
+    expect(toastError).toHaveBeenCalledWith('The file is larger than 10 MB.');
+    expect(screen.queryByRole('button', { name: 'Upload new version' })).not.toBeInTheDocument();
+  });
+});
+
+describe('CorpusDocuments - upload file checks', () => {
+  it('says why a picked file cannot be uploaded and keeps Upload disabled', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('No documents yet');
+
+    await user.type(screen.getByLabelText('Title'), 'Handbook');
+    await user.click(screen.getByRole('checkbox', { name: ATTESTATION }));
+    await user.upload(screen.getByLabelText('File'), new File([], 'empty.txt'));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/empty/);
+    expect(screen.getByRole('button', { name: 'Upload' })).toBeDisabled();
+  });
+});
+
+describe('CorpusDocuments - expiry', () => {
+  // PL-F8: past dates were accepted and nothing said the document is deleted.
+  it('blocks past dates and says what expiry does', async () => {
+    renderPage();
+    await screen.findByText('No documents yet');
+
+    const expiry = screen.getByLabelText('Expiry date (optional)');
+    expect(expiry).toHaveAttribute('min', isoDay(0));
+    expect(
+      screen.getByText('The document is deleted automatically after this date.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows an Expires column, and Expired rather than Ready once the date has passed', async () => {
+    api.listCorpusDocuments.mockResolvedValue([
+      doc({ id: 'a', title: 'Old policy', expires_on: isoDay(-1) }),
+      doc({ id: 'b', title: 'Current policy', expires_on: null }),
+    ]);
+    renderPage();
+    await screen.findByText('Old policy');
+
+    expect(screen.getByRole('columnheader', { name: 'Expires' })).toBeInTheDocument();
+    const oldRow = screen.getByText('Old policy').closest('tr')!;
+    expect(within(oldRow).getByText('Expired')).toBeInTheDocument();
+    expect(within(oldRow).queryByText('Ready')).not.toBeInTheDocument();
+    const currentRow = screen.getByText('Current policy').closest('tr')!;
+    expect(within(currentRow).getByText('Never')).toBeInTheDocument();
+    expect(within(currentRow).getByText('Ready')).toBeInTheDocument();
+  });
+
+  it('prints a date-only expiry on its own calendar day', async () => {
+    api.listCorpusDocuments.mockResolvedValue([doc({ expires_on: '2031-03-05' })]);
+    renderPage();
+    expect(await screen.findByText('5 Mar 2031')).toBeInTheDocument();
+  });
+});
+
+describe('CorpusDocuments - row copy and states', () => {
+  // PL-F9: the failed row promised automatic indexing next to a Retry button.
+  it('tells HR to press Retry on a row parked by a search outage', async () => {
+    api.listCorpusDocuments.mockResolvedValue([
+      doc({ status: 'failed', failure_code: 'embedding_unavailable' }),
+    ]);
+    renderPage();
+    expect(await screen.findByText(/press Retry to index it/)).toBeInTheDocument();
+    expect(screen.queryByText(/indexed automatically/)).not.toBeInTheDocument();
+  });
+
+  // F30: a row with no current version showed "Indexing…" forever.
+  it('shows "-" for a document with no current version, not Indexing…', async () => {
+    api.listCorpusDocuments.mockResolvedValue([doc({ status: null, version: null })]);
+    renderPage();
+    await screen.findByText('Employee handbook');
+    expect(screen.queryByText('Indexing…')).not.toBeInTheDocument();
+  });
+
+  // PL-F12: the search box had no limit, so a long query came back "HTTP 422".
+  it('limits the search box to the server limit', async () => {
+    renderPage();
+    await screen.findByText('No documents yet');
+    expect(screen.getByLabelText('Search your documents')).toHaveAttribute('maxLength', '500');
+  });
+
+  // F16: window.open after an await is a popup a blocker may stop.
+  it('downloads in the same tab instead of opening a popup', async () => {
+    const user = userEvent.setup();
+    api.listCorpusDocuments.mockResolvedValue([doc()]);
+    api.getCorpusDownloadUrl.mockResolvedValue({
+      url: 'https://files.example.com/doc?sig=x',
+      expires_in: 300,
+    });
+    const assign = vi.fn();
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    const original = window.location;
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      value: { ...original, assign },
+    });
+    try {
+      renderPage();
+      await screen.findByText('Employee handbook');
+      await user.click(screen.getByRole('button', { name: 'Download' }));
+      await waitFor(() => expect(assign).toHaveBeenCalledWith('https://files.example.com/doc?sig=x'));
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, 'location', { configurable: true, value: original });
+      open.mockRestore();
+    }
+  });
+});
+
+describe('CorpusDocuments - naming', () => {
+  // PL-L9: the nav said "Documents", the same word offers use for candidate
+  // preboarding documents ("Documents & preboarding").
+  it("is called Library in both consoles' nav, and the page says Document library", async () => {
+    const { NAV_SECTIONS } = await import('../components/layout/navSections');
+    const libraryItems = NAV_SECTIONS.flatMap((s) => s.items).filter((i) =>
+      /\/library$/.test(i.to),
+    );
+    expect(libraryItems.map((i) => i.to).sort()).toEqual(['/hr/library', '/superadmin/library']);
+    libraryItems.forEach((i) => expect(i.label).toBe('Library'));
+
+    renderPage();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Document library' }),
+    ).toBeInTheDocument();
   });
 });

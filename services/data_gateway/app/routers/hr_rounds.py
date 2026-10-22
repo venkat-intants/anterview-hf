@@ -19,9 +19,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +32,7 @@ from app.database import DbSessionDep
 from app.dependencies import HrCtxDep
 from app.models import (
     CodingQuestion,
+    ExamAttempt,
     ExamQuestion,
     ExamRound,
     ExamSection,
@@ -42,11 +44,13 @@ from app.routers.hr_coding import (
     _test_cases_payload,
 )
 from app.routers.hr_exams import (
+    ImportQuestionsOut,
     QuestionIn,
     QuestionOut,
     _bulk_insert_questions,
     _get_owned_exam,
     _question_out,
+    import_into_section,
 )
 from app.utils.ownership import get_owned
 
@@ -133,6 +137,11 @@ class RoundOut(BaseModel):
     status: str
     position: int
     sections: list[SectionOut]
+    # Live attempts on the round. Carried by the structure read the editor
+    # uses, so it can offer "Duplicate" rather than an Unpublish the server
+    # will refuse once anyone has sat the round. ``None`` on the write
+    # responses, which do not count.
+    attempt_count: int | None = None
 
 
 class ExamStructureOut(BaseModel):
@@ -181,7 +190,9 @@ async def _section_out(db: AsyncSession, sec: ExamSection) -> SectionOut:
     )
 
 
-async def _round_out(db: AsyncSession, rnd: ExamRound) -> RoundOut:
+async def _round_out(
+    db: AsyncSession, rnd: ExamRound, attempt_count: int | None = None
+) -> RoundOut:
     secs = (
         await db.execute(
             select(ExamSection)
@@ -204,7 +215,26 @@ async def _round_out(db: AsyncSession, rnd: ExamRound) -> RoundOut:
         status=rnd.status,
         position=rnd.position,
         sections=[await _section_out(db, s) for s in secs],
+        attempt_count=attempt_count,
     )
+
+
+async def _attempt_counts_by_round(
+    db: AsyncSession, company_id: uuid.UUID, exam_id: uuid.UUID
+) -> dict[uuid.UUID, int]:
+    """Live attempts per round of one exam, in ONE query (not one per round)."""
+    rows = (
+        await db.execute(
+            select(ExamAttempt.round_id, func.count())
+            .where(
+                ExamAttempt.exam_id == exam_id,
+                ExamAttempt.company_id == company_id,
+                ExamAttempt.deleted_at.is_(None),
+            )
+            .group_by(ExamAttempt.round_id)
+        )
+    ).tuples().all()
+    return {rid: int(n) for rid, n in rows if rid is not None}
 
 
 # ---------------------------------------------------------------------------
@@ -227,9 +257,10 @@ async def get_structure(
             .order_by(ExamRound.position.asc())
         )
     ).scalars().all()
+    attempts = await _attempt_counts_by_round(db, company_id, exam_id)
     return ExamStructureOut(
         exam_id=str(exam_id),
-        rounds=[await _round_out(db, r) for r in rounds],
+        rounds=[await _round_out(db, r, attempts.get(r.id, 0)) for r in rounds],
     )
 
 
@@ -334,13 +365,23 @@ async def update_round(
                     "Publish a workflow version that no longer uses it first."
                 ),
             )
+        # The exam_rounds_frozen trigger refuses this too, but its refusal
+        # surfaces as "reload and try again", which never helps (audit E2).
+        if await exam_locks.round_attempt_count(db, company_id, rnd.id) > 0:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=exam_locks.UNPUBLISH_TAKEN_REASON,
+            )
 
     # PH4-D1: grading fields are frozen once the round is published or taken
     # (exam_rounds_frozen). Checked before the write for a message naming the
     # reason; the trigger is the backstop against a race lost between the two.
+    # An explicit null time limit ("no limit") is a change as much as a number
+    # is; reading None as "not supplied" meant a limit could never be cleared.
+    clears_time_limit = "time_limit_seconds" in body.model_fields_set
     grading_changed = (
         body.pass_threshold is not None
-        or body.time_limit_seconds is not None
+        or clears_time_limit
         or body.advances_to_interview is not None
     )
     if grading_changed:
@@ -362,7 +403,7 @@ async def update_round(
         rnd.title = body.title.strip()
     if body.pass_threshold is not None:
         rnd.pass_threshold = body.pass_threshold
-    if body.time_limit_seconds is not None:
+    if clears_time_limit:
         rnd.time_limit_seconds = body.time_limit_seconds
     if body.advances_to_interview is not None:
         rnd.advances_to_interview = body.advances_to_interview
@@ -377,6 +418,22 @@ async def update_round(
         if body.status == "published" and exam.status != "published":
             exam.status = "published"
             exam.updated_at = now
+        # ...and unpublishing the LAST published round takes the exam back to
+        # draft, or the list kept calling an exam with nothing live "Live"
+        # (audit E10). A closed exam stays closed: that is HR's own decision.
+        if body.status == "draft" and exam.status == "published":
+            other_live = await db.scalar(
+                select(func.count()).select_from(ExamRound).where(
+                    ExamRound.exam_id == exam_id,
+                    ExamRound.company_id == company_id,
+                    ExamRound.id != rnd.id,
+                    ExamRound.status == "published",
+                    ExamRound.deleted_at.is_(None),
+                )
+            )
+            if int(other_live or 0) == 0:
+                exam.status = "draft"
+                exam.updated_at = now
     rnd.updated_at = now
     await exam_locks.commit_or_conflict(db)
     return await _round_out(db, rnd)
@@ -417,6 +474,21 @@ async def delete_round(
     ).scalars().all()
     for s in secs:
         s.deleted_at = now
+    # ...and their questions, as delete_section does, or the round's questions
+    # stayed live: counted in the exam list's "N Qs" and in a bank's usage.
+    sec_ids = [s.id for s in secs]
+    if sec_ids:
+        for model in (ExamQuestion, CodingQuestion):
+            for q in (
+                await db.execute(
+                    select(model).where(
+                        model.section_id.in_(sec_ids),
+                        model.company_id == company_id,
+                        model.deleted_at.is_(None),
+                    )
+                )
+            ).scalars().all():
+                q.deleted_at = now
     await exam_locks.commit_or_conflict(db)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -558,7 +630,8 @@ async def update_section(
     # kind is immutable after creation (it'd orphan the section's questions).
     if body.title is not None:
         sec.title = body.title.strip()
-    if body.time_limit_seconds is not None:
+    # An explicit null clears the section's own limit; an omitted field keeps it.
+    if "time_limit_seconds" in body.model_fields_set:
         sec.time_limit_seconds = body.time_limit_seconds
     sec.updated_at = datetime.now(tz=UTC)
     await exam_locks.commit_or_conflict(db)
@@ -731,6 +804,33 @@ async def add_section_question(
     await exam_locks.assert_round_editable_by_id(db, company_id, sec.round_id)
     created = await _bulk_insert_questions(db, company_id, sec, [body])
     return _question_out(created[0])
+
+
+@router.post(
+    "/exams/{exam_id}/sections/{section_id}/questions/import",
+    status_code=status.HTTP_201_CREATED,
+    response_model=ImportQuestionsOut,
+)
+async def import_section_questions(
+    exam_id: uuid.UUID,
+    section_id: uuid.UUID,
+    ctx: HrCtxDep,
+    db: DbSessionDep,
+    file: Annotated[UploadFile, File(description=".xlsx or .csv in the template layout")],
+) -> ImportQuestionsOut:
+    """Bulk-import an Excel/CSV sheet into THIS section.
+
+    The editor's import used the exam-level route, which always wrote into the
+    exam's first MCQ section and checked the first round's lock, so importing
+    from round 2 filled round 1, or was refused because round 1 was published
+    (audit E1). Same parser, caps and partial-success reporting as that route.
+    """
+    _hr_uid, company_id = ctx
+    await _get_owned_exam(db, company_id, exam_id)
+    sec = await _get_owned_section(db, company_id, exam_id, section_id)
+    _require_section_kind(sec, "mcq")
+    await exam_locks.assert_round_editable_by_id(db, company_id, sec.round_id)
+    return await import_into_section(db, company_id, sec, file)
 
 
 @router.get(

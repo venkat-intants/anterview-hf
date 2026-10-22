@@ -296,6 +296,12 @@ class AssignmentOut(BaseModel):
     expires_at: str
     consumed_at: str | None
     created_at: str
+    # Which round the link is for. The editor lists each round's links under
+    # that round and marks who already holds a live one; without these the
+    # per-round "Assigned" list matched nothing and stayed empty.
+    round_id: str | None = None
+    enrolment_id: str | None = None
+    scheduled_at: str | None = None
 
 
 class AttemptResultOut(BaseModel):
@@ -309,6 +315,13 @@ class AttemptResultOut(BaseModel):
     status: str
     submitted_at: str | None
     attempt_no: int
+    # The round this attempt sat, and THAT round's pass mark. ``passed`` is
+    # decided by the round's own threshold, so showing the exam-level one next
+    # to it put a 65% "Failed" under "pass >= 60%" (audit E8).
+    round_id: str | None = None
+    round_number: int | None = None
+    round_title: str | None = None
+    round_pass_threshold: int | None = None
     # Camera proctoring contract §7. The API carries both so a caller can tell
     # "not watched" from "watched and clean" without opening every attempt —
     # but note that the HR CONSOLE deliberately renders neither on this list.
@@ -697,7 +710,9 @@ async def update_exam(
         exam.target_job_title = body.target_job_title
     if body.pass_threshold is not None:
         exam.pass_threshold = body.pass_threshold
-    if body.time_limit_seconds is not None:
+    # An explicit null clears the limit; an omitted field leaves it alone. Reading
+    # None as "no change" meant a limit, once set, could never be removed.
+    if "time_limit_seconds" in body.model_fields_set:
         exam.time_limit_seconds = body.time_limit_seconds
     if body.allow_retake is not None:
         exam.allow_retake = body.allow_retake
@@ -945,7 +960,21 @@ async def import_questions(
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
     await exam_locks.assert_editable_by_exam(db, company_id, exam_id)
+    section = await _default_section(db, company_id, exam_id, "mcq")
+    return await import_into_section(db, company_id, section, file)
 
+
+async def import_into_section(
+    db: AsyncSession, company_id: uuid.UUID, section: ExamSection, file: UploadFile
+) -> ImportQuestionsOut:
+    """Read, parse and insert an uploaded sheet into ONE section.
+
+    Shared by the legacy exam-level route above and the section-scoped route
+    in ``hr_rounds.py``. The caller has already checked ownership and the lock
+    of the section's own round: the legacy route checked the FIRST round and
+    wrote into the FIRST MCQ section, which put an import made from round 2
+    into round 1, or refused it because round 1 was published (audit E1).
+    """
     # read(limit + 1), not read(): an unbounded read pulls the entire spooled
     # body into memory and only THEN measures it, so the cap described the
     # request without limiting it. One byte over is all that is needed to know
@@ -963,14 +992,13 @@ async def import_questions(
         raise HTTPException(
             status_code=400, detail="No question rows found. Use the template layout."
         )
-    section = await _default_section(db, company_id, exam_id, "mcq")
     created = (
         await _bulk_insert_questions(db, company_id, section, items) if items else []
     )
     log.info(
         "hr.exam.questions.imported",
-        exam_id=str(exam_id), company_id=str(company_id),
-        added=len(created), errors=len(errors),
+        exam_id=str(section.exam_id), section_id=str(section.id),
+        company_id=str(company_id), added=len(created), errors=len(errors),
     )
     return ImportQuestionsOut(
         added=len(created),
@@ -1218,6 +1246,9 @@ async def list_assignments(
             expires_at=a.expires_at.isoformat(),
             consumed_at=a.consumed_at.isoformat() if a.consumed_at else None,
             created_at=a.created_at.isoformat(),
+            round_id=str(a.round_id) if a.round_id else None,
+            enrolment_id=str(a.enrolment_id) if a.enrolment_id else None,
+            scheduled_at=a.scheduled_at.isoformat() if a.scheduled_at else None,
         )
         for a, name in rows
     ]
@@ -1252,12 +1283,50 @@ async def revoke_assignment(
         expires_at=asn.expires_at.isoformat(),
         consumed_at=asn.consumed_at.isoformat() if asn.consumed_at else None,
         created_at=asn.created_at.isoformat(),
+        round_id=str(asn.round_id) if asn.round_id else None,
+        enrolment_id=str(asn.enrolment_id) if asn.enrolment_id else None,
+        scheduled_at=asn.scheduled_at.isoformat() if asn.scheduled_at else None,
     )
 
 
 # ---------------------------------------------------------------------------
 # Results
 # ---------------------------------------------------------------------------
+class AttemptLocationOut(BaseModel):
+    attempt_id: str
+    exam_id: str
+
+
+@router.get("/exam-attempts/{attempt_id}", response_model=AttemptLocationOut)
+async def locate_attempt(
+    attempt_id: uuid.UUID, ctx: HrCtxDep, db: DbSessionDep
+) -> AttemptLocationOut:
+    """Which exam an attempt belongs to — one request, for a citation link
+    (``/hr/exams/attempts/{id}``) that carries only the attempt id.
+
+    The console used to find it by asking every exam for its attempts (1 + N
+    requests), and any one of those failing read as "not found" (audit E25).
+    A top-level path, like ``/exam-question-template``, so it can never be read
+    as ``/exams/{exam_id}``. Company-scoped: another tenant's attempt is a 404,
+    indistinguishable from a missing one.
+    """
+    _hr_uid, company_id = ctx
+    exam_id = await db.scalar(
+        select(ExamAttempt.exam_id)
+        .join(Exam, Exam.id == ExamAttempt.exam_id)
+        .where(
+            ExamAttempt.id == attempt_id,
+            ExamAttempt.company_id == company_id,
+            ExamAttempt.deleted_at.is_(None),
+            Exam.company_id == company_id,
+            Exam.deleted_at.is_(None),
+        )
+    )
+    if exam_id is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attempt not found.")
+    return AttemptLocationOut(attempt_id=str(attempt_id), exam_id=str(exam_id))
+
+
 @router.get("/exams/{exam_id}/attempts", response_model=list[AttemptResultOut])
 async def list_attempts(
     exam_id: uuid.UUID,
@@ -1269,8 +1338,14 @@ async def list_attempts(
     _hr_uid, company_id = ctx
     await _get_owned_exam(db, company_id, exam_id)
     stmt = (
-        select(ExamAttempt, Applicant.full_name)
+        select(ExamAttempt, Applicant.full_name, ExamRound)
         .join(Applicant, Applicant.id == ExamAttempt.applicant_id)
+        # Outer: a legacy attempt may predate rounds. Scoped by company so the
+        # join can never pull another tenant's round onto this row.
+        .outerjoin(
+            ExamRound,
+            (ExamRound.id == ExamAttempt.round_id) & (ExamRound.company_id == company_id),
+        )
         .where(
             ExamAttempt.exam_id == exam_id,
             ExamAttempt.company_id == company_id,
@@ -1297,8 +1372,12 @@ async def list_attempts(
             attempt_no=at.attempt_no,
             integrity_score=at.integrity_score,
             camera_in_use=at.camera_in_use,
+            round_id=str(rnd.id) if rnd is not None else None,
+            round_number=rnd.round_number if rnd is not None else None,
+            round_title=rnd.title if rnd is not None else None,
+            round_pass_threshold=rnd.pass_threshold if rnd is not None else None,
         )
-        for at, name in rows
+        for at, name, rnd in rows
     ]
 
 

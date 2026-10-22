@@ -191,6 +191,10 @@ export default function CandidatePanel({
 
       {verdict.summary && <p className="text-sm leading-relaxed">{verdict.summary}</p>}
 
+      {/* No separate strip for `verdict.citations`: the server builds it as
+          the union of the per-signal citations (shared/agents/panel.py and
+          _filter_panel_citations in routers/agent.py), and each signal row
+          already shows its own. A second strip would repeat every chip. */}
       <div className="divide-y divide-border">
         {verdict.signals.map((s) => (
           <SignalRow key={s.signal} signal={s} />

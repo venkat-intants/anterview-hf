@@ -1114,7 +1114,7 @@ async def _semantic_search(
     # B5: by application, the same as the plain list (see list_applicants).
     if status_filter:
         where.append(
-            "EXISTS (SELECT 1 FROM application_progress p"
+            "EXISTS (SELECT 1 FROM application_progress p"  # nosec B608: _status_column returns one of two literal names, value bound
             f" WHERE p.applicant_id = a.id AND p.{_status_column(status_filter)} = :status)"
         )
         params["status"] = status_filter

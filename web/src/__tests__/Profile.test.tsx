@@ -105,7 +105,12 @@ beforeEach(() => {
   mockUseAuth.mockReturnValue({
     isAuthenticated: true,
     isInitializing: false,
-    user: { user_id: 'u-1', full_name: 'Bhavya Nair', email: 'bhavya@example.com', roles: ['candidate'] },
+    user: {
+      user_id: 'u-1',
+      full_name: 'Bhavya Nair',
+      email: 'bhavya@example.com',
+      roles: ['candidate'],
+    },
   });
 });
 
@@ -242,7 +247,12 @@ describe('Profile - saving', () => {
     mockUseAuth.mockReturnValue({
       isAuthenticated: true,
       isInitializing: false,
-      user: { user_id: 'u-2', full_name: 'Chetan Iyer', email: 'chetan@acme.edu', roles: ['hr_manager'] },
+      user: {
+        user_id: 'u-2',
+        full_name: 'Chetan Iyer',
+        email: 'chetan@acme.edu',
+        roles: ['hr_manager'],
+      },
     });
     const user = userEvent.setup();
     await renderHydrated('Chetan Iyer');
@@ -254,6 +264,26 @@ describe('Profile - saving', () => {
     expect(body).toHaveProperty('official_email', 'chetan@acme.edu');
     expect(body).not.toHaveProperty('desired_roles');
     expect(body).not.toHaveProperty('employment_status');
+  });
+
+  it.each([
+    [['interviewer'], 'Interviewer'],
+    [['platform_owner'], 'Platform owner'],
+  ])('treats %j as staff, not a candidate (AD-F9)', async (roles, label) => {
+    getMe.mockResolvedValue({ ...HR, roles, company_name: undefined, official_email: undefined });
+    mockUseAuth.mockReturnValue({
+      isAuthenticated: true,
+      isInitializing: false,
+      user: { user_id: 'u-2', full_name: 'Chetan Iyer', email: 'chetan@acme.edu', roles },
+    });
+    await renderHydrated('Chetan Iyer');
+
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.queryByText('Candidate')).not.toBeInTheDocument();
+    // No candidate-only asks: no resume upload, no desired roles, no Career section.
+    expect(screen.queryByText('Upload your resume')).not.toBeInTheDocument();
+    expect(screen.queryByText('Add the roles you want')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /edit career/i })).not.toBeInTheDocument();
   });
 
   it('gives an HR manager no Career section', async () => {

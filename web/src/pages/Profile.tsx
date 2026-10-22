@@ -19,7 +19,9 @@ import { getMe } from '@/api/auth';
 import { updateProfile, imageFileToDataUrl } from '@/api/profile';
 import type { MeResponse, ProfileUpdate } from '@/types/auth';
 import { useAuth } from '@/context/AuthContext';
+import { isCandidateOnly } from '@/components/layout/navSections';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
 import { cn } from '@/lib/utils';
 import { safeAvatarSrc } from '@/lib/safeUrl';
 
@@ -185,8 +187,12 @@ export default function Profile() {
 
   const roles = me?.roles ?? user?.roles ?? [];
   const isHr = roles.includes('hr_manager');
-  const isAdmin = roles.includes('admin') || roles.includes('super_admin');
-  const isCandidate = !isHr && !isAdmin;
+  const isAdmin =
+    roles.includes('admin') || roles.includes('super_admin') || roles.includes('platform_owner');
+  // Staff status comes from the one shared predicate (audit AD-F9): an
+  // interviewer, or a platform owner without `admin`, used to fall through to
+  // the candidate variant and be asked to upload a resume.
+  const isCandidate = isCandidateOnly(roles);
 
   const mutation = useMutation({
     mutationFn: (body: ProfileUpdate) => updateProfile(body),
@@ -195,7 +201,7 @@ export default function Profile() {
       toast.success(t('profile.saved'));
       setEditing(null);
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t('profile.saveFailed')),
+    onError: (e: unknown) => toast.error(errorMessage(e, t('profile.saveFailed'))),
   });
 
   // The photo saves on its own mutation. Sharing the editors' one meant a photo
@@ -207,7 +213,7 @@ export default function Profile() {
       queryClient.setQueryData(['auth', 'me'], updated);
       toast.success(t('profile.saved'));
     },
-    onError: (e: unknown) => toast.error(e instanceof Error ? e.message : t('profile.saveFailed')),
+    onError: (e: unknown) => toast.error(errorMessage(e, t('profile.saveFailed'))),
   });
 
   // What the dialog renders. It outlives `editing` by one close animation: Radix
@@ -283,10 +289,22 @@ export default function Profile() {
     }
   };
 
-  const roleLabel = isAdmin
-    ? roles.includes('super_admin') ? t('profile.roleSuperAdmin') : t('profile.rolePlatformAdmin')
-    : isHr ? t('profile.roleHr') : t('profile.roleCandidate');
-  const roleTone: 'electric' | 'forest' | 'lavender' = isHr ? 'forest' : isAdmin ? 'lavender' : 'electric';
+  const roleLabel = roles.includes('platform_owner')
+    ? t('profile.rolePlatformOwner')
+    : roles.includes('super_admin')
+      ? t('profile.roleSuperAdmin')
+      : roles.includes('admin')
+        ? t('profile.rolePlatformAdmin')
+        : isHr
+          ? t('profile.roleHr')
+          : roles.includes('interviewer')
+            ? t('profile.roleInterviewer')
+            : t('profile.roleCandidate');
+  const roleTone: 'electric' | 'forest' | 'lavender' = isAdmin
+    ? 'lavender'
+    : isCandidate
+      ? 'electric'
+      : 'forest';
 
   const description = isCandidate
     ? t('profile.descCandidate')

@@ -39,6 +39,8 @@ vi.mock('../api/profile', () => ({
 }));
 
 import ProfileView from '../pages/ProfileView';
+import { roleLabel } from '../lib/roleLabel';
+import { ApiError } from '../api/client';
 
 function renderProfile() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -83,17 +85,37 @@ describe('ProfileView', () => {
   });
 
   it('distinguishes a forbidden profile from a missing one', async () => {
-    getUserProfile.mockRejectedValue(new Error('403 Forbidden'));
+    // The server's real 403 wording never said "403" or "forbidden" (AD-F28).
+    getUserProfile.mockRejectedValue(
+      new ApiError('Insufficient permissions for this action.', 403),
+    );
     renderProfile();
 
     expect(await screen.findByText(/don't have access to this profile/i)).toBeInTheDocument();
   });
 
   it('reports a genuinely missing profile as not found', async () => {
-    getUserProfile.mockRejectedValue(new Error('HTTP 404'));
+    getUserProfile.mockRejectedValue(new ApiError('User not found.', 404));
     renderProfile();
 
     expect(await screen.findByText(/profile not found/i)).toBeInTheDocument();
+  });
+
+  it('does not call a server failure "not found"', async () => {
+    getUserProfile.mockRejectedValue(new ApiError('Server error', 500, undefined, false));
+    renderProfile();
+
+    expect(await screen.findByText('Could not load this profile.')).toBeInTheDocument();
+    expect(screen.queryByText(/profile not found/i)).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [['interviewer'], 'Interviewer'],
+    [['platform_owner', 'admin'], 'Platform owner'],
+    [['hr_manager'], 'HR manager'],
+    [['candidate'], 'Candidate'],
+  ])('names the role %j as %s', (roles, label) => {
+    expect(roleLabel(roles).label).toBe(label);
   });
 });
 

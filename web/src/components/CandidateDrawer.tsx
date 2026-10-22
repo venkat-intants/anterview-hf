@@ -51,7 +51,6 @@ import OfferSection from '@/components/OfferSection';
 import CheckinSection from '@/components/hr/CheckinSection';
 import { getMetricDefinitions, sourceLabel } from '@/api/metrics';
 import { AlertTriangle, ChevronRight, Info, XCircle } from '@/design/components/icons';
-import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { DataList } from '@/design/components/page';

@@ -12,7 +12,7 @@
 //   (integrity_score / by_type / flagged_seconds / timeline / "not enabled"),
 //   session metadata grid, back nav, skeleton/error.
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useAccentColor } from '@/lib/useAccentColor';
@@ -43,7 +43,9 @@ import type {
   IntegrityEventItem,
   TranscriptTurn,
 } from '@/api/admin';
-import { toast } from '@/lib/toast';
+import { ApiError } from '@/api/client';
+import { errorMessage } from '@/lib/errorMessage';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { formatDate, formatDuration, statusProps, languageLabel, formatScore } from '@/lib/formatters';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
@@ -277,10 +279,27 @@ function ScoreBarRow({
 
 // ── Transcript panel (live — backed by getInterviewTranscript) ─────────────────
 
-function TranscriptPanel({ turns, isLoading }: { turns: TranscriptTurn[]; isLoading: boolean }) {
+interface TranscriptPanelProps {
+  turns: TranscriptTurn[];
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  onRetry: () => void;
+  retrying: boolean;
+}
+
+function TranscriptPanel({ turns, isLoading, isError, error, onRetry, retrying }: TranscriptPanelProps) {
   return (
     <SectionCard title="Transcript" icon={MessageSquare} className="h-full">
-      {isLoading ? (
+      {isError && !isLoading ? (
+        // A failed load is not an empty transcript (audit AD-F27).
+        <QueryErrorPanel
+          title="Could not load the transcript."
+          error={error}
+          onRetry={onRetry}
+          retrying={retrying}
+        />
+      ) : isLoading ? (
         <div className="flex flex-col gap-4" aria-label="Loading transcript" aria-busy="true">
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="flex gap-3">
@@ -462,13 +481,51 @@ function DetailSkeleton() {
   );
 }
 
+// ── No scorecard copy ──
+//
+// Only a live session will still be scored. An abandoned or failed one never
+// will, so "scoring happens when the session completes" would be untrue there
+// (audit AD-F27).
+
+function noScorecardCopy(status: string): { title: string; description: string } {
+  switch (status) {
+    case 'in_progress':
+    case 'scheduled':
+    case 'pending':
+      return {
+        title: 'No scorecard yet',
+        description: 'This session is still running. It is scored when it completes.',
+      };
+    case 'completed':
+      return {
+        title: 'Scorecard not ready',
+        description: 'The session has completed and is being scored. Check back in a few minutes.',
+      };
+    case 'abandoned':
+      return {
+        title: 'Not scored',
+        description: 'The candidate left before the interview finished, so it will not be scored.',
+      };
+    case 'failed':
+      return {
+        title: 'Not scored',
+        description: 'The session failed before it finished, so it will not be scored.',
+      };
+    default:
+      return {
+        title: 'No scorecard',
+        description: 'This session has no scorecard.',
+      };
+  }
+}
+
 // ── AdminInterviewDetail page ──────────────────────────────────────────────────
 
 export default function AdminInterviewDetail() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
 
-  const { data, isLoading, isError, error } = useQuery({
+  const detailQuery = useQuery({
     queryKey: ['admin', 'interview', sessionId],
     queryFn: () => {
       if (!sessionId) throw new Error('Missing session ID');
@@ -479,9 +536,10 @@ export default function AdminInterviewDetail() {
     retry: false,
     throwOnError: false,
   });
+  const { data, isLoading, isError, error } = detailQuery;
 
   // Live transcript query (queryKey ['admin','transcript',sessionId])
-  const { data: transcriptData, isLoading: transcriptLoading } = useQuery({
+  const transcriptQuery = useQuery({
     queryKey: ['admin', 'transcript', sessionId],
     queryFn: () => getInterviewTranscript(sessionId!),
     enabled: Boolean(sessionId),
@@ -490,11 +548,17 @@ export default function AdminInterviewDetail() {
     throwOnError: false,
   });
 
-  useEffect(() => {
-    if (isError) {
-      toast.error(error instanceof Error ? error.message : 'Failed to load interview detail.');
-    }
-  }, [isError, error]);
+  const transcriptData = transcriptQuery.data;
+  const transcriptPanel = (
+    <TranscriptPanel
+      turns={transcriptData?.turns ?? []}
+      isLoading={transcriptQuery.isLoading}
+      isError={transcriptQuery.isError}
+      error={transcriptQuery.error}
+      onRetry={() => void transcriptQuery.refetch()}
+      retrying={transcriptQuery.isFetching}
+    />
+  );
 
   const crumbs = (
     <Breadcrumbs
@@ -516,30 +580,41 @@ export default function AdminInterviewDetail() {
   // ── Error / not found ──
 
   if (isError || !data) {
+    // Only a 404 means the session does not exist; anything else is a failed
+    // load the admin can retry.
+    const notFound = !isError || (error instanceof ApiError && error.status === 404);
     return (
       <Page width="default">
         {crumbs}
-        <div role="alert">
-          <SectionCard title="Interview not found">
-            <EmptyState
-              size="page"
-              icon={AlertCircle}
-              title="This interview could not be loaded"
-              description={
-                error instanceof Error ? error.message : 'The session could not be loaded.'
-              }
-              action={
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => void navigate('/admin/interviews')}
-                >
-                  Back to Interviews
-                </Button>
-              }
+        {notFound ? (
+          <div role="alert">
+            <SectionCard title="Interview not found">
+              <EmptyState
+                size="page"
+                icon={AlertCircle}
+                title="This interview does not exist"
+                description="It may have been erased, or the link is wrong."
+                action={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => void navigate('/admin/interviews')}
+                  >
+                    Back to interviews
+                  </Button>
+                }
+              />
+            </SectionCard>
+          </div>
+        ) : (
+          <SectionCard title="Interview">
+            <QueryErrorPanel
+              title={errorMessage(error, 'Could not load this interview.')}
+              onRetry={() => void detailQuery.refetch()}
+              retrying={detailQuery.isFetching}
             />
           </SectionCard>
-        </div>
+        )}
       </Page>
     );
   }
@@ -633,7 +708,7 @@ export default function AdminInterviewDetail() {
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
             {/* Transcript — live, backed by getInterviewTranscript */}
             <div className="lg:col-span-2">
-              <TranscriptPanel turns={transcriptData?.turns ?? []} isLoading={transcriptLoading} />
+              {transcriptPanel}
             </div>
 
             <IntegrityPanel
@@ -701,14 +776,14 @@ export default function AdminInterviewDetail() {
           <SectionCard title="Scorecard">
             <EmptyState
               icon={TrendingUp}
-              title="No scorecard yet"
-              description="This session has not been scored. Scoring happens when the session completes."
+              title={noScorecardCopy(data.status).title}
+              description={noScorecardCopy(data.status).description}
             />
           </SectionCard>
 
           <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
             <div className="lg:col-span-2">
-              <TranscriptPanel turns={transcriptData?.turns ?? []} isLoading={transcriptLoading} />
+              {transcriptPanel}
             </div>
             <IntegrityPanel
               score={data.integrity_score}

@@ -37,8 +37,9 @@ const JOBS: JobsListResponse = {
   per_page: 20,
 };
 
+// The page reads every page of the catalogue (AD-F10), through getAllJobs.
 const getJobs = vi.fn();
-vi.mock('../api/jobs', () => ({ getJobs: (...a: unknown[]) => getJobs(...a) as unknown }));
+vi.mock('../api/jobs', () => ({ getAllJobs: (...a: unknown[]) => getJobs(...a) as unknown }));
 
 const uploadJd = vi.fn();
 vi.mock('../api/jd', () => ({ uploadJd: (...a: unknown[]) => uploadJd(...a) as unknown }));
@@ -87,7 +88,7 @@ beforeEach(() => {
     accessToken: 'tok-1',
     user: { user_id: 'u-1', full_name: 'Admin', email: 'admin@intants.com', roles: ['admin'] },
   });
-  getJobs.mockResolvedValue(JOBS);
+  getJobs.mockResolvedValue(JOBS.items);
   uploadJd.mockResolvedValue({ message: 'ok', jd_s3_key: 'jds/job-be.pdf', text_length: 4200 });
 });
 
@@ -97,29 +98,31 @@ describe('AdminJobJd', () => {
 
     expect(screen.getByRole('heading', { name: /practice-interview job descriptions/i })).toBeInTheDocument();
     await waitFor(() => expect(getJobs).toHaveBeenCalled());
-    expect(await screen.findByLabelText(/select job posting/i)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/select a practice role/i)).toBeInTheDocument();
   });
 
   it('withholds the upload zone until a job is chosen', async () => {
     renderPage();
 
-    await screen.findByLabelText(/select job posting/i);
-    expect(screen.getByText(/select a job above to enable jd upload/i)).toBeInTheDocument();
+    await screen.findByLabelText(/select a practice role/i);
+    expect(screen.getByText(/select a practice role above to upload/i)).toBeInTheDocument();
     // QA ANTHIRE-011: no made-up "Published" roles, and the scope is stated.
     expect(screen.queryByText(/frontend engineer · l2/i)).not.toBeInTheDocument();
     expect(screen.getByText(/each company's hr adds the job description on the opening/i)).toBeInTheDocument();
-    expect(screen.queryByText(/jd document for/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/job description for/i)).not.toBeInTheDocument();
   });
 
   it('names the chosen job above the upload zone', async () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText(/select job posting/i));
+    await user.click(await screen.findByLabelText(/select a practice role/i));
     await user.click(await screen.findByRole('option', { name: 'QA Engineer' }));
 
-    expect(await screen.findByText(/jd document for/i)).toHaveTextContent('QA Engineer');
-    expect(screen.queryByText(/select a job above/i)).not.toBeInTheDocument();
+    expect(await screen.findByText(/job description for/i)).toHaveTextContent('QA Engineer');
+    expect(screen.queryByText(/select a practice role above/i)).not.toBeInTheDocument();
+    // The upload replaces what the role has, and the page says so (AD-F25).
+    expect(screen.getByText(/replaces any job description this role already has/i)).toBeInTheDocument();
   });
 
   it('uploads against the job that was actually selected', async () => {
@@ -131,12 +134,12 @@ describe('AdminJobJd', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText(/select job posting/i));
+    await user.click(await screen.findByLabelText(/select a practice role/i));
     await user.click(await screen.findByRole('option', { name: 'QA Engineer' }));
-    await screen.findByText(/jd document for/i);
+    await screen.findByText(/job description for/i);
 
     await user.upload(
-      screen.getByLabelText('Job Description'),
+      screen.getByLabelText('Job description'),
       new File(['%PDF-1.4 jd'], 'qa-jd.pdf', { type: 'application/pdf' }),
     );
 
@@ -153,10 +156,10 @@ describe('AdminJobJd', () => {
     // The page sets its own `retry: 1`, so the error state only appears after
     // a second failed attempt and react-query's 1s backoff.
     expect(
-      await screen.findByRole('button', { name: /retry/i }, { timeout: 5000 }),
+      await screen.findByRole('button', { name: /try again/i }, { timeout: 5000 }),
     ).toBeInTheDocument();
     // No select means no way to upload against a guessed job id.
-    expect(screen.queryByLabelText(/select job posting/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/select a practice role/i)).not.toBeInTheDocument();
   });
 
   it('does not fetch at all without an access token', async () => {
@@ -170,5 +173,21 @@ describe('AdminJobJd', () => {
 
     expect(screen.getByRole('heading', { name: /practice-interview job descriptions/i })).toBeInTheDocument();
     await waitFor(() => expect(getJobs).not.toHaveBeenCalled());
+  });
+});
+
+describe('AdminJobJd - labels and empty catalogue (AD-F25)', () => {
+  it('calls the picker a practice role, not a job posting', async () => {
+    renderPage();
+    expect(await screen.findByText('Practice role')).toBeInTheDocument();
+    expect(screen.queryByText('Job posting')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Upload a job description' })).toBeInTheDocument();
+  });
+
+  it('says the catalogue is empty instead of showing an empty select', async () => {
+    getJobs.mockResolvedValue([]);
+    renderPage();
+    expect(await screen.findByText(/practice catalogue has no roles yet/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/select a practice role/i)).not.toBeInTheDocument();
   });
 });

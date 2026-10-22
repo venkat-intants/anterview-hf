@@ -7,10 +7,12 @@
 // there is no `:poolId`, the member table when there is.
 //
 // THE THREE RULES THIS SCREEN MUST NOT BREAK:
-//  1. Deleting a pool takes its members with it — the confirm dialog names
-//     how many (design §10, and the exact defect a missing count would be).
+//  1. Deleting a pool takes its members with it — the confirm names how many
+//     (design §10, and the exact defect a missing count would be).
 //  2. An INELIGIBLE member (`eligible: false`) shows its reason and offers
-//     ONLY Remove — no evidence panel, no match explanation, no Invite.
+//     ONLY Remove — no evidence panel, no match explanation, no Add to an
+//     opening. The server also withholds the snapshot and the band for such a
+//     row (audit PL-F1); the guards below are the second line, not the only one.
 //  3. `match_reason` is a FROZEN snapshot, labelled as one ("Added from a
 //     rediscovery search on …") and never recomputed. No in-page evidence
 //     editing of any kind — "Review evidence" only ever navigates to the
@@ -20,9 +22,27 @@
 // the SERVER (422 `stale_evidence_unreviewed`) — this screen reacts to that
 // specific failure rather than pre-computing "does this member need it?"; see
 // `api/pools.ts::inviteMember`'s own comment.
+//
+// "Add to an opening", not "Invite" (audit PL-F4): the action creates an
+// enrolment at stage `new` and sends the candidate nothing, so the copy must
+// not claim they were contacted. The API route keeps its `invite` name.
+//
+// English-only by design (CLAUDE.md — staff consoles are not translated). The
+// members section used to go through t('hrPools.*') with HI/TE values while the
+// rest of the page was literal English, so a HI/TE staff user saw half a
+// translation (audit PL-L5).
 
-import { Fragment, useEffect, useMemo, useState, type FormEvent } from 'react';
-import { useTranslation } from 'react-i18next';
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+  type RefObject,
+} from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -34,8 +54,11 @@ import {
   isStaleEvidenceUnreviewed,
   listPools,
   markEvidenceReviewed,
+  MAX_ADD_PER_CALL,
   poolErrorMessage,
+  poolFailureCode,
   removePoolMember,
+  skipReasonLabel,
   updatePool,
   type AddMemberSkipReason,
   type PoolMemberOut,
@@ -43,6 +66,8 @@ import {
 import { listApplicants, type Applicant } from '@/api/applicants';
 import { listRequisitions, type Requisition } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import {
   Dialog,
   DialogContent,
@@ -50,9 +75,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryState } from '@/components/QueryState';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
-import { Breadcrumbs, PageHeader, Page } from '@/design/components/page';
+import { Breadcrumbs, EmptyState, PageHeader, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
 import {
   AlertTriangle,
@@ -65,7 +92,6 @@ import {
   Plus,
   Search,
   ShieldCheck,
-  Trash2,
   UserMinus,
   UserPlus,
   Users,
@@ -77,6 +103,25 @@ import {
   ineligibleReasonLabel,
 } from '@/components/hr/rediscoveryDisplay';
 import { formatDate } from '@/lib/formatters';
+
+/** Server bounds (schemas/pools.py), enforced here so a long value is stopped
+ *  in the field rather than coming back as a validation error (PL-F12). */
+const NAME_MAX = 120;
+const DESCRIPTION_MAX = 1000;
+const NOTE_MAX = 500;
+const REMOVE_REASON_MAX = 200;
+/** The opening picker asks for the server's largest page (hr_requisitions.py
+ *  `_MAX_PAGE`); the default of 50 silently dropped the rest (PL-L10/F22). */
+const OPENINGS_PAGE = 200;
+
+const INPUT_CLASS =
+  'rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+const ROW_ACTION_CLASS =
+  'inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40';
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
 
 /** Debounce a fast-changing value (search box) — same shape as
  *  `Applicants.tsx`'s own local `useDebouncedValue`, kept local here too
@@ -90,9 +135,113 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   return debounced;
 }
 
+/** Focus `ref` whenever `open` goes from true to false: the control that
+ *  opened an inline panel gets focus back when the panel closes, instead of
+ *  focus dropping to the page (PL-L10/F29). */
+function useReturnFocus(open: boolean, ref: RefObject<HTMLElement>): void {
+  const wasOpen = useRef(open);
+  useEffect(() => {
+    if (wasOpen.current && !open) ref.current?.focus();
+    wasOpen.current = open;
+  }, [open, ref]);
+}
+
 export default function TalentPools(): JSX.Element {
   const { poolId } = useParams<{ poolId?: string }>();
   return poolId ? <PoolDetail poolId={poolId} /> : <PoolsList />;
+}
+
+// ---------------------------------------------------------------------------
+// Inline edit form (rename, description)
+// ---------------------------------------------------------------------------
+
+/**
+ * One inline text edit: Save is disabled while the save is in flight, Escape
+ * cancels, and a required field left blank says so instead of doing nothing
+ * (PL-L2).
+ */
+function InlineEditForm({
+  label,
+  initial,
+  maxLength,
+  required,
+  requiredMessage,
+  pending,
+  onSave,
+  onCancel,
+  className,
+  inputClassName,
+}: {
+  label: string;
+  initial: string;
+  maxLength: number;
+  required: boolean;
+  requiredMessage?: string;
+  pending: boolean;
+  onSave: (value: string) => void;
+  onCancel: () => void;
+  className?: string;
+  inputClassName?: string;
+}): JSX.Element {
+  const [value, setValue] = useState(initial);
+  const [error, setError] = useState<string | null>(null);
+  const errorId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  function submit(e: FormEvent): void {
+    e.preventDefault();
+    if (pending) return;
+    if (required && !value.trim()) {
+      setError(requiredMessage ?? 'This field is required.');
+      inputRef.current?.focus();
+      return;
+    }
+    onSave(value.trim());
+  }
+
+  // On the form, not the input: Escape cancels wherever focus is inside it
+  // (the Save button keeps focus after a refused blank save).
+  function onKeyDown(e: KeyboardEvent<HTMLFormElement>): void {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onCancel();
+    }
+  }
+
+  return (
+    <form className={className ?? 'flex flex-col gap-1'} onSubmit={submit} onKeyDown={onKeyDown}>
+      <span className="flex items-center gap-1.5">
+        <input
+          ref={inputRef}
+          autoFocus
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value);
+            if (error) setError(null);
+          }}
+          maxLength={maxLength}
+          aria-label={label}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
+          className={
+            inputClassName ??
+            'rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12.5px] text-foreground'
+          }
+        />
+        <Button type="submit" size="sm" variant="outline" disabled={pending} aria-busy={pending}>
+          {pending ? 'Saving…' : 'Save'}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </span>
+      {error ? (
+        <span id={errorId} className="text-[12px] text-[var(--ui-danger)]">
+          {error}
+        </span>
+      ) : null}
+    </form>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +255,7 @@ function PoolsList(): JSX.Element {
     queryKey: ['hr', 'pools', 'list', showArchived],
     queryFn: () => listPools(showArchived),
   });
-  const invalidate = () => void qc.invalidateQueries({ queryKey: ['hr', 'pools'] });
+  const invalidate = () => void invalidateAfterHrMutation(qc);
 
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState('');
@@ -120,59 +269,73 @@ function PoolsList(): JSX.Element {
       setNewDesc('');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not create this pool')),
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not create this pool.')),
   });
 
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState('');
   const renameMut = useMutation({
-    mutationFn: (id: string) => updatePool(id, { name: renameValue.trim() }),
+    mutationFn: ({ id, name }: { id: string; name: string }) => updatePool(id, { name }),
     onSuccess: () => {
       toast.success('Pool renamed');
       setRenamingId(null);
       invalidate();
     },
-    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not rename this pool')),
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not rename this pool.')),
   });
 
   const [editingDescId, setEditingDescId] = useState<string | null>(null);
-  const [descValue, setDescValue] = useState('');
   const descMut = useMutation({
-    mutationFn: (id: string) => updatePool(id, { description: descValue.trim() || null }),
+    mutationFn: ({ id, description }: { id: string; description: string }) =>
+      updatePool(id, { description: description || null }),
     onSuccess: () => {
       toast.success('Description updated');
       setEditingDescId(null);
       invalidate();
     },
-    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not update the description')),
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not update the description.')),
   });
 
+  // Archive is reversible, so it takes no confirm; the toast offers the way
+  // back instead (consistency B5).
   const archiveMut = useMutation({
     mutationFn: ({ id, archived }: { id: string; archived: boolean }) =>
       updatePool(id, { archived }),
     onSuccess: (_res, vars) => {
-      toast.success(vars.archived ? 'Pool archived' : 'Pool restored');
+      if (vars.archived) {
+        toast.success('Pool archived', {
+          action: {
+            label: 'Restore',
+            onClick: () => archiveMut.mutate({ id: vars.id, archived: false }),
+          },
+        });
+      } else {
+        toast.success('Pool restored');
+      }
       invalidate();
     },
-    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not update this pool')),
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not update this pool.')),
   });
 
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const deleteMut = useMutation({
     mutationFn: (id: string) => deletePool(id),
     onSuccess: (res) => {
       toast.success(
         res.members_removed > 0
-          ? `Pool deleted, along with ${res.members_removed} member${res.members_removed === 1 ? '' : 's'}`
+          ? `Pool deleted, along with ${plural(res.members_removed, 'member')}`
           : 'Pool deleted',
       );
-      setConfirmDeleteId(null);
       invalidate();
     },
-    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not delete this pool')),
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not delete this pool.')),
   });
 
-  const pools = list.data?.pools ?? [];
+  // The server refuses a pool past the company limit, archived pools
+  // included; say so up front instead of letting New pool lead to a 409
+  // (audit F20).
+  const maxPools = list.data?.limits.max_per_company;
+  const poolCount = list.data?.pool_count;
+  const atLimit = maxPools !== undefined && poolCount !== undefined && poolCount >= maxPools;
+  const archivedCount = list.data?.archived_count ?? 0;
 
   return (
     <Page width="default">
@@ -181,12 +344,28 @@ function PoolsList(): JSX.Element {
         title="Talent pools"
         description="Candidates you have chosen to keep in mind for future openings."
         actions={
-          <Button type="button" onClick={() => setNewOpen((v) => !v)}>
-            <Plus aria-hidden="true" />
-            New pool
-          </Button>
+          // One primary action per view (consistency A5): while the form is
+          // open its own Create pool button is the primary, so this one goes.
+          newOpen ? undefined : (
+            <Button
+              type="button"
+              onClick={() => setNewOpen(true)}
+              disabled={atLimit}
+              aria-describedby={atLimit ? 'pool-limit-note' : undefined}
+            >
+              <Plus aria-hidden="true" />
+              New pool
+            </Button>
+          )
         }
       />
+
+      {atLimit ? (
+        <p id="pool-limit-note" role="status" className="text-[12.5px] text-muted-foreground">
+          Your company has reached its limit of {maxPools} pools, and archived pools count. Delete
+          one you no longer need to make a new one.
+        </p>
+      ) : null}
 
       {newOpen ? (
         <Reveal delay={0.05}>
@@ -196,7 +375,7 @@ function PoolsList(): JSX.Element {
               className="grid gap-3 sm:grid-cols-2"
               onSubmit={(e: FormEvent) => {
                 e.preventDefault();
-                if (!newName.trim()) return;
+                if (!newName.trim() || createMut.isPending) return;
                 createMut.mutate();
               }}
             >
@@ -209,11 +388,12 @@ function PoolsList(): JSX.Element {
                 </label>
                 <input
                   id="pool-new-name"
+                  autoFocus
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  maxLength={120}
+                  maxLength={NAME_MAX}
                   placeholder="e.g. Fitters, Vizag"
-                  className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  className={INPUT_CLASS}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -227,25 +407,17 @@ function PoolsList(): JSX.Element {
                   id="pool-new-desc"
                   value={newDesc}
                   onChange={(e) => setNewDesc(e.target.value)}
-                  maxLength={1000}
-                  className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  maxLength={DESCRIPTION_MAX}
+                  className={INPUT_CLASS}
                 />
               </div>
-              <div className="sm:col-span-2 flex items-center gap-3">
-                <button
-                  type="submit"
-                  disabled={!newName.trim() || createMut.isPending}
-                  className="rounded-full bg-primary px-5 min-h-10 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-                >
+              <div className="sm:col-span-2 flex items-center gap-2">
+                <Button type="submit" disabled={!newName.trim() || createMut.isPending}>
                   {createMut.isPending ? 'Creating…' : 'Create pool'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setNewOpen(false)}
-                  className="text-[13px] text-muted-foreground hover:text-foreground"
-                >
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setNewOpen(false)}>
                   Cancel
-                </button>
+                </Button>
               </div>
             </form>
           </GlassCard>
@@ -266,214 +438,164 @@ function PoolsList(): JSX.Element {
             </label>
           </div>
 
-          {list.isLoading ? (
-            <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              Loading…
-            </p>
-          ) : list.isError ? (
-            <p className="text-[13px] text-[var(--ui-danger)]">
-              {poolErrorMessage(list.error, 'Could not load your talent pools.')}
-            </p>
-          ) : pools.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-muted-foreground">No pools yet</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-[12.5px]">
-                <thead>
-                  <tr className="border-b border-border text-[12px] uppercase tracking-wide text-muted-foreground">
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Name
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Members
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Created by
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Updated
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pools.map((p) => (
-                    <tr key={p.id} className="border-b border-border align-top">
-                      <td className="py-2.5 pr-3">
-                        {renamingId === p.id ? (
-                          <form
-                            className="flex items-center gap-1.5"
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              if (renameValue.trim()) renameMut.mutate(p.id);
-                            }}
-                          >
-                            <input
-                              autoFocus
-                              value={renameValue}
-                              onChange={(e) => setRenameValue(e.target.value)}
-                              aria-label={`Rename ${p.name}`}
-                              className="rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12.5px] text-foreground"
-                            />
-                            <button
-                              type="submit"
-                              className="text-[12px] font-medium text-[var(--ui-info)]"
-                            >
-                              Save
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setRenamingId(null)}
-                              className="text-[12px] text-muted-foreground"
-                            >
-                              Cancel
-                            </button>
-                          </form>
-                        ) : (
-                          <Link
-                            to={`/hr/pools/${p.id}`}
-                            className="font-medium text-foreground hover:text-[var(--ui-info)] hover:underline"
-                          >
-                            {p.name}
-                          </Link>
-                        )}
-                        {p.archived_at ? (
-                          <StatusTag tone="neutral" className="ml-2">
-                            Archived
-                          </StatusTag>
-                        ) : null}
-                        {editingDescId === p.id ? (
-                          <form
-                            className="mt-1.5 flex items-center gap-1.5"
-                            onSubmit={(e) => {
-                              e.preventDefault();
-                              descMut.mutate(p.id);
-                            }}
-                          >
-                            <input
-                              autoFocus
-                              value={descValue}
-                              onChange={(e) => setDescValue(e.target.value)}
-                              aria-label={`Edit description for ${p.name}`}
-                              className="min-w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground"
-                            />
-                            <button
-                              type="submit"
-                              className="text-[12px] font-medium text-[var(--ui-info)]"
-                            >
-                              Save
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setEditingDescId(null)}
-                              className="text-[12px] text-muted-foreground"
-                            >
-                              Cancel
-                            </button>
-                          </form>
-                        ) : p.description ? (
-                          <p className="mt-0.5 text-[12px] text-muted-foreground">
-                            {p.description}
-                          </p>
-                        ) : null}
-                      </td>
-                      <td className="py-2.5 pr-3 text-foreground">{p.member_count}</td>
-                      <td className="py-2.5 pr-3 text-muted-foreground">
-                        {p.created_by_name ?? '-'}
-                      </td>
-                      <td className="py-2.5 pr-3 text-muted-foreground">{formatDate(p.updated_at)}</td>
-                      <td className="py-2.5 pr-3">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setRenamingId(p.id);
-                              setRenameValue(p.name);
-                            }}
-                            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground"
-                          >
-                            <Pencil className="h-3 w-3" aria-hidden="true" />
-                            Rename
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingDescId(p.id);
-                              setDescValue(p.description ?? '');
-                            }}
-                            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground"
-                          >
-                            Edit description
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              archiveMut.mutate({ id: p.id, archived: !p.archived_at })
-                            }
-                            disabled={archiveMut.isPending}
-                            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-40"
-                          >
-                            {p.archived_at ? (
-                              <>
-                                <ArchiveRestore className="h-3 w-3" aria-hidden="true" />
-                                Restore
-                              </>
-                            ) : (
-                              <>
-                                <Archive className="h-3 w-3" aria-hidden="true" />
-                                Archive
-                              </>
-                            )}
-                          </button>
-                          {confirmDeleteId === p.id ? (
-                            <span
-                              role="group"
-                              aria-label={`Confirm deleting ${p.name}`}
-                              className="flex flex-col gap-1"
-                            >
-                              <span className="text-[12px] text-[var(--ui-danger)]">
-                                Delete this pool and its {p.member_count} member
-                                {p.member_count === 1 ? '' : 's'}?
-                              </span>
-                              <span className="flex gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => deleteMut.mutate(p.id)}
-                                  disabled={deleteMut.isPending}
-                                  className="rounded-[8px] bg-[var(--ui-danger-wash)] px-2 py-1 text-[12px] font-semibold text-[var(--ui-danger)] disabled:opacity-50"
-                                >
-                                  {deleteMut.isPending ? '…' : 'Delete'}
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => setConfirmDeleteId(null)}
-                                  className="rounded-[8px] bg-[var(--ui-inset)] px-2 py-1 text-[12px] text-[var(--ui-soft)]"
-                                >
-                                  Cancel
-                                </button>
-                              </span>
-                            </span>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteId(p.id)}
-                              className="inline-flex items-center gap-1 rounded-[8px] border border-[var(--ui-danger)]/40 px-2 py-1 text-[12px] text-[var(--ui-danger)]"
-                            >
-                              <Trash2 className="h-3 w-3" aria-hidden="true" />
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      </td>
+          <QueryState
+            query={list}
+            errorTitle="Could not load your talent pools."
+            isEmpty={(d) => d.pools.length === 0}
+            empty={
+              showArchived ? (
+                <EmptyState
+                  title="No pools yet"
+                  description="Create one with New pool, or add candidates from Rediscovery."
+                />
+              ) : (
+                // Archived pools are hidden here and still count toward the
+                // company limit, so "no pools" would not always be true
+                // (PL-L10/F20).
+                <EmptyState
+                  title="No active pools"
+                  description={
+                    archivedCount > 0
+                      ? `Create one with New pool, or tick Show archived to see ${plural(archivedCount, 'archived pool')}.`
+                      : 'Create one with New pool, or add candidates from Rediscovery.'
+                  }
+                />
+              )
+            }
+          >
+            {(data) => (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-[12.5px]">
+                  <thead>
+                    <tr className="border-b border-border text-[12px] uppercase tracking-wide text-muted-foreground">
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Name
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Members
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Created by
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Updated
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Actions
+                      </th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+                  </thead>
+                  <tbody>
+                    {data.pools.map((p) => (
+                      <tr key={p.id} className="border-b border-border align-top">
+                        <td className="py-2.5 pr-3">
+                          {renamingId === p.id ? (
+                            <InlineEditForm
+                              label={`Rename ${p.name}`}
+                              initial={p.name}
+                              maxLength={NAME_MAX}
+                              required
+                              requiredMessage="Give the pool a name."
+                              pending={renameMut.isPending}
+                              onSave={(name) => renameMut.mutate({ id: p.id, name })}
+                              onCancel={() => setRenamingId(null)}
+                            />
+                          ) : (
+                            <Link
+                              to={`/hr/pools/${p.id}`}
+                              className="font-medium text-foreground hover:text-[var(--ui-info)] hover:underline"
+                            >
+                              {p.name}
+                            </Link>
+                          )}
+                          {p.archived_at ? (
+                            <StatusTag tone="neutral" className="ml-2">
+                              Archived
+                            </StatusTag>
+                          ) : null}
+                          {editingDescId === p.id ? (
+                            <InlineEditForm
+                              className="mt-1.5 flex flex-col gap-1"
+                              label={`Edit description for ${p.name}`}
+                              initial={p.description ?? ''}
+                              maxLength={DESCRIPTION_MAX}
+                              required={false}
+                              pending={descMut.isPending}
+                              onSave={(description) => descMut.mutate({ id: p.id, description })}
+                              onCancel={() => setEditingDescId(null)}
+                              inputClassName="min-w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground"
+                            />
+                          ) : p.description ? (
+                            <p className="mt-0.5 text-[12px] text-muted-foreground">
+                              {p.description}
+                            </p>
+                          ) : null}
+                        </td>
+                        <td className="py-2.5 pr-3 text-foreground">{p.member_count}</td>
+                        <td className="py-2.5 pr-3 text-muted-foreground">
+                          {p.created_by_name ?? '-'}
+                        </td>
+                        <td className="py-2.5 pr-3 text-muted-foreground">
+                          {formatDate(p.updated_at)}
+                        </td>
+                        <td className="py-2.5 pr-3">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setRenamingId(p.id)}
+                              className={ROW_ACTION_CLASS}
+                            >
+                              <Pencil className="h-3 w-3" aria-hidden="true" />
+                              Rename
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingDescId(p.id)}
+                              className={ROW_ACTION_CLASS}
+                            >
+                              Edit description
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                archiveMut.mutate({ id: p.id, archived: !p.archived_at })
+                              }
+                              disabled={archiveMut.isPending}
+                              className={ROW_ACTION_CLASS}
+                            >
+                              {p.archived_at ? (
+                                <>
+                                  <ArchiveRestore className="h-3 w-3" aria-hidden="true" />
+                                  Restore
+                                </>
+                              ) : (
+                                <>
+                                  <Archive className="h-3 w-3" aria-hidden="true" />
+                                  Archive
+                                </>
+                              )}
+                            </button>
+                            {/* Set apart from the reversible Archive beside it
+                                (consistency A8 / PL-L7). The confirm names the
+                                member count: rule 1 above. */}
+                            <span className="ml-3">
+                              <ConfirmDeleteButton
+                                label="Delete"
+                                confirmText={`Delete pool and ${plural(p.member_count, 'member')}`}
+                                confirmGroupLabel={`Confirm deleting ${p.name}`}
+                                onConfirm={() => deleteMut.mutate(p.id)}
+                                pending={deleteMut.isPending && deleteMut.variables === p.id}
+                              />
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </QueryState>
         </GlassCard>
       </Reveal>
     </Page>
@@ -485,18 +607,19 @@ function PoolsList(): JSX.Element {
 // ---------------------------------------------------------------------------
 
 function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
-  const { t } = useTranslation();
   const qc = useQueryClient();
   const detail = useQuery({
     queryKey: ['hr', 'pools', 'detail', poolId],
     queryFn: () => getPool(poolId),
   });
-  const invalidate = () =>
-    void qc.invalidateQueries({ queryKey: ['hr', 'pools', 'detail', poolId] });
+  // Every member change also changes the pools list (member count, updated
+  // date), so refresh by the HR prefix, not only this pool (PL-L1).
+  const invalidate = () => void invalidateAfterHrMutation(qc);
 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [removeReason, setRemoveReason] = useState('');
+  const [confirmReviewId, setConfirmReviewId] = useState<string | null>(null);
   const [invitingMemberId, setInvitingMemberId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
 
@@ -509,23 +632,24 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
       setRemoveReason('');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not remove this member')),
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not remove this member.')),
   });
 
   const reviewedMut = useMutation({
     mutationFn: (memberId: string) => markEvidenceReviewed(poolId, memberId),
     onSuccess: () => {
       toast.success('Marked as reviewed');
+      setConfirmReviewId(null);
       invalidate();
     },
-    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not update this member')),
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not mark this review.')),
   });
 
-  const members = detail.data?.members ?? [];
+  const pool = detail.data?.pool;
+  const archived = Boolean(pool?.archived_at);
   // Depends on `detail.data?.members` (stable across re-renders until the
-  // query actually refetches), not the `members` fallback above — that `??
-  // []` makes a fresh array every render, which would recompute this on
-  // every keystroke in the dialog for no reason.
+  // query actually refetches) — a `?? []` fallback would make a fresh array
+  // every render and recompute this on every keystroke in the dialog.
   const existingApplicantIds = useMemo(
     () => new Set((detail.data?.members ?? []).map((m) => m.applicant_id)),
     [detail.data?.members],
@@ -537,15 +661,23 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
         className="mb-0"
         breadcrumbs={
           <Breadcrumbs
-            items={[
-              { label: 'Talent pools', to: '/hr/pools' },
-              { label: detail.data?.pool.name ?? 'Pool' },
-            ]}
+            items={[{ label: 'Talent pools', to: '/hr/pools' }, { label: pool?.name ?? 'Pool' }]}
           />
         }
-        title={detail.data?.pool.name ?? 'Pool'}
-        description={detail.data?.pool.description ?? undefined}
+        title={pool?.name ?? 'Pool'}
+        description={pool?.description ?? undefined}
       />
+
+      {archived ? (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[12.5px] text-muted-foreground"
+        >
+          <Archive className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          This pool is archived. Restore it from the pools list to add candidates or add them to
+          an opening.
+        </div>
+      ) : null}
 
       <Reveal delay={0.05}>
         <GlassCard className="p-5">
@@ -553,99 +685,108 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
             <h3 className="flex items-center gap-2 text-[15px] font-semibold text-foreground">
               <Users className="h-4 w-4" aria-hidden="true" />
               Members
+              {archived ? <StatusTag tone="neutral">Archived</StatusTag> : null}
             </h3>
-            <button
+            <Button
               type="button"
               onClick={() => setAddOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-full bg-primary px-5 min-h-10 text-sm font-semibold text-primary-foreground"
+              disabled={!pool || archived}
             >
-              <UserPlus className="h-3.5 w-3.5" aria-hidden="true" />
-              {t('hrPools.addCandidates')}
-            </button>
+              <UserPlus aria-hidden="true" />
+              Add candidates
+            </Button>
           </div>
 
-          {addOpen ? (
+          {addOpen && pool ? (
             <AddCandidatesDialog
               poolId={poolId}
-              poolName={detail.data?.pool.name ?? ''}
+              poolName={pool.name}
               existingApplicantIds={existingApplicantIds}
               onClose={() => setAddOpen(false)}
               onAdded={invalidate}
             />
           ) : null}
 
-          {detail.isLoading ? (
-            <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              Loading…
-            </p>
-          ) : detail.isError ? (
-            <p className="text-[13px] text-[var(--ui-danger)]">
-              {poolErrorMessage(detail.error, 'Could not load this pool.')}
-            </p>
-          ) : members.length === 0 ? (
-            <p className="py-6 text-center text-[13px] text-muted-foreground">
-              {t('hrPools.emptyState')}
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-left text-[12.5px]">
-                <thead>
-                  <tr className="border-b border-border text-[12px] uppercase tracking-wide text-muted-foreground">
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Name
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Added
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Source
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Evidence
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Eligibility
-                    </th>
-                    <th scope="col" className="py-2 pr-3 font-medium">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map((m) => (
-                    <MemberRow
-                      key={m.member_id}
-                      poolId={poolId}
-                      member={m}
-                      expanded={expandedId === m.member_id}
-                      onToggle={() =>
-                        setExpandedId(expandedId === m.member_id ? null : m.member_id)
-                      }
-                      onReview={() => reviewedMut.mutate(m.member_id)}
-                      reviewPending={reviewedMut.isPending && reviewedMut.variables === m.member_id}
-                      confirmingRemove={confirmRemoveId === m.member_id}
-                      onRemoveClick={() => setConfirmRemoveId(m.member_id)}
-                      removeReason={removeReason}
-                      onRemoveReasonChange={setRemoveReason}
-                      onRemoveConfirm={() =>
-                        removeMut.mutate({ memberId: m.member_id, reason: removeReason })
-                      }
-                      onRemoveCancel={() => {
-                        setConfirmRemoveId(null);
-                        setRemoveReason('');
-                      }}
-                      removePending={removeMut.isPending}
-                      invitingOpen={invitingMemberId === m.member_id}
-                      onInviteClick={() => setInvitingMemberId(m.member_id)}
-                      onInviteClose={() => setInvitingMemberId(null)}
-                      onInvited={invalidate}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <QueryState
+            query={detail}
+            errorTitle="Could not load this pool."
+            isEmpty={(d) => d.members.length === 0}
+            empty={
+              <EmptyState
+                title="No members yet"
+                description="Add candidates with the button above, or find matches with Rediscovery."
+              />
+            }
+          >
+            {(data) => (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse text-left text-[12.5px]">
+                  <thead>
+                    <tr className="border-b border-border text-[12px] uppercase tracking-wide text-muted-foreground">
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Name
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Added
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Source
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Evidence
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Eligibility
+                      </th>
+                      <th scope="col" className="py-2 pr-3 font-medium">
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.members.map((m) => (
+                      <MemberRow
+                        key={m.member_id}
+                        poolId={poolId}
+                        member={m}
+                        archived={archived}
+                        expanded={expandedId === m.member_id}
+                        onToggle={() =>
+                          setExpandedId(expandedId === m.member_id ? null : m.member_id)
+                        }
+                        confirmingReview={confirmReviewId === m.member_id}
+                        onReviewClick={() => setConfirmReviewId(m.member_id)}
+                        onReviewCancel={() => setConfirmReviewId(null)}
+                        onReviewConfirm={() => reviewedMut.mutate(m.member_id)}
+                        reviewPending={
+                          reviewedMut.isPending && reviewedMut.variables === m.member_id
+                        }
+                        confirmingRemove={confirmRemoveId === m.member_id}
+                        onRemoveClick={() => {
+                          setRemoveReason('');
+                          setConfirmRemoveId(m.member_id);
+                        }}
+                        removeReason={removeReason}
+                        onRemoveReasonChange={setRemoveReason}
+                        onRemoveConfirm={() =>
+                          removeMut.mutate({ memberId: m.member_id, reason: removeReason.trim() })
+                        }
+                        onRemoveCancel={() => {
+                          setConfirmRemoveId(null);
+                          setRemoveReason('');
+                        }}
+                        removePending={removeMut.isPending}
+                        invitingOpen={invitingMemberId === m.member_id}
+                        onInviteClick={() => setInvitingMemberId(m.member_id)}
+                        onInviteClose={() => setInvitingMemberId(null)}
+                        onInvited={invalidate}
+                      />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </QueryState>
         </GlassCard>
       </Reveal>
     </Page>
@@ -655,9 +796,13 @@ function PoolDetail({ poolId }: { poolId: string }): JSX.Element {
 interface MemberRowProps {
   poolId: string;
   member: PoolMemberOut;
+  archived: boolean;
   expanded: boolean;
   onToggle: () => void;
-  onReview: () => void;
+  confirmingReview: boolean;
+  onReviewClick: () => void;
+  onReviewCancel: () => void;
+  onReviewConfirm: () => void;
   reviewPending: boolean;
   confirmingRemove: boolean;
   onRemoveClick: () => void;
@@ -672,9 +817,33 @@ interface MemberRowProps {
   onInvited: () => void;
 }
 
+/** The review line under the band: who re-checked and when, whether that
+ *  review has lapsed (PL-F3), or that nobody has. */
+function reviewLine(m: PoolMemberOut): string {
+  if (!m.evidence_reviewed_at) return 'Evidence not re-checked';
+  const when = formatDate(m.evidence_reviewed_at);
+  if (!m.review_current) return `Review from ${when} has expired`;
+  const by = m.evidence_reviewed_by_name ? ` by ${m.evidence_reviewed_by_name}` : '';
+  return `Evidence re-checked${by} on ${when}`;
+}
+
 function MemberRow(props: MemberRowProps): JSX.Element {
   const { poolId, member: m } = props;
-  const hasSnapshot = Boolean(m.match_reason);
+  // Rule 2: an ineligible row shows no evidence and no match explanation,
+  // whatever the payload carries.
+  const snapshot = m.eligible ? m.match_reason : undefined;
+  const whyId = `pool-member-why-${m.member_id}`;
+
+  const removeTriggerRef = useRef<HTMLButtonElement>(null);
+  const reviewTriggerRef = useRef<HTMLButtonElement>(null);
+  const inviteTriggerRef = useRef<HTMLButtonElement>(null);
+  const reviewKeepRef = useRef<HTMLButtonElement>(null);
+  useReturnFocus(props.confirmingRemove, removeTriggerRef);
+  useReturnFocus(props.confirmingReview, reviewTriggerRef);
+  useReturnFocus(props.invitingOpen, inviteTriggerRef);
+  useEffect(() => {
+    if (props.confirmingReview) reviewKeepRef.current?.focus();
+  }, [props.confirmingReview]);
 
   return (
     <Fragment>
@@ -709,32 +878,36 @@ function MemberRow(props: MemberRowProps): JSX.Element {
           </StatusTag>
         </td>
         <td className="py-2.5 pr-3">
-          {m.evidence_freshness ? (
-            <StatusTag tone={FRESHNESS_TONE[m.evidence_freshness]} dot>
-              {freshnessChipLabel(m.evidence_freshness)}
-            </StatusTag>
+          {m.eligible ? (
+            <>
+              {m.evidence_freshness ? (
+                <StatusTag tone={FRESHNESS_TONE[m.evidence_freshness]} dot>
+                  {freshnessChipLabel(m.evidence_freshness)}
+                </StatusTag>
+              ) : (
+                <span className="text-[12px] text-muted-foreground">-</span>
+              )}
+              <p className="mt-1 text-[12px] text-muted-foreground">{reviewLine(m)}</p>
+              {snapshot ? (
+                <button
+                  type="button"
+                  onClick={props.onToggle}
+                  aria-expanded={props.expanded}
+                  aria-controls={whyId}
+                  className="mt-1 inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
+                >
+                  {props.expanded ? (
+                    <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                  ) : (
+                    <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                  )}
+                  {props.expanded ? 'Hide match details' : 'Why this match?'}
+                </button>
+              ) : null}
+            </>
           ) : (
             <span className="text-[12px] text-muted-foreground">-</span>
           )}
-          <p className="mt-1 text-[12px] text-muted-foreground">
-            {m.evidence_reviewed_at
-              ? `Evidence re-checked${m.evidence_reviewed_by_name ? ` by ${m.evidence_reviewed_by_name}` : ''} on ${formatDate(m.evidence_reviewed_at)}`
-              : 'Evidence not re-checked'}
-          </p>
-          {hasSnapshot ? (
-            <button
-              type="button"
-              onClick={props.onToggle}
-              className="mt-1 inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
-            >
-              {props.expanded ? (
-                <ChevronDown className="h-3 w-3" aria-hidden="true" />
-              ) : (
-                <ChevronRight className="h-3 w-3" aria-hidden="true" />
-              )}
-              {props.expanded ? 'Hide match details' : 'Why this match?'}
-            </button>
-          ) : null}
         </td>
         <td className="py-2.5 pr-3">
           {m.eligible ? (
@@ -750,31 +923,73 @@ function MemberRow(props: MemberRowProps): JSX.Element {
             {m.eligible ? (
               <>
                 {m.enrolment_id ? (
-                  <Link
-                    to={`/hr/enrolments/${m.enrolment_id}/evidence`}
-                    className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground"
-                  >
+                  <Link to={`/hr/enrolments/${m.enrolment_id}/evidence`} className={ROW_ACTION_CLASS}>
                     <ShieldCheck className="h-3 w-3" aria-hidden="true" />
                     Review evidence
                   </Link>
                 ) : null}
-                {!m.evidence_reviewed_at ? (
+                {!m.review_current ? (
+                  props.confirmingReview ? (
+                    // An attestation in a person's name, so it takes a second,
+                    // explicit step rather than one stray click (PL-L6).
+                    <span
+                      role="group"
+                      aria-label={`Confirm reviewing evidence for ${m.full_name}`}
+                      className="flex flex-col gap-1"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          e.stopPropagation();
+                          props.onReviewCancel();
+                        }
+                      }}
+                    >
+                      <span className="max-w-[260px] text-[12px] text-foreground">
+                        Confirm you have looked at this candidate&apos;s evidence and it still
+                        holds. This is recorded in your name.
+                      </span>
+                      <span className="flex gap-1.5">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={props.onReviewConfirm}
+                          disabled={props.reviewPending}
+                          aria-busy={props.reviewPending}
+                        >
+                          {props.reviewPending ? 'Saving…' : 'Confirm review'}
+                        </Button>
+                        <Button
+                          ref={reviewKeepRef}
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={props.onReviewCancel}
+                        >
+                          Cancel
+                        </Button>
+                      </span>
+                    </span>
+                  ) : (
+                    <button
+                      ref={reviewTriggerRef}
+                      type="button"
+                      onClick={props.onReviewClick}
+                      className={ROW_ACTION_CLASS}
+                    >
+                      Mark evidence reviewed
+                    </button>
+                  )
+                ) : null}
+                {!props.archived ? (
                   <button
+                    ref={inviteTriggerRef}
                     type="button"
-                    onClick={props.onReview}
-                    disabled={props.reviewPending}
-                    className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-40"
+                    onClick={props.onInviteClick}
+                    aria-expanded={props.invitingOpen}
+                    className={ROW_ACTION_CLASS}
                   >
-                    Mark evidence reviewed
+                    Add to an opening
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  onClick={props.onInviteClick}
-                  className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground"
-                >
-                  Invite to an opening
-                </button>
               </>
             ) : null}
             {props.confirmingRemove ? (
@@ -782,61 +997,69 @@ function MemberRow(props: MemberRowProps): JSX.Element {
                 role="group"
                 aria-label={`Confirm removing ${m.full_name}`}
                 className="flex flex-col gap-1"
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    props.onRemoveCancel();
+                  }
+                }}
               >
                 <input
+                  autoFocus
                   value={props.removeReason}
                   onChange={(e) => props.onRemoveReasonChange(e.target.value)}
+                  maxLength={REMOVE_REASON_MAX}
                   placeholder="Reason (optional)"
                   aria-label={`Reason for removing ${m.full_name}`}
                   className="rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground"
                 />
                 <span className="flex gap-1.5">
-                  <button
+                  <Button
                     type="button"
+                    size="sm"
+                    variant="destructive"
                     onClick={props.onRemoveConfirm}
                     disabled={props.removePending}
-                    className="rounded-[8px] bg-[var(--ui-danger-wash)] px-2 py-1 text-[12px] font-semibold text-[var(--ui-danger)] disabled:opacity-50"
+                    aria-busy={props.removePending}
                   >
-                    {props.removePending ? '…' : 'Remove'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={props.onRemoveCancel}
-                    className="rounded-[8px] bg-[var(--ui-inset)] px-2 py-1 text-[12px] text-[var(--ui-soft)]"
-                  >
+                    {props.removePending ? 'Removing…' : 'Remove'}
+                  </Button>
+                  <Button type="button" size="sm" variant="ghost" onClick={props.onRemoveCancel}>
                     Cancel
-                  </button>
+                  </Button>
                 </span>
               </span>
             ) : (
               <button
+                ref={removeTriggerRef}
                 type="button"
                 onClick={props.onRemoveClick}
-                className="inline-flex items-center gap-1 rounded-[8px] border border-[var(--ui-danger)]/40 px-2 py-1 text-[12px] text-[var(--ui-danger)]"
+                className="inline-flex items-center gap-1 rounded-[8px] border border-[var(--ui-danger)]/40 px-2 py-1 text-[12px] text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-danger)]"
               >
                 <UserMinus className="h-3 w-3" aria-hidden="true" />
                 Remove
               </button>
             )}
           </div>
-          {props.invitingOpen ? (
-            <InviteDialog
+          {props.invitingOpen && m.eligible && !props.archived ? (
+            <AddToOpeningPanel
               poolId={poolId}
-              memberId={m.member_id}
+              member={m}
               onClose={props.onInviteClose}
               onInvited={props.onInvited}
             />
           ) : null}
         </td>
       </tr>
-      {props.expanded && m.match_reason ? (
-        <tr className="border-b border-border bg-[var(--ui-inset-soft)]">
+      {props.expanded && snapshot ? (
+        <tr id={whyId} className="border-b border-border bg-[var(--ui-inset-soft)]">
           <td colSpan={6} className="p-3">
             <p className="mb-2 text-[12px] text-muted-foreground">
-              Added from a rediscovery search on {formatDate(m.match_reason.frozen_at)}. This is a
-              snapshot from that search and is not recalculated.
+              Added from a rediscovery search on{' '}
+              {formatDate(snapshot.frozen_at || m.added_at)}. This is a snapshot from that search
+              and is not recalculated.
             </p>
-            <RediscoveryWhyPanel items={m.match_reason.why} />
+            <RediscoveryWhyPanel items={snapshot.why} />
           </td>
         </tr>
       ) : null}
@@ -845,33 +1068,42 @@ function MemberRow(props: MemberRowProps): JSX.Element {
 }
 
 // ---------------------------------------------------------------------------
-// Invite to an opening — the criterion-14 gate reacts to the server's own
-// 422, never pre-computes it.
+// Add to an opening — the criterion-14 gate reacts to the server's own 422,
+// never pre-computes it.
 // ---------------------------------------------------------------------------
 
-function InviteDialog({
+function AddToOpeningPanel({
   poolId,
-  memberId,
+  member,
   onClose,
   onInvited,
 }: {
   poolId: string;
-  memberId: string;
+  member: PoolMemberOut;
   onClose: () => void;
   onInvited: () => void;
 }): JSX.Element {
+  const qc = useQueryClient();
   const openings = useQuery({
     queryKey: ['hr', 'requisitions', 'open-for-invite'],
-    queryFn: () => listRequisitions({ status: 'open' }),
+    queryFn: () => listRequisitions({ status: 'open', limit: OPENINGS_PAGE }),
   });
   const [requisitionId, setRequisitionId] = useState('');
   const [needsAck, setNeedsAck] = useState(false);
+  const ackRef = useRef<HTMLButtonElement>(null);
+  const openingList: Requisition[] = openings.data ?? [];
+  const chosen = openingList.find((r) => r.id === requisitionId);
+
+  useEffect(() => {
+    if (needsAck) ackRef.current?.focus();
+  }, [needsAck]);
 
   const inviteMut = useMutation({
     mutationFn: (acknowledgedStale: boolean) =>
-      inviteMember(poolId, memberId, { requisitionId, acknowledgedStale }),
+      inviteMember(poolId, member.member_id, { requisitionId, acknowledgedStale }),
     onSuccess: (res) => {
-      toast.success(res.already_enrolled ? 'Already invited to this opening' : 'Invited');
+      const title = chosen?.title ?? 'the opening';
+      toast.success(res.already_enrolled ? `Already in ${title}` : `Added to ${title}`);
       onInvited();
       onClose();
     },
@@ -880,7 +1112,13 @@ function InviteDialog({
         setNeedsAck(true);
         return;
       }
-      toast.error(poolErrorMessage(e, 'Could not invite this candidate'));
+      if (poolFailureCode(e) === 'requisition_not_open') {
+        // The list was stale: refresh it so the closed opening drops out.
+        setRequisitionId('');
+        setNeedsAck(false);
+        void qc.invalidateQueries({ queryKey: ['hr', 'requisitions'] });
+      }
+      toast.error(poolErrorMessage(e, 'Could not add this candidate to the opening.'));
     },
   });
 
@@ -888,61 +1126,110 @@ function InviteDialog({
     <div
       className="mt-2 rounded-[10px] border border-border bg-card p-3"
       role="group"
-      aria-label="Invite to an opening"
+      aria-label={`Add ${member.full_name} to an opening`}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          onClose();
+        }
+      }}
     >
       {needsAck ? (
         <div className="space-y-2">
           <p className="flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            This evidence has not been reviewed recently. Invite this candidate anyway?
+            This candidate has no recently reviewed evidence. Review it first, or add them to the
+            opening anyway. Adding them anyway is recorded.
           </p>
           <div className="flex gap-1.5">
-            <button
+            <Button
+              ref={ackRef}
               type="button"
+              size="sm"
+              variant="outline"
               onClick={() => inviteMut.mutate(true)}
               disabled={inviteMut.isPending}
-              className="rounded-full bg-primary px-5 min-h-10 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+              aria-busy={inviteMut.isPending}
             >
-              {inviteMut.isPending ? '…' : 'Invite anyway'}
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-[8px] border border-border px-3 py-1.5 text-[12px] text-muted-foreground"
-            >
+              {inviteMut.isPending ? 'Adding…' : 'Add anyway'}
+            </Button>
+            {/* The way to clear the gate properly: open the evidence (F21).
+                Not a one-click "mark reviewed" here, which would attest to
+                evidence nobody opened (PL-L6). */}
+            {member.enrolment_id ? (
+              <Link to={`/hr/enrolments/${member.enrolment_id}/evidence`} className={ROW_ACTION_CLASS}>
+                <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+                Review evidence
+              </Link>
+            ) : null}
+            <Button type="button" size="sm" variant="ghost" onClick={onClose}>
               Cancel
-            </button>
+            </Button>
           </div>
+        </div>
+      ) : openings.isLoading ? (
+        <p className="flex items-center gap-2 text-[12px] text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          Loading openings…
+        </p>
+      ) : openings.isError ? (
+        <div className="flex flex-wrap items-center gap-2" role="alert">
+          <p className="text-[12px] text-[var(--ui-danger)]">
+            {errorMessage(openings.error, 'Could not load your openings.')}
+          </p>
+          <Button type="button" size="sm" variant="outline" onClick={() => void openings.refetch()}>
+            Try again
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      ) : openingList.length === 0 ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="text-[12px] text-muted-foreground">
+            No openings are open right now. Open one first, then add this candidate to it.
+          </p>
+          <Button type="button" size="sm" variant="ghost" onClick={onClose}>
+            Close
+          </Button>
         </div>
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <label className="sr-only" htmlFor={`invite-req-${memberId}`}>
+          <label className="sr-only" htmlFor={`invite-req-${member.member_id}`}>
             Opening
           </label>
           <select
-            id={`invite-req-${memberId}`}
+            autoFocus
+            id={`invite-req-${member.member_id}`}
             value={requisitionId}
             onChange={(e) => setRequisitionId(e.target.value)}
             className="h-9 rounded-[10px] border border-border bg-secondary ps-2.5 text-[12px] text-foreground"
           >
             <option value="">Choose an opening…</option>
-            {(openings.data ?? []).map((r: Requisition) => (
+            {openingList.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.title}
               </option>
             ))}
           </select>
-          <button
+          <Button
             type="button"
+            size="sm"
+            variant="outline"
             onClick={() => requisitionId && inviteMut.mutate(false)}
             disabled={!requisitionId || inviteMut.isPending}
-            className="rounded-full bg-primary px-5 min-h-10 text-[12px] font-semibold text-primary-foreground disabled:opacity-50"
+            aria-busy={inviteMut.isPending}
           >
-            {inviteMut.isPending ? '…' : 'Invite'}
-          </button>
-          <button type="button" onClick={onClose} className="text-[12px] text-muted-foreground">
+            {inviteMut.isPending ? 'Adding…' : 'Add'}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" onClick={onClose}>
             Cancel
-          </button>
+          </Button>
+          {openingList.length >= OPENINGS_PAGE ? (
+            <p className="w-full text-[12px] text-muted-foreground">
+              Showing the first {OPENINGS_PAGE} open openings.
+            </p>
+          ) : null}
         </div>
       )}
     </div>
@@ -970,7 +1257,6 @@ function AddCandidatesDialog({
   onClose: () => void;
   onAdded: () => void;
 }): JSX.Element {
-  const { t } = useTranslation();
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebouncedValue(query, 300);
   const trimmedQuery = debouncedQuery.trim();
@@ -989,12 +1275,15 @@ function AddCandidatesDialog({
   // server would only tell us `already_a_member` for one anyway.
   const results = (applicantsQuery.data ?? []).filter((a) => !existingApplicantIds.has(a.id));
   const selectedIds = Object.keys(selected);
+  // The server takes at most MAX_ADD_PER_CALL ids per call; stop the picker
+  // there rather than let the add come back as a validation error (PL-F12).
+  const atCap = selectedIds.length >= MAX_ADD_PER_CALL;
 
   function toggle(a: Applicant): void {
     setSelected((prev) => {
       const next = { ...prev };
       if (next[a.id]) delete next[a.id];
-      else next[a.id] = a;
+      else if (Object.keys(next).length < MAX_ADD_PER_CALL) next[a.id] = a;
       return next;
     });
   }
@@ -1008,7 +1297,7 @@ function AddCandidatesDialog({
       }),
     onSuccess: (res) => {
       if (res.added.length > 0) {
-        toast.success(t('hrPools.addedToast', { count: res.added.length }));
+        toast.success(`Added ${plural(res.added.length, 'candidate')} to the pool`);
         onAdded();
       }
       // Drop everything the server just processed (added or skipped) from
@@ -1022,7 +1311,7 @@ function AddCandidatesDialog({
       if (res.skipped.length > 0) {
         // Surfaced, not swallowed: named per candidate, in words an HR
         // manager can act on, and left on screen rather than a toast alone.
-        toast.error(t('hrPools.skippedToast', { count: res.skipped.length }));
+        toast.error(`${plural(res.skipped.length, 'candidate')} could not be added`);
         setSkipped(
           res.skipped.map((s) => ({
             applicantId: s.applicant_id,
@@ -1036,21 +1325,26 @@ function AddCandidatesDialog({
         onClose();
       }
     },
-    onError: (e: unknown) => toast.error(poolErrorMessage(e, t('hrPools.couldNotAdd'))),
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not add candidates to this pool.')),
   });
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogContent aria-describedby={undefined} className="max-w-[480px] space-y-3">
         <DialogHeader>
-          <DialogTitle className="text-[17px] font-bold">
-            {t('hrPools.dialogTitle', { pool: poolName })}
-          </DialogTitle>
+          <DialogTitle className="text-[17px] font-bold">Add candidates to {poolName}</DialogTitle>
         </DialogHeader>
+
+        {/* A manual add needs no opt-in, but adding someone to an opening
+            later does (PL-F6): say so before they are added, not after. */}
+        <p className="text-[12px] text-muted-foreground">
+          Anyone can be kept on a pool. Only candidates who opted in to future openings can later
+          be added to an opening from it.
+        </p>
 
         <div>
           <label htmlFor="pool-add-search" className="sr-only">
-            {t('hrPools.searchLabel')}
+            Search your applicants
           </label>
           <div className="relative">
             <Search
@@ -1061,8 +1355,9 @@ function AddCandidatesDialog({
               id="pool-add-search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={t('hrPools.searchPlaceholder')}
-              className="w-full rounded-[10px] border border-border bg-secondary py-2 pl-8 pr-3 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              maxLength={200}
+              placeholder="Search by name, title or company…"
+              className={`w-full py-2 pl-8 pr-3 ${INPUT_CLASS}`}
             />
           </div>
         </div>
@@ -1071,53 +1366,72 @@ function AddCandidatesDialog({
           {applicantsQuery.isLoading ? (
             <p className="flex items-center gap-2 py-3 text-[12.5px] text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-              {t('hrPools.loading')}
+              Loading applicants…
             </p>
           ) : applicantsQuery.isError ? (
-            <p className="py-3 text-[12.5px] text-[var(--ui-danger)]">{t('hrPools.loadError')}</p>
+            <div className="flex flex-wrap items-center gap-2 py-3" role="alert">
+              <p className="text-[12.5px] text-[var(--ui-danger)]">
+                {errorMessage(applicantsQuery.error, 'Could not load applicants.')}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void applicantsQuery.refetch()}
+              >
+                Try again
+              </Button>
+            </div>
           ) : results.length === 0 ? (
             <p className="py-3 text-center text-[12.5px] text-muted-foreground">
-              {trimmedQuery ? t('hrPools.noResults') : t('hrPools.noApplicants')}
+              {trimmedQuery
+                ? 'No applicants match this search.'
+                : 'Your company has no applicants yet.'}
             </p>
           ) : (
-            results.map((a) => (
-              <label
-                key={a.id}
-                className="flex items-center gap-2 rounded-[8px] px-2 py-1.5 text-[12.5px] text-foreground hover:bg-[var(--ui-inset-soft)]"
-              >
-                <input
-                  type="checkbox"
-                  checked={Boolean(selected[a.id])}
-                  onChange={() => toggle(a)}
-                />
-                <span className="flex-1">
-                  <span className="font-medium">{a.full_name}</span>
-                  {a.current_title || a.current_company ? (
-                    <span className="ml-1.5 text-[12px] text-muted-foreground">
-                      {[a.current_title, a.current_company].filter(Boolean).join(' · ')}
-                    </span>
-                  ) : null}
-                </span>
-              </label>
-            ))
+            results.map((a) => {
+              const checked = Boolean(selected[a.id]);
+              return (
+                <label
+                  key={a.id}
+                  className="flex items-center gap-2 rounded-[8px] px-2 py-1.5 text-[12.5px] text-foreground hover:bg-[var(--ui-inset-soft)]"
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={!checked && atCap}
+                    onChange={() => toggle(a)}
+                  />
+                  <span className="flex-1">
+                    <span className="font-medium">{a.full_name}</span>
+                    {a.current_title || a.current_company ? (
+                      <span className="ml-1.5 text-[12px] text-muted-foreground">
+                        {[a.current_title, a.current_company].filter(Boolean).join(' · ')}
+                      </span>
+                    ) : null}
+                  </span>
+                </label>
+              );
+            })
           )}
         </div>
 
-        <p className="text-[12px] text-muted-foreground">
-          {t('hrPools.selected', { count: selectedIds.length })}
+        <p className="text-[12px] text-muted-foreground" aria-live="polite">
+          {selectedIds.length} selected
+          {atCap ? `. You can add up to ${MAX_ADD_PER_CALL} at a time.` : ''}
         </p>
 
         <div className="flex flex-col gap-1.5">
           <label htmlFor="pool-add-note" className="text-[12px] font-medium text-[var(--ui-soft)]">
-            {t('hrPools.noteLabel')}
+            Note (optional)
           </label>
           <input
             id="pool-add-note"
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            maxLength={500}
-            placeholder={t('hrPools.notePlaceholder')}
-            className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            maxLength={NOTE_MAX}
+            placeholder="Why you are adding them"
+            className={INPUT_CLASS}
           />
         </div>
 
@@ -1126,13 +1440,11 @@ function AddCandidatesDialog({
             role="status"
             className="space-y-1 rounded-[10px] border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] p-2.5"
           >
-            <p className="text-[12px] font-medium text-[var(--ui-danger)]">
-              {t('hrPools.notAddedHeading')}
-            </p>
+            <p className="text-[12px] font-medium text-[var(--ui-danger)]">Not added</p>
             <ul className="space-y-0.5 text-[12px] text-[var(--ui-danger)]">
               {skipped.map((s) => (
                 <li key={s.applicantId}>
-                  {s.name} - {t(`hrPools.skipReason.${s.reason}`)}
+                  {s.name}: {skipReasonLabel(s.reason)}
                 </li>
               ))}
             </ul>
@@ -1141,7 +1453,7 @@ function AddCandidatesDialog({
 
         <DialogFooter className="flex-row items-center justify-end gap-2 sm:space-x-0">
           <Button type="button" variant="ghost" onClick={onClose}>
-            {t('hrPools.cancel')}
+            {skipped.length > 0 ? 'Close' : 'Cancel'}
           </Button>
           <Button
             type="button"
@@ -1149,8 +1461,8 @@ function AddCandidatesDialog({
             disabled={selectedIds.length === 0 || addMut.isPending}
           >
             {addMut.isPending
-              ? t('hrPools.adding')
-              : t('hrPools.addSelected', { count: selectedIds.length })}
+              ? 'Adding…'
+              : `Add ${plural(selectedIds.length, 'candidate')}`}
           </Button>
         </DialogFooter>
       </DialogContent>

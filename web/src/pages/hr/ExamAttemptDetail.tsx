@@ -13,8 +13,10 @@ import { useQuery } from '@tanstack/react-query';
 import {
   getExam,
   listAttempts,
+  listCodingQuestions,
   getAttemptBreakdown,
   type AttemptAdjustment,
+  type CodingQuestion,
   type ExamQuestion,
 } from '@/api/exams';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
@@ -24,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { PageHeader, Breadcrumbs, Page } from '@/design/components/page';
 import AttemptProctoringSummary from '@/components/hr/AttemptProctoringSummary';
 import { formatDateTime } from '@/lib/formatters';
+import { useTabKeys } from '@/lib/tabKeys';
 
 // Code-split: the evidence tab pulls in the read-only CodeEditor (Prism +
 // language grammars), which most HR sessions on this page never open.
@@ -59,12 +62,25 @@ function describeAdjustment(adj: AttemptAdjustment): string {
   return parts.join(' · ');
 }
 
-type AttemptTab = 'overview' | 'code-evidence';
+const ATTEMPT_TABS = ['overview', 'code-evidence'] as const;
+type AttemptTab = (typeof ATTEMPT_TABS)[number];
+
+/** The first line of a coding prompt, trimmed for a row label. */
+function excerpt(prompt: string, max = 120): string {
+  const line = prompt.trim().split('\n')[0] ?? '';
+  return line.length > max ? `${line.slice(0, max - 1)}…` : line;
+}
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 export default function ExamAttemptDetail() {
   const { examId = '', attemptId = '' } = useParams<{ examId: string; attemptId: string }>();
   const [tab, setTab] = useState<AttemptTab>('overview');
+  const tabs = useTabKeys({
+    idBase: `attempt-${attemptId}`,
+    keys: ATTEMPT_TABS,
+    active: tab,
+    onChange: setTab,
+  });
 
   const { data: exam } = useQuery({
     queryKey: ['hr', 'exam', examId],
@@ -97,13 +113,29 @@ export default function ExamAttemptDetail() {
 
   const mcqEntries = Object.entries(breakdown?.per_question ?? {});
   const codingEntries = Object.entries(breakdown?.coding ?? {});
+
+  // The coding prompts, so a row says which problem it is rather than only
+  // "Coding question" (audit E24). Fetched only when there is a coding row.
+  const { data: codingQuestions } = useQuery({
+    queryKey: ['hr', 'exam', examId, 'coding-questions'],
+    queryFn: () => listCodingQuestions(examId),
+    enabled: Boolean(examId) && codingEntries.length > 0,
+  });
+  const codingMap = new Map<string, CodingQuestion>(
+    (codingQuestions ?? []).map((q) => [q.id, q]),
+  );
   const mcqCorrect = mcqEntries.filter(([, ok]) => ok).length;
   const totalQuestions = mcqEntries.length + codingEntries.length;
 
-  const passThreshold = exam?.pass_threshold ?? null;
+  // The pass mark this attempt was judged against: its own round's, not the
+  // exam-level one (audit E8). The exam's is only a fallback for a legacy
+  // attempt that predates rounds.
+  const passThreshold = attempt?.round_pass_threshold ?? exam?.pass_threshold ?? null;
   const scorePercent = attempt?.score_percent ?? breakdown?.score_percent ?? null;
   const passed = attempt?.passed ?? breakdown?.passed ?? null;
   const inProgress = attempt?.status === 'in_progress' || attempt?.submitted_at === null;
+  // Not yet graded reads as such, never as "did not pass" (audit E24).
+  const verdict = inProgress || passed === null ? 'not graded yet' : passed ? 'passed' : 'did not pass';
 
   return (
     <Page width="default">
@@ -132,6 +164,9 @@ export default function ExamAttemptDetail() {
           <span className="font-mono text-[13px]">
             {exam?.title ?? 'Exam'}
             {attempt ? ` · attempt #${attempt.attempt_no}` : ''}
+            {attempt?.round_number != null
+              ? ` · round ${attempt.round_number}${attempt.round_title ? ` (${attempt.round_title})` : ''}`
+              : ''}
             {attempt?.submitted_at ? ` · ${formatDateTime(attempt.submitted_at)}` : ''}
           </span>
         }
@@ -205,11 +240,11 @@ export default function ExamAttemptDetail() {
                 className="mt-5 flex gap-1 border-b border-border"
                 role="tablist"
                 aria-label="Attempt views"
+                {...tabs.tabListProps}
               >
                 <button
                   type="button"
-                  role="tab"
-                  aria-selected={tab === 'overview'}
+                  {...tabs.tabProps('overview')}
                   onClick={() => setTab('overview')}
                   className={cn(
                     'min-h-[40px] border-b-2 px-3 py-2 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
@@ -222,8 +257,7 @@ export default function ExamAttemptDetail() {
                 </button>
                 <button
                   type="button"
-                  role="tab"
-                  aria-selected={tab === 'code-evidence'}
+                  {...tabs.tabProps('code-evidence')}
                   onClick={() => setTab('code-evidence')}
                   className={cn(
                     'inline-flex min-h-[40px] items-center gap-1.5 border-b-2 px-3 py-2 text-[13px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
@@ -240,7 +274,7 @@ export default function ExamAttemptDetail() {
           )}
 
           {tab === 'code-evidence' && codingEntries.length > 0 ? (
-            <div className="mt-5">
+            <div className="mt-5" {...tabs.panelProps('code-evidence')}>
               <Suspense
                 fallback={
                   <GlassCard className="p-8 text-center">
@@ -255,15 +289,15 @@ export default function ExamAttemptDetail() {
               </Suspense>
             </div>
           ) : (
-            <>
+            <div {...(codingEntries.length > 0 ? tabs.panelProps('overview') : {})}>
               {/* ── Stat strip ── */}
               <Reveal delay={0.06}>
                 <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
                   <StatCard
                     label="Score"
                     value={scorePercent !== null ? `${scorePercent}%` : '-'}
-                    delta={passed ? 'passed' : 'did not pass'}
-                    trend={passed ? 'up' : 'flat'}
+                    delta={verdict}
+                    trend={verdict === 'passed' ? 'up' : 'flat'}
                   />
                   <StatCard
                     label="Points"
@@ -284,7 +318,7 @@ export default function ExamAttemptDetail() {
                   <StatCard
                     label="Pass mark"
                     value={passThreshold !== null ? `${passThreshold}%` : '-'}
-                    delta="threshold"
+                    delta={attempt?.round_pass_threshold != null ? "this round's threshold" : 'threshold'}
                     trend="flat"
                   />
                 </div>
@@ -350,13 +384,14 @@ export default function ExamAttemptDetail() {
                         const earned = r.raw ?? 0;
                         const full = earned >= r.points && r.points > 0;
                         const partial = earned > 0 && earned < r.points;
+                        const cq = codingMap.get(qid);
                         return (
                           <StaggerItem key={qid}>
                             <div className="flex items-start justify-between gap-3 border-b border-border px-6 py-3.5 last:border-0">
                               <div className="min-w-0">
                                 <p className="text-[13.5px] text-foreground">
-                                  <span className="text-[var(--ui-faint)]">Q{i + 1}.</span> Coding
-                                  question
+                                  <span className="text-[var(--ui-faint)]">Q{i + 1}.</span>{' '}
+                                  {cq ? excerpt(cq.prompt) : 'Coding question'}
                                 </p>
                                 <p className="mt-1 text-[12.5px] text-muted-foreground">
                                   {r.submitted === false
@@ -398,7 +433,7 @@ export default function ExamAttemptDetail() {
                   </p>
                 </GlassCard>
               )}
-            </>
+            </div>
           )}
         </>
       )}

@@ -12,9 +12,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle, Loader2 } from '@/design/components/icons';
+import { Skeleton } from '@/components/ui/skeleton';
 import { GlassCard } from '@/design/components/primitives';
-import { EmptyState, PageHeader, Toolbar } from '@/design/components/page';
+import { EmptyState, Page, PageHeader, Toolbar } from '@/design/components/page';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { cn } from '@/lib/utils';
 import { LIVE_POLL_MS } from '@/lib/polling';
 import { getHiringBoard, type BoardOpening, type HealthBand } from '@/api/companyBoard';
@@ -49,7 +50,8 @@ export default function HiringBoard(): JSX.Element {
   const openings = (board.data?.openings ?? []).filter((o) => !filter || o.health.band === filter);
 
   return (
-    <div className="mx-auto w-full max-w-[1200px] px-4 py-8">
+    // The shared frame (AD-F31): its own px-4 py-8 doubled main's gutters.
+    <Page width="default">
       <PageHeader
         title="Hiring board"
         description="Every open opening in the company. Health is worked out from how candidates have actually moved through each workflow - nobody types it in. Read-only: the hiring decisions stay with your HR managers."
@@ -84,15 +86,18 @@ export default function HiringBoard(): JSX.Element {
       ) : null}
 
       {board.isLoading ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading the board…
+        <div className="flex flex-col gap-3" role="status" aria-label="Loading the board">
+          <Skeleton className="h-24 w-full rounded-card" />
+          <Skeleton className="h-24 w-full rounded-card" />
+          <Skeleton className="h-24 w-full rounded-card" />
         </div>
-      ) : board.isError ? (
-        <GlassCard className="flex items-center gap-2 p-6 text-[13.5px] text-[var(--ui-danger)]">
-          <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-          Could not load the hiring board.
-        </GlassCard>
+      ) : board.isError && !board.data ? (
+        <QueryErrorPanel
+          title="Could not load the hiring board."
+          error={board.error}
+          onRetry={() => void board.refetch()}
+          retrying={board.isFetching}
+        />
       ) : openings.length === 0 ? (
         <GlassCard className="p-4">
           <EmptyState
@@ -133,7 +138,9 @@ export default function HiringBoard(): JSX.Element {
                         <div className="text-[12px] text-muted-foreground">{o.location}</div>
                       ) : null}
                     </td>
-                    <td className="px-3 py-3 text-[var(--ui-soft)]">{statusLabel(o.status, 'opening')}</td>
+                    <td className="px-3 py-3 text-[var(--ui-soft)]">
+                      {statusLabel(o.status, 'opening')}
+                    </td>
                     <td className="px-3 py-3 text-[var(--ui-soft)]">{workflowText(o)}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{o.applied}</td>
                     <td className="px-3 py-3 text-right tabular-nums">{o.in_play}</td>
@@ -161,6 +168,6 @@ export default function HiringBoard(): JSX.Element {
           </div>
         </GlassCard>
       )}
-    </div>
+    </Page>
   );
 }

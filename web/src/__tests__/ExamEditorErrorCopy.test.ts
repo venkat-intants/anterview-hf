@@ -11,12 +11,20 @@
 // editor is too large to render cheaply for each of its 19 mutations, and the
 // property is "no toast bypasses the helper", which the source states exactly.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-const editor = readFileSync(resolve(__dirname, '../pages/hr/ExamEditor.tsx'), 'utf-8');
+// The editor page plus the panels it is composed of (components/hr/exam/).
+const panelDir = resolve(__dirname, '../components/hr/exam');
+const editor = [
+  readFileSync(resolve(__dirname, '../pages/hr/ExamEditor.tsx'), 'utf-8'),
+  ...readdirSync(panelDir)
+    .filter((f) => /\.tsx?$/.test(f))
+    .sort()
+    .map((f) => readFileSync(resolve(panelDir, f), 'utf-8')),
+].join('\n');
 
 describe('exam editor error toasts', () => {
   it('never shows a raw error message with an "X failed" fallback', () => {

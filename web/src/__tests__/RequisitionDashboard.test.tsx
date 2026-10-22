@@ -295,6 +295,29 @@ describe('the per-opening dashboard (E1)', () => {
     expect(screen.getByRole('link', { name: /Hiring board/ }).getAttribute('href')).toBe(
       '/superadmin/board',
     );
+    // AD-F17: the decisions are HR's, so the read-only view does not say "you".
+    expect(screen.queryByText(/your decision/i)).toBeNull();
+    expect(screen.queryByText(/waiting on you/i)).toBeNull();
+    expect(screen.getByText("Held for HR's decision")).toBeTruthy();
+    expect(screen.getByText("Awaiting HR's decision")).toBeTruthy();
+  });
+
+  it('sends the super admin back to Approvals from an opening still awaiting approval', async () => {
+    const pending = dash();
+    getCompanyRequisitionDashboard.mockResolvedValue({
+      ...pending,
+      requisition: { ...pending.requisition, approval_status: 'pending_approval' },
+    });
+    renderPage(true);
+    expect(await screen.findByRole('heading', { name: 'Python Developer' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Approvals/ }).getAttribute('href')).toBe(
+      '/superadmin/approvals',
+    );
+  });
+
+  it('keeps "your decision" wording for HR', async () => {
+    renderPage();
+    expect(await screen.findByText('Held for your decision')).toBeTruthy();
   });
 
   it('warns that the public link waits for a published workflow', async () => {

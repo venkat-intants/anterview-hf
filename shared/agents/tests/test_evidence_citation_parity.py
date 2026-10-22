@@ -176,6 +176,10 @@ def test_every_citation_view_names_a_real_kind_and_a_relative_path() -> None:
     for (kind, view), template in CITATION_VIEWS.items():
         assert kind in python_kinds, f"view ({kind!r}, {view!r}) names no CitationKind"
         assert view, f"({kind!r}, {view!r}) has an empty view name"
+        # None is a deliberate "this console has no page for it" (an unlinked
+        # chip), the same meaning it has in CITATION_ROUTES.
+        if template is None:
+            continue
         # The same rule Citation.href's validator enforces: a relative app path,
         # never an absolute URL and never protocol-relative.
         assert template.startswith("/") and not template.startswith("//"), (

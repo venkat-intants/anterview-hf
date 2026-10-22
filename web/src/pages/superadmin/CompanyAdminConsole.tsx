@@ -24,6 +24,7 @@ import {
   Search,
   type LucideIcon,
   UserMinus,
+  Send,
 } from '@/design/components/icons';
 import { getMe } from '@/api/auth';
 import CareersLinkCard from '@/components/hr/CareersLinkCard';
@@ -34,9 +35,14 @@ import {
   listMyInterviewers,
   createMyInterviewer,
   deleteMyInterviewer,
+  resendMyHrManagerInvite,
+  resendMyInterviewerInvite,
   type HrManager,
+  type ResendInviteResult,
 } from '@/api/hr';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
+import { QueryState } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -53,6 +59,9 @@ import { listPendingWorkflowReviews } from '@/api/workflowReview';
 import { listOfferApprovals } from '@/api/offers';
 import { listAdminQuestionReviews } from '@/api/questionBanks';
 
+/** The account status every staff roster shows, worded once. */
+const PENDING_FIRST_LOGIN = 'Pending first login';
+
 /**
  * One roster (HR managers, or interviewers) — the list plus its create dialog.
  * Both rosters share the exact same server-row shape (HrManager), so this is
@@ -67,6 +76,7 @@ function StaffRoster({
   idPrefix,
   icon,
   heading,
+  singular,
   createTitle,
   createBlurb,
   addLabel,
@@ -80,12 +90,15 @@ function StaffRoster({
   listFn,
   createFn,
   deleteFn,
+  resendFn,
   createOpen,
   onCreateOpenChange,
 }: {
   idPrefix: string;
   icon: LucideIcon;
   heading: string;
+  /** One person in this roster, in sentence case: "HR manager", "Interviewer". */
+  singular: string;
   createTitle: string;
   createBlurb: (companyName: string) => string;
   /** The dialog's submit button. */
@@ -97,57 +110,65 @@ function StaffRoster({
   emptyText: string;
   listLabel: string;
   companyName: string;
-  /** Shown once, under the list — e.g. what removing someone also does. */
-  removalNote?: string;
+  /** Shown once, under the list: what removing someone also does. */
+  removalNote: string;
   queryKey: string;
   listFn: () => Promise<HrManager[]>;
   createFn: (body: { email: string; full_name: string }) => Promise<HrManager>;
   deleteFn: (userId: string) => Promise<void>;
+  resendFn: (userId: string) => Promise<ResendInviteResult>;
   createOpen: boolean;
   onCreateOpenChange: (open: boolean) => void;
 }) {
   const qc = useQueryClient();
+  // "HR manager" keeps its acronym mid-sentence; "Interviewer" does not.
+  const inSentence = singular.startsWith('HR') ? singular : singular.toLowerCase();
+  const pluralInSentence = heading.startsWith('HR') ? heading : heading.toLowerCase();
 
-  const { data: rows, isLoading } = useQuery({ queryKey: [queryKey], queryFn: listFn });
+  const roster = useQuery({ queryKey: [queryKey], queryFn: listFn });
   const [filter, setFilter] = useState('');
   const needle = filter.trim().toLowerCase();
-  const shown = (rows ?? []).filter(
-    (r) =>
-      !needle ||
-      r.full_name.toLowerCase().includes(needle) ||
-      r.email.toLowerCase().includes(needle),
-  );
 
   const createMut = useMutation({
     mutationFn: (v: { email: string; fullName: string }) =>
       createFn({ email: v.email.trim(), full_name: v.fullName.trim() }),
-    onSuccess: (_created, v) => {
-      toast.success(
-        `${heading.replace(/s$/, '')} ${v.email} created - a set-password link was emailed.`,
-      );
+    onSuccess: (created, v) => {
+      // The server says whether the set-password email was queued (AD-F8):
+      // sending is best-effort, so never claim it went when it did not.
+      if (created.email_queued === false) {
+        toast.warning(
+          `${singular} ${v.email} was created, but the set-password email could not be sent. Use Resend link on their row.`,
+        );
+      } else {
+        toast.success(`${singular} ${v.email} created. A set-password link is on its way`);
+      }
       onCreateOpenChange(false);
       void qc.invalidateQueries({ queryKey: [queryKey] });
     },
-    onError: (err: unknown) =>
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : `Could not create this ${heading.toLowerCase().replace(/s$/, '')}.`,
-      ),
+    onError: (err: unknown) => toast.error(errorMessage(err, `Could not add this ${inSentence}.`)),
   });
 
   const deleteMut = useMutation({
     mutationFn: (userId: string) => deleteFn(userId),
     onSuccess: () => {
-      toast.success(`${heading.replace(/s$/, '')} removed.`);
+      toast.success(`${singular} removed`);
       void qc.invalidateQueries({ queryKey: [queryKey] });
     },
     onError: (err: unknown) =>
-      toast.error(
-        err instanceof Error
-          ? err.message
-          : `Could not remove this ${heading.toLowerCase().replace(/s$/, '')}.`,
-      ),
+      toast.error(errorMessage(err, `Could not remove this ${inSentence}.`)),
+  });
+
+  const resendMut = useMutation({
+    mutationFn: (row: HrManager) => resendFn(row.user_id),
+    onSuccess: (res, row) => {
+      if (res.email_queued) {
+        toast.success(`Set-password link sent again to ${row.email}`);
+      } else {
+        toast.warning(`Could not send the set-password email to ${row.email}. Try again later.`);
+      }
+    },
+    onError: (err: unknown) =>
+      toast.error(errorMessage(err, 'Could not resend the set-password link.')),
   });
 
   return (
@@ -157,7 +178,12 @@ function StaffRoster({
       description={createBlurb(companyName)}
       actions={
         showOpenButton ? (
-          <Button type="button" variant="outline" onClick={() => onCreateOpenChange(true)} className="gap-1.5">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => onCreateOpenChange(true)}
+            className="gap-1.5"
+          >
             <UserPlus className="h-4 w-4" aria-hidden="true" />
             {openLabel}
           </Button>
@@ -181,88 +207,120 @@ function StaffRoster({
         onSubmit={(v) => createMut.mutate(v)}
       />
 
-      {isLoading ? (
-        <div className="space-y-2" aria-busy="true">
-          <Skeleton className="h-14 w-full rounded-[14px]" />
-          <Skeleton className="h-14 w-full rounded-[14px]" />
-        </div>
-      ) : !rows || rows.length === 0 ? (
-        <EmptyState icon={icon} title={emptyText} bordered={false} />
-      ) : (
-        <>
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-            <div className="relative w-full max-w-[320px]">
-              <Search
-                size={15}
-                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ui-faint)]"
-                aria-hidden="true"
-              />
-              <input
-                type="search"
-                value={filter}
-                onChange={(e) => setFilter(e.target.value)}
-                aria-label={`Search ${listLabel.toLowerCase()}`}
-                placeholder="Search by name or email"
-                className="min-h-10 w-full rounded-[10px] border border-input bg-card pl-9 pr-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              />
-            </div>
-            <span className="text-[13px] tabular-nums text-muted-foreground">
-              {needle ? `${shown.length} of ${rows.length}` : rows.length}{' '}
-              {rows.length === 1 ? 'person' : 'people'}
-            </span>
+      {/* A failed load is an error with a retry, never "No HR managers yet"
+          (AD-F6): the summary above already says the count is unavailable. */}
+      <QueryState
+        query={roster}
+        errorTitle={`Could not load ${pluralInSentence}.`}
+        loading={
+          <div className="space-y-2" aria-busy="true">
+            <Skeleton className="h-14 w-full rounded-[14px]" />
+            <Skeleton className="h-14 w-full rounded-[14px]" />
           </div>
-          {shown.length === 0 ? (
-            <p className="py-6 text-center text-[13.5px] text-muted-foreground">
-              No one matches “{filter.trim()}”.
-            </p>
-          ) : null}
-          <RowList aria-label={listLabel}>
-            {shown.map((row) => (
-              <Row
-                key={row.user_id}
-                leading={
-                  <Avatar
-                    initials={initialsOf(row.full_name)}
-                    gradient={gradientFor(row.user_id.charCodeAt(0))}
-                    size={32}
+        }
+        isEmpty={(rows) => rows.length === 0}
+        empty={<EmptyState icon={icon} title={emptyText} bordered={false} />}
+      >
+        {(rows) => {
+          const shown = rows.filter(
+            (r) =>
+              !needle ||
+              r.full_name.toLowerCase().includes(needle) ||
+              r.email.toLowerCase().includes(needle),
+          );
+          return (
+            <>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                <div className="relative w-full max-w-[320px]">
+                  <Search
+                    size={15}
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ui-faint)]"
+                    aria-hidden="true"
                   />
-                }
-                title={<span className="block truncate">{row.full_name}</span>}
-                meta={<span className="block truncate">{row.email}</span>}
-                trailing={
-                  <>
-                    {row.must_change_password ? (
-                      <Badge variant="outline" className="text-xs">
-                        pending first login
-                      </Badge>
-                    ) : (
-                      <Badge variant="success" className="gap-1 text-xs">
-                        <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-                        active
-                      </Badge>
-                    )}
-                    <ConfirmDeleteButton
-                      title={`Remove ${row.full_name}`}
-                      confirmText="Remove"
-                      icon={UserMinus}
-                      pending={deleteMut.isPending && deleteMut.variables === row.user_id}
-                      onConfirm={() => deleteMut.mutate(row.user_id)}
-                    />
-                  </>
-                }
-              />
-            ))}
-          </RowList>
-        </>
-      )}
+                  <input
+                    type="search"
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    aria-label={`Search ${listLabel.toLowerCase()}`}
+                    placeholder="Search by name or email"
+                    className="min-h-10 w-full rounded-[10px] border border-input bg-card pl-9 pr-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  />
+                </div>
+                <span className="text-[13px] tabular-nums text-muted-foreground">
+                  {needle ? `${shown.length} of ${rows.length}` : rows.length}{' '}
+                  {rows.length === 1 ? 'person' : 'people'}
+                </span>
+              </div>
+              {shown.length === 0 ? (
+                <p className="py-6 text-center text-[13.5px] text-muted-foreground">
+                  No one matches “{filter.trim()}”.
+                </p>
+              ) : null}
+              <RowList aria-label={listLabel}>
+                {shown.map((row) => (
+                  <Row
+                    key={row.user_id}
+                    leading={
+                      <Avatar
+                        initials={initialsOf(row.full_name)}
+                        gradient={gradientFor(row.user_id.charCodeAt(0))}
+                        size={32}
+                      />
+                    }
+                    title={<span className="block truncate">{row.full_name}</span>}
+                    meta={<span className="block truncate">{row.email}</span>}
+                    trailing={
+                      <>
+                        {row.must_change_password ? (
+                          <>
+                            <Badge variant="outline" className="text-xs">
+                              {PENDING_FIRST_LOGIN}
+                            </Badge>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="gap-1"
+                              aria-label={`Resend the set-password link to ${row.full_name}`}
+                              disabled={
+                                resendMut.isPending && resendMut.variables?.user_id === row.user_id
+                              }
+                              onClick={() => resendMut.mutate(row)}
+                            >
+                              <Send className="h-3.5 w-3.5" aria-hidden="true" />
+                              Resend link
+                            </Button>
+                          </>
+                        ) : (
+                          <Badge variant="success" className="gap-1 text-xs">
+                            <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
+                            Active
+                          </Badge>
+                        )}
+                        <ConfirmDeleteButton
+                          title={`Remove ${row.full_name}`}
+                          confirmText="Remove"
+                          confirmGroupLabel={`Permanently remove ${row.full_name}`}
+                          icon={UserMinus}
+                          pending={deleteMut.isPending && deleteMut.variables === row.user_id}
+                          onConfirm={() => deleteMut.mutate(row.user_id)}
+                        />
+                      </>
+                    }
+                  />
+                ))}
+              </RowList>
+            </>
+          );
+        }}
+      </QueryState>
 
       <p className="mt-4 flex items-center gap-1.5 text-[13px] text-muted-foreground">
-        <KeyRound className="h-3.5 w-3.5 text-[var(--ui-info)]" aria-hidden="true" />A secure “set
-        your password” link is emailed to them - no password is shared here.
+        <KeyRound className="h-3.5 w-3.5 shrink-0 text-[var(--ui-info)]" aria-hidden="true" />A
+        secure “set your password” link is emailed to them - no password is shared here. The link
+        expires, so use Resend link if it did not reach them in time.
       </p>
-      {removalNote ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">{removalNote}</p>
-      ) : null}
+      <p className="mt-2 text-[12.5px] text-muted-foreground">{removalNote}</p>
     </Card>
   );
 }
@@ -274,7 +332,10 @@ function StaffRoster({
  * functions are the ones the queue pages themselves use, so the cache serves
  * both and nothing here polls.
  */
-function useQueueCount(queryKey: readonly string[], queryFn: () => Promise<unknown[]>): {
+function useQueueCount(
+  queryKey: readonly string[],
+  queryFn: () => Promise<unknown[]>,
+): {
   count: number | null;
   failed: boolean;
 } {
@@ -343,11 +404,11 @@ export default function CompanyAdminConsole() {
     <Page width="default">
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <PageHeader
-        title={<span data-testid="page-title">Super Admin</span>}
+        title={<span data-testid="page-title">Team</span>}
         description={
           <span className="flex items-center gap-1.5">
             <Building2 size={14} className="text-[var(--ui-info)]" aria-hidden="true" />
-            HR managers for {companyName}.
+            HR managers and interviewers for {companyName}.
           </span>
         }
         actions={
@@ -375,7 +436,7 @@ export default function CompanyAdminConsole() {
         <Stat label="HR managers" value={hrRows?.length} />
         <Stat label="Interviewers" value={ivRows?.length} />
         <Stat
-          label="Awaiting first login"
+          label={PENDING_FIRST_LOGIN}
           value={
             hrRows && ivRows
               ? [...hrRows, ...ivRows].filter((r) => r.must_change_password).length
@@ -388,6 +449,7 @@ export default function CompanyAdminConsole() {
         idPrefix="hr"
         icon={Users}
         heading="HR managers"
+        singular="HR manager"
         createTitle="Create an HR manager"
         createBlurb={(name) => `They log in, reset the password, then run hiring for ${name}.`}
         addLabel="Add HR"
@@ -396,10 +458,14 @@ export default function CompanyAdminConsole() {
         emptyText="No HR managers yet - add your first one above."
         listLabel="HR managers"
         companyName={companyName}
+        // Removal is permanent and, because HR managers interview too, takes
+        // their open interview assignments with it (AD-F7): same note as below.
+        removalNote="Removing an HR manager is permanent and also withdraws their unsubmitted interview assignments."
         queryKey="my-hr-managers"
         listFn={listMyHrManagers}
         createFn={createMyHrManager}
         deleteFn={deleteMyHrManager}
+        resendFn={resendMyHrManagerInvite}
         createOpen={hrOpen}
         onCreateOpenChange={setHrOpen}
       />
@@ -409,6 +475,7 @@ export default function CompanyAdminConsole() {
         idPrefix="interviewer"
         icon={ClipboardCheck}
         heading="Interviewers"
+        singular="Interviewer"
         createTitle="Create an interviewer"
         createBlurb={(name) => `They see only the interviews assigned to them at ${name}.`}
         addLabel="Add interviewer"
@@ -419,11 +486,12 @@ export default function CompanyAdminConsole() {
         companyName={companyName}
         // Removing an interviewer is destructive beyond the roster row: say so
         // where the confirm control for it lives.
-        removalNote="Removing an interviewer also withdraws their unsubmitted interview assignments."
+        removalNote="Removing an interviewer is permanent and also withdraws their unsubmitted interview assignments."
         queryKey="my-interviewers"
         listFn={listMyInterviewers}
         createFn={createMyInterviewer}
         deleteFn={deleteMyInterviewer}
+        resendFn={resendMyInterviewerInvite}
         createOpen={interviewerOpen}
         onCreateOpenChange={setInterviewerOpen}
       />

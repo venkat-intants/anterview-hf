@@ -8,6 +8,9 @@ import { useQuery } from '@tanstack/react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 
 import { getUserProfile } from '@/api/profile';
+import { ApiError } from '@/api/client';
+import { errorMessage } from '@/lib/errorMessage';
+import { roleLabel } from '@/lib/roleLabel';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Avatar, StatusTag } from '@/design/components/primitives';
@@ -15,16 +18,19 @@ import { safeAvatarSrc } from '@/lib/safeUrl';
 import { EmptyState, Page, SectionCard } from '@/design/components/page';
 import { initialsOf, gradientFor } from '@/design/data/shared';
 import {
-  ArrowLeft, Mail, Building2, MapPin, GraduationCap, Briefcase,
-  FileText, Link2, AlertCircle, Phone, Globe, User,
+  ArrowLeft,
+  Mail,
+  Building2,
+  MapPin,
+  GraduationCap,
+  Briefcase,
+  FileText,
+  Link2,
+  AlertCircle,
+  Phone,
+  Globe,
+  User,
 } from '@/design/components/icons';
-
-function roleLabel(roles: string[]): { label: string; tone: 'electric' | 'forest' | 'lavender' } {
-  if (roles.includes('super_admin')) return { label: 'Super Admin', tone: 'lavender' };
-  if (roles.includes('admin')) return { label: 'Platform Admin', tone: 'lavender' };
-  if (roles.includes('hr_manager')) return { label: 'HR Manager', tone: 'forest' };
-  return { label: 'Candidate', tone: 'electric' };
-}
 
 const STATUS_LABEL: Record<string, string> = { student: 'Student', employed: 'Employed' };
 
@@ -60,7 +66,15 @@ function BackButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function InfoRow({ label, icon: Icon, children }: { label: string; icon: typeof Mail; children: ReactNode }) {
+function InfoRow({
+  label,
+  icon: Icon,
+  children,
+}: {
+  label: string;
+  icon: typeof Mail;
+  children: ReactNode;
+}) {
   return (
     <div className="min-w-0">
       <dt className="text-[12px] font-semibold text-muted-foreground">{label}</dt>
@@ -79,7 +93,12 @@ export default function ProfileView() {
   const { userId = '' } = useParams<{ userId: string }>();
   const navigate = useNavigate();
 
-  const { data: p, isLoading, isError, error } = useQuery({
+  const {
+    data: p,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ['user-profile', userId],
     queryFn: () => getUserProfile(userId),
     retry: false,
@@ -99,8 +118,10 @@ export default function ProfileView() {
   }
 
   if (isError || !p) {
-    const msg = error instanceof Error ? error.message : 'Could not load this profile.';
-    const forbidden = /403|forbidden/i.test(msg);
+    // Decided by the status, not the wording (AD-F28): the server's 403 text
+    // ("Insufficient permissions for this action.") never matched a regex.
+    const forbidden = error instanceof ApiError && error.status === 403;
+    const notFound = !isError || (error instanceof ApiError && error.status === 404);
     return (
       <Page width="form">
         <BackButton onClick={() => void navigate(-1)} />
@@ -108,13 +129,25 @@ export default function ProfileView() {
           <EmptyState
             size="page"
             icon={AlertCircle}
-            title={forbidden ? "You don't have access to this profile." : 'Profile not found.'}
+            title={
+              forbidden
+                ? "You don't have access to this profile."
+                : notFound
+                  ? 'Profile not found.'
+                  : 'Could not load this profile.'
+            }
             description={
               forbidden
                 ? 'Only HR managers and admins can view other people’s profiles.'
-                : 'The link may be out of date, or the person may have left. Go back and try another.'
+                : notFound
+                  ? 'The link may be out of date, or the person may have left. Go back and try another.'
+                  : errorMessage(error, 'Something went wrong. Go back and try again.')
             }
-            action={<Button type="button" variant="outline" onClick={() => void navigate(-1)}>Go back</Button>}
+            action={
+              <Button type="button" variant="outline" onClick={() => void navigate(-1)}>
+                Go back
+              </Button>
+            }
           />
         </div>
       </Page>
@@ -138,7 +171,10 @@ export default function ProfileView() {
       <BackButton onClick={() => void navigate(-1)} />
 
       {/* Header card */}
-      <section aria-label="Profile summary" className="overflow-hidden rounded-card border border-border bg-card shadow-card">
+      <section
+        aria-label="Profile summary"
+        className="overflow-hidden rounded-card border border-border bg-card shadow-card"
+      >
         <div className="h-24 bg-[image:var(--ui-grad-brand)] sm:h-28" aria-hidden="true" />
         <div className="px-6 pb-6">
           <div className="-mt-12">
@@ -149,12 +185,19 @@ export default function ProfileView() {
                 className="h-24 w-24 rounded-full border-4 border-card bg-card object-cover"
               />
             ) : (
-              <Avatar initials={initials} gradient={gradient} size={96} className="border-4 border-card" />
+              <Avatar
+                initials={initials}
+                gradient={gradient}
+                size={96}
+                className="border-4 border-card"
+              />
             )}
           </div>
           <div className="mt-4 min-w-0">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-              <h1 className="break-words text-[24px] font-bold tracking-[-0.4px] text-foreground">{name}</h1>
+              <h1 className="break-words text-[24px] font-bold tracking-[-0.4px] text-foreground">
+                {name}
+              </h1>
               <StatusTag tone={role.tone}>{role.label}</StatusTag>
               {p.employment_status && STATUS_LABEL[p.employment_status] && (
                 <StatusTag tone="neutral">{STATUS_LABEL[p.employment_status]}</StatusTag>
@@ -183,9 +226,13 @@ export default function ProfileView() {
         {/* About */}
         <SectionCard title="Summary" icon={User}>
           {p.bio ? (
-            <p className="whitespace-pre-line text-[14.5px] leading-relaxed text-foreground">{p.bio}</p>
+            <p className="whitespace-pre-line text-[14.5px] leading-relaxed text-foreground">
+              {p.bio}
+            </p>
           ) : (
-            <p className="text-[14px] text-muted-foreground">{name} hasn&apos;t added a summary yet.</p>
+            <p className="text-[14px] text-muted-foreground">
+              {name} hasn&apos;t added a summary yet.
+            </p>
           )}
         </SectionCard>
 
@@ -232,12 +279,22 @@ export default function ProfileView() {
           <SectionCard title="Contact & links" icon={Link2}>
             {hasContact && (
               <dl className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
-                {p.phone && <InfoRow label="Phone" icon={Phone}>{p.phone}</InfoRow>}
-                {p.official_email && <InfoRow label="Official email" icon={Mail}>{p.official_email}</InfoRow>}
+                {p.phone && (
+                  <InfoRow label="Phone" icon={Phone}>
+                    {p.phone}
+                  </InfoRow>
+                )}
+                {p.official_email && (
+                  <InfoRow label="Official email" icon={Mail}>
+                    {p.official_email}
+                  </InfoRow>
+                )}
               </dl>
             )}
             {(linkedin || github) && (
-              <div className={hasContact ? 'mt-5 flex flex-wrap gap-2.5' : 'flex flex-wrap gap-2.5'}>
+              <div
+                className={hasContact ? 'mt-5 flex flex-wrap gap-2.5' : 'flex flex-wrap gap-2.5'}
+              >
                 {linkedin && (
                   <a href={linkedin} target="_blank" rel="noreferrer" className={LINK_CLS}>
                     <Globe size={15} aria-hidden="true" /> LinkedIn

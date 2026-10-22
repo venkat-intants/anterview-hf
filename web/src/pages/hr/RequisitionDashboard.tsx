@@ -453,7 +453,7 @@ function HeldPool({
   const { held_pool: pool, progress } = data;
   return (
     <Section
-      title="Held for your decision"
+      title={readOnly ? "Held for HR's decision" : 'Held for your decision'}
       className={className}
       data-testid="held-pool"
       description="Below a round’s threshold. Held, not rejected - they wait for a person."
@@ -508,16 +508,20 @@ function HeldPool({
   );
 }
 
-function ManualSteps({ data }: { data: Dashboard }) {
+// The super admin's read-only view (audit AD-F17) shows HR's decisions, so the
+// labels name HR instead of "you".
+function ManualSteps({ data, readOnly = false }: { data: Dashboard; readOnly?: boolean }) {
   return (
     <Section
-      title="Waiting on you, by design"
+      title={readOnly ? 'Waiting on HR, by design' : 'Waiting on you, by design'}
       titleAs="h2"
       data-testid="manual-steps"
       description="The steps a person takes. Nothing here is stuck for want of automation."
     >
       {data.manual_steps.length === 0 ? (
-        <p className="text-[13px] text-muted-foreground">Nothing waiting on you.</p>
+        <p className="text-[13px] text-muted-foreground">
+          {readOnly ? 'Nothing waiting on HR.' : 'Nothing waiting on you.'}
+        </p>
       ) : (
         <ul className="flex flex-col gap-1.5">
           {data.manual_steps.map((s) => (
@@ -673,7 +677,7 @@ function PipelineTab({
 
   const asideBody = (
     <div className="flex flex-col gap-6">
-      <ManualSteps data={data} />
+      <ManualSteps data={data} readOnly={readOnly} />
       <TimingAndScores data={data} />
       <Section
         title={`Public applications ${req.public_apply_enabled ? 'on' : 'off'}`}
@@ -703,7 +707,11 @@ function PipelineTab({
       variant="card"
       headingLevel="h2"
       title="Process, timing and applications"
-      summary="Steps waiting on you, how long it takes, public applications"
+      summary={
+        readOnly
+          ? 'Steps waiting on HR, how long it takes, public applications'
+          : 'Steps waiting on you, how long it takes, public applications'
+      }
       persistKey={asideKey}
       data-testid="pipeline-aside"
     >
@@ -717,7 +725,11 @@ function PipelineTab({
           else in the system will clear. */}
       <div>
         <StatGroup aria-label="Pipeline summary" data-testid="pipeline-stats">
-          <Stat label="Awaiting your decision" value={progress.awaiting_decision} to={decisions} />
+          <Stat
+            label={readOnly ? "Awaiting HR's decision" : 'Awaiting your decision'}
+            value={progress.awaiting_decision}
+            to={decisions}
+          />
           <Stat label="Held, not rejected" value={progress.held} />
           <Stat label="In a round now" value={progress.in_progress} />
           <Stat label="Applications" value={progress.applications} />
@@ -933,10 +945,11 @@ export default function RequisitionDashboard({
         breadcrumbs={
           <Breadcrumbs
             items={[
-              {
-                label: readOnly ? 'Hiring board' : 'Openings',
-                to: readOnly ? '/superadmin/board' : '/hr/requisitions',
-              },
+              readOnly
+                ? req.approval_status !== 'pending_approval'
+                  ? { label: 'Hiring board', to: '/superadmin/board' }
+                  : { label: 'Approvals', to: '/superadmin/approvals' }
+                : { label: 'Openings', to: '/hr/requisitions' },
               // HR-L8: name the opening, as the decision queue does.
               { label: req.title },
             ]}

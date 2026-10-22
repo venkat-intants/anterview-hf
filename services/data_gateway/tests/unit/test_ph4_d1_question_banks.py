@@ -211,7 +211,7 @@ def test_every_route_sits_behind_its_audience_gate() -> None:
         ("app.routers.hr_rounds", ["create_section", "update_section", "delete_section",
                                    "delete_section_question", "delete_section_coding_question",
                                    "add_section_question", "add_section_coding_question",
-                                   "delete_round"]),
+                                   "delete_round", "import_section_questions"]),
     ],
 )
 def test_every_question_writer_calls_the_lock_check(module_name: str, functions: list[str]) -> None:

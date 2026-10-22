@@ -7,9 +7,13 @@
 // documents) lives on the offer detail page — this is a launch pad, same
 // relationship InterviewLoopsSection has to the interview-scheduling screens.
 
-import { offerStatusWord } from '@/lib/offerStatus';
+import { OFFER_STATUS_TONE } from '@/lib/offerStatus';
+import { statusLabel } from '@/lib/statusLabel';
+import { effectiveOfferStatus } from '@/lib/offerTrack';
+import { errorMessage } from '@/lib/errorMessage';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { useId, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   createEnrolmentOffer,
@@ -19,7 +23,7 @@ import {
   type OfferStatus,
 } from '@/api/offers';
 import { toast } from '@/lib/toast';
-import { StatusTag, type TagTone } from '@/design/components/primitives';
+import { StatusTag } from '@/design/components/primitives';
 import { FileText } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,32 +38,24 @@ const labelCls = 'text-[13px] font-semibold text-foreground';
 const selectCls =
   'mt-1.5 h-11 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
-const OFFER_TONE: Record<OfferStatus, TagTone> = {
-  draft: 'neutral',
-  pending_approval: 'amber',
-  approved: 'electric',
-  rejected: 'ember',
-  sent: 'electric',
-  accepted: 'forest',
-  declined: 'ember',
-  expired: 'neutral',
-  withdrawn: 'neutral',
-};
+/** States in which an application already has its one offer in play: the
+ *  server allows a single live offer per application and refuses a second with
+ *  a 409 (uq_offers_live_per_enrolment). */
+const LIVE: readonly OfferStatus[] = [
+  'draft',
+  'pending_approval',
+  'approved',
+  'rejected',
+  'sent',
+  'accepted',
+];
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+/** The server's own ceiling for base_salary, NUMERIC(14,2). */
+const SALARY_MAX = 1e12;
 
-function CreateOfferForm({
-  enrolmentId,
-  jobTitle,
-  onDone,
-}: {
-  enrolmentId: string;
-  jobTitle: string | undefined;
-  onDone: () => void;
-}) {
+function CreateOfferForm({ enrolmentId }: { enrolmentId: string }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const uid = useId();
   const templates = useQuery({ queryKey: ['hr', 'offer-templates'], queryFn: listOfferTemplates });
   const [templateId, setTemplateId] = useState('');
@@ -73,15 +69,21 @@ function CreateOfferForm({
         base_salary: baseSalary,
         currency,
       }),
-    onSuccess: () => {
+    onSuccess: (offer) => {
       toast.success('Offer created as a draft');
-      void qc.invalidateQueries({ queryKey: ['hr', 'enrolment', enrolmentId, 'offers'] });
-      onDone();
+      // Refreshes the drawer's list, the company offers list and the pipeline.
+      void invalidateAfterHrMutation(qc);
+      // Everything but the salary is filled in on the offer itself, so that is
+      // the next stop (audit L9).
+      void navigate(`/hr/offers/${offer.id}`);
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not create this offer')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not create this offer.')),
   });
 
-  const ready = Number(baseSalary) > 0 && currency.trim().length === 3;
+  const salary = Number(baseSalary);
+  const salaryOk = baseSalary.trim() !== '' && salary > 0 && salary < SALARY_MAX;
+  const currencyOk = /^[A-Za-z]{3}$/.test(currency.trim());
+  const ready = salaryOk && currencyOk;
 
   return (
     <div className="mt-3 flex flex-col gap-4 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
@@ -103,13 +105,19 @@ function CreateOfferForm({
           }}
           className={selectCls}
         >
-          <option value="">No template - start from scratch</option>
+          <option value="">No template, start from scratch</option>
           {(templates.data ?? []).map((tpl) => (
             <option key={tpl.id} value={tpl.id}>
               {tpl.name}
             </option>
           ))}
         </select>
+        {templates.isError ? (
+          <p role="alert" className="mt-1.5 text-[12.5px] text-[var(--ui-danger)]">
+            {errorMessage(templates.error, 'Could not load the offer templates.')} You can still
+            start from scratch.
+          </p>
+        ) : null}
       </div>
       <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
         <div>
@@ -119,7 +127,8 @@ function CreateOfferForm({
           <Input
             id={`${uid}-salary`}
             type="number"
-            min={1}
+            min={0.01}
+            step={0.01}
             value={baseSalary}
             onChange={(e) => setBaseSalary(e.target.value)}
             placeholder="e.g. 1200000"
@@ -139,9 +148,19 @@ function CreateOfferForm({
           />
         </div>
       </div>
+      {baseSalary.trim() !== '' && !salaryOk ? (
+        <p className="text-[12.5px] text-[var(--ui-warn)]">
+          The base salary must be more than zero and under 1,00,00,00,00,000.
+        </p>
+      ) : null}
+      {currency.trim() !== '' && !currencyOk ? (
+        <p className="text-[12.5px] text-[var(--ui-warn)]">
+          Currency is a three-letter code, such as INR.
+        </p>
+      ) : null}
       <p className="text-[12.5px] text-muted-foreground">
-        Job title defaults to {jobTitle ?? 'this opening'}. Everything else - dates, benefits, terms
-        - is filled in on the offer itself.
+        The job title is taken from the opening. Everything else (dates, benefits, terms) is filled
+        in on the offer itself, which opens next.
       </p>
       <Button
         type="button"
@@ -157,10 +176,12 @@ function CreateOfferForm({
 
 export default function OfferSection({
   enrolmentId,
-  jobTitle,
   applicationStatus,
 }: {
   enrolmentId: string;
+  /** Accepted for callers but not shown: the title an offer gets is decided by
+   *  the server, which prefers the opening's title to the application's, so
+   *  naming this one could promise the wrong title (audit L9). */
   jobTitle?: string;
   /** Only a hired application may start an offer (D-05: the decision itself
    *  is made elsewhere). Undefined hides the "create" control, not the list. */
@@ -175,7 +196,11 @@ export default function OfferSection({
   });
 
   const rows = offers.data ?? [];
-  const canCreate = applicationStatus === 'hired';
+  const hired = applicationStatus === 'hired';
+  // One offer in play per application: the server refuses a second, so it is
+  // not offered (audit OF-L8). A sent offer past its deadline is not in play.
+  const inPlay = rows.some((o) => LIVE.includes(effectiveOfferStatus(o)));
+  const canCreate = hired && offers.isSuccess && !inPlay;
 
   return (
     <div className={SECTION}>
@@ -193,20 +218,14 @@ export default function OfferSection({
         </h3>
         {canCreate ? (
           <Button type="button" variant="outline" onClick={() => setCreating((v) => !v)}>
-            {creating ? 'Close' : 'Create offer'}
+            {creating ? 'Close' : 'New offer'}
           </Button>
         ) : null}
       </div>
 
       {!expanded ? null : (
         <>
-          {creating ? (
-            <CreateOfferForm
-              enrolmentId={enrolmentId}
-              jobTitle={jobTitle}
-              onDone={() => setCreating(false)}
-            />
-          ) : null}
+          {creating && canCreate ? <CreateOfferForm enrolmentId={enrolmentId} /> : null}
 
           {offers.isLoading ? (
             <div className="mt-2 flex flex-col gap-2" aria-busy="true">
@@ -224,31 +243,39 @@ export default function OfferSection({
             </div>
           ) : rows.length === 0 ? (
             <p className="mt-2 text-[13px] text-muted-foreground">
-              {canCreate
+              {hired
                 ? 'No offer yet for this application.'
                 : 'An offer can be created once this application is recorded as a hire.'}
             </p>
           ) : (
-            <ul className="mt-2 flex flex-col gap-2">
-              {rows.map((o: OfferOut) => (
-                <li key={o.id}>
-                  <Link
-                    to={`/hr/offers/${o.id}`}
-                    className="flex min-h-12 items-center justify-between gap-3 rounded-[16px] border border-border p-3.5 hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                  >
-                    <span className="min-w-0 truncate text-[13px] text-foreground">
-                      {o.job_title}
-                      {o.currency && o.base_salary
-                        ? ` · ${formatMoney(o.base_salary, o.currency)}`
-                        : ''}
-                    </span>
-                    <StatusTag tone={OFFER_TONE[o.status]} dot>
-                      {offerStatusWord(o.status)}
-                    </StatusTag>
-                  </Link>
-                </li>
-              ))}
-            </ul>
+            <>
+              {hired && inPlay ? (
+                <p className="mt-2 text-[12.5px] text-muted-foreground">
+                  This application already has an offer in progress. A new one can be written once
+                  it is declined, withdrawn or expired.
+                </p>
+              ) : null}
+              <ul className="mt-2 flex flex-col gap-2">
+                {rows.map((o: OfferOut) => (
+                  <li key={o.id}>
+                    <Link
+                      to={`/hr/offers/${o.id}`}
+                      className="flex min-h-12 items-center justify-between gap-3 rounded-[16px] border border-border p-3.5 hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    >
+                      <span className="min-w-0 truncate text-[13px] text-foreground">
+                        {o.job_title}
+                        {o.currency && o.base_salary
+                          ? ` · ${formatMoney(o.base_salary, o.currency)}`
+                          : ''}
+                      </span>
+                      <StatusTag tone={OFFER_STATUS_TONE[effectiveOfferStatus(o)]} dot>
+                        {statusLabel(effectiveOfferStatus(o), 'offer')}
+                      </StatusTag>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </>
       )}

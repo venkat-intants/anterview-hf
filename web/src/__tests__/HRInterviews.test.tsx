@@ -57,6 +57,8 @@ const INVITED: InterviewInvite = {
   created_at: '2026-08-05T10:00:00.000Z',
   composite_score: null,
   scorecard_id: null,
+  missed_slot: false,
+  can_reschedule: true,
 };
 
 const COMPLETED: InterviewInvite = {
@@ -72,6 +74,8 @@ const COMPLETED: InterviewInvite = {
   created_at: '2026-08-01T10:00:00.000Z',
   composite_score: 8.42,
   scorecard_id: 'sc-9',
+  missed_slot: false,
+  can_reschedule: false,
 };
 
 // A live invite with a scheduled time — for the reschedule pre-fill bug.
@@ -88,6 +92,8 @@ const SCHEDULED: InterviewInvite = {
   created_at: '2026-09-01T10:00:00.000Z',
   composite_score: null,
   scorecard_id: null,
+  missed_slot: false,
+  can_reschedule: true,
 };
 
 const MINTED: InviteResult = {
@@ -107,7 +113,9 @@ const createInvite = vi.fn();
 const revokeInvite = vi.fn();
 const rescheduleInvite = vi.fn();
 const setInviteAvatarMode = vi.fn();
+const getInviteResult = vi.fn();
 vi.mock('../api/interviewInvites', () => ({
+  getInviteResult: (...a: unknown[]) => getInviteResult(...a) as unknown,
   listEligibleApplicants: (...a: unknown[]) => listEligibleApplicants(...a) as unknown,
   listInvites: (...a: unknown[]) => listInvites(...a) as unknown,
   createInvite: (...a: unknown[]) => createInvite(...a) as unknown,
@@ -118,11 +126,12 @@ vi.mock('../api/interviewInvites', () => ({
 
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
+const toastInfo = vi.fn();
 vi.mock('../lib/toast', () => ({
   toast: {
     error: (...a: unknown[]) => toastError(...a) as unknown,
     success: (...a: unknown[]) => toastSuccess(...a) as unknown,
-    info: vi.fn(),
+    info: (...a: unknown[]) => toastInfo(...a) as unknown,
     warning: vi.fn(),
   },
 }));
@@ -282,12 +291,35 @@ describe('HRInterviews - invite form', () => {
 });
 
 describe('HRInterviews - invite list', () => {
-  it('links a completed interview to its scorecard and shows the score', async () => {
+  it("opens a completed interview's result inside the console and shows the score", async () => {
+    // It used to link to /scorecard/:id, the candidate-facing page outside the
+    // HR shell, with candidate copy and no way back to this list.
+    getInviteResult.mockResolvedValue({
+      invite_id: 'inv-2',
+      applicant_id: 'ap-3',
+      applicant_name: 'Deepa Menon',
+      status: 'completed',
+      session_status: 'completed',
+      scorecard_id: 'sc-9',
+      composite_score: 8.42,
+      scores: { communication: 8.1, technical: 8.6 },
+      strengths: ['Clear explanations'],
+      improvements: [{ area: 'Depth', suggestion: 'Go one level deeper' }],
+      summary: 'A strong, structured interview.',
+    });
+    const user = userEvent.setup();
     renderPage();
 
-    const link = await screen.findByRole('link', { name: /view scorecard for deepa menon/i });
-    expect(link).toHaveAttribute('href', '/scorecard/sc-9');
+    const toggle = await screen.findByRole('button', { name: /show result for deepa menon/i });
     expect(screen.getByLabelText('Score: 8.4 out of 10')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /scorecard/i })).not.toBeInTheDocument();
+    await user.click(toggle);
+
+    const panel = await screen.findByRole('region', { name: /interview result for deepa menon/i });
+    expect(await within(panel).findByText('A strong, structured interview.')).toBeInTheDocument();
+    expect(within(panel).getByText('Overall 8.4/10')).toBeInTheDocument();
+    expect(within(panel).getByText('Depth: Go one level deeper')).toBeInTheDocument();
+    expect(getInviteResult).toHaveBeenCalledWith('inv-2');
   });
 
   it('shows the interview language instead of a result link while none exists', async () => {
@@ -297,7 +329,7 @@ describe('HRInterviews - invite list', () => {
     // Scoped to the row: the same label is also a language option in the form.
     expect(within(rowFor('Bhavya Nair')).getByText('हिंदी')).toBeInTheDocument();
     expect(
-      screen.queryByRole('link', { name: /view scorecard for bhavya nair/i }),
+      screen.queryByRole('button', { name: /result for bhavya nair/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -330,7 +362,7 @@ describe('HRInterviews - invite list', () => {
       await user.click(
         await screen.findByRole('button', { name: /reschedule interview for esha kapoor/i }),
       );
-      const input = screen.getByLabelText<HTMLInputElement>('New scheduled time');
+      const input = screen.getByLabelText<HTMLInputElement>(/new interview time/i);
 
       expect(input.value).toBe(toLocalInputValue(SCHEDULED.scheduled_at));
       expect(input.value).not.toBe(
@@ -353,6 +385,9 @@ describe('HRInterviews - invite list', () => {
 
     await screen.findByText('Bhavya Nair');
     await user.click(screen.getByRole('button', { name: /revoke interview link for bhavya nair/i }));
+    // One click only arms it: the link stops working for good.
+    expect(revokeInvite).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Revoke link' }));
 
     await waitFor(() => expect(revokeInvite).toHaveBeenCalledWith('inv-1'));
     expect(toastSuccess).toHaveBeenCalledWith('Link revoked');
@@ -363,7 +398,7 @@ describe('HRInterviews - invite list', () => {
     renderPage();
 
     await screen.findByText('Bhavya Nair');
-    await user.click(screen.getByRole('tab', { name: /completed/i }));
+    await user.click(screen.getByRole('button', { name: /^completed$/i }));
 
     expect(screen.getByText('Deepa Menon')).toBeInTheDocument();
     expect(screen.queryByText('Bhavya Nair')).not.toBeInTheDocument();
@@ -376,7 +411,7 @@ describe('HRInterviews - invite list', () => {
     renderPage();
 
     await screen.findByText('Bhavya Nair');
-    await user.click(screen.getByRole('tab', { name: /^expired$/i }));
+    await user.click(screen.getByRole('button', { name: /^expired$/i }));
     expect(screen.getByText(/no interviews match this filter/i)).toBeInTheDocument();
     expect(screen.queryByText(/no interviews yet/i)).not.toBeInTheDocument();
   });
@@ -423,7 +458,8 @@ describe('HRInterviews - interview citation deep link', () => {
     renderPage('/hr/interviews/00000000-0000-4000-8000-0000000000ff');
 
     expect(await screen.findByText(/not in this list/i)).toBeInTheDocument();
-    expect(screen.getByText(/human interview/i)).toBeInTheDocument();
+    // The human-interview sessions live in the drawer section of this name.
+    expect(screen.getByText(/interview schedule/i)).toBeInTheDocument();
   });
 
   // ── Avatar vs audio ────────────────────────────────────────────────────
@@ -499,6 +535,203 @@ describe('HRInterviews - interview citation deep link', () => {
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(expect.stringMatching(/already consumed/i)),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Audit wave 2 (interviews): replacing a live link, failed loads, the join
+// window, missed slots and per-row pending state.
+// ---------------------------------------------------------------------------
+
+describe('HRInterviews - replacing a live link (IV-H2)', () => {
+  it('asks before replacing a live link, and only then sends replace_existing', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole('option', { name: /chetan iyer/i });
+    await user.selectOptions(screen.getByLabelText('Applicant'), 'en-2');
+    expect(screen.queryByRole('button', { name: /generate interview link/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/already has an active interview link/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Replace interview link' }));
+    expect(createInvite).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Replace link and send' }));
+
+    await waitFor(() =>
+      expect(createInvite).toHaveBeenCalledWith(
+        expect.objectContaining({ applicant_id: 'ap-2', enrolment_id: 'en-2', replace_existing: true }),
+      ),
+    );
+  });
+
+  it('never sends replace_existing for someone with no live link', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectApplicant(user, 'en-1');
+    await user.click(screen.getByRole('button', { name: /generate interview link/i }));
+    await waitFor(() => expect(createInvite).toHaveBeenCalled());
+    expect(createInvite.mock.calls[0][0]).not.toHaveProperty('replace_existing');
+  });
+
+  it('says so when the server answered with the link it already sent', async () => {
+    createInvite.mockResolvedValue({ ...MINTED, magic_link: '', reused: true });
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectApplicant(user, 'en-1');
+    await user.click(screen.getByRole('button', { name: /generate interview link/i }));
+
+    await waitFor(() =>
+      expect(toastInfo).toHaveBeenCalledWith(expect.stringMatching(/no new email was sent/i)),
+    );
+    expect(screen.queryByLabelText('Magic interview link')).not.toBeInTheDocument();
+    expect(toastSuccess).not.toHaveBeenCalledWith('Interview link created');
+  });
+
+  it('tells HR the link was emailed, not that they must deliver it', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await selectApplicant(user, 'en-1');
+    await user.click(screen.getByRole('button', { name: /generate interview link/i }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/we have emailed this link/i);
+  });
+});
+
+describe('HRInterviews - failed loads (IV-M3)', () => {
+  it('shows a failed invite list as an error with a retry, not as "no interviews yet"', async () => {
+    listInvites.mockRejectedValue(new Error('boom'));
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText('Could not load interviews.')).toBeInTheDocument();
+    expect(screen.queryByText(/no interviews yet/i)).not.toBeInTheDocument();
+    listInvites.mockResolvedValue([INVITED]);
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Bhavya Nair')).toBeInTheDocument();
+  });
+
+  it('shows a failed applicant list as an error, not as an empty dropdown', async () => {
+    listEligibleApplicants.mockRejectedValue(new Error('boom'));
+    renderPage();
+
+    expect(await screen.findByText('Could not load eligible applicants.')).toBeInTheDocument();
+  });
+});
+
+describe('HRInterviews - time, window and expiry (IV-H1, IV-M1, IV-M10)', () => {
+  it('states the 10-minute join window and the zone HR is typing in', async () => {
+    renderPage();
+
+    const input = await screen.findByLabelText(/interview time \(optional, your time/i);
+    expect(input).toHaveAttribute('min');
+    expect(screen.getByText(/can start within 10 minutes/i)).toBeInTheDocument();
+    expect(screen.queryByText(/link works any time/i)).not.toBeInTheDocument();
+  });
+
+  it('shows the scheduled time with its year and zone, and when the link expires', async () => {
+    listInvites.mockResolvedValue([SCHEDULED]);
+    renderPage();
+
+    const row = (await screen.findByText('Esha Kapoor')).closest(
+      'div[id^="interview-"]',
+    ) as HTMLElement;
+    // formatDateTime always prints the year and the zone.
+    expect(within(row).getAllByText(/2026/).length).toBeGreaterThanOrEqual(2);
+    expect(within(row).getByText(/link expires/i)).toBeInTheDocument();
+  });
+
+  it('flags a missed join window instead of reading "Invited"', async () => {
+    listInvites.mockResolvedValue([{ ...SCHEDULED, missed_slot: true }]);
+    renderPage();
+
+    const row = (await screen.findByText('Esha Kapoor')).closest(
+      'div[id^="interview-"]',
+    ) as HTMLElement;
+    expect(within(row).getByText('Missed slot')).toBeInTheDocument();
+    expect(within(row).queryByText('Invited')).not.toBeInTheDocument();
+    expect(
+      within(row).getByRole('button', { name: /reschedule interview for esha kapoor/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('offers neither reschedule nor revoke on an interview in progress (IV-M4, IV-M12)', async () => {
+    listInvites.mockResolvedValue([{ ...INVITED, status: 'consumed', can_reschedule: false }]);
+    renderPage();
+
+    await screen.findByText('Bhavya Nair');
+    expect(
+      screen.queryByRole('button', { name: /reschedule interview for bhavya nair/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /revoke interview link for bhavya nair/i }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe('HRInterviews - inline reschedule (IV-L2, IV-L14)', () => {
+  it('keeps the form open when the server refuses, and shows the reason', async () => {
+    rescheduleInvite.mockRejectedValue(new Error('The new interview time cannot be in the past.'));
+    listInvites.mockResolvedValue([SCHEDULED]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole('button', { name: /reschedule interview for esha kapoor/i }),
+    );
+    const input = screen.getByLabelText<HTMLInputElement>(/new interview time/i);
+    // Focus moves into the form that just opened.
+    expect(input).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: /save new time for esha kapoor/i }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('The new interview time cannot be in the past.'),
+    );
+    expect(screen.getByLabelText(/new interview time/i)).toBeInTheDocument();
+  });
+
+  it('closes the form once the new time is saved', async () => {
+    listInvites.mockResolvedValue([SCHEDULED]);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(
+      await screen.findByRole('button', { name: /reschedule interview for esha kapoor/i }),
+    );
+    await user.click(screen.getByRole('button', { name: /save new time for esha kapoor/i }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/new interview time/i)).not.toBeInTheDocument(),
+    );
+  });
+});
+
+describe('HRInterviews - per-row state (IV-L3, IV-L5)', () => {
+  it('shows the new mode at once and leaves other rows usable while it saves', async () => {
+    setInviteAvatarMode.mockReturnValue(new Promise(() => undefined));
+    listInvites.mockResolvedValue([INVITED, SCHEDULED]);
+    const user = userEvent.setup();
+    renderPage();
+
+    const mine = await screen.findByLabelText<HTMLSelectElement>('Interview mode for Bhavya Nair');
+    await user.selectOptions(mine, 'audio');
+
+    await waitFor(() => expect(mine.value).toBe('audio'));
+    expect(mine).toBeDisabled();
+    expect(screen.getByLabelText('Interview mode for Esha Kapoor')).not.toBeDisabled();
+  });
+
+  it('counts what the filter shows next to the total', async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(await screen.findByText('Interviews (2)')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /^completed$/i }));
+    expect(screen.getByText('Interviews (1 of 2)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^completed$/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
     );
   });
 });

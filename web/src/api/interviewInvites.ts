@@ -45,6 +45,11 @@ export interface InterviewInvite {
   created_at: string;
   composite_score: number | null;
   scorecard_id: string | null;
+  /** Still `invited`, but the scheduled join window has closed: the candidate
+   *  can no longer start until HR gives a new time. */
+  missed_slot: boolean;
+  /** The server would accept a reschedule (nobody has started the interview). */
+  can_reschedule: boolean;
 }
 
 export interface InviteResult {
@@ -56,6 +61,10 @@ export interface InviteResult {
   expires_at: string;
   scheduled_at: string | null;
   status: InviteStatus;
+  /** True when the server answered a repeat of an identical request with the
+   *  invite it had already made: no new link, no second email, and
+   *  `magic_link` is empty. */
+  reused?: boolean;
 }
 
 export interface InterviewOutcome {
@@ -84,6 +93,9 @@ export interface InviteCreateInput {
   avatar_mode?: AvatarMode;
   scheduled_at?: string | null;
   ttl_hours?: number;
+  /** The application already has a live link: revoke it and send a new one.
+   *  Without it the server refuses with 409 rather than replacing silently. */
+  replace_existing?: boolean;
 }
 
 export function listEligibleApplicants(

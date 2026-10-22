@@ -790,6 +790,33 @@ describe('TalentPools - add to an opening', () => {
       }),
     );
   });
+
+  // F21: the prompt said "review it first" with no way to do so from there.
+  it('offers a link to the evidence from the acknowledgement prompt', async () => {
+    const user = userEvent.setup();
+    api.getPool.mockResolvedValue({
+      pool: pool(),
+      members: [member({ enrolment_id: 'enr-9' })],
+    });
+    api.inviteMember.mockRejectedValueOnce(
+      new ApiError('This evidence has not been reviewed recently.', 422, {
+        failure_code: 'stale_evidence_unreviewed',
+      }),
+    );
+    renderPage('/hr/pools/pool-1');
+    await screen.findByText('Asha K');
+
+    await user.click(screen.getByRole('button', { name: 'Add to an opening' }));
+    await user.selectOptions(await screen.findByLabelText('Opening'), 'req-1');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    const prompt = await screen.findByRole('group', { name: 'Add Asha K to an opening' });
+    await within(prompt).findByText(/no recently reviewed evidence/);
+    expect(within(prompt).getByRole('link', { name: 'Review evidence' })).toHaveAttribute(
+      'href',
+      '/hr/enrolments/enr-9/evidence',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -1129,6 +1129,15 @@ function AddToOpeningPanel({
             >
               {inviteMut.isPending ? 'Adding…' : 'Add anyway'}
             </Button>
+            {/* The way to clear the gate properly: open the evidence (F21).
+                Not a one-click "mark reviewed" here, which would attest to
+                evidence nobody opened (PL-L6). */}
+            {member.enrolment_id ? (
+              <Link to={`/hr/enrolments/${member.enrolment_id}/evidence`} className={ROW_ACTION_CLASS}>
+                <ShieldCheck className="h-3 w-3" aria-hidden="true" />
+                Review evidence
+              </Link>
+            ) : null}
             <Button type="button" size="sm" variant="ghost" onClick={onClose}>
               Cancel
             </Button>

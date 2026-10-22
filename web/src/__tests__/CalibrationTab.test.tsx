@@ -160,7 +160,8 @@ describe('CalibrationTab - states', () => {
   it('shows an error state', async () => {
     schedulingApi.getCalibration.mockRejectedValue(new Error('boom'));
     renderTab();
-    expect(await screen.findByText('boom')).toBeInTheDocument();
+    expect(await screen.findByText('Could not load calibration.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   it('shows an empty state', async () => {
@@ -230,7 +231,9 @@ describe('CalibrationTab - flags in words (PH5-E4 §4.3 wording)', () => {
         'Scores higher than the rest of the panel on the same candidates, by 0.9 on average across 7 shared judgements; in 6 of 7 the gap was the same way.',
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText('Same direction in 86% of shared judgements.')).toBeInTheDocument();
+    // The flag sentence already gives the count, so the share is not repeated
+    // underneath it (IV-L13).
+    expect(screen.queryByText(/^Same direction in/)).not.toBeInTheDocument();
     expect(screen.getByText('Scores higher')).toBeInTheDocument();
   });
 
@@ -484,7 +487,10 @@ describe('CalibrationTab - "How is this calculated?"', () => {
     await user.click(await screen.findByRole('button', { name: 'How is this calculated?' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('interviewer_calibration@1')).toBeInTheDocument();
-    expect(within(dialog).getByText(/registry abc123def4/)).toBeInTheDocument();
+    // The whole hash, so it can be copied by hand and checked (IV-L13).
+    expect(within(dialog).getByText('abc123def4567890')).toBeInTheDocument();
+    // A share threshold reads as a percentage, not 0.7.
+    expect(within(dialog).getByText('70%')).toBeInTheDocument();
     expect(within(dialog).getByText('0.75')).toBeInTheDocument();
 
     await user.keyboard('{Escape}');
@@ -672,5 +678,38 @@ describe('CalibrationTab - filters', () => {
     expect(schedulingApi.getCalibration).toHaveBeenLastCalledWith(
       expect.objectContaining({ requisitionId: 'req-1', roundId: null }),
     );
+  });
+});
+
+describe('CalibrationTab - one decimal everywhere (IV-L13)', () => {
+  it('prints every mean to one decimal place', async () => {
+    schedulingApi.getCalibration.mockResolvedValue(
+      calibration({ interviewers: [interviewerRow({ mean: 4.237, mean_delta: 1.256 })] }),
+    );
+    renderTab();
+
+    expect(await screen.findByText('4.2')).toBeInTheDocument();
+    expect(screen.getByText('+1.3')).toBeInTheDocument();
+    expect(screen.queryByText('4.237')).not.toBeInTheDocument();
+    expect(screen.queryByText('+1.26')).not.toBeInTheDocument();
+  });
+
+  it('still states the share when there is no flag sentence', async () => {
+    schedulingApi.getCalibration.mockResolvedValue(
+      calibration({ interviewers: [interviewerRow({ flag: null, same_direction_share: 0.5 })] }),
+    );
+    renderTab();
+    expect(
+      await screen.findByText('Same direction in 50% of shared judgements.'),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('CalibrationTab - a failed openings list (IV-L10)', () => {
+  it('says the openings could not load instead of offering an empty choice', async () => {
+    listRequisitions.mockRejectedValue(new Error('boom'));
+    schedulingApi.getCalibration.mockResolvedValue(calibration());
+    renderTab();
+    expect(await screen.findByText(/Could not load openings\./)).toBeInTheDocument();
   });
 });

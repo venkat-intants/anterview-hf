@@ -33,6 +33,15 @@ vi.mock('../lib/toast', () => ({
 }));
 
 import AvailabilityTab from '../components/panel/AvailabilityTab';
+import { toLocalInputValue } from '../lib/localDatetime';
+
+/** A datetime-local value `days` from now (plus `hours`): inside the default
+ *  four-week view, and not in the past, which the inputs' `min` refuses. */
+function soon(days: number, hours = 0): string {
+  const d = new Date(Date.now() + days * 86_400_000 + hours * 3_600_000);
+  d.setMinutes(0, 0, 0);
+  return toLocalInputValue(d.toISOString());
+}
 
 function renderTab() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -72,8 +81,14 @@ describe('AvailabilityTab (panel) - choosing an interviewer', () => {
     renderTab();
 
     await chooseInterviewer(user);
-    await waitFor(() => expect(schedulingApi.getInterviewerAvailability).toHaveBeenCalledWith('iv-1'));
-    expect(await screen.findByText('No windows set yet.')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(schedulingApi.getInterviewerAvailability).toHaveBeenCalledWith(
+        'iv-1',
+        expect.objectContaining({ start: expect.any(String), end: expect.any(String) }),
+      ),
+    );
+    // The empty state says which period it covers (IV-M14).
+    expect(await screen.findByText('No windows set in the next 4 weeks.')).toBeInTheDocument();
   });
 
   it('shows an error state', async () => {
@@ -82,7 +97,8 @@ describe('AvailabilityTab (panel) - choosing an interviewer', () => {
     renderTab();
 
     await chooseInterviewer(user);
-    expect(await screen.findByText('boom')).toBeInTheDocument();
+    expect(await screen.findByText('Could not load their availability.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 
   it('lists existing windows', async () => {
@@ -93,7 +109,10 @@ describe('AvailabilityTab (panel) - choosing an interviewer', () => {
     renderTab();
 
     await chooseInterviewer(user);
-    expect(await screen.findByRole('button', { name: 'Remove this window' })).toBeInTheDocument();
+    // Each remove button names its own window, not one label for every row (IV-L12).
+    expect(
+      await screen.findByRole('button', { name: /^Remove the window .+ to .+/ }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -109,9 +128,9 @@ describe('AvailabilityTab (panel) - adding and removing', () => {
     renderTab();
 
     await chooseInterviewer(user);
-    await screen.findByText('No windows set yet.');
-    await user.type(screen.getByLabelText('From'), '2026-09-22T10:00');
-    await user.type(screen.getByLabelText('To'), '2026-09-22T16:00');
+    await screen.findByText('No windows set in the next 4 weeks.');
+    await user.type(screen.getByLabelText('From'), soon(2));
+    await user.type(screen.getByLabelText('To'), soon(2, 6));
     await user.click(screen.getByRole('button', { name: 'Add window for Rekha Iyer' }));
 
     await waitFor(() => expect(schedulingApi.addInterviewerAvailability).toHaveBeenCalledWith('iv-1', expect.any(Object)));
@@ -127,10 +146,13 @@ describe('AvailabilityTab (panel) - adding and removing', () => {
     renderTab();
 
     await chooseInterviewer(user);
-    await user.click(await screen.findByRole('button', { name: 'Remove this window' }));
+    await user.click(await screen.findByRole('button', { name: /^Remove the window/ }));
+    // One click only arms it (IV-L12).
+    expect(schedulingApi.removeInterviewerAvailability).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Remove window' }));
 
     await waitFor(() => expect(schedulingApi.removeInterviewerAvailability).toHaveBeenCalledWith('win-1'));
-    expect(toastSuccess).toHaveBeenCalledWith('Removed');
+    expect(toastSuccess).toHaveBeenCalledWith('Window removed');
   });
 
   it('surfaces a failed add rather than pretending it worked', async () => {
@@ -140,11 +162,60 @@ describe('AvailabilityTab (panel) - adding and removing', () => {
     renderTab();
 
     await chooseInterviewer(user);
-    await screen.findByText('No windows set yet.');
-    await user.type(screen.getByLabelText('From'), '2026-09-22T10:00');
-    await user.type(screen.getByLabelText('To'), '2026-09-22T16:00');
+    await screen.findByText('No windows set in the next 4 weeks.');
+    await user.type(screen.getByLabelText('From'), soon(2));
+    await user.type(screen.getByLabelText('To'), soon(2, 6));
     await user.click(screen.getByRole('button', { name: 'Add window for Rekha Iyer' }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('That overlaps a window already set.'));
+  });
+});
+
+describe('AvailabilityTab (panel) - the period shown (IV-M14, IV-L10)', () => {
+  it('reads a longer period on request', async () => {
+    schedulingApi.getInterviewerAvailability.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderTab();
+
+    await chooseInterviewer(user);
+    await screen.findByText('No windows set in the next 4 weeks.');
+    await user.selectOptions(screen.getByLabelText('Showing'), '12');
+
+    await waitFor(() => expect(schedulingApi.getInterviewerAvailability).toHaveBeenCalledTimes(2));
+    const { start, end } = schedulingApi.getInterviewerAvailability.mock.calls[1][1] as {
+      start: string;
+      end: string;
+    };
+    const days = (Date.parse(end) - Date.parse(start)) / 86_400_000;
+    expect(Math.round(days)).toBe(84);
+  });
+
+  it('says so when a new window starts after the period shown', async () => {
+    schedulingApi.getInterviewerAvailability.mockResolvedValue([]);
+    schedulingApi.addInterviewerAvailability.mockResolvedValue({
+      id: 'w',
+      starts_at: '2099-01-01T04:00:00Z',
+      ends_at: '2099-01-01T10:00:00Z',
+    });
+    const user = userEvent.setup();
+    renderTab();
+
+    await chooseInterviewer(user);
+    await screen.findByText('No windows set in the next 4 weeks.');
+    await user.type(screen.getByLabelText('From'), '2099-01-01T10:00');
+    await user.type(screen.getByLabelText('To'), '2099-01-01T16:00');
+    await user.click(screen.getByRole('button', { name: 'Add window for Rekha Iyer' }));
+
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(
+        expect.stringMatching(/starts after the period shown/),
+      ),
+    );
+  });
+
+  it('shows a failed interviewer list as an error, not an empty dropdown', async () => {
+    listInterviewers.mockRejectedValue(new Error('boom'));
+    renderTab();
+    expect(await screen.findByText('Could not load interviewers.')).toBeInTheDocument();
   });
 });

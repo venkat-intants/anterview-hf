@@ -278,6 +278,25 @@ def test_workload_counts_days_in_india_and_flags_over_allocation() -> None:
     assert row["hours"] == 3.0 and row["outside_availability"] == 0
 
 
+def test_workload_returns_the_stored_override_apart_from_the_effective_limit() -> None:
+    """IV-M13: the editor pre-filled the EFFECTIVE limit, so saving an untouched
+    row pinned the company default as a custom override. The stored value is
+    returned separately, None when the default applies."""
+    from app.panel_workload import DEFAULT_MAX_PER_DAY, DEFAULT_MAX_PER_WEEK, workload_rows
+
+    people = [{"user_id": "u1", "full_name": "Asha", "role": "interviewer"},
+              {"user_id": "u2", "full_name": "Bala", "role": "interviewer"}]
+    rows = {r["user_id"]: r for r in workload_rows(
+        people, [], [], {},
+        {"u1": {"max_sessions_per_day": 2, "max_sessions_per_week": None}}, now=_t(0),
+    )}
+    assert rows["u1"]["max_per_day"] == 2 and rows["u1"]["custom_max_per_day"] == 2
+    assert rows["u1"]["max_per_week"] == DEFAULT_MAX_PER_WEEK
+    assert rows["u1"]["custom_max_per_week"] is None
+    assert rows["u2"]["max_per_day"] == DEFAULT_MAX_PER_DAY
+    assert rows["u2"]["custom_max_per_day"] is None and rows["u2"]["custom_max_per_week"] is None
+
+
 def test_workload_flags_sessions_outside_availability_and_overdue_scorecards() -> None:
     from app.panel_workload import workload_rows
 

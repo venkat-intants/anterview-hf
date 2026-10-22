@@ -32,6 +32,15 @@ const RULE_ORDER: (keyof CalibrationResponse['rules'])[] = [
   'max_span_days',
 ];
 
+/** A threshold as a person reads it: a share as a percentage (0.7 is "70%"),
+ *  everything else as the server sent it. */
+function ruleValue(key: string, value: unknown): string {
+  if (key === 'min_same_direction_share' && typeof value === 'number') {
+    return `${Math.round(value * 100)}%`;
+  }
+  return String(value);
+}
+
 export default function CalibrationInfoDialog({
   calibration,
   onClose,
@@ -48,7 +57,7 @@ export default function CalibrationInfoDialog({
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Clipboard may be unavailable — the hash is still shown for a manual copy.
+      // Clipboard may be unavailable; the full hash is shown below for a manual copy.
     }
   }
 
@@ -108,13 +117,20 @@ export default function CalibrationInfoDialog({
           {RULE_ORDER.map((key) => (
             <div key={key} className="flex items-baseline justify-between gap-3">
               <dt className="text-muted-foreground">{RULE_LABELS[key]}</dt>
-              <dd className="text-right text-foreground">{String(calibration.rules[key])}</dd>
+              <dd className="text-right text-foreground">{ruleValue(key, calibration.rules[key])}</dd>
             </div>
           ))}
         </dl>
 
         <div className="mt-4 flex items-center gap-2 text-[12px] text-muted-foreground">
-          <span>registry {calibration.registry_hash.slice(0, 10)}…</span>
+          {/* The whole hash, selectable: the copy button is a convenience,
+              and a truncated hash cannot be checked against the registry. */}
+          <span>
+            registry{' '}
+            <code className="select-all break-all font-mono text-[11.5px] text-foreground">
+              {calibration.registry_hash}
+            </code>
+          </span>
           <button
             type="button"
             onClick={() => void copyHash()}

@@ -6,14 +6,14 @@
 // Behavior: listSessions({page, perPage:10}) + pagination + status/format
 // helpers + conditional scorecard link + i18n.
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 
 import { listSessions } from '@/api/sessions';
 import type { SessionListItem } from '@/api/sessions';
-import { toast } from '@/lib/toast';
+import { LoadErrorPanel } from '@/components/candidate/LoadErrorPanel';
 import { cn } from '@/lib/utils';
 import { formatDate, formatDuration, statusProps } from '@/lib/formatters';
 import { Button, buttonVariants } from '@/components/ui/button';
@@ -24,7 +24,6 @@ import { initialsOf } from '@/design/data/shared';
 import {
   ChevronLeft,
   ChevronRight,
-  ExternalLink,
   Clock,
   Globe,
   ArrowRight,
@@ -209,7 +208,7 @@ function SessionCard({ session }: { session: SessionListItem }) {
             className={buttonVariants({ variant: 'outline', size: 'sm' })}
           >
             {t('history.viewScorecard')}
-            <ExternalLink aria-hidden="true" />
+            <ArrowRight aria-hidden="true" />
           </Link>
         </div>
       )}
@@ -270,20 +269,13 @@ export default function History() {
   const { t } = useTranslation();
   const [page, setPage] = useState(1);
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['sessions', { page, perPage: PER_PAGE }],
     queryFn: () => listSessions({ page, perPage: PER_PAGE }),
     staleTime: 2 * 60 * 1000,
     retry: false,
     throwOnError: false,
   });
-
-  // Fire error toast once per distinct error object — never on every render.
-  useEffect(() => {
-    if (isError) {
-      toast.error(error instanceof Error ? error.message : t('history.loadError'));
-    }
-  }, [isError, error, t]);
 
   const sessions = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -305,6 +297,13 @@ export default function History() {
 
       {isLoading ? (
         <LoadingSkeletons />
+      ) : isError && !data ? (
+        // A failed load is not "no interviews yet" (audit CA-M6).
+        <LoadErrorPanel
+          title={t('history.loadError')}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       ) : sessions.length === 0 ? (
         <HistoryEmpty />
       ) : (

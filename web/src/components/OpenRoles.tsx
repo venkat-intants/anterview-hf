@@ -26,7 +26,7 @@ import { listOpenRoles, type OpenRole } from '@/api/applications';
 import { buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatusTag } from '@/design/components/primitives';
-import { Building2, Check, ExternalLink } from '@/design/components/icons';
+import { Building2, Check, ChevronDown } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 import { formatMoney, uiLocale } from '@/lib/formatters';
 
@@ -184,7 +184,7 @@ export default function OpenRoles() {
 
       {items.length > 0 ? (
         <p className="mt-3 flex items-center gap-1.5 text-[13px] text-muted-foreground">
-          <ExternalLink size={13} aria-hidden="true" />
+          <ChevronDown size={13} aria-hidden="true" />
           {t('jobs.openRolesPracticeNote')}
         </p>
       ) : null}

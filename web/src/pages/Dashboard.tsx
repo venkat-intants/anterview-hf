@@ -157,7 +157,8 @@ export default function Dashboard() {
     data: me,
     isLoading: meLoading,
     isError,
-    error,
+    refetch: refetchMe,
+    isFetching: meFetching,
   } = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: () => getMe(accessToken ?? undefined),
@@ -370,11 +371,28 @@ export default function Dashboard() {
         >
           <AlertTriangle className="h-10 w-10 text-[var(--ui-danger)]" aria-hidden="true" />
           <p className="text-[15px] text-muted-foreground">
-            {error instanceof Error ? error.message : t('dashboard.failedToLoadProfile')}
+            {t('dashboard.failedToLoadProfile')}
           </p>
-          <Button type="button" variant="outline" onClick={() => logoutMutation.mutate()}>
-            {t('dashboard.returnToLogin')}
-          </Button>
+          {/* A failed /me is usually temporary: retry first, and keep signing
+              out as the secondary way out (audit CA-L1). */}
+          <div className="flex flex-wrap justify-center gap-2.5">
+            <Button
+              type="button"
+              onClick={() => void refetchMe()}
+              disabled={meFetching}
+              aria-busy={meFetching}
+            >
+              {meFetching ? t('error.tryingAgain') : t('error.tryAgain')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => logoutMutation.mutate()}
+              disabled={logoutMutation.isPending}
+            >
+              {t('nav.logout')}
+            </Button>
+          </div>
         </div>
       </Page>
     );

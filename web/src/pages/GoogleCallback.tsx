@@ -18,7 +18,6 @@ import { homePathFor } from '@/components/layout/navSections';
 import { toast } from '@/lib/toast';
 import { CenteredCard } from '@/components/layout/AuthLayout';
 import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
-import { Pill } from '@/design/components/primitives';
 import { AlertCircle } from '@/design/components/icons';
 import type { AuthUser } from '@/types/auth';
 
@@ -111,9 +110,9 @@ export default function GoogleCallback() {
             <Link to="/login" className={PRIMARY_LINK_CLASS}>
               {t('googleCallback.backToSignIn')}
             </Link>
-            <Pill variant="outline" type="button" className="min-h-11" onClick={() => window.location.reload()}>
-              {t('googleCallback.retry')}
-            </Pill>
+            {/* No "Retry" that reloads: the code and state in this URL are
+                single use, so a reload always fails (audit CA-M8). A new
+                attempt starts from the sign-in page. */}
           </div>
         </div>
       ) : (

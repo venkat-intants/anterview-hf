@@ -120,7 +120,13 @@ function ApplicationCard({
 
   // The history is only fetched when someone asks for it. Most people want the
   // headline; loading a timeline per card would be work nobody requested.
-  const { data: detail, isLoading } = useQuery({
+  const {
+    data: detail,
+    isLoading,
+    isError: detailError,
+    refetch: refetchDetail,
+    isFetching: detailFetching,
+  } = useQuery({
     queryKey: ['my-application', app.id],
     queryFn: () => getMyApplication(app.id),
     enabled: open,
@@ -215,6 +221,20 @@ function ApplicationCard({
             <div className="mt-2 border-t border-border pt-3">
               {isLoading && (
                 <p className="text-[13.5px] text-muted-foreground">{t('applications.loading')}</p>
+              )}
+              {detailError && !detail && (
+                // A failed load used to leave the panel blank (audit CA-L2).
+                <p role="alert" className="flex flex-wrap items-center gap-2 text-[13.5px] text-muted-foreground">
+                  {t('applications.historyLoadError')}
+                  <button
+                    type="button"
+                    onClick={() => void refetchDetail()}
+                    disabled={detailFetching}
+                    className="inline-flex min-h-[40px] items-center rounded font-semibold text-[var(--ui-info)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
+                  >
+                    {detailFetching ? t('error.tryingAgain') : t('error.tryAgain')}
+                  </button>
+                </p>
               )}
               {detail && detail.history.length === 0 && (
                 <p className="text-[13.5px] text-muted-foreground">

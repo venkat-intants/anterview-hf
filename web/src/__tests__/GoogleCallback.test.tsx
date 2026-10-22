@@ -143,4 +143,13 @@ describe('GoogleCallback page', () => {
     });
     expect(mockComplete).not.toHaveBeenCalled();
   });
+  // Audit CA-M8: "Retry" reloaded the page with the same single-use code and
+  // state, which can only fail. A new attempt starts from the sign-in page.
+  it('offers no reload retry on failure, only the way back to sign in', async () => {
+    mockComplete.mockRejectedValue(new Error('nope'));
+    renderAt('/auth/google/callback?code=abc&state=xyz');
+    expect(await screen.findByRole('heading', { name: 'Sign-in failed' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /retry|try again/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Back to sign in' })).toHaveAttribute('href', '/login');
+  });
 });

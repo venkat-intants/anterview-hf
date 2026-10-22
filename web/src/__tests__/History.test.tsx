@@ -2,7 +2,7 @@
 // Covers: loading skeletons, session list rendering, status badges,
 // scorecard links, empty state, error state.
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { I18nextProvider } from 'react-i18next';
@@ -137,5 +137,16 @@ describe('History page', () => {
     await waitFor(() => {
       expect(screen.getByText(/2 interviews total/i)).toBeInTheDocument();
     });
+  });
+  // Audit CA-M6: a failed load used to read as "start your first interview".
+  it('shows a retryable error, not the empty state, when the list fails to load', async () => {
+    mockListSessions.mockRejectedValueOnce(new Error('boom'));
+    renderHistory();
+    expect(await screen.findByText('Could not load your interview history.')).toBeInTheDocument();
+    expect(screen.queryByText(/first interview/i)).not.toBeInTheDocument();
+
+    mockListSessions.mockResolvedValueOnce(MOCK_SESSIONS);
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect((await screen.findAllByText('Junior Java Developer')).length).toBeGreaterThan(0);
   });
 });

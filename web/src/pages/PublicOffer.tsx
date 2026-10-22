@@ -4,10 +4,14 @@
 //
 // SECURITY (this page was the subject of a security review):
 // - The token comes from the URL #FRAGMENT, never a path param or query
-//   string — read once into state, then stripped from the address bar with
-//   history.replaceState so it never lingers in browser history. It lives in
-//   memory for the rest of the page's life and is sent as the X-Offer-Token
-//   header on every /offer call (see api/publicOffer.ts) — never a URL.
+//   string — read once, then stripped from the address bar with
+//   history.replaceState so it never lingers in browser history. It is kept in
+//   memory and in THIS TAB's sessionStorage (useFragmentToken's per-tab mode,
+//   the /exam pattern), so a reload while reading the offer or waiting for a
+//   code does not land on "this link isn't valid" (audit CA-H3). Never
+//   localStorage, a cookie or a URL, and dropped once the offer reaches a
+//   terminal state. It is sent as the X-Offer-Token header on every /offer
+//   call (see api/publicOffer.ts) — never a URL.
 // - Answering needs a 6-digit code emailed on request. Documents need a
 //   SECOND code, traded for an hour-long session token that is ALSO kept in
 //   memory only — never localStorage, sessionStorage, or a URL — and sent as
@@ -49,6 +53,14 @@ import {
   type OfferStepKey,
 } from '@/lib/offerSteps';
 import { AlertCircle, CheckCircle2, Loader2, Lock, Upload } from '@/design/components/icons';
+import {
+  FRAGMENT_TOKEN_KEYS,
+  forgetFragmentToken,
+  useFragmentToken,
+} from '@/hooks/useFragmentToken';
+
+/** Offer states in which the link can do nothing more. */
+const TERMINAL_OFFER_STATUSES: ReadonlySet<string> = new Set(['expired', 'withdrawn', 'declined']);
 
 const MAX_DOC_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -887,12 +899,8 @@ export default function PublicOffer(): JSX.Element {
 
   // SECURITY: token from the URL #fragment — never a path param or query
   // string. Read once, then the fragment is stripped from the address bar so
-  // it never lingers in browser history; the token itself lives only in this
-  // component's memory for the rest of the page's life.
-  const [token] = useState(() => window.location.hash.replace(/^#/, '').trim());
-  useEffect(() => {
-    if (token) window.history.replaceState(null, '', window.location.pathname);
-  }, [token]);
+  // it never lingers in browser history; kept for this tab only (see header).
+  const token = useFragmentToken(FRAGMENT_TOKEN_KEYS.offer);
 
   const [locked, setLocked] = useState<string | null>(null);
 
@@ -903,6 +911,17 @@ export default function PublicOffer(): JSX.Element {
     retry: (failureCount, error) => isTransientApiError(error) && failureCount < 2,
     staleTime: 0,
   });
+
+  // A link that can do nothing more is a spent credential: drop it from this
+  // tab's storage. An accepted offer is NOT terminal, since its documents step
+  // still needs the token.
+  const spent =
+    locked !== null ||
+    (view.isError && !isTransientApiError(view.error)) ||
+    TERMINAL_OFFER_STATUSES.has(view.data?.status ?? '');
+  useEffect(() => {
+    if (spent) forgetFragmentToken(FRAGMENT_TOKEN_KEYS.offer);
+  }, [spent]);
 
   if (locked) {
     return (
@@ -940,7 +959,7 @@ export default function PublicOffer(): JSX.Element {
           title={t('offer.invalidTitle')}
           desc={t('offer.invalidDesc')}
         />
-        <p className="text-center text-[13px] text-[var(--ui-soft)]">{t('publicFrame.requestNew')}</p>
+        <p className="text-center text-[13px] text-[var(--ui-soft)]">{t('publicFrame.reopenEmail')}</p>
       </PageWrap>
     );
   }

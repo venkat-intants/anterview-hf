@@ -5,11 +5,25 @@
 // server-side) → store the returned guest token → navigate into the existing
 // /interview/:sessionId UI, unchanged.
 //
-// SECURITY: token MUST come from window.location.hash — NOT useParams.
+// SECURITY: token MUST come from window.location.hash — NOT useParams. It is
+// kept for this tab in sessionStorage so a reload of this page works (audit
+// CA-H3, the /exam pattern), and dropped once the link can do nothing more.
+//
+// A SIGNED-IN CANDIDATE KEEPS THEIR ACCOUNT (audit CA-H4). The dashboard's
+// "Start interview" mints a fresh link for the candidate's own invitation and
+// sends them here. Redeeming used to replace their account session with the
+// guest token, silently: afterwards the complete and scorecard pages treated
+// them as a guest, with no way back to their dashboard. An invitation minted
+// from an account belongs to an applicant linked to that account, so redeem
+// creates the session under the account's own user id, and the account token
+// can take the interview. The guest token is therefore not adopted when it is
+// for the same user. When it is for SOMEBODY ELSE (a shared machine, a link
+// forwarded to the wrong person), the account session is not replaced either:
+// the page says whose account is signed in and offers to sign out first.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation, Trans } from 'react-i18next';
 import {
   Loader2,
@@ -20,14 +34,26 @@ import {
   ShieldCheck,
   Calendar,
 } from '@/design/components/icons';
-import { getInterviewInvite, redeemInterviewInvite } from '@/api/publicInterview';
+import {
+  getInterviewInvite,
+  redeemInterviewInvite,
+  type InterviewRedeem as RedeemResult,
+} from '@/api/publicInterview';
+import { logout } from '@/api/auth';
 import { isTransientApiError } from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
 import { StatusTag, Avatar } from '@/design/components/primitives';
 import { Button } from '@/components/ui/button';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { PublicNext } from '@/components/PublicNext';
-import { useFragmentToken } from '@/hooks/useFragmentToken';
+import {
+  FRAGMENT_TOKEN_KEYS,
+  forgetFragmentToken,
+  useFragmentToken,
+} from '@/hooks/useFragmentToken';
+import { formatDateTime, uiLocale } from '@/lib/formatters';
+import { isGuestOnly } from '@/lib/guest';
+import { useCandidateError } from '@/lib/candidateCopy';
 
 const LANGUAGE_STORAGE_KEY = 'intants:interview-language';
 
@@ -42,13 +68,21 @@ function PageWrap({ children }: { children: React.ReactNode }) {
 }
 
 export default function InterviewInvite() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
-  const { setAuth } = useAuth();
+  const queryClient = useQueryClient();
+  const { setAuth, clearAuth, isAuthenticated, user } = useAuth();
+  const errorText = useCandidateError();
+  // The account signed in on this tab, if any. A guest session from an earlier
+  // invite is not an account and may be replaced as before.
+  const account = isAuthenticated && user && !isGuestOnly(user.roles) ? user : null;
 
   // SECURITY: token from #fragment — never from a path param.
-  const token = useFragmentToken();
+  const token = useFragmentToken(FRAGMENT_TOKEN_KEYS.invite);
   const [consent, setConsent] = useState(false);
+  // Set when the invitation turned out to be for a different person than the
+  // signed-in account: the page asks them to sign out rather than swapping.
+  const [otherAccount, setOtherAccount] = useState<RedeemResult | null>(null);
 
   const inviteQ = useQuery({
     queryKey: ['interview-invite', token],
@@ -61,9 +95,8 @@ export default function InterviewInvite() {
     staleTime: Infinity,
   });
 
-  const redeemMut = useMutation({
-    mutationFn: () => redeemInterviewInvite(token, true),
-    onSuccess: (r) => {
+  function enter(r: RedeemResult, adoptGuest: boolean): void {
+    if (adoptGuest) {
       setAuth(r.access_token, {
         user_id: r.user_id,
         full_name: r.full_name,
@@ -71,16 +104,63 @@ export default function InterviewInvite() {
         roles: r.roles,
         must_change_password: false,
       });
-      try {
-        localStorage.setItem(LANGUAGE_STORAGE_KEY, r.language);
-      } catch {
-        // non-fatal — the session already carries the language server-side
+    }
+    try {
+      localStorage.setItem(LANGUAGE_STORAGE_KEY, r.language);
+    } catch {
+      // non-fatal — the session already carries the language server-side
+    }
+    // Strip the token from the URL before leaving the page.
+    window.history.replaceState(null, '', '/interview-invite');
+    void navigate(`/interview/${r.session_id}`, { replace: true });
+  }
+
+  const redeemMut = useMutation({
+    // The signed-in account's id travels with the call, so the decision below
+    // is about who was signed in when Begin was pressed.
+    mutationFn: (_accountId: string | null) => redeemInterviewInvite(token, true),
+    onSuccess: (r, accountId) => {
+      if (accountId === null) {
+        enter(r, true);
+      } else if (accountId === r.user_id) {
+        // The account owns the session (redeem created it under the account's
+        // user id), so its own token takes the interview; nothing is swapped.
+        enter(r, false);
+      } else {
+        // Not this account's interview. Never swap a signed-in account for a
+        // guest without saying so.
+        setOtherAccount(r);
       }
-      // Strip the token from the URL before leaving the page.
-      window.history.replaceState(null, '', '/interview-invite');
-      void navigate(`/interview/${r.session_id}`, { replace: true });
     },
   });
+
+  // Sign the other account out (server side too, so a reload does not bring it
+  // back from the refresh cookie), then enter as the invited applicant with the
+  // guest session the redeem already issued.
+  const switchAccount = useMutation({
+    mutationFn: async () => {
+      try {
+        await logout();
+      } catch {
+        // Signing out locally still stops this tab acting as that account.
+      }
+    },
+    onSettled: () => {
+      const pending = otherAccount;
+      queryClient.clear();
+      clearAuth();
+      setOtherAccount(null);
+      if (pending) enter(pending, true);
+    },
+  });
+
+  // A link that can do nothing more is spent: drop it from this tab's storage.
+  const spent =
+    (inviteQ.isError && !isTransientApiError(inviteQ.error)) ||
+    inviteQ.data?.already_completed === true;
+  useEffect(() => {
+    if (spent) forgetFragmentToken(FRAGMENT_TOKEN_KEYS.invite);
+  }, [spent]);
 
   // ── Transient failure (network / server hiccup) — the link may be fine ──
   if (token && inviteQ.isError && isTransientApiError(inviteQ.error)) {
@@ -106,7 +186,7 @@ export default function InterviewInvite() {
         <PublicNotice
           title={t('interviewInvite.invalidTitle')}
           description={t('interviewInvite.invalidDesc')}
-          hint={t('publicFrame.requestNew')}
+          hint={t('publicFrame.reopenEmail')}
         />
       </PageWrap>
     );
@@ -161,9 +241,6 @@ export default function InterviewInvite() {
           {info.job_title}
         </h1>
 
-        {/* Token hint — keeps the magic-link UX without leaking company_name (not in API type) */}
-        <p className="mt-1 font-mono text-[12px] text-[var(--ui-soft)]">#{token.slice(0, 8)}</p>
-
         {/* Personalised greeting (Trans keeps the bold-name interpolation) */}
         <p className="mt-3 text-[15px] leading-relaxed text-muted-foreground">
           <Trans
@@ -184,7 +261,7 @@ export default function InterviewInvite() {
               <p className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
                 <Calendar size={13} aria-hidden="true" />
                 {t('interviewInvite.scheduledFor', {
-                  time: new Date(info.scheduled_at).toLocaleString(),
+                  time: formatDateTime(info.scheduled_at, { locale: uiLocale(i18n.language) }),
                 })}
               </p>
             ) : (
@@ -232,10 +309,27 @@ export default function InterviewInvite() {
         </label>
 
         {/* Begin button — disabled until consent is given */}
+        {otherAccount ? (
+          <div role="alert" className="mt-5 rounded-[12px] border border-[var(--ui-warn)] p-4 text-[13.5px] leading-relaxed text-foreground">
+            <p>{t('interviewInvite.otherAccount', { email: account?.email ?? '' })}</p>
+            <Button
+              variant="outline"
+              className="mt-3 h-11"
+              disabled={switchAccount.isPending}
+              onClick={() => switchAccount.mutate()}
+            >
+              {switchAccount.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : null}
+              {t('interviewInvite.signOutAndBegin')}
+            </Button>
+          </div>
+        ) : null}
+
         <Button
           className="mt-6 h-12 w-full text-[15px]"
-          disabled={!consent || redeemMut.isPending}
-          onClick={() => redeemMut.mutate()}
+          disabled={!consent || redeemMut.isPending || otherAccount !== null}
+          onClick={() => redeemMut.mutate(account?.user_id ?? null)}
         >
           {redeemMut.isPending ? (
             <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
@@ -245,9 +339,7 @@ export default function InterviewInvite() {
 
         {redeemMut.isError && (
           <p role="alert" className="mt-3 text-center text-[14px] text-[var(--ui-danger)]">
-            {redeemMut.error instanceof Error
-              ? redeemMut.error.message
-              : t('interviewInvite.startError')}
+            {errorText(redeemMut.error, t('interviewInvite.startError'))}
           </p>
         )}
 

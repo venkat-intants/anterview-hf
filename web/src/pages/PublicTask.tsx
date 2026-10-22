@@ -5,7 +5,8 @@
 // SECURITY (follows the PublicOffer/PublicApply precedent):
 // - The token comes from the URL #FRAGMENT, never a path param or query
 //   string — read once into state, then stripped from the address bar with
-//   history.replaceState so it never lingers in browser history. It is sent
+//   history.replaceState so it never lingers in browser history. It is kept
+//   for this tab in sessionStorage so a reload works (audit CA-H3), and sent
 //   as the X-Task-Token header on every /task call (api/publicTask.ts) —
 //   never a URL.
 // - Every failure the server can produce for a bad/expired/withdrawn link
@@ -70,6 +71,11 @@ import {
   Trash2,
   Upload,
 } from '@/design/components/icons';
+import {
+  FRAGMENT_TOKEN_KEYS,
+  forgetFragmentToken,
+  useFragmentToken,
+} from '@/hooks/useFragmentToken';
 
 const MAX_MATERIAL_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_ARTIFACT_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -1160,11 +1166,10 @@ export default function PublicTask(): JSX.Element {
 
   // SECURITY: token from the URL #fragment — never a path param or query
   // string. Read once, then the fragment is stripped so it never lingers in
-  // browser history; the token lives only in this component's memory.
-  const [token] = useState(() => window.location.hash.replace(/^#/, '').trim());
-  useEffect(() => {
-    if (token) window.history.replaceState(null, '', window.location.pathname);
-  }, [token]);
+  // browser history. Kept in memory and in THIS TAB's sessionStorage (the
+  // /exam pattern): a task can take hours, and a reload used to land on "this
+  // link isn't valid" (audit CA-H3). Never localStorage, a cookie or a URL.
+  const token = useFragmentToken(FRAGMENT_TOKEN_KEYS.task);
 
   const view = useQuery({
     queryKey: ['public-task', token],
@@ -1173,6 +1178,13 @@ export default function PublicTask(): JSX.Element {
     retry: (failureCount, error) => isTransientApiError(error) && failureCount < 2,
     staleTime: 0,
   });
+
+  // A link the server refuses is spent: drop it from this tab's storage. A
+  // submitted task is not, since its consent can still be withdrawn.
+  const refused = view.isError && !isTransientApiError(view.error);
+  useEffect(() => {
+    if (refused) forgetFragmentToken(FRAGMENT_TOKEN_KEYS.task);
+  }, [refused]);
 
   if (token && view.isError && isTransientApiError(view.error)) {
     return (
@@ -1202,6 +1214,7 @@ export default function PublicTask(): JSX.Element {
               : t('task.invalidDesc')
           }
         />
+        <p className="text-center text-[13px] text-[var(--ui-soft)]">{t('publicFrame.reopenEmail')}</p>
       </PageWrap>
     );
   }

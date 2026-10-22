@@ -487,7 +487,7 @@ export default function PublicExam() {
         <PublicNotice
           title={t('publicExam.invalidTitle')}
           description={t('publicExam.invalidDesc')}
-          hint={t('publicFrame.requestNew')}
+          hint={t('publicFrame.reopenEmail')}
         />
       </PageWrap>
     );

@@ -91,7 +91,7 @@ const en = {
     // Footer of the no-login public pages (apply, exam, offer, …)
     publicFrame: {
       footer: 'Sent to you through AntHire. Your link is private to you, so please do not share it.',
-      requestNew: 'If you need a new link, ask the person who invited you.',
+      reopenEmail: 'Came here from an email? Open the link in that email again. If it still does not work, ask the hiring team for a new one.',
     },
     // Auth
     auth: {
@@ -946,6 +946,8 @@ const en = {
         'I consent to my microphone and camera being used to conduct and assess this interview. My data is processed for hiring purposes; I can withdraw consent (DPDP §11) by contacting the recruiter.',
       begin: 'Begin interview',
       startError: 'Could not start the interview.',
+      otherAccount: 'You are signed in as {{email}}, but this invitation is for someone else. To take this interview, sign out first.',
+      signOutAndBegin: 'Sign out and begin',
       // Design-port additions
       avatarName: 'Aanya - your AI interviewer',
       availableNow: 'Available now · take it anytime',
@@ -1268,7 +1270,7 @@ const en = {
       no: 'No',
       experienceYears: '{{count}} years',
       emailLanguage: 'Emails about this application in',
-      consent: 'I agree that {{company}} may store my name, email and CV to consider me for this role, and may contact me about it. I can ask them to delete my data at any time by writing to support@intants.com.',
+      consent: 'I agree that {{company}} may store my name, email and CV to consider me for this role, and may contact me about it. I can ask them to delete my data at any time by writing to {{supportEmail}}.',
       savedTitle: 'Saved. Keep this link to carry on later.',
       resumeLinkAria: 'Your resume link',
       savedAgainst:
@@ -1815,7 +1817,7 @@ const hi = {
     },
     publicFrame: {
       footer: 'AntHire के ज़रिए आपको भेजा गया। यह लिंक सिर्फ़ आपके लिए है, कृपया इसे साझा न करें।',
-      requestNew: 'नया लिंक चाहिए तो आपको आमंत्रित करने वाले व्यक्ति से कहें।',
+      reopenEmail: 'क्या आप किसी ईमेल से यहाँ आए हैं? उस ईमेल का लिंक फिर से खोलें। अगर तब भी काम न करे, तो भर्ती टीम से नया लिंक माँगें।',
     },
     auth: {
       welcomeBack: 'वापसी पर स्वागत है',
@@ -2638,6 +2640,8 @@ const hi = {
         'मैं इस इंटरव्यू को संचालित और मूल्यांकन करने के लिए अपने माइक्रोफ़ोन और कैमरे के उपयोग की सहमति देता/देती हूं। मेरा डेटा भर्ती उद्देश्यों के लिए process किया जाता है; मैं recruiter से संपर्क करके सहमति वापस ले सकता/सकती हूं (DPDP §11)।',
       begin: 'इंटरव्यू शुरू करें',
       startError: 'इंटरव्यू शुरू नहीं हो सका।',
+      otherAccount: 'आप {{email}} के रूप में साइन इन हैं, लेकिन यह आमंत्रण किसी और के लिए है। यह इंटरव्यू देने के लिए पहले साइन आउट करें।',
+      signOutAndBegin: 'साइन आउट करें और शुरू करें',
       avatarName: 'Aanya - आपका AI इंटरव्यूअर',
       availableNow: 'अभी उपलब्ध · कभी भी लें',
       beforeYouBegin: 'शुरू करने से पहले',
@@ -2883,7 +2887,7 @@ const hi = {
     apply: {
       savedPartial: 'हमने आपकी प्रगति {{email}} के विरुद्ध सहेज ली है, लेकिन आपकी दी गई हर जानकारी नहीं सहेज सके। अपना विवरण जाँचने और CV जोड़ने के लिए लिंक खोलें। वापस आने का यही एकमात्र रास्ता है, इसलिए इसे सुरक्षित रखें।',
       emailAccountHint: 'आप साइन इन हैं, इसलिए आप अपने खाते के ईमेल से आवेदन करेंगे और इस आवेदन को मेरे आवेदन में देख सकेंगे।',
-      errEmail: 'एक मान्य ईमेल पता लिखें, जैसे name@example.com।',
+      errEmail: 'एक मान्य ईमेल पता लिखें।',
       retry: 'फिर से कोशिश करें',
       loadFailedDesc: 'यह आमतौर पर कनेक्शन या हमारे सर्वर की अस्थायी समस्या होती है। नौकरी अभी भी खुली हो सकती है, इसलिए थोड़ी देर में फिर से कोशिश करें।',
       loadFailedTitle: 'हम यह नौकरी लोड नहीं कर सके',
@@ -2934,7 +2938,7 @@ const hi = {
       no: 'नहीं',
       experienceYears: '{{count}} वर्ष',
       emailLanguage: 'इस आवेदन से जुड़े ईमेल किस भाषा में',
-      consent: 'मैं सहमत हूँ कि {{company}} इस भूमिका के लिए मुझ पर विचार करने हेतु मेरा नाम, ईमेल और CV संग्रहीत कर सकता है, और इस बारे में मुझसे संपर्क कर सकता है। मैं support@intants.com पर लिखकर कभी भी उनसे अपना डेटा मिटाने के लिए कह सकता हूँ।',
+      consent: 'मैं सहमत हूँ कि {{company}} इस भूमिका के लिए मुझ पर विचार करने हेतु मेरा नाम, ईमेल और CV संग्रहीत कर सकता है, और इस बारे में मुझसे संपर्क कर सकता है। मैं {{supportEmail}} पर लिखकर कभी भी उनसे अपना डेटा मिटाने के लिए कह सकता हूँ।',
       savedTitle: 'सहेज लिया गया। बाद में जारी रखने के लिए यह लिंक रखें।',
       resumeLinkAria: 'आपका पुनः शुरू करने का लिंक',
       savedAgainst:
@@ -3431,7 +3435,7 @@ const te = {
     },
     publicFrame: {
       footer: 'AntHire ద్వారా మీకు పంపబడింది. ఈ లింక్ మీకు మాత్రమే, దయచేసి షేర్ చేయకండి.',
-      requestNew: 'కొత్త లింక్ కావాలంటే మిమ్మల్ని ఆహ్వానించిన వ్యక్తిని అడగండి.',
+      reopenEmail: 'ఈమెయిల్ నుండి ఇక్కడికి వచ్చారా? ఆ ఈమెయిల్‌లోని లింక్‌ను మళ్లీ తెరవండి. అప్పటికీ పని చేయకపోతే, నియామక బృందాన్ని కొత్త లింక్ అడగండి.',
     },
     auth: {
       welcomeBack: 'తిరిగి స్వాగతం',
@@ -4260,6 +4264,8 @@ const te = {
         'ఈ ఇంటర్వ్యూను నిర్వహించడానికి మరియు అంచనా వేయడానికి నా మైక్రోఫోన్ మరియు కెమెరా ఉపయోగించబడటానికి నేను సమ్మతిస్తున్నాను. నా డేటా నియామక ప్రయోజనాల కోసం process చేయబడుతుంది; నేను recruiterను సంప్రదించడం ద్వారా సమ్మతిని ఉపసంహరించుకోవచ్చు (DPDP §11).',
       begin: 'ఇంటర్వ్యూ ప్రారంభించండి',
       startError: 'ఇంటర్వ్యూ ప్రారంభించలేకపోయాం.',
+      otherAccount: 'మీరు {{email}}గా సైన్ ఇన్ అయ్యారు, కానీ ఈ ఆహ్వానం వేరొకరి కోసం. ఈ ఇంటర్వ్యూ ఇవ్వడానికి ముందుగా సైన్ అవుట్ చేయండి.',
+      signOutAndBegin: 'సైన్ అవుట్ చేసి ప్రారంభించండి',
       avatarName: 'Aanya - మీ AI ఇంటర్వ్యూయర్',
       availableNow: 'ఇప్పుడు అందుబాటులో · ఎప్పుడైనా తీసుకోండి',
       beforeYouBegin: 'ప్రారంభించే ముందు',
@@ -4508,7 +4514,7 @@ const te = {
     apply: {
       savedPartial: 'మీ పురోగతిని {{email}} కింద భద్రపరిచాం, కానీ మీరు ఇచ్చిన ప్రతిదాన్నీ భద్రపరచలేకపోయాం. మీ వివరాలు చూసి CV జోడించడానికి లింక్‌ను తెరవండి. తిరిగి రావడానికి ఇదే ఏకైక మార్గం, కాబట్టి దీన్ని సురక్షితంగా ఉంచుకోండి.',
       emailAccountHint: 'మీరు సైన్ ఇన్ అయ్యారు, కాబట్టి మీ ఖాతా ఈమెయిల్‌తో దరఖాస్తు చేస్తారు, ఈ దరఖాస్తును నా దరఖాస్తులు లో చూడవచ్చు.',
-      errEmail: 'సరైన ఈమెయిల్ చిరునామా ఇవ్వండి, ఉదా. name@example.com.',
+      errEmail: 'సరైన ఈమెయిల్ చిరునామా ఇవ్వండి.',
       retry: 'మళ్లీ ప్రయత్నించండి',
       loadFailedDesc: 'ఇది సాధారణంగా కనెక్షన్ లేదా మా సర్వర్‌లో తాత్కాలిక సమస్య. ఉద్యోగం ఇంకా తెరిచే ఉండవచ్చు, కాబట్టి కాసేపటి తర్వాత మళ్లీ ప్రయత్నించండి.',
       loadFailedTitle: 'ఈ ఉద్యోగాన్ని లోడ్ చేయలేకపోయాం',
@@ -4559,7 +4565,7 @@ const te = {
       no: 'కాదు',
       experienceYears: '{{count}} సంవత్సరాలు',
       emailLanguage: 'ఈ దరఖాస్తు గురించి ఈమెయిల్‌లు ఏ భాషలో',
-      consent: 'ఈ ఉద్యోగానికి నన్ను పరిగణించడానికి {{company}} నా పేరు, ఈమెయిల్ మరియు CVని నిల్వ చేయవచ్చని, దీని గురించి నన్ను సంప్రదించవచ్చని నేను అంగీకరిస్తున్నాను. support@intants.com కి రాసి నా డేటాను తొలగించమని నేను ఎప్పుడైనా వారిని అడగవచ్చు.',
+      consent: 'ఈ ఉద్యోగానికి నన్ను పరిగణించడానికి {{company}} నా పేరు, ఈమెయిల్ మరియు CVని నిల్వ చేయవచ్చని, దీని గురించి నన్ను సంప్రదించవచ్చని నేను అంగీకరిస్తున్నాను. {{supportEmail}} కి రాసి నా డేటాను తొలగించమని నేను ఎప్పుడైనా వారిని అడగవచ్చు.',
       savedTitle: 'భద్రపరచబడింది. తర్వాత కొనసాగించడానికి ఈ లింక్‌ను ఉంచుకోండి.',
       resumeLinkAria: 'మీ తిరిగి ప్రారంభించే లింక్',
       savedAgainst:

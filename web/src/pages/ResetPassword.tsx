@@ -12,12 +12,17 @@ import AuthLayout, { FormError, PasswordField, PasswordStrength, StatusPanel } f
 import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
 import { Pill } from '@/design/components/primitives';
 import { Lock, KeyRound, AlertCircle } from '@/design/components/icons';
-import { useFragmentToken } from '@/hooks/useFragmentToken';
+import {
+  FRAGMENT_TOKEN_KEYS,
+  forgetFragmentToken,
+  useFragmentToken,
+} from '@/hooks/useFragmentToken';
 
 export default function ResetPassword() {
   const navigate = useNavigate();
-  // Read once, then removed from the address bar and history entry.
-  const token = useFragmentToken();
+  // Read once, then removed from the address bar and history entry. Kept for
+  // this tab so a reload while typing does not lose the link (audit CA-H3).
+  const token = useFragmentToken(FRAGMENT_TOKEN_KEYS.resetPassword);
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -25,6 +30,7 @@ export default function ResetPassword() {
   const mutation = useMutation({
     mutationFn: () => resetPassword(token, pw),
     onSuccess: () => {
+      forgetFragmentToken(FRAGMENT_TOKEN_KEYS.resetPassword);
       toast.success('Password updated - please sign in.');
       void navigate('/login', { replace: true });
     },

@@ -25,6 +25,7 @@ import {
   getActivationTarget,
   type ActivationTarget,
 } from '@/api/publicApply';
+import { isTransientApiError } from '@/api/client';
 import { toast } from '@/lib/toast';
 import AuthLayout, { FormError, PasswordField, PasswordStrength, StatusPanel } from '@/components/layout/AuthLayout';
 import { TEXT_LINK_CLASS } from '@/components/layout/authStyles';
@@ -36,7 +37,11 @@ import {
   Lock,
   UserPlus,
 } from '@/design/components/icons';
-import { useFragmentToken } from '@/hooks/useFragmentToken';
+import {
+  FRAGMENT_TOKEN_KEYS,
+  forgetFragmentToken,
+  useFragmentToken,
+} from '@/hooks/useFragmentToken';
 import { useTranslation } from 'react-i18next';
 
 type Phase = 'checking' | 'ready' | 'expired' | 'done';
@@ -44,9 +49,14 @@ type Phase = 'checking' | 'ready' | 'expired' | 'done';
 export default function ActivateAccount() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  // Read once, then removed from the address bar and history entry.
-  const token = useFragmentToken();
+  // Read once, then removed from the address bar and history entry. Kept for
+  // this tab so a reload while choosing a password does not land on "this link
+  // has expired" (audit CA-H3); dropped once the link is used or refused.
+  const token = useFragmentToken(FRAGMENT_TOKEN_KEYS.activate);
   const [phase, setPhase] = useState<Phase>(token ? 'checking' : 'expired');
+  useEffect(() => {
+    if (phase === 'done') forgetFragmentToken(FRAGMENT_TOKEN_KEYS.activate);
+  }, [phase]);
   const [target, setTarget] = useState<ActivationTarget | null>(null);
   const [linked, setLinked] = useState<'new' | 'existing'>('new');
   // What the server said happened. For an address that already had an account
@@ -73,6 +83,8 @@ export default function ActivateAccount() {
         setPhase('ready');
       })
       .catch((err: unknown) => {
+        // A refused link is spent; a network blip is not, and a reload retries.
+        if (!isTransientApiError(err)) forgetFragmentToken(FRAGMENT_TOKEN_KEYS.activate);
         setCheckError(
           err instanceof Error ? err.message : t('public.activate.invalidLink'),
         );

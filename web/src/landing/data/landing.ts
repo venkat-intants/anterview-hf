@@ -4,8 +4,9 @@ import {
   ShieldCheck, UserCheck, Eraser, Building,
   type LucideIcon,
 } from 'lucide-react'
+import { SUPPORT_EMAIL } from '@/lib/contact'
 
-export const CONTACT_EMAIL = 'support@intants.com'
+export const CONTACT_EMAIL = SUPPORT_EMAIL
 
 /** mailto link for the "talk to us" calls to action. */
 export const mailto = (subject: string) => `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}`

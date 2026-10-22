@@ -116,6 +116,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.location.hash = '#task_tok_123456';
   window.history.replaceState = replaceState;
+  // The page keeps its token in this tab's storage across reloads (CA-H3).
+  sessionStorage.clear();
   viewTask.mockResolvedValue(ASSIGNED);
 });
 
@@ -129,7 +131,8 @@ describe('PublicTask - the link itself', () => {
     await screen.findByText('Take-home simulation');
 
     expect(viewTask).toHaveBeenCalledWith('task_tok_123456');
-    expect(replaceState).toHaveBeenCalledWith(null, '', '/');
+    // Path and router state kept; only the fragment goes.
+    expect(replaceState).toHaveBeenCalledWith(window.history.state, '', '/');
   });
 
   it('never calls the API and shows an invalid link when there is no token', async () => {
@@ -154,6 +157,26 @@ describe('PublicTask - the link itself', () => {
       await screen.findByRole('button', { name: /try again/i }, { timeout: 8000 }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/isn't valid/i)).not.toBeInTheDocument();
+  });
+
+  // Audit CA-H3: a multi-hour task must survive a reload.
+  it('still opens the task after a reload, once the fragment is gone', async () => {
+    const first = renderPage();
+    await screen.findByText('Take-home simulation');
+    first.unmount();
+    window.location.hash = '';
+    viewTask.mockClear();
+
+    renderPage();
+    await screen.findByText('Take-home simulation');
+    expect(viewTask).toHaveBeenCalledWith('task_tok_123456');
+  });
+
+  it('forgets a link the server refuses, and says to reopen the emailed one', async () => {
+    viewTask.mockRejectedValue(new ApiError("This task link isn't available.", 404));
+    renderPage();
+    expect(await screen.findByText(/Open the link in that email again/)).toBeInTheDocument();
+    await waitFor(() => expect(sessionStorage.getItem('anthire.task.token')).toBeNull());
   });
 });
 

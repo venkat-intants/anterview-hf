@@ -57,6 +57,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { PublicNext } from '@/components/PublicNext';
+import { SUPPORT_EMAIL } from '@/lib/contact';
 import { ProgressMeter } from '@/design/components/page';
 
 const MAX_BYTES = 5 * 1024 * 1024;
@@ -1123,7 +1124,7 @@ export default function PublicApply(): JSX.Element {
               className="mt-0.5 h-5 w-5 shrink-0 accent-[var(--accent)]"
             />
             <span className="text-[13.5px] leading-relaxed text-[var(--ui-soft)]">
-              {t('apply.consent', { company: job.company_name })}
+              {t('apply.consent', { company: job.company_name, supportEmail: SUPPORT_EMAIL })}
             </span>
           </label>
 

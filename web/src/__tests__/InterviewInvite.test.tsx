@@ -51,8 +51,25 @@ vi.mock('react-router-dom', async () => {
 });
 
 const setAuth = vi.fn();
+const clearAuth = vi.fn();
+interface FakeUser {
+  user_id: string;
+  email: string;
+  roles: string[];
+}
+let signedIn: FakeUser | null = null;
 vi.mock('../context/AuthContext', () => ({
-  useAuth: () => ({ setAuth, isAuthenticated: false, isInitializing: false, user: null }),
+  useAuth: () => ({
+    setAuth,
+    clearAuth,
+    isAuthenticated: signedIn !== null,
+    isInitializing: false,
+    user: signedIn,
+  }),
+}));
+const logout = vi.fn();
+vi.mock('../api/auth', () => ({
+  logout: (...a: unknown[]) => logout(...a) as unknown,
 }));
 
 import InterviewInvite from '../pages/InterviewInvite';
@@ -75,6 +92,10 @@ beforeEach(() => {
   window.location.hash = '#tok_abcdef123456';
   window.history.replaceState = replaceState;
   localStorage.clear();
+  // The page keeps its token in this tab's storage across reloads (CA-H3).
+  sessionStorage.clear();
+  signedIn = null;
+  logout.mockResolvedValue({});
   getInterviewInvite.mockResolvedValue(INFO);
   redeemInterviewInvite.mockResolvedValue(REDEEM);
 });
@@ -94,12 +115,26 @@ describe('InterviewInvite - link states', () => {
     expect(getInterviewInvite).toHaveBeenCalledWith('tok_abcdef123456');
   });
 
-  it('shows only a truncated token hint, never the whole secret', async () => {
+  // Audit CA-M26: even a truncated token hint meant nothing to the candidate
+  // and put part of a bearer secret in the DOM. /exam removed it; so does this.
+  it('prints no part of the token', async () => {
     renderInvite();
 
     await screen.findByRole('heading', { name: 'Backend Engineer' });
-    expect(screen.getByText('#tok_abcd')).toBeInTheDocument();
-    expect(screen.queryByText(/tok_abcdef123456/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/tok_abcd/)).not.toBeInTheDocument();
+  });
+
+  // Audit CA-H3: a reload used to land on "this link isn't valid".
+  it('still opens after a reload, once the fragment is gone', async () => {
+    const first = renderInvite();
+    await screen.findByRole('heading', { name: 'Backend Engineer' });
+    first.unmount();
+    window.location.hash = '';
+    getInterviewInvite.mockClear();
+
+    renderInvite();
+    await screen.findByRole('heading', { name: 'Backend Engineer' });
+    expect(getInterviewInvite).toHaveBeenCalledWith('tok_abcdef123456');
   });
 
   it('refuses without ever calling the API when the link carries no token', async () => {
@@ -116,6 +151,9 @@ describe('InterviewInvite - link states', () => {
 
     expect(await screen.findByText(/isn't valid/i)).toBeInTheDocument();
     expect(screen.getByText(/ask your recruiter for a fresh link/i)).toBeInTheDocument();
+    // Reopening the emailed link comes first: it is the likelier fix.
+    expect(screen.getByText(/Open the link in that email again/)).toBeInTheDocument();
+    await waitFor(() => expect(sessionStorage.getItem('anthire.invite.token')).toBeNull());
   });
 
   it('offers a retry - not "invalid" - when the failure was transient', async () => {
@@ -218,5 +256,52 @@ describe('InterviewInvite - redeeming', () => {
 
     expect(await screen.findByText('This invite has expired.')).toBeInTheDocument();
     expect(navigate).not.toHaveBeenCalled();
+  });
+});
+
+// Audit CA-H4: starting an invited interview from the account used to replace
+// the account session with a guest token, silently.
+describe('InterviewInvite - a signed-in candidate', () => {
+  async function begin(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await screen.findByRole('heading', { name: 'Backend Engineer' });
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /begin interview/i }));
+  }
+
+  it('keeps the account session when the interview is their own', async () => {
+    signedIn = { user_id: 'u-me', email: 'me@example.com', roles: ['candidate'] };
+    redeemInterviewInvite.mockResolvedValue({ ...REDEEM, user_id: 'u-me', roles: ['guest_candidate'] });
+    const user = userEvent.setup();
+    renderInvite();
+    await begin(user);
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/interview/sess-77', { replace: true }));
+    expect(setAuth).not.toHaveBeenCalled();
+  });
+
+  it('does not swap a different account for the guest without asking', async () => {
+    signedIn = { user_id: 'u-other', email: 'other@example.com', roles: ['candidate'] };
+    redeemInterviewInvite.mockResolvedValue({ ...REDEEM, roles: ['guest_candidate'] });
+    const user = userEvent.setup();
+    renderInvite();
+    await begin(user);
+
+    expect(await screen.findByText(/signed in as other@example.com/)).toBeInTheDocument();
+    expect(setAuth).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Sign out and begin' }));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/interview/sess-77', { replace: true }));
+    expect(logout).toHaveBeenCalled();
+    expect(clearAuth).toHaveBeenCalled();
+    expect(setAuth).toHaveBeenCalledWith('jwt-for-guest', expect.objectContaining({ user_id: 'u-guest' }));
+  });
+
+  it('still adopts the guest session over an earlier guest one', async () => {
+    signedIn = { user_id: 'u-old-guest', email: '', roles: ['guest_candidate'] };
+    const user = userEvent.setup();
+    renderInvite();
+    await begin(user);
+    await waitFor(() => expect(setAuth).toHaveBeenCalledWith('jwt-for-guest', expect.anything()));
   });
 });

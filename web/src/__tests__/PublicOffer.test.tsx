@@ -6,7 +6,8 @@
 //     history.replaceState on arrival — it must never linger in the address
 //     bar or reach a server as anything but the X-Offer-Token header;
 //   • the documents session token is never written to localStorage or
-//     sessionStorage — it lives in memory only;
+//     sessionStorage — it lives in memory only (the offer token itself is kept
+//     in this tab's sessionStorage so a reload works, audit CA-H3);
 //   • a 423 (too many wrong codes) locks the whole flow with the server's own
 //     wording, and a 401 on the documents session sends the candidate back to
 //     asking for a new code rather than failing silently;
@@ -132,7 +133,33 @@ describe('PublicOffer - the link itself', () => {
     await screen.findByText('Backend Engineer');
 
     expect(viewOffer).toHaveBeenCalledWith('offer_tok_123456');
-    expect(replaceState).toHaveBeenCalledWith(null, '', '/');
+    // Path and router state kept; only the fragment goes.
+    expect(replaceState).toHaveBeenCalledWith(window.history.state, '', '/');
+  });
+
+  // Audit CA-H3: a reload used to land on "this link isn't valid".
+  it('still opens the offer after a reload, once the fragment is gone', async () => {
+    const first = renderPage();
+    await screen.findByText('Backend Engineer');
+    first.unmount();
+    window.location.hash = '';
+    viewOffer.mockClear();
+
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    expect(viewOffer).toHaveBeenCalledWith('offer_tok_123456');
+  });
+
+  it('forgets the link once the offer can do nothing more', async () => {
+    viewOffer.mockResolvedValue({ ...SENT, status: 'withdrawn' });
+    renderPage();
+    await waitFor(() => expect(sessionStorage.getItem('anthire.offer.token')).toBeNull());
+  });
+
+  it('tells them to reopen the emailed link before asking for a new one', async () => {
+    viewOffer.mockRejectedValue(new ApiError('Not found', 404));
+    renderPage();
+    expect(await screen.findByText(/Open the link in that email again/)).toBeInTheDocument();
   });
 
   it('never calls the API and shows an invalid link when there is no token', async () => {
@@ -318,9 +345,11 @@ describe('PublicOffer - documents, once accepted', () => {
     await screen.findByText('PAN card');
 
     // The token this whole step exists to protect must never land in
-    // persistent storage — only ever held in the component's own memory.
+    // persistent storage — only ever held in the component's own memory. The
+    // OFFER token is kept for this tab (CA-H3), and is the only thing stored.
     expect(localStorage.length).toBe(0);
-    expect(sessionStorage.length).toBe(0);
+    expect(JSON.stringify({ ...sessionStorage })).not.toContain('sess_super_secret_token');
+    expect(Object.keys(sessionStorage)).toEqual(['anthire.offer.token']);
   });
 
   it('says so when the hiring team has asked for no documents', async () => {

@@ -37,6 +37,7 @@ vi.mock('../lib/toast', () => ({
 }));
 
 import ActivateAccount from '../pages/ActivateAccount';
+import { ApiError } from '../api/client';
 
 const TARGET = {
   full_name: 'Nadia Newbie',
@@ -71,6 +72,8 @@ async function fillPasswords(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // The page keeps its token in this tab's storage across reloads (CA-H3).
+  sessionStorage.clear();
   setHash('tok-abc-1234567890123456');
   getActivationTarget.mockResolvedValue(TARGET);
   activateAccount.mockResolvedValue({
@@ -90,6 +93,22 @@ describe('ActivateAccount', () => {
     await waitFor(() =>
       expect(getActivationTarget).toHaveBeenCalledWith('tok-abc-1234567890123456'),
     );
+  });
+
+  // Audit CA-H3: a reload while choosing a password used to say "expired".
+  it('still has the link after a reload, and drops it once refused', async () => {
+    const first = renderPage();
+    await screen.findByLabelText('Choose a password');
+    first.unmount();
+    setHash('');
+    getActivationTarget.mockClear();
+    getActivationTarget.mockRejectedValue(new ApiError('This link has expired.', 410));
+
+    renderPage();
+    await waitFor(() =>
+      expect(getActivationTarget).toHaveBeenCalledWith('tok-abc-1234567890123456'),
+    );
+    await waitFor(() => expect(sessionStorage.length).toBe(0));
   });
 
   it('checks the link exactly once', async () => {

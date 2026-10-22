@@ -113,7 +113,7 @@ describe('StartInterview page', () => {
 
   it('renders the form with all expected fields', async () => {
     renderPage();
-    expect(screen.getByRole('heading', { name: /start an interview/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /practice interview/i })).toBeInTheDocument();
     expect(screen.getByLabelText(/job title/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/company/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/job description/i)).toBeInTheDocument();
@@ -206,7 +206,7 @@ describe('StartInterview page', () => {
     await user.click(submitBtn);
 
     await waitFor(() => {
-      expect(screen.getByRole('dialog', { name: /data & privacy consent/i })).toBeInTheDocument();
+      expect(screen.getByRole('dialog', { name: /data and privacy consent/i })).toBeInTheDocument();
     });
     // Job/session creation must NOT have started yet
     expect(mockCreateCustomJob).not.toHaveBeenCalled();
@@ -269,6 +269,15 @@ describe('StartInterview page', () => {
       expect(screen.getByRole('radio', { name: /select anna/i })).toBeInTheDocument();
       expect(screen.getByRole('radio', { name: /select gloria/i })).toBeInTheDocument();
     });
+  });
+
+  // Audit CA-L10: the avatar's gender is a word in the UI language, not the code.
+  it('avatar picker: names the gender in the UI language', async () => {
+    renderPage();
+    await screen.findByRole('radio', { name: /select lucas/i });
+    expect(screen.getAllByText('Female').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Male').length).toBeGreaterThan(0);
+    expect(screen.queryByText('male')).not.toBeInTheDocument();
   });
 
   it('avatar picker: default selection is anna', async () => {
@@ -355,4 +364,46 @@ describe('StartInterview page', () => {
       expect(mockNavigate).toHaveBeenCalledWith('/interview/sess-fallback');
     });
   });
+  // Audit CA-L5: every retry used to create another custom job.
+  it('a retry after the session failed to start reuses the job it already made', async () => {
+    mockCreateCustomJob.mockResolvedValue({ id: 'job-abc', title: 'Dev' });
+    mockCreateSession
+      .mockRejectedValueOnce(new Error('busy'))
+      .mockResolvedValueOnce({ session_id: 'sess-2' });
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(mockGetConsentStatus).toHaveBeenCalled());
+    await user.type(screen.getByLabelText(/job title/i), 'Dev');
+    await user.click(screen.getByRole('button', { name: /start interview/i }));
+    await waitFor(() => expect(mockCreateSession).toHaveBeenCalledTimes(1));
+
+    await user.click(await screen.findByRole('button', { name: /start interview/i }));
+    await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/interview/sess-2'));
+    expect(mockCreateCustomJob).toHaveBeenCalledTimes(1);
+  });
+
+  it('makes a new job once the form has changed', async () => {
+    mockCreateCustomJob
+      .mockResolvedValueOnce({ id: 'job-1', title: 'Dev' })
+      .mockResolvedValueOnce({ id: 'job-2', title: 'Dev ops' });
+    mockCreateSession
+      .mockRejectedValueOnce(new Error('busy'))
+      .mockResolvedValueOnce({ session_id: 'sess-3' });
+    const user = userEvent.setup();
+    renderPage();
+    await waitFor(() => expect(mockGetConsentStatus).toHaveBeenCalled());
+    await user.type(screen.getByLabelText(/job title/i), 'Dev');
+    await user.click(screen.getByRole('button', { name: /start interview/i }));
+    await waitFor(() => expect(mockCreateSession).toHaveBeenCalledTimes(1));
+    await user.type(screen.getByLabelText(/job title/i), ' ops');
+    await user.click(await screen.findByRole('button', { name: /start interview/i }));
+    await waitFor(() => expect(mockCreateCustomJob).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(mockCreateSession).toHaveBeenLastCalledWith(
+        expect.objectContaining({ job_id: 'job-2' }),
+        'mock-token',
+      ),
+    );
+  });
 });
+

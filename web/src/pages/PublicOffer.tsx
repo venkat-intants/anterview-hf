@@ -4,10 +4,14 @@
 //
 // SECURITY (this page was the subject of a security review):
 // - The token comes from the URL #FRAGMENT, never a path param or query
-//   string — read once into state, then stripped from the address bar with
-//   history.replaceState so it never lingers in browser history. It lives in
-//   memory for the rest of the page's life and is sent as the X-Offer-Token
-//   header on every /offer call (see api/publicOffer.ts) — never a URL.
+//   string — read once, then stripped from the address bar with
+//   history.replaceState so it never lingers in browser history. It is kept in
+//   memory and in THIS TAB's sessionStorage (useFragmentToken's per-tab mode,
+//   the /exam pattern), so a reload while reading the offer or waiting for a
+//   code does not land on "this link isn't valid" (audit CA-H3). Never
+//   localStorage, a cookie or a URL, and dropped once the offer reaches a
+//   terminal state. It is sent as the X-Offer-Token header on every /offer
+//   call (see api/publicOffer.ts) — never a URL.
 // - Answering needs a 6-digit code emailed on request. Documents need a
 //   SECOND code, traded for an hour-long session token that is ALSO kept in
 //   memory only — never localStorage, sessionStorage, or a URL — and sent as
@@ -37,6 +41,8 @@ import {
   type PublicChecklistItem,
   type PublicOffer as PublicOfferShape,
 } from '@/api/publicOffer';
+import type { PayPeriod } from '@/api/offers';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { DataList, Stepper } from '@/design/components/page';
 import type { DataItem } from '@/design/components/page';
@@ -49,6 +55,20 @@ import {
   type OfferStepKey,
 } from '@/lib/offerSteps';
 import { AlertCircle, CheckCircle2, Loader2, Lock, Upload } from '@/design/components/icons';
+import {
+  FRAGMENT_TOKEN_KEYS,
+  forgetFragmentToken,
+  useFragmentToken,
+} from '@/hooks/useFragmentToken';
+
+/** Offer states in which the link can do nothing more. */
+const TERMINAL_OFFER_STATUSES: ReadonlySet<string> = new Set(['expired', 'withdrawn', 'declined']);
+
+const PAY_PERIOD_KEY: Record<PayPeriod, string> = {
+  annual: 'offer.payPerYear',
+  monthly: 'offer.payPerMonth',
+  hourly: 'offer.payPerHour',
+};
 
 const MAX_DOC_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -62,8 +82,37 @@ function localeFor(lang: string): string {
 /** The server's own sentence, shown exactly as written — never paraphrased
  *  or translated, so a candidate reading it and calling the hiring team
  *  describes precisely what they saw. */
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
+// How long "Resend code" waits after a code is sent (audit CA-M28). The server
+// rate-limits sends as well; this only keeps a double tap from asking twice.
+const RESEND_COOLDOWN_SECONDS = 30;
+
+/** "Resend code", disabled with a countdown for a short while after a send. */
+function ResendCode({
+  sentAt,
+  pending,
+  onResend,
+}: {
+  sentAt: number;
+  pending: boolean;
+  onResend: () => void;
+}) {
+  const { t } = useTranslation();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const wait = Math.max(0, RESEND_COOLDOWN_SECONDS - Math.floor((now - sentAt) / 1000));
+  return (
+    <button
+      type="button"
+      onClick={onResend}
+      disabled={pending || wait > 0}
+      className="inline-flex min-h-10 items-center self-start rounded text-[13px] font-semibold text-[var(--ui-info)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:text-muted-foreground disabled:no-underline"
+    >
+      {wait > 0 ? t('offer.resendIn', { count: wait }) : t('offer.resendCode')}
+    </button>
+  );
 }
 
 function isLocked(e: unknown): e is ApiError {
@@ -144,7 +193,8 @@ function OfferFacts({
   if (pay) {
     facts.push({
       label: t('offer.compensation'),
-      value: `${pay}${offer.pay_period ? ` / ${offer.pay_period}` : ''}`,
+      // The period in words, not the stored code ("/ annual"; audit CA-L10).
+      value: offer.pay_period ? t(PAY_PERIOD_KEY[offer.pay_period], { pay }) : pay,
     });
   }
   if (offer.employment_type) {
@@ -260,7 +310,10 @@ function AnswerPanel({
   onCancel: () => void;
 }) {
   const { t, i18n } = useTranslation();
+  const errText = useCandidateError();
   const [codeSent, setCodeSent] = useState(false);
+  const [sentAt, setSentAt] = useState(0);
+  const [resent, setResent] = useState(false);
   const [minutes, setMinutes] = useState<number | null>(null);
   const [code, setCode] = useState('');
   const [fullName, setFullName] = useState('');
@@ -270,7 +323,9 @@ function AnswerPanel({
   const codeMut = useMutation({
     mutationFn: () => requestOfferCode(token, purpose),
     onSuccess: (res) => {
+      setResent(codeSent);
       setCodeSent(true);
+      setSentAt(Date.now());
       setMinutes(res.minutes);
       setError(null);
     },
@@ -312,9 +367,12 @@ function AnswerPanel({
         </>
       ) : (
         <>
-          <p className="mt-2 text-[13px] text-[var(--ui-ok)]">
-            {t('offer.codeSent', { minutes: minutes ?? '' })}
+          <p className="mt-2 text-[13px] text-[var(--ui-ok)]" aria-live="polite">
+            {resent ? t('offer.codeResent') : t('offer.codeSent', { minutes: minutes ?? '' })}
           </p>
+          {/* The email may not arrive: ask again here instead of starting
+              over (audit CA-M28). */}
+          <ResendCode sentAt={sentAt} pending={codeMut.isPending} onResend={() => codeMut.mutate()} />
           <div className="mt-4 flex flex-col gap-3">
             <label className={FIELD_LABEL}>
               {t('offer.codeLabel')}
@@ -433,6 +491,7 @@ function DocumentRow({
   onSessionExpired: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [expiresOn, setExpiresOn] = useState('');
   const [error, setError] = useState<string | null>(null);
 
@@ -557,9 +616,12 @@ function DocumentRow({
 
 function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferShape }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const qc = useQueryClient();
   const [session, setSession] = useState<string | null>(null);
   const [codeSent, setCodeSent] = useState(false);
+  const [sentAt, setSentAt] = useState(0);
+  const [resent, setResent] = useState(false);
   const [minutes, setMinutes] = useState<number | null>(null);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -579,7 +641,9 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
   const codeMut = useMutation({
     mutationFn: () => requestDocumentsCode(token),
     onSuccess: (res) => {
+      setResent(codeSent);
       setCodeSent(true);
+      setSentAt(Date.now());
       setMinutes(res.minutes);
       setError(null);
     },
@@ -666,9 +730,14 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
             </>
           ) : (
             <div className="flex flex-col gap-3">
-              <p className="text-[13px] text-[var(--ui-ok)]">
-                {t('offer.codeSent', { minutes: minutes ?? '' })}
+              <p className="text-[13px] text-[var(--ui-ok)]" aria-live="polite">
+                {resent ? t('offer.codeResent') : t('offer.codeSent', { minutes: minutes ?? '' })}
               </p>
+              <ResendCode
+                sentAt={sentAt}
+                pending={codeMut.isPending}
+                onResend={() => codeMut.mutate()}
+              />
               <label className={FIELD_LABEL}>
                 {t('offer.codeLabel')}
                 <input
@@ -887,12 +956,8 @@ export default function PublicOffer(): JSX.Element {
 
   // SECURITY: token from the URL #fragment — never a path param or query
   // string. Read once, then the fragment is stripped from the address bar so
-  // it never lingers in browser history; the token itself lives only in this
-  // component's memory for the rest of the page's life.
-  const [token] = useState(() => window.location.hash.replace(/^#/, '').trim());
-  useEffect(() => {
-    if (token) window.history.replaceState(null, '', window.location.pathname);
-  }, [token]);
+  // it never lingers in browser history; kept for this tab only (see header).
+  const token = useFragmentToken(FRAGMENT_TOKEN_KEYS.offer);
 
   const [locked, setLocked] = useState<string | null>(null);
 
@@ -903,6 +968,17 @@ export default function PublicOffer(): JSX.Element {
     retry: (failureCount, error) => isTransientApiError(error) && failureCount < 2,
     staleTime: 0,
   });
+
+  // A link that can do nothing more is a spent credential: drop it from this
+  // tab's storage. An accepted offer is NOT terminal, since its documents step
+  // still needs the token.
+  const spent =
+    locked !== null ||
+    (view.isError && !isTransientApiError(view.error)) ||
+    TERMINAL_OFFER_STATUSES.has(view.data?.status ?? '');
+  useEffect(() => {
+    if (spent) forgetFragmentToken(FRAGMENT_TOKEN_KEYS.offer);
+  }, [spent]);
 
   if (locked) {
     return (
@@ -940,7 +1016,7 @@ export default function PublicOffer(): JSX.Element {
           title={t('offer.invalidTitle')}
           desc={t('offer.invalidDesc')}
         />
-        <p className="text-center text-[13px] text-[var(--ui-soft)]">{t('publicFrame.requestNew')}</p>
+        <p className="text-center text-[13px] text-[var(--ui-soft)]">{t('publicFrame.reopenEmail')}</p>
       </PageWrap>
     );
   }

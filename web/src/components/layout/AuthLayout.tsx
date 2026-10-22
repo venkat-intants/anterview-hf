@@ -354,11 +354,18 @@ const STRENGTH_COLOR = [
   'var(--ui-info)',
   'var(--ui-ok)',
 ];
-const STRENGTH_LABEL = ['Too weak', 'Weak', 'Fair', 'Good', 'Strong'];
+const STRENGTH_LABEL_KEYS = [
+  'auth.strength0',
+  'auth.strength1',
+  'auth.strength2',
+  'auth.strength3',
+  'auth.strength4',
+] as const;
 
 /** Four-segment strength meter. The word carries the meaning; colour only
  *  reinforces it. Renders nothing for an empty password. */
 export function PasswordStrength({ password }: { password: string }) {
+  const { t } = useTranslation();
   if (password.length === 0) return null;
   const strength = strengthOf(password);
   return (
@@ -377,7 +384,7 @@ export function PasswordStrength({ password }: { password: string }) {
         className="w-16 text-right text-[12px] font-semibold"
         style={{ color: STRENGTH_COLOR[strength] }}
       >
-        {STRENGTH_LABEL[strength]}
+        {t(STRENGTH_LABEL_KEYS[strength])}
       </span>
     </div>
   );

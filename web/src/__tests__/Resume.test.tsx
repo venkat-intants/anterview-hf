@@ -110,7 +110,7 @@ describe('Resume page', () => {
     mockListResumes.mockImplementation(() => new Promise(() => undefined));
     mockGetCurrentResume.mockImplementation(() => new Promise(() => undefined));
     renderResume();
-    expect(screen.getByLabelText(/loading resume data/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/loading your resumes/i)).toBeInTheDocument();
   });
 
   it('displays the current resume filename in the active resume card', async () => {
@@ -212,5 +212,35 @@ describe('Resume page', () => {
     await waitFor(() => {
       expect(screen.getByText(/upload new version/i)).toBeInTheDocument();
     });
+  });
+  // Audit CA-M7: a failed list used to show "No resume on file".
+  it('shows a retryable error, not the upload-first empty state, when the list fails', async () => {
+    mockListResumes.mockRejectedValueOnce(new Error('boom'));
+    renderResume();
+    expect(await screen.findByText('Could not load your resumes.')).toBeInTheDocument();
+    expect(screen.queryByText('No resume on file')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect((await screen.findAllByText('priya_resume_v2.pdf')).length).toBeGreaterThan(0);
+  });
+
+  // Audit CA-L6: text_length counts characters, it is not a file size.
+  it('reports the extracted text as a character count, not kilobytes', async () => {
+    renderResume();
+    expect((await screen.findAllByText(/2840 characters extracted/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/KB/)).not.toBeInTheDocument();
+  });
+
+  // Audit CA-L9: accessible names follow the UI language.
+  it('localises the row action names', async () => {
+    await i18n.changeLanguage('hi');
+    try {
+      renderResume();
+      expect(
+        await screen.findByRole('button', { name: 'priya_resume_v1.pdf हटाएँ' }),
+      ).toBeInTheDocument();
+    } finally {
+      await i18n.changeLanguage('en');
+    }
   });
 });

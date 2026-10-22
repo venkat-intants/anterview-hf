@@ -22,9 +22,13 @@ import pytest
 
 from app.application_questions import (
     EDITABLE_AFTER_ANSWERS,
+    MAX_ANSWER_CHARS,
+    MAX_OPTIONS,
+    MAX_QUESTIONS_PER_OPENING,
     QUESTION_KINDS,
     AnswerError,
     QuestionError,
+    bound_draft_answers,
     coerce_answer,
     validate_answers,
     validate_shape,
@@ -303,3 +307,50 @@ def test_answers_are_validated_before_anything_is_stored() -> None:
 
     src = inspect.getsource(submit_application)
     assert src.index("validate_answers(") < src.index("Read the resume")
+
+
+# ---------------------------------------------------------------------------
+# A saved draft's answers are bounded (CWE-770). PATCH /apply/draft is the
+# normal write path for them, and a draft token holder could otherwise store
+# any number of keys of any size in application_drafts.answers.
+# ---------------------------------------------------------------------------
+def test_a_draft_keeps_only_answers_to_the_openings_questions() -> None:
+    asked = q(kind="short_text")
+    out = bound_draft_answers([asked], {str(asked["id"]): "yes", "not-a-question": "x"})
+    assert out == {str(asked["id"]): "yes"}
+
+
+def test_a_draft_answer_is_cut_to_the_length_submission_keeps() -> None:
+    asked = q(kind="long_text")
+    out = bound_draft_answers([asked], {str(asked["id"]): "a" * (MAX_ANSWER_CHARS + 500)})
+    assert len(out[str(asked["id"])]) == MAX_ANSWER_CHARS
+
+
+def test_a_draft_still_saves_what_submission_would_refuse() -> None:
+    """Incomplete is allowed: a half-typed number and a blank required answer."""
+    number = q(kind="number", required=True)
+    blank = q(kind="short_text", required=True)
+    out = bound_draft_answers(
+        [number, blank], {str(number["id"]): "1.", str(blank["id"]): None},
+    )
+    assert out == {str(number["id"]): "1.", str(blank["id"]): None}
+
+
+@pytest.mark.parametrize(
+    "value",
+    [{"nested": "object"}, ["ok", 3], ["c"] * (MAX_OPTIONS + 1), float("nan")],
+)
+def test_a_draft_answer_the_form_could_not_produce_is_refused(value: object) -> None:
+    asked = q(kind="multi_choice", options=["c"])
+    with pytest.raises(AnswerError):
+        bound_draft_answers([asked], {str(asked["id"]): value})
+
+
+def test_the_draft_body_caps_the_number_of_answers() -> None:
+    from pydantic import ValidationError
+
+    from app.routers.public_apply import DraftFieldsIn
+
+    too_many = {str(uuid.uuid4()): "x" for _ in range(MAX_QUESTIONS_PER_OPENING + 1)}
+    with pytest.raises(ValidationError):
+        DraftFieldsIn(answers=too_many)

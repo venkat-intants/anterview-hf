@@ -1,4 +1,5 @@
 import { Moon, Sun } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
 import { useThemeMode, type ThemeMode } from '@/lib/useThemeMode';
 
@@ -14,23 +15,24 @@ import { useThemeMode, type ThemeMode } from '@/lib/useThemeMode';
  * action.
  */
 export default function ModeSwitch({ className }: { className?: string }) {
+  const { t } = useTranslation();
   const [mode, setMode] = useThemeMode();
 
-  const options: { id: ThemeMode; label: string; Icon: typeof Sun }[] = [
-    { id: 'light', label: 'Light', Icon: Sun },
-    { id: 'dark', label: 'Dark', Icon: Moon },
+  const options: { id: ThemeMode; label: string; title: string; Icon: typeof Sun }[] = [
+    { id: 'light', label: t('shell.modeLight'), title: t('shell.modeLightTitle'), Icon: Sun },
+    { id: 'dark', label: t('shell.modeDark'), title: t('shell.modeDarkTitle'), Icon: Moon },
   ];
 
   return (
     <div
       role="radiogroup"
-      aria-label="Colour mode"
+      aria-label={t('shell.colourMode')}
       className={cn(
         'flex h-9 items-center gap-0.5 rounded-full border border-border bg-card p-[3px]',
         className,
       )}
     >
-      {options.map(({ id, label, Icon }) => {
+      {options.map(({ id, label, title, Icon }) => {
         const active = mode === id;
         return (
           <button
@@ -39,7 +41,7 @@ export default function ModeSwitch({ className }: { className?: string }) {
             role="radio"
             aria-checked={active}
             aria-label={label}
-            title={`${label} mode`}
+            title={title}
             data-testid={`mode-${id}`}
             onClick={() => setMode(id)}
             className={cn(

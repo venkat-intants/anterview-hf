@@ -6,7 +6,8 @@
 //     history.replaceState on arrival — it must never linger in the address
 //     bar or reach a server as anything but the X-Offer-Token header;
 //   • the documents session token is never written to localStorage or
-//     sessionStorage — it lives in memory only;
+//     sessionStorage — it lives in memory only (the offer token itself is kept
+//     in this tab's sessionStorage so a reload works, audit CA-H3);
 //   • a 423 (too many wrong codes) locks the whole flow with the server's own
 //     wording, and a 401 on the documents session sends the candidate back to
 //     asking for a new code rather than failing silently;
@@ -132,7 +133,33 @@ describe('PublicOffer - the link itself', () => {
     await screen.findByText('Backend Engineer');
 
     expect(viewOffer).toHaveBeenCalledWith('offer_tok_123456');
-    expect(replaceState).toHaveBeenCalledWith(null, '', '/');
+    // Path and router state kept; only the fragment goes.
+    expect(replaceState).toHaveBeenCalledWith(window.history.state, '', '/');
+  });
+
+  // Audit CA-H3: a reload used to land on "this link isn't valid".
+  it('still opens the offer after a reload, once the fragment is gone', async () => {
+    const first = renderPage();
+    await screen.findByText('Backend Engineer');
+    first.unmount();
+    window.location.hash = '';
+    viewOffer.mockClear();
+
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    expect(viewOffer).toHaveBeenCalledWith('offer_tok_123456');
+  });
+
+  it('forgets the link once the offer can do nothing more', async () => {
+    viewOffer.mockResolvedValue({ ...SENT, status: 'withdrawn' });
+    renderPage();
+    await waitFor(() => expect(sessionStorage.getItem('anthire.offer.token')).toBeNull());
+  });
+
+  it('tells them to reopen the emailed link before asking for a new one', async () => {
+    viewOffer.mockRejectedValue(new ApiError('Not found', 404));
+    renderPage();
+    expect(await screen.findByText(/Open the link in that email again/)).toBeInTheDocument();
   });
 
   it('never calls the API and shows an invalid link when there is no token', async () => {
@@ -166,6 +193,9 @@ describe('PublicOffer - a sent offer', () => {
     await screen.findByText('Backend Engineer');
     expect(screen.getByText('Acme Corp')).toBeInTheDocument();
     expect(screen.getByText(/12,00,000|1,200,000/)).toBeInTheDocument();
+    // The period in words, not the stored code (audit CA-L10).
+    expect(screen.getByText(/per year/)).toBeInTheDocument();
+    expect(screen.queryByText(/\/ annual/)).not.toBeInTheDocument();
   });
 
   it('offers Accept and Decline, and nothing from the documents step', async () => {
@@ -196,6 +226,31 @@ describe('PublicOffer - a sent offer', () => {
       expect(acceptOffer).toHaveBeenCalledWith('offer_tok_123456', '123456', 'Kiran Rao', 'en'),
     );
     expect(await screen.findByText('Offer accepted')).toBeInTheDocument();
+  });
+
+  // Audit CA-M28: an email that never arrived meant cancelling and starting over.
+  it('offers to resend the code after a short wait', async () => {
+    const user = userEvent.setup();
+    requestOfferCode.mockResolvedValue({ sent: true, minutes: 15 });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Accept offer' }));
+    await user.click(screen.getByRole('button', { name: 'Send me a code' }));
+    await screen.findByText(/Code sent/);
+
+    const wait = screen.getByRole('button', { name: /^Resend code in \d+ seconds$/ });
+    expect(wait).toBeDisabled();
+
+    // Half a minute later.
+    const realNow = Date.now.bind(Date);
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 31_000);
+    try {
+      const resend = await screen.findByRole('button', { name: 'Resend code' }, { timeout: 2500 });
+      await user.click(resend);
+      await waitFor(() => expect(requestOfferCode).toHaveBeenCalledTimes(2));
+      expect(await screen.findByText('We sent a new code. Use the newest one.')).toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('says what accepting agrees to, before the candidate confirms (DPDP)', async () => {
@@ -318,9 +373,11 @@ describe('PublicOffer - documents, once accepted', () => {
     await screen.findByText('PAN card');
 
     // The token this whole step exists to protect must never land in
-    // persistent storage — only ever held in the component's own memory.
+    // persistent storage — only ever held in the component's own memory. The
+    // OFFER token is kept for this tab (CA-H3), and is the only thing stored.
     expect(localStorage.length).toBe(0);
-    expect(sessionStorage.length).toBe(0);
+    expect(JSON.stringify({ ...sessionStorage })).not.toContain('sess_super_secret_token');
+    expect(Object.keys(sessionStorage)).toEqual(['anthire.offer.token']);
   });
 
   it('says so when the hiring team has asked for no documents', async () => {
@@ -490,8 +547,10 @@ describe('PublicOffer - documents, once accepted', () => {
   // property a candidate depends on, it had no test, and the next refactor of
   // this mutation could quietly lose it.
   it.each([
-    ['the server fails', new Error('Internal server error.'), /Internal server error/],
-    ['the request never arrives', new TypeError('Failed to fetch'), /Failed to fetch/],
+    // The wording now comes from the shared candidate error copy (audit
+    // CA-M21): the page's own sentence, never a raw "Failed to fetch".
+    ['the server fails', new Error('Internal server error.'), /Could not upload that file/],
+    ['the request never arrives', new TypeError('Failed to fetch'), /Could not reach the server/],
   ])('tells the candidate when an upload fails because %s', async (_why, failure, shown) => {
     requestDocumentsCode.mockResolvedValue({ sent: true, minutes: 60 });
     openDocumentsSession.mockResolvedValue({

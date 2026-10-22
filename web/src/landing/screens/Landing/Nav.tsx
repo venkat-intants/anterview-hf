@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Menu, X } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+import LanguageSwitcher from '@/components/LanguageSwitcher'
 import { buttonVariants } from '@/components/ui/button'
 import { cn } from '../../lib/cn'
 import { NAV_LINKS } from '../../data/landing'
@@ -12,6 +14,7 @@ const linkClass =
   'rounded-pill px-3 py-2 text-sm font-medium text-[var(--lp-text-muted)] transition-colors hover:text-[var(--lp-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lp-accent)]'
 
 export function Nav({ theme, onThemeChange }: { theme: LandingTheme; onThemeChange: (next: LandingTheme) => void }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const toggleRef = useRef<HTMLButtonElement>(null)
 
@@ -34,12 +37,12 @@ export function Nav({ theme, onThemeChange }: { theme: LandingTheme; onThemeChan
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-3 focus:z-[60] focus:rounded-pill focus:bg-[var(--lp-btn)] focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-[var(--lp-btn-text)]"
       >
-        Skip to content
+        {t('lp.nav.skip')}
       </a>
-      <nav aria-label="Main" className="mx-auto flex h-16 max-w-[1200px] items-center justify-between gap-3 px-4 sm:px-6">
+      <nav aria-label={t('lp.nav.mainAria')} className="mx-auto flex h-16 max-w-[1200px] items-center justify-between gap-3 px-4 sm:px-6">
         <a
           href="#top"
-          aria-label="AntHire, back to top"
+          aria-label={t('lp.nav.backToTop')}
           className="flex items-center gap-2.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lp-accent)]"
         >
           <BrandMark />
@@ -49,21 +52,23 @@ export function Nav({ theme, onThemeChange }: { theme: LandingTheme; onThemeChan
         <ul className="hidden items-center gap-1 lg:flex">
           {NAV_LINKS.map((l) => (
             <li key={l.href}>
-              <a href={l.href} className={linkClass}>{l.label}</a>
+              <a href={l.href} className={linkClass}>{t(l.labelKey)}</a>
             </li>
           ))}
         </ul>
 
         <div className="flex items-center gap-2">
+          {/* The page is read in EN/HI/TE like every other public page (audit CA-M16). */}
+          <LanguageSwitcher />
           <ThemeSwitch theme={theme} onChange={onThemeChange} className="hidden sm:flex" />
-          <Link to="/login" className={cn(linkClass, 'hidden h-10 items-center sm:inline-flex')}>Log in</Link>
-          <Link to="/register" className={buttonVariants({ size: 'default' })}>Sign up</Link>
+          <Link to="/login" className={cn(linkClass, 'hidden h-10 items-center sm:inline-flex')}>{t('lp.nav.signIn')}</Link>
+          <Link to="/register" className={buttonVariants({ size: 'default' })}>{t('lp.nav.signUp')}</Link>
           <button
             ref={toggleRef}
             type="button"
             aria-expanded={open}
             aria-controls="landing-mobile-menu"
-            aria-label={open ? 'Close menu' : 'Open menu'}
+            aria-label={open ? t('lp.nav.closeMenu') : t('lp.nav.openMenu')}
             onClick={() => setOpen((o) => !o)}
             className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--lp-line)] bg-[var(--lp-surface)] text-[var(--lp-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lp-accent)] lg:hidden"
           >
@@ -82,7 +87,7 @@ export function Nav({ theme, onThemeChange }: { theme: LandingTheme; onThemeChan
                   onClick={() => setOpen(false)}
                   className="flex min-h-[44px] items-center rounded-lg px-1 text-base font-medium text-[var(--lp-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lp-accent)]"
                 >
-                  {l.label}
+                  {t(l.labelKey)}
                 </a>
               </li>
             ))}
@@ -91,12 +96,12 @@ export function Nav({ theme, onThemeChange }: { theme: LandingTheme; onThemeChan
                 to="/login"
                 className="flex min-h-[44px] items-center rounded-lg px-1 text-base font-medium text-[var(--lp-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--lp-accent)]"
               >
-                Log in
+                {t('lp.nav.signIn')}
               </Link>
             </li>
           </ul>
           <div className="mt-3 flex items-center justify-between sm:hidden">
-            <span className="text-sm text-[var(--lp-text-muted)]">Appearance</span>
+            <span className="text-sm text-[var(--lp-text-muted)]">{t('lp.nav.appearance')}</span>
             <ThemeSwitch theme={theme} onChange={onThemeChange} testIdPrefix="landing-menu-theme" />
           </div>
         </div>

@@ -179,18 +179,18 @@ describe('Scorecard page', () => {
   it('displays the score breakdown section', async () => {
     renderScorecard();
     await waitFor(() => {
-      expect(screen.getByText('Score Breakdown')).toBeInTheDocument();
+      expect(screen.getByText('Score breakdown')).toBeInTheDocument();
     });
     expect(screen.getByText('Communication')).toBeInTheDocument();
-    expect(screen.getByText('Technical Knowledge')).toBeInTheDocument();
-    expect(screen.getByText('Problem Solving')).toBeInTheDocument();
+    expect(screen.getByText('Technical knowledge')).toBeInTheDocument();
+    expect(screen.getByText('Problem solving')).toBeInTheDocument();
     expect(screen.getByText('Confidence')).toBeInTheDocument();
   });
 
   it('displays strengths list', async () => {
     renderScorecard();
     await waitFor(() => {
-      expect(screen.getByText('Key Strengths')).toBeInTheDocument();
+      expect(screen.getByText('Key strengths')).toBeInTheDocument();
     });
     expect(screen.getByText('Clear communication throughout the interview')).toBeInTheDocument();
     expect(screen.getByText('Good use of concrete examples')).toBeInTheDocument();
@@ -199,7 +199,7 @@ describe('Scorecard page', () => {
   it('displays improvements with area and suggestion', async () => {
     renderScorecard();
     await waitFor(() => {
-      expect(screen.getByText('Areas for Improvement')).toBeInTheDocument();
+      expect(screen.getByText('Areas for improvement')).toBeInTheDocument();
     });
     expect(screen.getByText('Technical Depth:')).toBeInTheDocument();
     expect(screen.getByText('Practice system design concepts.')).toBeInTheDocument();
@@ -407,5 +407,63 @@ describe('Scorecard page', () => {
       expect(screen.getAllByRole('heading', { name: /your scorecard/i }).length).toBeGreaterThan(0);
     });
     expect(screen.queryByText('Interview integrity')).not.toBeInTheDocument();
+  });
+  // ── Audit CA-M14 / CA-L13 ─────────────────────────────────────────────────
+
+  it('gives a guest a retry, not a History link it cannot open, when loading fails', async () => {
+    sessionRoles = ['guest_candidate'];
+    mockGetScorecard.mockRejectedValueOnce(new Error('boom'));
+    renderScorecard();
+    const retry = await screen.findByRole('button', { name: 'Try again' });
+    expect(screen.queryByRole('link', { name: /history/i })).not.toBeInTheDocument();
+
+    mockGetScorecard.mockResolvedValueOnce(MOCK_SCORECARD_DATA);
+    await userEvent.click(retry);
+    expect(await screen.findByRole('heading', { name: /your scorecard/i })).toBeInTheDocument();
+  });
+
+  it('keeps the History link for an account holder when loading fails', async () => {
+    mockGetScorecard.mockRejectedValueOnce(new Error('boom'));
+    renderScorecard();
+    await screen.findByRole('button', { name: 'Try again' });
+    expect(screen.getByRole('link', { name: /history/i })).toBeInTheDocument();
+  });
+
+  it('does not offer a guest a retake that does not exist', async () => {
+    sessionRoles = ['guest_candidate'];
+    mockGetScorecard.mockResolvedValueOnce({
+      ...MOCK_SCORECARD_DATA,
+      report_pdf_url: 'https://r2.example.com/scorecards/001/report.pdf?sig=abc',
+    });
+    renderScorecard();
+    await screen.findByText('Keep a copy of your scorecard');
+    expect(screen.queryByText(/improve your score/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /practice interview/i })).not.toBeInTheDocument();
+  });
+
+  it('shows a guest no footer at all when there is no PDF to keep', async () => {
+    sessionRoles = ['guest_candidate'];
+    renderScorecard();
+    await screen.findByRole('heading', { name: /your scorecard/i });
+    expect(screen.queryByText(/improve your score/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Keep a copy of your scorecard')).not.toBeInTheDocument();
+  });
+
+  it('offers an account holder a real next practice interview', async () => {
+    renderScorecard();
+    const link = await screen.findByRole('link', { name: 'Practice interview' });
+    expect(link).toHaveAttribute('href', '/start');
+  });
+
+  it('has only one primary Download PDF button', async () => {
+    mockGetScorecard.mockResolvedValueOnce({
+      ...MOCK_SCORECARD_DATA,
+      report_pdf_url: 'https://r2.example.com/scorecards/001/report.pdf?sig=abc',
+    });
+    renderScorecard();
+    await screen.findAllByRole('link', { name: /download pdf report/i });
+    const links = screen.getAllByRole('link', { name: /download pdf report/i });
+    expect(links).toHaveLength(2);
+    expect(links.filter((l) => l.className.includes('bg-primary'))).toHaveLength(1);
   });
 });

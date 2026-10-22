@@ -44,7 +44,11 @@ type Phase = 'checking' | 'ready' | 'expired' | 'done';
 export default function ActivateAccount() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  // Read once, then removed from the address bar and history entry.
+  // Read once, then removed from the address bar and history entry, and held
+  // in memory only. This token sets a password on an account: kept in tab
+  // storage, a reopened tab on a shared machine would hand the next person a
+  // working form for somebody else's account. A reload costs the form; the
+  // emailed link still works until it is used.
   const token = useFragmentToken();
   const [phase, setPhase] = useState<Phase>(token ? 'checking' : 'expired');
   const [target, setTarget] = useState<ActivationTarget | null>(null);

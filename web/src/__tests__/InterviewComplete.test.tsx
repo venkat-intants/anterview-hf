@@ -129,7 +129,7 @@ describe('InterviewComplete page', () => {
     // The server refuses a guest token on all of these.
     expect(screen.queryByRole('link', { name: /dashboard/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /history/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /new interview/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /practice interview/i })).not.toBeInTheDocument();
   });
 
   it('says the scorecard to come is feedback, not a hiring decision', () => {
@@ -145,6 +145,21 @@ describe('InterviewComplete page', () => {
     const note = screen.getByTestId('not-a-decision');
     expect(note).toHaveTextContent('This is feedback on your interview, not a hiring decision.');
     expect(note).not.toHaveTextContent(/practice/i);
+  });
+
+  // Audit CA-H5: a guest was told to "start a new interview", which they cannot.
+  it('gives an invited guest an early-exit next step they can actually take', () => {
+    authState.roles = ['guest_candidate'];
+    renderCompleteWithState('sess-abc-123', { endedEarly: true });
+    const card = screen.getByTestId('early-exit-card');
+    expect(card).toHaveTextContent(/contact the hiring team/i);
+    expect(card).toHaveTextContent('support@intants.com');
+    expect(card).not.toHaveTextContent(/start a new interview/i);
+  });
+
+  it('still tells an account holder they can start a new interview after an early exit', () => {
+    renderCompleteWithState('sess-abc-123', { endedEarly: true });
+    expect(screen.getByTestId('early-exit-card')).toHaveTextContent(/start a new interview/i);
   });
 
   it('does not promise feedback after an early exit', () => {
@@ -264,9 +279,9 @@ describe('InterviewComplete page', () => {
     expect(historyLink).toHaveAttribute('href', '/history');
   });
 
-  it('has a "New interview" link pointing to /start', () => {
+  it('has a "Practice interview" link pointing to /start', () => {
     renderComplete();
-    const newLink = screen.getByRole('link', { name: /new interview/i });
+    const newLink = screen.getByRole('link', { name: /practice interview/i });
     expect(newLink).toHaveAttribute('href', '/start');
   });
 
@@ -295,10 +310,10 @@ describe('InterviewComplete page', () => {
     expect(mockListSessions).not.toHaveBeenCalled();
   });
 
-  it('shows Dashboard, History and New interview links on early-exit', () => {
+  it('shows Dashboard, History and Practice interview links on early-exit', () => {
     renderCompleteWithState('sess-abc-123', { endedEarly: true });
     expect(screen.getByRole('link', { name: /back to dashboard/i })).toHaveAttribute('href', '/dashboard');
     expect(screen.getByRole('link', { name: /history/i })).toHaveAttribute('href', '/history');
-    expect(screen.getByRole('link', { name: /new interview/i })).toHaveAttribute('href', '/start');
+    expect(screen.getByRole('link', { name: /practice interview/i })).toHaveAttribute('href', '/start');
   });
 });

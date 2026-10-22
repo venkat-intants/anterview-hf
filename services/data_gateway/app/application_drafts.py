@@ -137,6 +137,24 @@ def sanitise(fields: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+# The fields a confirmation vouches for. `language` is a preference about
+# emails, not a detail of the person, so changing it does not undo anything.
+CONFIRMED_FIELDS: tuple[str, ...] = tuple(f for f in DRAFT_FIELDS if f != "language")
+
+
+def details_changed(row: dict[str, Any], fields: dict[str, Any]) -> bool:
+    """Whether saving ``fields`` would change a detail the candidate confirmed.
+
+    Compared after `sanitise`, the same normalisation the write applies, so
+    re-sending the confirmed values unchanged (a trailing space, the same name)
+    is not a change. The submitted application is built from these columns and
+    stamped with `confirmed_at`; letting an edit through without clearing it
+    would submit values nobody confirmed under a timestamp that says they did.
+    """
+    clean = sanitise(fields)
+    return any(k in clean and clean[k] != row.get(k) for k in CONFIRMED_FIELDS)
+
+
 async def start(
     db: AsyncSession,
     *,
@@ -266,6 +284,7 @@ async def save(
     fields: dict[str, Any],
     answers: dict[str, Any] | None = None,
     now: datetime | None = None,
+    unconfirm: bool = False,
 ) -> None:
     """Write progress. Caller commits.
 
@@ -273,6 +292,10 @@ async def save(
     rules — a draft is allowed to be incomplete. Saving extends the expiry, so
     somebody who comes back weekly does not lose their work to a deadline they
     were never shown.
+
+    ``unconfirm`` clears ``confirmed_at`` in the same statement: the caller
+    passes it when the save changes a detail the candidate had confirmed
+    (see `details_changed`), for the same reason a new CV clears it.
     """
     now = now or datetime.now(tz=UTC)
     clean = sanitise(fields)
@@ -282,6 +305,8 @@ async def save(
     if answers is not None:
         assignments.append("answers = CAST(:answers AS jsonb)")
         params["answers"] = json.dumps(answers)
+    if unconfirm:
+        assignments.append("confirmed_at = NULL")
     assignments.extend(["updated_at = :n", "expires_at = :exp"])
     await db.execute(
         text(

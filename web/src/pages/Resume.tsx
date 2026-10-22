@@ -5,6 +5,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { useCandidateFormat } from '@/lib/candidateCopy';
 import {
   FileText,
   Download,
@@ -23,7 +24,7 @@ import {
 import type { ResumeVersionItem } from '@/api/resume';
 import FileUploadZone from '@/components/FileUploadZone';
 import { toast } from '@/lib/toast';
-import { formatDate } from '@/lib/formatters';
+import { LoadErrorPanel } from '@/components/candidate/LoadErrorPanel';
 import { cn } from '@/lib/utils';
 import { downloadUrl } from '@/lib/safeUrl';
 import { StatusTag } from '@/design/components/primitives';
@@ -45,17 +46,12 @@ const RESUME_MAX_BYTES = 5 * 1024 * 1024; // 5 MB
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 // ── Sub-components ─────────────────────────────────────────────────────────────
 
 function LoadingSkeletons() {
+  const { t } = useTranslation();
   return (
-    <div className="space-y-4" aria-busy="true" aria-label="Loading resume data">
+    <div className="space-y-4" aria-busy="true" aria-label={t('resume.loadingAria')}>
       <Skeleton className="h-28 w-full rounded-card" />
       <Skeleton className="h-40 w-full rounded-card" />
       <Skeleton className="h-20 w-full rounded-card" />
@@ -158,6 +154,7 @@ function ResumeVersionRow({
   isDeleting,
 }: ResumeVersionRowProps) {
   const { t } = useTranslation();
+  const fmt = useCandidateFormat();
   return (
     <li
       className={cn(
@@ -197,8 +194,8 @@ function ResumeVersionRow({
             )}
           </div>
           <p className="mt-0.5 text-[13px] text-muted-foreground">
-            {t('resume.uploaded')} {formatDate(item.uploaded_at)} ·{' '}
-            {formatBytes(item.text_length)} {t('resume.extracted')}
+            {t('resume.uploaded')} {fmt.date(item.uploaded_at)} ·{' '}
+            {t('resume.charactersExtracted', { count: item.text_length })}
           </p>
         </div>
       </div>
@@ -209,7 +206,7 @@ function ResumeVersionRow({
           <a
             href={downloadUrl(item.download_url) ?? undefined}
             download={item.filename}
-            aria-label={`Download ${item.filename}`}
+            aria-label={t('resume.downloadAria', { filename: item.filename })}
             className={buttonVariants({ variant: 'outline' })}
           >
             <Download aria-hidden="true" />
@@ -222,7 +219,7 @@ function ResumeVersionRow({
             onClick={() => onSetCurrent(item.resume_id)}
             disabled={isSettingCurrent}
             aria-busy={isSettingCurrent}
-            aria-label={`Set ${item.filename} as current resume`}
+            aria-label={t('resume.setCurrentAria', { filename: item.filename })}
           >
             {isSettingCurrent ? t('resume.setting') : t('resume.setAsCurrent')}
           </Button>
@@ -233,7 +230,7 @@ function ResumeVersionRow({
           className="text-[var(--ui-danger)] hover:text-[var(--ui-danger)]"
           onClick={() => onDelete(item)}
           disabled={isDeleting}
-          aria-label={`Delete ${item.filename}`}
+          aria-label={t('resume.deleteAria', { filename: item.filename })}
         >
           <Trash2 aria-hidden="true" />
         </Button>
@@ -246,6 +243,7 @@ function ResumeVersionRow({
 
 export default function Resume() {
   const { t } = useTranslation();
+  const fmt = useCandidateFormat();
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<ResumeVersionItem | null>(null);
 
@@ -254,6 +252,8 @@ export default function Resume() {
     data: resumes,
     isLoading: resumesLoading,
     isError: resumesError,
+    refetch: refetchResumes,
+    isFetching: resumesFetching,
   } = useQuery({
     queryKey: ['resumes'],
     queryFn: listResumes,
@@ -320,10 +320,11 @@ export default function Resume() {
     [queryClient, t],
   );
 
-  // Error toast — fires once per distinct error transition
+  // The list failing has its own panel with a retry; only the current-resume
+  // card failing on its own is worth a toast.
   useEffect(() => {
-    if (resumesError || currentError) {
-      toast.error(t('resume.loadError'));
+    if (currentError && !resumesError) {
+      toast.error(t('resume.currentLoadError'));
     }
   }, [resumesError, currentError, t]);
 
@@ -339,6 +340,13 @@ export default function Resume() {
 
       {isLoading ? (
         <LoadingSkeletons />
+      ) : resumesError && !resumes ? (
+        // A failed load is not "no resume on file" (audit CA-M7).
+        <LoadErrorPanel
+          title={t('resume.loadError')}
+          onRetry={() => void refetchResumes()}
+          retrying={resumesFetching}
+        />
       ) : !hasResumes ? (
         <EmptyState
           onUploadSuccess={() =>
@@ -364,8 +372,8 @@ export default function Resume() {
                       {currentResume.filename}
                     </p>
                     <p className="text-[13px] text-muted-foreground">
-                      {formatBytes(currentResume.text_length)} ·{' '}
-                      {t('resume.uploaded')} {formatDate(currentResume.uploaded_at)}
+                      {t('resume.charactersExtracted', { count: currentResume.text_length })} ·{' '}
+                      {t('resume.uploaded')} {fmt.date(currentResume.uploaded_at)}
                     </p>
                   </div>
                 </div>
@@ -375,7 +383,7 @@ export default function Resume() {
                     <a
                       href={downloadUrl(currentResume.download_url) ?? undefined}
                       download={currentResume.filename}
-                      aria-label={`Download ${currentResume.filename}`}
+                      aria-label={t('resume.downloadAria', { filename: currentResume.filename })}
                       className={cn(buttonVariants({ variant: 'outline' }), 'flex-1')}
                     >
                       <Download aria-hidden="true" />
@@ -424,7 +432,7 @@ export default function Resume() {
           {/* Right column: version history list */}
           <div className="lg:col-span-3">
             <SectionCard title={t('resume.versionHistory', { count: resumeList.length })}>
-              <ul className="space-y-3" aria-label="Resume version list">
+              <ul className="space-y-3" aria-label={t('resume.listAria')}>
                 {resumeList.map((item) => (
                   <ResumeVersionRow
                     key={item.resume_id}

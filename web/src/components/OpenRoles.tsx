@@ -26,7 +26,8 @@ import { listOpenRoles, type OpenRole } from '@/api/applications';
 import { buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatusTag } from '@/design/components/primitives';
-import { Building2, Check, ExternalLink } from '@/design/components/icons';
+import { Building2, Check, ChevronDown } from '@/design/components/icons';
+import { levelLabel } from '@/lib/candidateCopy';
 import { cn } from '@/lib/utils';
 import { formatMoney, uiLocale } from '@/lib/formatters';
 
@@ -103,7 +104,7 @@ function RoleCard({ role }: { role: OpenRole }) {
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
         <span className="text-[13px] text-muted-foreground">
-          {t('jobs.levelLine', { level: role.level })}
+          {levelLabel(t, role.level)}
           {experience ? ` · ${experience}` : ''}
         </span>
 
@@ -184,7 +185,7 @@ export default function OpenRoles() {
 
       {items.length > 0 ? (
         <p className="mt-3 flex items-center gap-1.5 text-[13px] text-muted-foreground">
-          <ExternalLink size={13} aria-hidden="true" />
+          <ChevronDown size={13} aria-hidden="true" />
           {t('jobs.openRolesPracticeNote')}
         </p>
       ) : null}

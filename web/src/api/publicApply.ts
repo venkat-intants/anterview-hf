@@ -307,6 +307,12 @@ export interface ApplicationDraft {
   parsed: ParsedDetails;
   confirmed: boolean;
   expires_at: string;
+  /**
+   * The opening's screening questions, in HR's order, so the draft page can
+   * ask them: submission validates the draft's answers against these. Optional
+   * only so an older server that does not send it still renders the page.
+   */
+  questions?: PostingQuestion[];
 }
 
 export interface DraftStarted {

@@ -16,9 +16,9 @@ import { getMe } from '@/api/auth';
 import { useAuth } from '@/context/AuthContext';
 import { homePathFor } from '@/components/layout/navSections';
 import { toast } from '@/lib/toast';
+import { takeReturnPath } from '@/lib/returnTo';
 import { CenteredCard } from '@/components/layout/AuthLayout';
 import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
-import { Pill } from '@/design/components/primitives';
 import { AlertCircle } from '@/design/components/icons';
 import type { AuthUser } from '@/types/auth';
 
@@ -77,7 +77,8 @@ export default function GoogleCallback() {
         // role-scoped sidebar does not even link to. homePathFor already
         // returns /dashboard for candidates and for unknown/empty roles, so
         // the candidate path is unchanged.
-        void navigate(homePathFor(me.roles), { replace: true });
+        // Or the protected page that sent them to sign in (audit CA-M27).
+        void navigate(takeReturnPath() ?? homePathFor(me.roles), { replace: true });
       } catch (err) {
         // The server answers with a machine code (GOOGLE_SIGNIN_CANDIDATES_ONLY).
         // Known codes get a sentence in the visitor's language; an unknown
@@ -111,9 +112,9 @@ export default function GoogleCallback() {
             <Link to="/login" className={PRIMARY_LINK_CLASS}>
               {t('googleCallback.backToSignIn')}
             </Link>
-            <Pill variant="outline" type="button" className="min-h-11" onClick={() => window.location.reload()}>
-              {t('googleCallback.retry')}
-            </Pill>
+            {/* No "Retry" that reloads: the code and state in this URL are
+                single use, so a reload always fails (audit CA-M8). A new
+                attempt starts from the sign-in page. */}
           </div>
         </div>
       ) : (

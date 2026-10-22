@@ -113,12 +113,15 @@ async function sitAndSubmit(result: ExamResult): Promise<void> {
   await user.click(screen.getByRole('checkbox'));
   await user.click(screen.getByRole('button', { name: 'Start exam' }));
   await user.click(await screen.findByRole('button', { name: 'Submit exam' }));
+  // Submitting asks first (audit CA-M3).
+  await user.click(within(screen.getByTestId('exam-confirm')).getByRole('button', { name: 'Submit exam' }));
   await screen.findByTestId('exam-submitted');
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   window.location.hash = '#exam_tok_123456';
+  sessionStorage.clear();
   auth.value = { isAuthenticated: false, isInitializing: false, user: null };
   Object.defineProperty(document, 'fullscreenElement', {
     value: document.body,

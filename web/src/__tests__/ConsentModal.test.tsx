@@ -1,9 +1,10 @@
 // Tests for ConsentModal component — S3-011
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ConsentModal from '../components/ConsentModal';
+import i18n from '../lib/i18n';
 
 function renderModal(overrides: Partial<React.ComponentProps<typeof ConsentModal>> = {}) {
   const defaults = {
@@ -111,6 +112,24 @@ describe('ConsentModal', () => {
     await user.keyboard('{Escape}');
 
     expect(props.onDecline).toHaveBeenCalledOnce();
+  });
+
+  // Audit CA-L17: Esc during the consent POST declined while the pending
+  // agree still went on to start the session.
+  it('ignores Escape while the consent is being saved', () => {
+    const { props } = renderModal({ isSubmitting: true });
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+    expect(props.onDecline).not.toHaveBeenCalled();
+  });
+
+  it('keeps a localised accessible name on the agree button while saving', async () => {
+    await i18n.changeLanguage('hi');
+    try {
+      renderModal({ isSubmitting: true });
+      expect(screen.getByRole('button', { name: 'मैं सहमत हूँ' })).toBeDisabled();
+    } finally {
+      await i18n.changeLanguage('en');
+    }
   });
 
   // --- Submitting state ---

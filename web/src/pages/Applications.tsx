@@ -35,6 +35,7 @@ import type { CandidateOffer } from '@/api/offers';
 import { toast } from '@/lib/toast';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useCandidateFormat } from '@/lib/candidateCopy';
 import type { TFunction } from 'i18next';
 import { buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -43,7 +44,6 @@ import { Card } from '@/design/components/card';
 import { Section } from '@/design/components/rows';
 import { TurnBadge } from '@/design/components/next-step';
 import { StatusTag } from '@/design/components/primitives';
-import { formatDate } from '@/lib/formatters';
 import { useCandidateActions } from '@/hooks/useCandidateActions';
 import { actionsForApplication, turnOf, type CandidateAction } from '@/lib/candidateActions';
 import { nextStepText, stageText, stageTone } from '@/lib/applicationStage';
@@ -113,6 +113,7 @@ function ApplicationCard({
   offers: CandidateOffer[];
 }) {
   const { t } = useTranslation();
+  const fmt = useCandidateFormat();
   const [open, setOpen] = useState(false);
   const [alsoOpen, setAlsoOpen] = useState(false);
   const turn = turnOf(app, mine);
@@ -120,7 +121,13 @@ function ApplicationCard({
 
   // The history is only fetched when someone asks for it. Most people want the
   // headline; loading a timeline per card would be work nobody requested.
-  const { data: detail, isLoading } = useQuery({
+  const {
+    data: detail,
+    isLoading,
+    isError: detailError,
+    refetch: refetchDetail,
+    isFetching: detailFetching,
+  } = useQuery({
     queryKey: ['my-application', app.id],
     queryFn: () => getMyApplication(app.id),
     enabled: open,
@@ -135,7 +142,7 @@ function ApplicationCard({
       titleAs="h3"
       data-testid={`application-${app.id}`}
       title={app.job_title}
-      description={`${app.company_name} · ${t('applications.applied', { date: formatDate(app.applied_at) })}`}
+      description={`${app.company_name} · ${t('applications.applied', { date: fmt.date(app.applied_at) })}`}
       actions={
         <span className="flex flex-wrap items-center justify-end gap-2">
           <StatusTag tone={stageTone(app)} dot>
@@ -216,6 +223,20 @@ function ApplicationCard({
               {isLoading && (
                 <p className="text-[13.5px] text-muted-foreground">{t('applications.loading')}</p>
               )}
+              {detailError && !detail && (
+                // A failed load used to leave the panel blank (audit CA-L2).
+                <p role="alert" className="flex flex-wrap items-center gap-2 text-[13.5px] text-muted-foreground">
+                  {t('applications.historyLoadError')}
+                  <button
+                    type="button"
+                    onClick={() => void refetchDetail()}
+                    disabled={detailFetching}
+                    className="inline-flex min-h-[40px] items-center rounded font-semibold text-[var(--ui-info)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
+                  >
+                    {detailFetching ? t('error.tryingAgain') : t('error.tryAgain')}
+                  </button>
+                </p>
+              )}
               {detail && detail.history.length === 0 && (
                 <p className="text-[13.5px] text-muted-foreground">
                   {t('applications.nothingChanged')}
@@ -235,7 +256,7 @@ function ApplicationCard({
                         {stageText(t, e)}
                         <span className="text-muted-foreground">
                           {' '}
-                          · {formatDate(e.occurred_at)}
+                          · {fmt.date(e.occurred_at)}
                           {/* Worth surfacing: it answers "did a person look at
                               this, or did the system move me?" — which is exactly
                               what someone waiting wants to know. */}

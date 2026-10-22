@@ -34,9 +34,11 @@ interface JobCardProps {
   job: Job;
   onStartInterview: (jobId: string) => void;
   isStarting: boolean;
+  /** True while any card's session is being created (audit CA-L4). */
+  disabled?: boolean;
 }
 
-export default function JobCard({ job, onStartInterview, isStarting }: JobCardProps) {
+export default function JobCard({ job, onStartInterview, isStarting, disabled = false }: JobCardProps) {
   const { t } = useTranslation();
   const levelLabel = LEVEL_KEY[job.level] ? t(LEVEL_KEY[job.level]) : job.level;
   const levelClass = LEVEL_CLASS[job.level] ?? 'bg-[var(--ui-inset-strong)] text-[var(--ui-soft)]';
@@ -74,7 +76,7 @@ export default function JobCard({ job, onStartInterview, isStarting }: JobCardPr
         <Button
           type="button"
           onClick={() => onStartInterview(job.id)}
-          disabled={isStarting}
+          disabled={isStarting || disabled}
           aria-label={t('jobs.startAria', { title: job.title })}
           aria-busy={isStarting}
         >

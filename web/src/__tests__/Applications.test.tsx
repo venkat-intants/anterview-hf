@@ -949,4 +949,17 @@ describe('Applications - a 409 question belongs to the action that asked it', ()
     expect(screen.queryByRole('button', { name: 'Open it here' })).not.toBeInTheDocument();
     expect(screen.queryByText(/already open in another tab/)).not.toBeInTheDocument();
   });
+  // Audit CA-L2: a failed history load used to leave the panel blank.
+  it('says the history could not load, and retries', async () => {
+    getMyApplication.mockRejectedValueOnce(new Error('down'));
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    await user.click(screen.getByRole('button', { name: /Show history/ }));
+
+    expect(await screen.findByText("Could not load this application's history.")).toBeInTheDocument();
+    getMyApplication.mockResolvedValueOnce({ ...app(), history: [] } satisfies MyApplicationDetail);
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(getMyApplication).toHaveBeenCalledTimes(2));
+  });
 });

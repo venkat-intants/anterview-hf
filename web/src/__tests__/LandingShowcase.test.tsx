@@ -208,3 +208,28 @@ describe('Landing: a company hiring platform', () => {
     expect(hero).toHaveTextContent(/companies are set up with our team/i);
   });
 });
+
+// Audit CA-M16: the landing page reads in the visitor's language and offers the
+// language switcher like every other public page.
+describe('Landing - languages', () => {
+  beforeEach(() => stubReducedMotion(true));
+  afterEach(async () => {
+    await i18n.changeLanguage('en');
+  });
+
+  it('offers the language switcher', () => {
+    renderLanding();
+    expect(screen.getAllByRole('group', { name: 'UI language' }).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['hi', 'तेज़ी से भर्ती करें, हर आवेदक के लिए निष्पक्ष पहले दौर के साथ।', 'सामान्य प्रश्न'],
+    ['te', 'ప్రతి దరఖాస్తుదారుకు న్యాయమైన మొదటి రౌండ్‌తో, వేగంగా నియమించుకోండి.', 'తరచుగా అడిగే ప్రశ్నలు'],
+  ])('renders in %s', async (lng, hero, faq) => {
+    await i18n.changeLanguage(lng);
+    renderLanding();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent(hero);
+    expect(screen.getAllByText(faq).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Hire faster, with a fair first round for every applicant.')).not.toBeInTheDocument();
+  });
+});

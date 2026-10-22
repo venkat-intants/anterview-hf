@@ -80,6 +80,8 @@ interface EmbeddedProps {
   questions: PublicCodingQuestion[];
   /** Called whenever the user edits any question — parent accumulates submissions. */
   onSubmissionsChange: (submissions: Record<string, CodingAnswer>) => void;
+  /** Code already written for these questions (restored after a reload). */
+  initialSubmissions?: Record<string, CodingAnswer>;
   // Not used in embedded mode.
   exam?: undefined;
   attemptId?: undefined;
@@ -100,11 +102,20 @@ export default function CodingTaking(props: Props) {
     return [...(props.exam?.coding_questions ?? [])].sort((a, b) => a.position - b.position);
   }, [props.mode, props.questions, props.exam]);
 
+  // Read once, at mount: what the candidate had already written wins over the
+  // starter code (audit CA-M2).
+  const initial = props.mode === 'embedded' ? props.initialSubmissions : undefined;
   const [code, setCode] = useState<Record<string, string>>(() =>
-    Object.fromEntries(questions.map((q) => [q.id, q.starter_code ?? ''])),
+    Object.fromEntries(questions.map((q) => [q.id, initial?.[q.id]?.source ?? q.starter_code ?? ''])),
   );
   const [lang, setLang] = useState<Record<string, string>>(() =>
-    Object.fromEntries(questions.map((q) => [q.id, q.allowed_languages[0] ?? 'python'])),
+    Object.fromEntries(
+      questions.map((q) => {
+        const saved = initial?.[q.id]?.language;
+        const usable = saved && q.allowed_languages.includes(saved) ? saved : undefined;
+        return [q.id, usable ?? q.allowed_languages[0] ?? 'python'];
+      }),
+    ),
   );
 
   // Sample-run state

@@ -14,6 +14,8 @@ import { AuthProvider, useAuth } from '../context/AuthContext';
 import { getToken, setToken, clearToken } from '../api/tokenStore';
 import { getMe } from '../api/auth';
 import type { AuthUser } from '../types/auth';
+import { FRAGMENT_TOKEN_KEYS } from '../hooks/useFragmentToken';
+import { progressKey } from '../pages/exam/examProgress';
 
 vi.mock('../api/client', () => ({ attemptRefresh: vi.fn(() => Promise.resolve(false)) }));
 vi.mock('../api/auth', () => ({ getMe: vi.fn() }));
@@ -132,6 +134,41 @@ describe('logout across tabs', () => {
     const mine = FakeChannel.instances[0];
     utils.unmount();
     expect(mine?.closed).toBe(true);
+  });
+});
+
+// A shared lab machine: the emailed-link credentials this tab kept (draft,
+// offer, task, invite, exam, and the exam progress beside them) must not
+// outlive the session, or the next person reopens the tab into them.
+describe('sign-out clears the emailed-link credentials', () => {
+  function seed(): void {
+    for (const key of Object.values(FRAGMENT_TOKEN_KEYS)) sessionStorage.setItem(key, `v-${key}`);
+    sessionStorage.setItem(progressKey('exam-1', 'round-1'), '{"attemptId":"a"}');
+    sessionStorage.setItem('unrelated.key', 'kept');
+  }
+  afterEach(() => sessionStorage.clear());
+
+  it('when this tab signs out', () => {
+    const { get } = setup();
+    act(() => get().setAuth(SECRET, person('alice')));
+    seed();
+    act(() => get().clearAuth());
+    for (const key of Object.values(FRAGMENT_TOKEN_KEYS)) {
+      expect(sessionStorage.getItem(key)).toBeNull();
+    }
+    expect(sessionStorage.getItem(progressKey('exam-1', 'round-1'))).toBeNull();
+    expect(sessionStorage.getItem('unrelated.key')).toBe('kept');
+  });
+
+  it('when another tab signs out', async () => {
+    const { get } = setup();
+    act(() => get().setAuth(SECRET, person('alice')));
+    seed();
+    const tab = otherTab();
+    act(() => tab.postMessage({ type: 'logout' }));
+    await waitFor(() => expect(get().isAuthenticated).toBe(false));
+    expect(sessionStorage.getItem(FRAGMENT_TOKEN_KEYS.draft)).toBeNull();
+    expect(sessionStorage.getItem(progressKey('exam-1', 'round-1'))).toBeNull();
   });
 });
 

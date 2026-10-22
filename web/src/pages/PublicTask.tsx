@@ -5,7 +5,8 @@
 // SECURITY (follows the PublicOffer/PublicApply precedent):
 // - The token comes from the URL #FRAGMENT, never a path param or query
 //   string — read once into state, then stripped from the address bar with
-//   history.replaceState so it never lingers in browser history. It is sent
+//   history.replaceState so it never lingers in browser history. It is kept
+//   for this tab in sessionStorage so a reload works (audit CA-H3), and sent
 //   as the X-Task-Token header on every /task call (api/publicTask.ts) —
 //   never a URL.
 // - Every failure the server can produce for a bad/expired/withdrawn link
@@ -35,8 +36,9 @@
 // nothing either, but the hiring team can no longer see the work and it
 // cannot be used to pass the round.
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, isTransientApiError } from '@/api/client';
 import {
@@ -70,6 +72,11 @@ import {
   Trash2,
   Upload,
 } from '@/design/components/icons';
+import {
+  FRAGMENT_TOKEN_KEYS,
+  forgetFragmentToken,
+  useFragmentToken,
+} from '@/hooks/useFragmentToken';
 
 const MAX_MATERIAL_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_ARTIFACT_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -82,12 +89,13 @@ const LINK_KINDS: TaskLinkKind[] = [
   'other',
 ];
 
-/** The server's own sentence, shown exactly as written — see PublicOffer.tsx
- *  for why: a candidate reading it and calling the hiring team should
- *  describe precisely what they saw. */
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+// Errors go through useCandidateError (audit CA-M21): on an English page the
+// server's own sentence is shown as written, so a candidate calling the hiring
+// team can describe exactly what they saw; on a Hindi or Telugu page it gives
+// way to the page's own sentence.
+
+/** How long typing pauses before an answer saves itself (audit CA-M23). */
+const AUTOSAVE_MS = 800;
 
 function fmtDuration(totalSeconds: number): string {
   const s = Math.max(0, Math.floor(totalSeconds));
@@ -189,6 +197,7 @@ function PreStart({
   onStarted: (next: PublicTaskShape) => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -250,6 +259,7 @@ function MaterialRow({
   material: PublicTaskShape['materials'][number];
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [error, setError] = useState<string | null>(null);
 
   const downloadMut = useMutation({
@@ -291,7 +301,89 @@ function MaterialRow({
   );
 }
 
+/* ── Removing something already uploaded ─────────────────────────────────── */
+
+/** "Remove", then "Remove <name>? [Remove] [Keep]". One stray tap used to
+ *  delete an uploaded file (audit B3); the second step names what goes. */
+function RemoveWithConfirm({
+  name,
+  disabled,
+  pending,
+  onConfirm,
+}: {
+  name: string;
+  disabled: boolean;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const { t } = useTranslation();
+  const [asking, setAsking] = useState(false);
+  const keepRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (asking) keepRef.current?.focus();
+  }, [asking]);
+  if (!asking) {
+    return (
+      <button
+        type="button"
+        onClick={() => setAsking(true)}
+        disabled={disabled}
+        aria-label={`${t('task.remove')} ${name}`}
+        className={DANGER_BUTTON}
+      >
+        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+        {t('task.remove')}
+      </button>
+    );
+  }
+  return (
+    <div
+      role="group"
+      aria-label={t('task.removeConfirm', { name })}
+      className="flex flex-wrap items-center gap-2"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') setAsking(false);
+      }}
+    >
+      <span className="text-[12.5px] text-foreground">{t('task.removeConfirm', { name })}</span>
+      <button
+        type="button"
+        onClick={() => {
+          setAsking(false);
+          onConfirm();
+        }}
+        disabled={pending}
+        className={DANGER_BUTTON}
+      >
+        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+        {t('task.remove')}
+      </button>
+      <button ref={keepRef} type="button" onClick={() => setAsking(false)} className={CHIP_BUTTON}>
+        {t('task.keep')}
+      </button>
+    </div>
+  );
+}
+
 /* ── One item's answer ────────────────────────────────────────────────────── */
+
+/** Save `value` once typing pauses. Answers used to save only on blur, so
+ *  the last one typed stayed unsaved, and Submit disabled, until the
+ *  candidate clicked somewhere else (audit CA-M23). */
+function useAutosave(
+  value: string,
+  savedValue: string,
+  disabled: boolean,
+  save: (v: string) => void,
+): void {
+  const saveRef = useRef(save);
+  saveRef.current = save;
+  useEffect(() => {
+    if (disabled || value === savedValue) return;
+    const id = window.setTimeout(() => saveRef.current(value), AUTOSAVE_MS);
+    return () => window.clearTimeout(id);
+  }, [value, savedValue, disabled]);
+}
 
 function TextItemField({
   token,
@@ -299,28 +391,35 @@ function TextItemField({
   response,
   disabled,
   onSaved,
+  onDraft,
 }: {
   token: string;
   item: TaskItem;
   response: TaskResponseOut | undefined;
   disabled: boolean;
   onSaved: () => void;
+  onDraft: (key: string, unsaved: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [value, setValue] = useState(response?.text_value ?? '');
   const [savedValue, setSavedValue] = useState(response?.text_value ?? '');
   const [error, setError] = useState<string | null>(null);
   const limit = item.max_chars ?? 20000;
 
   const saveMut = useMutation({
-    mutationFn: () => saveTaskResponse(token, item.key, { text_value: value }),
-    onSuccess: () => {
-      setSavedValue(value);
+    mutationFn: (v: string) => saveTaskResponse(token, item.key, { text_value: v }),
+    onSuccess: (_res, v) => {
+      setSavedValue(v);
       setError(null);
       onSaved();
     },
     onError: (e: unknown) => setError(errText(e, t('task.saveError'))),
   });
+  useAutosave(value, savedValue, disabled, (v) => saveMut.mutate(v));
+  useEffect(() => {
+    onDraft(item.key, value === savedValue ? null : value);
+  }, [item.key, value, savedValue, onDraft]);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -331,7 +430,7 @@ function TextItemField({
         maxLength={limit}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => {
-          if (value !== savedValue) saveMut.mutate();
+          if (value !== savedValue) saveMut.mutate(value);
         }}
         rows={5}
         placeholder={t('task.textPlaceholder')}
@@ -360,6 +459,7 @@ function LinkItemField({
   allowedDomains,
   disabled,
   onSaved,
+  onDraft,
 }: {
   token: string;
   item: TaskItem;
@@ -367,21 +467,27 @@ function LinkItemField({
   allowedDomains: string[];
   disabled: boolean;
   onSaved: () => void;
+  onDraft: (key: string, unsaved: string | null) => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [value, setValue] = useState(response?.link_url ?? '');
   const [savedValue, setSavedValue] = useState(response?.link_url ?? '');
   const [error, setError] = useState<string | null>(null);
 
   const saveMut = useMutation({
-    mutationFn: () => saveTaskResponse(token, item.key, { link_url: value }),
-    onSuccess: () => {
-      setSavedValue(value);
+    mutationFn: (v: string) => saveTaskResponse(token, item.key, { link_url: v }),
+    onSuccess: (_res, v) => {
+      setSavedValue(v);
       setError(null);
       onSaved();
     },
     onError: (e: unknown) => setError(errText(e, t('task.saveError'))),
   });
+  useAutosave(value, savedValue, disabled, (v) => saveMut.mutate(v));
+  useEffect(() => {
+    onDraft(item.key, value === savedValue ? null : value);
+  }, [item.key, value, savedValue, onDraft]);
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -395,7 +501,7 @@ function LinkItemField({
         disabled={disabled}
         onChange={(e) => setValue(e.target.value)}
         onBlur={() => {
-          if (value !== savedValue) saveMut.mutate();
+          if (value !== savedValue) saveMut.mutate(value);
         }}
         placeholder={t('task.linkPlaceholder')}
         className={`w-full ${INPUT}`}
@@ -439,6 +545,7 @@ function FileItemField({
   onSaved: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [error, setError] = useState<string | null>(null);
   const current = response?.response_type === 'file' ? response : undefined;
 
@@ -487,16 +594,12 @@ function FileItemField({
           <span className="min-w-0 truncate text-[13px] text-foreground">
             {current.original_name}
           </span>
-          <button
-            type="button"
-            onClick={() => removeMut.mutate(current.id)}
+          <RemoveWithConfirm
+            name={current.original_name ?? ''}
             disabled={busy}
-            aria-label={`${t('task.remove')} ${current.original_name ?? ''}`}
-            className={DANGER_BUTTON}
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('task.remove')}
-          </button>
+            pending={removeMut.isPending}
+            onConfirm={() => removeMut.mutate(current.id)}
+          />
         </div>
       ) : null}
       {!disabled ? (
@@ -533,6 +636,7 @@ function ItemCard({
   allowedDomains,
   disabled,
   onSaved,
+  onDraft,
 }: {
   token: string;
   item: TaskItem;
@@ -540,6 +644,7 @@ function ItemCard({
   allowedDomains: string[];
   disabled: boolean;
   onSaved: () => void;
+  onDraft: (key: string, unsaved: string | null) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -558,6 +663,7 @@ function ItemCard({
             response={response}
             disabled={disabled}
             onSaved={onSaved}
+            onDraft={onDraft}
           />
         ) : item.response_type === 'link' ? (
           <LinkItemField
@@ -567,6 +673,7 @@ function ItemCard({
             allowedDomains={allowedDomains}
             disabled={disabled}
             onSaved={onSaved}
+            onDraft={onDraft}
           />
         ) : (
           <FileItemField
@@ -596,6 +703,7 @@ function ArtifactRow({
   onRemoved: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [error, setError] = useState<string | null>(null);
 
   const removeMut = useMutation({
@@ -624,16 +732,12 @@ function ArtifactRow({
             ID scan instead of a portfolio PDF) any time before submitting —
             security review, PH4-D4. */}
         {!disabled ? (
-          <button
-            type="button"
-            onClick={() => removeMut.mutate()}
+          <RemoveWithConfirm
+            name={artifact.title || artifact.original_name || artifact.link_url || ''}
             disabled={removeMut.isPending}
-            aria-label={`${t('task.remove')} ${artifact.title || artifact.original_name || artifact.link_url || ''}`}
-            className={DANGER_BUTTON}
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('task.remove')}
-          </button>
+            pending={removeMut.isPending}
+            onConfirm={() => removeMut.mutate()}
+          />
         ) : null}
       </div>
       {error ? <p className="mt-1.5 text-[12.5px] text-[var(--ui-danger)]">{error}</p> : null}
@@ -653,6 +757,7 @@ function AddArtifactForm({
   onAdded: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [mode, setMode] = useState<'file' | 'link' | null>(null);
   const [linkUrl, setLinkUrl] = useState('');
   const [linkKind, setLinkKind] = useState<TaskLinkKind>('other');
@@ -818,6 +923,7 @@ function TaskWorkspace({
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [confirming, setConfirming] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -846,6 +952,32 @@ function TaskWorkspace({
     onError: (e: unknown) => setWithdrawError(errText(e, t('task.errorGeneric'))),
   });
 
+  // What has been typed but not saved yet, per item. Readiness counts it, a
+  // reload asks first while any is left, and Submit waits for it to save.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const onDraft = useCallback((key: string, unsaved: string | null) => {
+    setDrafts((prev) => {
+      if (unsaved === null) {
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return prev[key] === unsaved ? prev : { ...prev, [key]: unsaved };
+    });
+  }, []);
+  const unsaved = Object.keys(drafts).length > 0;
+  useEffect(() => {
+    if (!unsaved) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Older browsers need returnValue set to show their prompt.
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [unsaved]);
+
   const responsesByItem = new Map(
     data.responses.filter((r) => r.item_key).map((r) => [r.item_key as string, r]),
   );
@@ -855,8 +987,9 @@ function TaskWorkspace({
   const requiredUnmet = data.items.filter((i) => {
     if (!i.required) return false;
     const r = responsesByItem.get(i.key);
-    if (i.response_type === 'text') return !r?.text_value;
-    if (i.response_type === 'link') return !r?.link_url;
+    const typed = drafts[i.key];
+    if (i.response_type === 'text') return typed !== undefined ? !typed.trim() : !r?.text_value;
+    if (i.response_type === 'link') return typed !== undefined ? !typed.trim() : !r?.link_url;
     return r?.response_type !== 'file';
   });
   const minArtifactsUnmet =
@@ -890,12 +1023,23 @@ function TaskWorkspace({
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [deadlineMs]);
+  // The server stops accepting answers at the limit; say so instead of a
+  // silent 00:00 (audit CA-M23).
+  const timeUp = deadlineMs !== null && now >= deadlineMs;
 
   return (
     <>
       <TaskHeader data={data} />
 
-      {deadlineMs !== null ? (
+      {timeUp ? (
+        <p
+          role="alert"
+          data-testid="task-time-up"
+          className="w-full rounded-[12px] bg-[var(--ui-warn-wash)] px-4 py-3 text-[13px] text-foreground"
+        >
+          {t('task.timeUp')}
+        </p>
+      ) : deadlineMs !== null ? (
         <p className="w-full text-right text-[12.5px] text-muted-foreground">
           {t('task.timeRemaining', { time: fmtDuration((deadlineMs - now) / 1000) })}
         </p>
@@ -921,8 +1065,9 @@ function TaskWorkspace({
           item={item}
           response={responsesByItem.get(item.key)}
           allowedDomains={allowedDomains}
-          disabled={withdrawn}
+          disabled={withdrawn || timeUp}
           onSaved={onChanged}
+          onDraft={onDraft}
         />
       ))}
 
@@ -971,6 +1116,11 @@ function TaskWorkspace({
           <p className="text-[12.5px] text-muted-foreground">{t('task.withdrawConsentDone')}</p>
         ) : (
           <>
+            {ready && unsaved ? (
+              <p className="text-[12px] text-muted-foreground" aria-live="polite">
+                {t('task.savingAnswers')}
+              </p>
+            ) : null}
             {!ready ? (
               <p className="text-[12px] text-[var(--ui-warn)]">
                 {requiredUnmet.length > 0 ? t('task.notReadyRequired') : null}
@@ -992,7 +1142,7 @@ function TaskWorkspace({
                   <button
                     type="button"
                     onClick={() => submitMut.mutate()}
-                    disabled={submitMut.isPending}
+                    disabled={submitMut.isPending || unsaved || timeUp}
                     className="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 text-[14px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 disabled:opacity-50"
                   >
                     {submitMut.isPending ? t('task.submitting') : t('task.confirmYes')}
@@ -1009,7 +1159,7 @@ function TaskWorkspace({
             ) : (
               <Button
                 className="mt-1 h-12 w-full sm:w-auto"
-                disabled={!ready}
+                disabled={!ready || unsaved || timeUp}
                 onClick={() => {
                   setSubmitError(null);
                   setConfirming(true);
@@ -1087,6 +1237,7 @@ function SubmittedScreen({
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [withdrawAsking, setWithdrawAsking] = useState(false);
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
 
@@ -1160,11 +1311,10 @@ export default function PublicTask(): JSX.Element {
 
   // SECURITY: token from the URL #fragment — never a path param or query
   // string. Read once, then the fragment is stripped so it never lingers in
-  // browser history; the token lives only in this component's memory.
-  const [token] = useState(() => window.location.hash.replace(/^#/, '').trim());
-  useEffect(() => {
-    if (token) window.history.replaceState(null, '', window.location.pathname);
-  }, [token]);
+  // browser history. Kept in memory and in THIS TAB's sessionStorage (the
+  // /exam pattern): a task can take hours, and a reload used to land on "this
+  // link isn't valid" (audit CA-H3). Never localStorage, a cookie or a URL.
+  const token = useFragmentToken(FRAGMENT_TOKEN_KEYS.task);
 
   const view = useQuery({
     queryKey: ['public-task', token],
@@ -1173,6 +1323,13 @@ export default function PublicTask(): JSX.Element {
     retry: (failureCount, error) => isTransientApiError(error) && failureCount < 2,
     staleTime: 0,
   });
+
+  // A link the server refuses is spent: drop it from this tab's storage. A
+  // submitted task is not, since its consent can still be withdrawn.
+  const refused = view.isError && !isTransientApiError(view.error);
+  useEffect(() => {
+    if (refused) forgetFragmentToken(FRAGMENT_TOKEN_KEYS.task);
+  }, [refused]);
 
   if (token && view.isError && isTransientApiError(view.error)) {
     return (
@@ -1202,6 +1359,7 @@ export default function PublicTask(): JSX.Element {
               : t('task.invalidDesc')
           }
         />
+        <p className="text-center text-[13px] text-[var(--ui-soft)]">{t('publicFrame.reopenEmail')}</p>
       </PageWrap>
     );
   }

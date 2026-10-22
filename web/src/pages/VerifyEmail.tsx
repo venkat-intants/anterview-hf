@@ -5,19 +5,24 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { verifyEmail } from '@/api/auth';
 import AuthLayout, { StatusPanel } from '@/components/layout/AuthLayout';
 import { PRIMARY_LINK_CLASS, TEXT_LINK_CLASS } from '@/components/layout/authStyles';
 import { CheckCircle2, AlertCircle, Loader2 } from '@/design/components/icons';
 import { useFragmentToken } from '@/hooks/useFragmentToken';
+import { useCandidateError } from '@/lib/candidateCopy';
 
 type Status = 'verifying' | 'success' | 'error';
 
 export default function VerifyEmail() {
+  const { t } = useTranslation();
+  const errorText = useCandidateError();
   // Read once, then removed from the address bar and history entry.
   const token = useFragmentToken();
   const [status, setStatus] = useState<Status>('verifying');
-  const [message, setMessage] = useState('');
+  // The failure itself, so its sentence follows the UI language.
+  const [failure, setFailure] = useState<unknown>(null);
   // Guard React 18 StrictMode double-invoke so we don't burn the single-use token.
   const ran = useRef(false);
 
@@ -26,16 +31,14 @@ export default function VerifyEmail() {
     ran.current = true;
     if (!token) {
       setStatus('error');
-      setMessage('This verification link is missing its token.');
+      setFailure('missing');
       return;
     }
     verifyEmail(token)
       .then(() => setStatus('success'))
       .catch((err: unknown) => {
         setStatus('error');
-        setMessage(
-          err instanceof Error ? err.message : 'This verification link is invalid or has expired.',
-        );
+        setFailure(err);
       });
   }, [token]);
 
@@ -43,8 +46,8 @@ export default function VerifyEmail() {
     <AuthLayout>
       <div aria-live="polite">
         {status === 'verifying' && (
-          <StatusPanel icon={Loader2} tone="info" spin title="Confirming your email…">
-            <p>One moment.</p>
+          <StatusPanel icon={Loader2} tone="info" spin title={t('auth.verifyingTitle')}>
+            <p>{t('auth.oneMoment')}</p>
           </StatusPanel>
         )}
 
@@ -52,14 +55,14 @@ export default function VerifyEmail() {
           <StatusPanel
             icon={CheckCircle2}
             tone="ok"
-            title="Email confirmed"
+            title={t('auth.verifiedTitle')}
             actions={
               <Link to="/login" className={PRIMARY_LINK_CLASS}>
-                Continue to sign in
+                {t('auth.continueToSignIn')}
               </Link>
             }
           >
-            <p>Thanks - your email address is verified. You can sign in and get started.</p>
+            <p>{t('auth.verifiedBody')}</p>
           </StatusPanel>
         )}
 
@@ -67,15 +70,21 @@ export default function VerifyEmail() {
           <StatusPanel
             icon={AlertCircle}
             tone="danger"
-            title="Couldn’t verify your email"
+            title={t('auth.verifyFailedTitle')}
             actions={
               <Link to="/login" className={TEXT_LINK_CLASS}>
-                Back to sign in
+                {t('auth.backToSignIn')}
               </Link>
             }
           >
-            <p>{message}</p>
-            <p className="text-[13px]">You can request a fresh link from your profile after signing in.</p>
+            <p>
+              {failure === 'missing'
+                ? t('auth.verifyMissingToken')
+                : errorText(failure, t('auth.verifyInvalid'))}
+            </p>
+            {/* No page offers a "resend" control; signing in with an
+                unconfirmed address re-sends the link (audit CA-M9). */}
+            <p className="text-[13px]">{t('auth.verifyHelp')}</p>
           </StatusPanel>
         )}
       </div>

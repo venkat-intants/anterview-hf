@@ -1,5 +1,5 @@
 // YourInterviews — PH4-A2. A candidate's own interview loops: job title, each
-// session's time in the loop's own timezone (named), duration, location and
+// session's time in the candidate's own timezone (named), duration, location and
 // interviewer names, a calendar download, and — for a session waiting on the
 // candidate — the times they may pick from.
 //
@@ -21,6 +21,7 @@ import {
   type CandidateSession,
 } from '@/api/scheduling';
 import { toast } from '@/lib/toast';
+import { useCandidateError } from '@/lib/candidateCopy';
 import {
   browserTimezone,
   dayHeading,
@@ -41,10 +42,6 @@ function localeFor(lang: string): string {
   return 'en-IN';
 }
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
-
 const STATUS_TONE: Record<CandidateSession['status'], TagTone> = {
   awaiting_slot: 'amber',
   scheduled: 'electric',
@@ -63,8 +60,12 @@ function ChooseTimeSection({
   locale: string;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  // A booking is final (A23), so a tap only picks the time; booking it is a
+  // second, explicit step (audit CA-M10).
+  const [chosen, setChosen] = useState<string | null>(null);
   const slotsKey = ['me', 'interview-loop', loop.id, 'session', session.id, 'slots'];
 
   const slots = useQuery({
@@ -82,6 +83,7 @@ function ChooseTimeSection({
       }),
     onSuccess: () => {
       toast.success(t('myInterviews.booked'));
+      setChosen(null);
       setOpen(false);
       void qc.invalidateQueries({ queryKey: ['me', 'interview-loops'] });
     },
@@ -90,6 +92,7 @@ function ChooseTimeSection({
       // just taken, or the schedule closed under the candidate (a decision or
       // an HR cancellation) — reusing the same path, since both are "refresh
       // and tell them why" rather than needing their own branch.
+      setChosen(null);
       toast.error(errText(e, t('myInterviews.bookError')));
       void qc.invalidateQueries({ queryKey: slotsKey });
       void qc.invalidateQueries({ queryKey: ['me', 'interview-loops'] });
@@ -128,7 +131,10 @@ function ChooseTimeSection({
         <p className="text-[14px] font-semibold text-foreground">{t('myInterviews.chooseTime')}</p>
         <button
           type="button"
-          onClick={() => setOpen(false)}
+          onClick={() => {
+            setChosen(null);
+            setOpen(false);
+          }}
           className="min-h-[40px] rounded px-1 text-[13px] font-semibold text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {t('myInterviews.hideTimes')}
@@ -156,8 +162,13 @@ function ChooseTimeSection({
                     key={iso}
                     type="button"
                     disabled={bookMut.isPending}
-                    onClick={() => bookMut.mutate(iso)}
-                    className="min-h-[40px] rounded-full border border-input bg-card px-3.5 text-[13px] font-medium text-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+                    aria-pressed={chosen === iso}
+                    onClick={() => setChosen(iso)}
+                    className={
+                      chosen === iso
+                        ? 'min-h-[40px] rounded-full border border-foreground bg-[var(--ui-inset)] px-3.5 text-[13px] font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40'
+                        : 'min-h-[40px] rounded-full border border-input bg-card px-3.5 text-[13px] font-medium text-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40'
+                    }
                   >
                     {timeInZone(iso, myTz, locale)}
                   </button>
@@ -165,6 +176,40 @@ function ChooseTimeSection({
               </div>
             </div>
           ))}
+          {chosen ? (
+            <div
+              role="group"
+              aria-label={t('myInterviews.confirmBookAria')}
+              data-testid="book-confirm"
+              className="rounded-[12px] border border-border bg-[var(--ui-inset-soft)] p-3"
+            >
+              <p className="text-[13.5px] text-foreground">
+                {t('myInterviews.confirmBook', {
+                  when: `${formatDayTime(chosen, myTz, locale)} ${zoneAbbrev(chosen, myTz)}`,
+                })}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={() => bookMut.mutate(chosen)}
+                  disabled={bookMut.isPending}
+                  aria-busy={bookMut.isPending}
+                >
+                  {bookMut.isPending ? t('myInterviews.booking') : t('myInterviews.bookThisTime')}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setChosen(null)}
+                  disabled={bookMut.isPending}
+                >
+                  {t('myInterviews.chooseAnother')}
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
     </div>
@@ -181,6 +226,7 @@ function SessionRow({
   locale: string;
 }) {
   const { t } = useTranslation();
+  const myTz = browserTimezone();
   return (
     <li className="rounded-[14px] bg-[var(--ui-inset-soft)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -190,8 +236,10 @@ function SessionRow({
         </StatusTag>
       </div>
       <p className="mt-1 text-[13px] text-muted-foreground">
+        {/* The candidate's own zone, like the slot picker, so one card never
+            mixes two zones (audit CA-L11). */}
         {session.starts_at
-          ? `${formatDayTime(session.starts_at, loop.timezone, locale)} ${zoneAbbrev(session.starts_at, loop.timezone)} · ${t(
+          ? `${formatDayTime(session.starts_at, myTz, locale)} ${zoneAbbrev(session.starts_at, myTz)} · ${t(
               'myInterviews.duration',
               { count: session.duration_minutes },
             )}`
@@ -232,6 +280,7 @@ function LoopCard({
   embedded?: boolean;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
 
   const icsMut = useMutation({
     mutationFn: () => downloadMyLoopIcs(loop.id),
@@ -245,7 +294,9 @@ function LoopCard({
           <h3 className="text-[15px] font-bold text-foreground">
             {embedded ? loop.title : loop.job_title}
           </h3>
-          <p className="mt-0.5 text-[13px] text-muted-foreground">{loop.timezone}</p>
+          <p className="mt-0.5 text-[13px] text-muted-foreground">
+            {t('myInterviews.timesInYourZone', { zone: zoneAbbrev(new Date().toISOString(), browserTimezone()) })}
+          </p>
         </div>
         <Button
           type="button"
@@ -297,6 +348,7 @@ export default function YourInterviews({
   hideWhenEmpty = false,
 }: YourInterviewsProps = {}): JSX.Element | null {
   const { t, i18n } = useTranslation();
+  const errText = useCandidateError();
   const locale = localeFor(i18n.language);
 
   const { data, isLoading, isError, error } = useQuery({

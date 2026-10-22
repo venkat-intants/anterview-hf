@@ -28,9 +28,11 @@ export default function InterviewIntro({ language, onDone }: InterviewIntroProps
   // Whether the user has tapped "Begin interview" — hides the CTA once started.
   const [started, setStarted] = useState(false);
   // Phase A — explicit opt-in for the candidate camera (DPDP video_capture).
-  // Default ON so the 1:1 video experience is the norm, but the candidate can
-  // untick it; an unticked box → audio-only, exactly the previous behaviour.
-  const [cameraConsent, setCameraConsent] = useState(true);
+  // Starts UNTICKED, like every other consent box in the product (audit
+  // CA-M1): ticking it records a `video_capture` grant in the ledger, and a
+  // pre-ticked box would make that entry a record of something the candidate
+  // never did. Unticked → audio-only, exactly the previous behaviour.
+  const [cameraConsent, setCameraConsent] = useState(false);
   // Read the latest checkbox value inside event-driven safeDone calls.
   const cameraConsentRef = useRef(cameraConsent);
   cameraConsentRef.current = cameraConsent;

@@ -121,7 +121,7 @@ describe('Login page', () => {
     const user = userEvent.setup();
     renderLogin();
     const google = screen.getByRole('button', { name: /sign in with google/i });
-    const consent = screen.getByRole('checkbox', { name: /i agree to the terms and dpdp/i });
+    const consent = screen.getByRole('checkbox', { name: /i agree to AntHire processing/i });
     expect(google).toBeDisabled();
     expect(consent).toHaveAccessibleDescription(/tick the box above/i);
     await user.click(consent);

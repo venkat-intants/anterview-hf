@@ -18,6 +18,7 @@ import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useLocation, Link, Navigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useCandidateFormat } from '@/lib/candidateCopy';
 import type { TFunction } from 'i18next';
 
 import { getMe, logout } from '@/api/auth';
@@ -31,7 +32,6 @@ import { useCandidateActions } from '@/hooks/useCandidateActions';
 import { actionsForApplication, isWaitingOnYou, turnOf } from '@/lib/candidateActions';
 import { stageText } from '@/lib/applicationStage';
 import { toast } from '@/lib/toast';
-import { formatDate, formatDuration, statusProps } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 
 import { Button } from '@/components/ui/button';
@@ -142,6 +142,7 @@ const TURN_RANK = { you: 0, them: 1, closed: 2 } as const;
 
 export default function Dashboard() {
   const { t } = useTranslation();
+  const fmt = useCandidateFormat();
   const navigate = useNavigate();
   const location = useLocation();
   const { accessToken, user, clearAuth } = useAuth();
@@ -157,7 +158,8 @@ export default function Dashboard() {
     data: me,
     isLoading: meLoading,
     isError,
-    error,
+    refetch: refetchMe,
+    isFetching: meFetching,
   } = useQuery({
     queryKey: ['auth', 'me'],
     queryFn: () => getMe(accessToken ?? undefined),
@@ -370,11 +372,28 @@ export default function Dashboard() {
         >
           <AlertTriangle className="h-10 w-10 text-[var(--ui-danger)]" aria-hidden="true" />
           <p className="text-[15px] text-muted-foreground">
-            {error instanceof Error ? error.message : t('dashboard.failedToLoadProfile')}
+            {t('dashboard.failedToLoadProfile')}
           </p>
-          <Button type="button" variant="outline" onClick={() => logoutMutation.mutate()}>
-            {t('dashboard.returnToLogin')}
-          </Button>
+          {/* A failed /me is usually temporary: retry first, and keep signing
+              out as the secondary way out (audit CA-L1). */}
+          <div className="flex flex-wrap justify-center gap-2.5">
+            <Button
+              type="button"
+              onClick={() => void refetchMe()}
+              disabled={meFetching}
+              aria-busy={meFetching}
+            >
+              {meFetching ? t('error.tryingAgain') : t('error.tryAgain')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => logoutMutation.mutate()}
+              disabled={logoutMutation.isPending}
+            >
+              {t('nav.logout')}
+            </Button>
+          </div>
         </div>
       </Page>
     );
@@ -518,7 +537,7 @@ export default function Dashboard() {
                   {hasResume && currentResume?.uploaded_at && (
                     <div className="text-[12px] text-muted-foreground">
                       {t('dashboard.uploadedOn', {
-                        date: formatDate(currentResume.uploaded_at),
+                        date: fmt.date(currentResume.uploaded_at),
                       })}
                     </div>
                   )}
@@ -594,7 +613,7 @@ export default function Dashboard() {
             <Stat label={t('dashboard.statBestScore')} value={bestScore0to100} unit="/ 100" />
             <Stat
               label={t('dashboard.statPracticeTime')}
-              value={totalPracticeSeconds > 0 ? formatDuration(totalPracticeSeconds) : null}
+              value={totalPracticeSeconds > 0 ? fmt.duration(totalPracticeSeconds) : null}
             />
             <Stat
               label={t('dashboard.statLanguagesUsed')}
@@ -626,7 +645,7 @@ export default function Dashboard() {
           ) : (
             <RowList className="-my-3" aria-label={t('dashboard.recentInterviewsTitle')}>
               {recentSessions.map((session) => {
-                const { label } = statusProps(session.status);
+                const label = fmt.status(session.status);
                 return (
                   <Row
                     key={session.session_id}
@@ -648,13 +667,13 @@ export default function Dashboard() {
                         </StatusTag>
                         <span className="flex items-center gap-1">
                           <Clock size={12} aria-hidden="true" />
-                          {formatDuration(session.duration_seconds)}
+                          {fmt.duration(session.duration_seconds)}
                         </span>
                       </span>
                     }
                     trailing={
                       <span className="text-[12.5px] text-muted-foreground">
-                        {formatDate(session.created_at)}
+                        {fmt.date(session.created_at)}
                       </span>
                     }
                   />

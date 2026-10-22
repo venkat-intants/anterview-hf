@@ -98,10 +98,13 @@ const ASSIGNED: PublicTaskShape = {
   responses: [],
 };
 
+// Started a minute ago, so the 30-minute limit is still running: the page now
+// closes the task at the limit (audit CA-M23), and a fixed past date would be
+// past it.
 const IN_PROGRESS: PublicTaskShape = {
   ...ASSIGNED,
   status: 'in_progress',
-  started_at: '2026-09-21T10:00:00.000Z',
+  started_at: new Date(Date.now() - 60_000).toISOString(),
 };
 
 const SUBMITTED: PublicTaskShape = {
@@ -116,6 +119,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   window.location.hash = '#task_tok_123456';
   window.history.replaceState = replaceState;
+  // The page keeps its token in this tab's storage across reloads (CA-H3).
+  sessionStorage.clear();
   viewTask.mockResolvedValue(ASSIGNED);
 });
 
@@ -129,7 +134,8 @@ describe('PublicTask - the link itself', () => {
     await screen.findByText('Take-home simulation');
 
     expect(viewTask).toHaveBeenCalledWith('task_tok_123456');
-    expect(replaceState).toHaveBeenCalledWith(null, '', '/');
+    // Path and router state kept; only the fragment goes.
+    expect(replaceState).toHaveBeenCalledWith(window.history.state, '', '/');
   });
 
   it('never calls the API and shows an invalid link when there is no token', async () => {
@@ -154,6 +160,26 @@ describe('PublicTask - the link itself', () => {
       await screen.findByRole('button', { name: /try again/i }, { timeout: 8000 }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/isn't valid/i)).not.toBeInTheDocument();
+  });
+
+  // Audit CA-H3: a multi-hour task must survive a reload.
+  it('still opens the task after a reload, once the fragment is gone', async () => {
+    const first = renderPage();
+    await screen.findByText('Take-home simulation');
+    first.unmount();
+    window.location.hash = '';
+    viewTask.mockClear();
+
+    renderPage();
+    await screen.findByText('Take-home simulation');
+    expect(viewTask).toHaveBeenCalledWith('task_tok_123456');
+  });
+
+  it('forgets a link the server refuses, and says to reopen the emailed one', async () => {
+    viewTask.mockRejectedValue(new ApiError("This task link isn't available.", 404));
+    renderPage();
+    expect(await screen.findByText(/Open the link in that email again/)).toBeInTheDocument();
+    await waitFor(() => expect(sessionStorage.getItem('anthire.task.token')).toBeNull());
   });
 });
 
@@ -344,9 +370,25 @@ describe('PublicTask - a file item', () => {
     expect(screen.getByRole('button', { name: /^submit$/i })).toBeEnabled();
 
     await user.click(screen.getByRole('button', { name: /remove plan\.pdf/i }));
+    // A single tap no longer deletes it (audit B3): it asks, naming the file.
+    expect(removeTaskArtifact).not.toHaveBeenCalled();
+    const ask = screen.getByRole('group', { name: 'Remove plan.pdf?' });
+    expect(within(ask).getByRole('button', { name: 'Keep' })).toHaveFocus();
+    await user.click(within(ask).getByRole('button', { name: 'Remove' }));
     await waitFor(() =>
       expect(removeTaskArtifact).toHaveBeenCalledWith('task_tok_123456', 'r-file'),
     );
+  });
+
+  it('keeps the uploaded file when the candidate backs out', async () => {
+    const user = userEvent.setup();
+    viewTask.mockResolvedValue({ ...WITH_FILE_ITEM, responses: [UPLOADED] });
+    renderPage();
+    await screen.findByText('plan.pdf');
+    await user.click(screen.getByRole('button', { name: /remove plan\.pdf/i }));
+    await user.click(screen.getByRole('button', { name: 'Keep' }));
+    expect(removeTaskArtifact).not.toHaveBeenCalled();
+    expect(screen.getByText('plan.pdf')).toBeInTheDocument();
   });
 
   it('refuses a file type the server would refuse, without uploading it', async () => {
@@ -530,5 +572,49 @@ describe('PublicTask - after submitting', () => {
     expect(
       screen.queryByRole('button', { name: /withdraw my consent/i }),
     ).not.toBeInTheDocument();
+  });
+});
+
+// Audit CA-M23: answers save while typing pauses, Submit follows what was
+// typed, a reload with unsaved work asks first, and time-up is said.
+describe('PublicTask - typing, unsaved work and the time limit', () => {
+  it('saves a text answer once typing pauses, without a blur', async () => {
+    const user = userEvent.setup();
+    saveTaskResponse.mockResolvedValue({ item_key: 'design_doc', saved: true });
+    viewTask.mockResolvedValue(IN_PROGRESS);
+    renderPage();
+    const textarea = await screen.findByPlaceholderText(/write your answer/i);
+    await user.type(textarea, 'Draft');
+    await waitFor(
+      () =>
+        expect(saveTaskResponse).toHaveBeenCalledWith('task_tok_123456', 'design_doc', {
+          text_value: 'Draft',
+        }),
+      { timeout: 2500 },
+    );
+  });
+
+  it('asks before a reload while an answer is unsaved', async () => {
+    const user = userEvent.setup();
+    saveTaskResponse.mockImplementation(() => new Promise(() => undefined));
+    viewTask.mockResolvedValue(IN_PROGRESS);
+    renderPage();
+    const textarea = await screen.findByPlaceholderText(/write your answer/i);
+    await user.type(textarea, 'Unsaved');
+    const event = new Event('beforeunload', { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(screen.getByRole('button', { name: /^submit$/i })).toBeDisabled();
+  });
+
+  it('says time is up at the limit and closes the answers', async () => {
+    viewTask.mockResolvedValue({
+      ...IN_PROGRESS,
+      started_at: new Date(Date.now() - 2 * 3600_000).toISOString(),
+    });
+    renderPage();
+    expect(await screen.findByTestId('task-time-up')).toHaveTextContent(/time is up/i);
+    expect(screen.getByPlaceholderText(/write your answer/i)).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^submit$/i })).toBeDisabled();
   });
 });

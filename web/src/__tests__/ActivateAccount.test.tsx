@@ -71,6 +71,7 @@ async function fillPasswords(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sessionStorage.clear();
   setHash('tok-abc-1234567890123456');
   getActivationTarget.mockResolvedValue(TARGET);
   activateAccount.mockResolvedValue({
@@ -90,6 +91,24 @@ describe('ActivateAccount', () => {
     await waitFor(() =>
       expect(getActivationTarget).toHaveBeenCalledWith('tok-abc-1234567890123456'),
     );
+  });
+
+  // This token sets a password. Kept in tab storage, a reopened tab on a shared
+  // machine would hand the next person a working form for that account.
+  it('keeps the token in memory only, so a remount after leaving has no form', async () => {
+    const first = renderPage();
+    await screen.findByLabelText('Choose a password');
+    expect(JSON.stringify({ ...sessionStorage, ...localStorage })).not.toContain(
+      'tok-abc-1234567890123456',
+    );
+    first.unmount();
+    setHash('');
+    getActivationTarget.mockClear();
+
+    renderPage();
+    expect(await screen.findByText('This link has expired')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Choose a password')).not.toBeInTheDocument();
+    expect(getActivationTarget).not.toHaveBeenCalled();
   });
 
   it('checks the link exactly once', async () => {

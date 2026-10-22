@@ -14,7 +14,7 @@
 // mounts all five: <Route element={<HRRoute />}><Route path=… /></Route>.
 
 import { homePathFor } from './layout/navSections';
-import { Navigate, Outlet } from 'react-router-dom';
+import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
 /**
@@ -45,6 +45,7 @@ export interface RoleRouteProps {
 
 export default function RoleRoute({ roles }: RoleRouteProps) {
   const { isAuthenticated, isInitializing, user } = useAuth();
+  const location = useLocation();
 
   if (isInitializing) {
     return (
@@ -62,7 +63,12 @@ export default function RoleRoute({ roles }: RoleRouteProps) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    // Carry the page asked for, so signing in returns to it (audit CA-M27).
+    // The hash is left off: no protected page reads one, and fragments are
+    // where single-use tokens travel.
+    return (
+      <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />
+    );
   }
 
   // `user` is briefly null on an authenticated-but-profile-less session.

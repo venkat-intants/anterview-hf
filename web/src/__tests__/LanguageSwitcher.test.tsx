@@ -119,7 +119,7 @@ function renderLandingWithSwitcher() {
     <I18nextProvider i18n={i18n}>
       <MemoryRouter>
         <AuthProvider>
-          <LanguageSwitcher />
+          {/* The landing nav carries its own switcher now (audit CA-M16). */}
           <Landing />
         </AuthProvider>
       </MemoryRouter>
@@ -134,7 +134,7 @@ describe('Landing page i18n integration', () => {
 
   it('shows English headline by default', async () => {
     renderLandingWithSwitcher();
-    // The Landing hero headline is hardcoded English copy.
+    // The Landing hero headline in English.
     // The h1 reads "Hire faster, with a fair first round for every applicant."
     await waitFor(() => {
       expect(
@@ -164,6 +164,8 @@ describe('Landing page i18n integration', () => {
       const trigger = screen.getByRole('button', { name: /ui भाषा/i });
       expect(trigger).toHaveTextContent('हिंदी');
     });
+    // And the page itself follows: the hero is now Hindi.
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('तेज़ी से भर्ती करें');
 
     spy.mockRestore();
   });

@@ -12,7 +12,7 @@
 // the page renders a graceful "missing session" error rather than crashing.
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import InterviewIntro from '@/components/InterviewIntro';
 import LiveKitInterview from '@/features/interview/LiveKitInterview';
@@ -23,13 +23,24 @@ import type { Language } from '@/types/interview';
 import { StatusTag } from '@/design/components/primitives';
 import { XCircle } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
+import { buttonVariants } from '@/components/ui/button';
+import { useAuth } from '@/context/AuthContext';
+import { homePathFor } from '@/components/layout/navSections';
+import { isGuestOnly } from '@/lib/guest';
 
 // Language preference written to localStorage by StartInterview / JobsList
 // before createSession is called. Resolved once at page mount.
 const LANGUAGE_STORAGE_KEY = 'intants:interview-language';
 
 function resolveLanguage(): Language {
-  const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+  // Storage can throw when blocked (private mode, site data off); the page
+  // must still render (audit CA-L18).
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+  } catch {
+    stored = null;
+  }
   if (stored === 'en' || stored === 'hi' || stored === 'te') return stored;
   return 'en';
 }
@@ -37,6 +48,9 @@ function resolveLanguage(): Language {
 export default function Interview() {
   const { t } = useTranslation();
   const { sessionId } = useParams<{ sessionId: string }>();
+  const { user } = useAuth();
+  const roles = user?.roles ?? [];
+  const homePath = !user || isGuestOnly(roles) ? '/' : homePathFor(roles);
   const [introDone, setIntroDone] = useState(false);
   // Phase A — whether the candidate consented to their camera in the intro.
   const [cameraConsented, setCameraConsented] = useState(false);
@@ -99,6 +113,10 @@ export default function Interview() {
           <StatusTag tone="ember" className="text-[13px]">
             {t('interviewPage.missingSession')}
           </StatusTag>
+          {/* A way out (audit CA-L15). A guest has no account home. */}
+          <Link to={homePath} className={buttonVariants({ variant: 'outline' })}>
+            {t('error.goHome')}
+          </Link>
         </div>
       </main>
     );

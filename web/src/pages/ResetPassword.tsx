@@ -6,17 +6,25 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
 import { resetPassword } from '@/api/auth';
 import { toast } from '@/lib/toast';
 import AuthLayout, { FormError, PasswordField, PasswordStrength, StatusPanel } from '@/components/layout/AuthLayout';
 import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
 import { Pill } from '@/design/components/primitives';
 import { Lock, KeyRound, AlertCircle } from '@/design/components/icons';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { useFragmentToken } from '@/hooks/useFragmentToken';
 
 export default function ResetPassword() {
+  const { t } = useTranslation();
+  const errorText = useCandidateError();
   const navigate = useNavigate();
-  // Read once, then removed from the address bar and history entry.
+  // Read once, then removed from the address bar and history entry, and held
+  // in memory only. This token sets a password: kept in tab storage, a
+  // reopened tab on a shared machine would hand the next person a working form
+  // for somebody else's account. A reload costs the form; the emailed link
+  // still works until it is used.
   const token = useFragmentToken();
   const [pw, setPw] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -25,11 +33,11 @@ export default function ResetPassword() {
   const mutation = useMutation({
     mutationFn: () => resetPassword(token, pw),
     onSuccess: () => {
-      toast.success('Password updated - please sign in.');
+      toast.success(t('auth.resetSuccess'));
       void navigate('/login', { replace: true });
     },
     onError: (err: unknown) => {
-      setError(err instanceof Error ? err.message : 'Could not reset your password.');
+      setError(errorText(err, t('auth.resetError')));
     },
   });
 
@@ -37,11 +45,11 @@ export default function ResetPassword() {
     e.preventDefault();
     setError(null);
     if (pw.length < 8) {
-      setError('Password must be at least 8 characters.');
+      setError(t('auth.errPasswordMin'));
       return;
     }
     if (pw !== confirm) {
-      setError('Passwords do not match.');
+      setError(t('auth.errPasswordMismatch'));
       return;
     }
     mutation.mutate();
@@ -53,14 +61,16 @@ export default function ResetPassword() {
         <StatusPanel
           icon={AlertCircle}
           tone="danger"
-          title="Invalid reset link"
+          title={t('auth.resetInvalidTitle')}
           actions={
             <Link to="/forgot-password" className={PRIMARY_LINK_CLASS}>
-              Request a new link
+              {t('auth.requestNewLink')}
             </Link>
           }
         >
-          <p>This link is missing its token. Please request a new password-reset email.</p>
+          {/* The emailed link still works if it has not been used: say so
+              before sending them to request another (audit CA-H3). */}
+          <p>{t('auth.resetInvalidBody')}</p>
         </StatusPanel>
       </AuthLayout>
     );
@@ -72,15 +82,15 @@ export default function ResetPassword() {
         <KeyRound className="h-6 w-6" aria-hidden="true" />
       </span>
       <h1 className="mt-5 text-[30px] font-bold leading-tight tracking-[-0.8px] text-foreground">
-        Set a new password
+        {t('auth.resetTitle')}
       </h1>
-      <p className="mt-2 text-[15px] text-muted-foreground">Choose a strong password you’ll remember.</p>
+      <p className="mt-2 text-[15px] text-muted-foreground">{t('auth.resetDesc')}</p>
 
-      <form onSubmit={onSubmit} noValidate aria-label="Reset password form" className="mt-8 flex flex-col gap-4">
+      <form onSubmit={onSubmit} noValidate aria-label={t('auth.resetFormAria')} className="mt-8 flex flex-col gap-4">
         <div className="space-y-2">
           <PasswordField
             id="rp-new"
-            label="New password"
+            label={t('auth.newPassword')}
             autoComplete="new-password"
             placeholder="••••••••"
             icon={<Lock size={15} aria-hidden="true" />}
@@ -94,7 +104,7 @@ export default function ResetPassword() {
 
         <PasswordField
           id="rp-confirm"
-          label="Confirm password"
+          label={t('auth.confirmPassword')}
           autoComplete="new-password"
           placeholder="••••••••"
           icon={<Lock size={15} aria-hidden="true" />}
@@ -107,7 +117,7 @@ export default function ResetPassword() {
         <FormError id="rp-error">{error}</FormError>
 
         <Pill type="submit" disabled={mutation.isPending} aria-busy={mutation.isPending} className="min-h-11 w-full py-3">
-          {mutation.isPending ? 'Updating…' : 'Update password'}
+          {mutation.isPending ? t('auth.updating') : t('auth.updatePassword')}
         </Pill>
       </form>
 
@@ -116,7 +126,7 @@ export default function ResetPassword() {
           to="/login"
           className="inline-flex min-h-10 items-center rounded font-semibold text-foreground underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
-          Back to sign in
+          {t('auth.backToSignIn')}
         </Link>
       </p>
     </AuthLayout>

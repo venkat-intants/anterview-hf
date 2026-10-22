@@ -116,7 +116,7 @@ describe('ResetPassword', () => {
   it('refuses to show the form when the link carries no token', () => {
     renderPage(<ResetPassword />);
 
-    expect(screen.getByRole('heading', { name: /invalid reset link/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /reset link no longer works/i })).toBeInTheDocument();
     expect(screen.queryByRole('form', { name: /reset password form/i })).not.toBeInTheDocument();
   });
 
@@ -125,6 +125,21 @@ describe('ResetPassword', () => {
     renderPage(<ResetPassword />);
 
     expect(screen.getByRole('heading', { name: /set a new password/i })).toBeInTheDocument();
+  });
+
+  // This token sets a password. Kept in tab storage, a reopened tab on a shared
+  // machine would hand the next person a working form for that account.
+  it('keeps the token in memory only, so a remount after leaving has no form', () => {
+    setHash('#tok-abandoned');
+    const first = renderPage(<ResetPassword />);
+    expect(screen.getByRole('form', { name: /reset password form/i })).toBeInTheDocument();
+    expect(JSON.stringify({ ...sessionStorage, ...localStorage })).not.toContain('tok-abandoned');
+    first.unmount();
+    setHash('');
+
+    renderPage(<ResetPassword />);
+    expect(screen.getByRole('heading', { name: /reset link no longer works/i })).toBeInTheDocument();
+    expect(screen.queryByRole('form', { name: /reset password form/i })).not.toBeInTheDocument();
   });
 
   it('will not submit a password under 8 characters', async () => {
@@ -180,7 +195,7 @@ describe('VerifyEmail', () => {
     renderPage(<VerifyEmail />);
 
     expect(
-      await screen.findByRole('heading', { name: /couldn.t verify your email/i }),
+      await screen.findByRole('heading', { name: /could not verify your email/i }),
     ).toBeInTheDocument();
     expect(screen.getByText(/missing its token/i)).toBeInTheDocument();
     expect(verifyEmail).not.toHaveBeenCalled();

@@ -60,7 +60,9 @@ from sqlalchemy.exc import IntegrityError
 from app import application_drafts as draft_store
 from app import rediscovery
 from app.application_questions import (
+    MAX_QUESTIONS_PER_OPENING,
     AnswerError,
+    bound_draft_answers,
     list_questions,
     store_answers,
     validate_answers,
@@ -463,7 +465,9 @@ class DraftFieldsIn(BaseModel):
     linkedin_url: str | None = Field(default=None, max_length=500)
     github_url: str | None = Field(default=None, max_length=500)
     language: Literal["en", "hi", "te"] | None = None
-    answers: dict[str, Any] | None = None
+    # Bounded here (a form renders at most this many questions) and again in
+    # update_draft, against the opening's live question ids and value shapes.
+    answers: dict[str, Any] | None = Field(default=None, max_length=MAX_QUESTIONS_PER_OPENING)
 
 
 class ParsedDetails(BaseModel):
@@ -505,6 +509,12 @@ class DraftOut(BaseModel):
     parsed: ParsedDetails = Field(default_factory=ParsedDetails)
     confirmed: bool = False
     expires_at: str
+    # The opening's live questions, so the draft page can ask them. Without
+    # these a saved draft for an opening with a required question could never
+    # be submitted: submit_draft validates the stored answers against them,
+    # and the page had no field to answer them in. Same shape as the public
+    # posting, which is already readable by anyone holding the apply link.
+    questions: list[PostingQuestion] = Field(default_factory=list)
 
 
 class DraftStartOut(BaseModel):
@@ -514,7 +524,28 @@ class DraftStartOut(BaseModel):
     draft: DraftOut
 
 
-def _draft_out(row: dict[str, Any]) -> DraftOut:
+def _question_out(q: dict[str, Any]) -> PostingQuestion:
+    return PostingQuestion(
+        id=str(q["id"]),
+        prompt=q["prompt"],
+        kind=q["kind"],
+        help_text=q["help_text"],
+        required=q["required"],
+        options=list(q["options"] or []),
+    )
+
+
+async def _draft_view(db: DbSessionDep, row: dict[str, Any]) -> DraftOut:
+    """A draft plus the questions its opening asks today."""
+    questions = await list_questions(
+        db, requisition_id=uuid.UUID(str(row["requisition_id"]))
+    )
+    return _draft_out(row, questions)
+
+
+def _draft_out(
+    row: dict[str, Any], questions: list[dict[str, Any]] | None = None
+) -> DraftOut:
     parsed = dict(row.get("parsed") or {})
     return DraftOut(
         requisition_id=str(row["requisition_id"]),
@@ -538,6 +569,7 @@ def _draft_out(row: dict[str, Any]) -> DraftOut:
         ),
         confirmed=row.get("confirmed_at") is not None,
         expires_at=row["expires_at"].isoformat(),
+        questions=[_question_out(q) for q in questions or []],
     )
 
 
@@ -679,10 +711,11 @@ async def start_draft(
             status_code=503, detail="We could not save your progress just now."
         ) from None
 
+    questions = await list_questions(db, requisition_id=requisition_id)
     return DraftStartOut(
         resume_token=raw_token,
         draft=_draft_out({**draft, "title": req["title"],
-                          "company_name": req.get("company_name")}),
+                          "company_name": req.get("company_name")}, questions),
     )
 
 
@@ -693,7 +726,7 @@ async def start_draft(
 )
 async def resume_draft(db: DbSessionDep, token: DraftTokenDep) -> DraftOut:
     """Pick up where you left off."""
-    return _draft_out(await _draft_or_404(db, token))
+    return await _draft_view(db, await _draft_or_404(db, token))
 
 
 @router.patch(
@@ -710,9 +743,29 @@ async def update_draft(
     row = await _draft_or_404(db, token)
     fields = body.model_dump(exclude_unset=True)
     answers = fields.pop("answers", None)
-    await draft_store.save(db, draft_id=row["id"], fields=fields, answers=answers)
+    if answers is not None:
+        # The draft column holds only answers to this opening's questions, in
+        # shapes the form produces. Submission validates them fully later.
+        questions = await list_questions(
+            db, requisition_id=uuid.UUID(str(row["requisition_id"]))
+        )
+        try:
+            answers = bound_draft_answers(questions, answers)
+        except AnswerError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+    # An edit to a confirmed detail undoes the confirmation. submit_draft builds
+    # the application from these columns and stamps it with confirmed_at, so a
+    # save that changed the name after "these details are correct" would
+    # otherwise be submitted as confirmed when nobody confirmed it. Saving only
+    # answers, or the same values again, leaves the confirmation standing.
+    unconfirm = row.get("confirmed_at") is not None and draft_store.details_changed(
+        row, fields
+    )
+    await draft_store.save(
+        db, draft_id=row["id"], fields=fields, answers=answers, unconfirm=unconfirm
+    )
     await db.commit()
-    return _draft_out(await _draft_or_404(db, token))
+    return await _draft_view(db, await _draft_or_404(db, token))
 
 
 @router.post(
@@ -749,7 +802,7 @@ async def confirm_draft(
 
     await draft_store.confirm(db, draft_id=row["id"], corrections=corrections)
     await db.commit()
-    return _draft_out(await _draft_or_404(db, token))
+    return await _draft_view(db, await _draft_or_404(db, token))
 
 
 async def _draft_only_guest_user(
@@ -947,7 +1000,7 @@ async def upload_draft_resume(
         filename=resume.filename, parsed=parsed,
     )
     await db.commit()
-    return _draft_out(await _draft_or_404(db, token))
+    return await _draft_view(db, await _draft_or_404(db, token))
 
 
 @router.post(
@@ -1272,17 +1325,7 @@ async def get_posting(
         salary_min=req.get("salary_min") if shows_salary else None,
         salary_max=req.get("salary_max") if shows_salary else None,
         salary_currency=req.get("salary_currency") if shows_salary else None,
-        questions=[
-            PostingQuestion(
-                id=str(q["id"]),
-                prompt=q["prompt"],
-                kind=q["kind"],
-                help_text=q["help_text"],
-                required=q["required"],
-                options=list(q["options"] or []),
-            )
-            for q in questions
-        ],
+        questions=[_question_out(q) for q in questions],
         source=source,
         source_detail=source_detail,
     )

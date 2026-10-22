@@ -325,7 +325,7 @@ describe('Dashboard page', () => {
     renderDashboard();
     const stats = await screen.findByTestId('practice-stats');
     expect(within(stats).getByText('Interviews')).toBeInTheDocument();
-    expect(within(stats).getByText('Avg Score')).toBeInTheDocument();
+    expect(within(stats).getByText('Avg score')).toBeInTheDocument();
     expect(within(stats).getAllByText('71')).toHaveLength(2); // average and best
   });
 
@@ -533,5 +533,31 @@ describe('Dashboard - a failed request is not an empty queue', () => {
     renderDashboard();
     expect(await screen.findByRole('heading', { name: failedTitle })).toBeInTheDocument();
     expect(screen.queryByText('Nothing needed from you right now')).not.toBeInTheDocument();
+  });
+});
+
+// Audit CA-L1: the only action on a failed /me used to sign the person out.
+describe('Dashboard - profile load failure', () => {
+  it('retries first and keeps sign-out as the secondary action', async () => {
+    const { getMe, logout } = await import('../api/auth');
+    vi.mocked(getMe).mockRejectedValueOnce(new Error('upstream 502'));
+    renderDashboard();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Failed to load profile');
+    expect(alert).not.toHaveTextContent('upstream 502');
+
+    await userEvent.click(within(alert).getByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(vi.mocked(getMe)).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(logout)).not.toHaveBeenCalled();
+  });
+
+  it('can still sign out from the error', async () => {
+    const { getMe, logout } = await import('../api/auth');
+    vi.mocked(getMe).mockRejectedValueOnce(new Error('upstream 502'));
+    renderDashboard();
+    const alert = await screen.findByRole('alert');
+    await userEvent.click(within(alert).getByRole('button', { name: 'Sign out' }));
+    await waitFor(() => expect(vi.mocked(logout)).toHaveBeenCalled());
   });
 });

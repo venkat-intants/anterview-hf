@@ -382,6 +382,32 @@ describe('PublicExam - camera proctoring consent (camera-proctoring contract)', 
     await waitFor(() => expect(screen.queryByRole('checkbox')).not.toBeInTheDocument());
     expect(await screen.findByText(/camera unavailable/i)).toBeInTheDocument();
   });
+
+  // Audit CA-M4: pinned at bottom-4 the self-view sat on the sticky footer,
+  // over Next and Submit. jsdom does not lay out, so this pins the offset that
+  // keeps it above the footer (h-11 buttons plus py-3, under 6rem).
+  it('keeps the camera self-view above the sticky footer', async () => {
+    const user = userEvent.setup();
+    getPublicExam.mockResolvedValue(EXAM_WITH_CAMERA);
+    startExam.mockResolvedValue({
+      attempt_id: 'att-cam-3',
+      started_at: '2026-09-16T00:00:00.000Z',
+      deadline: null,
+      max_violations: 3,
+    });
+    const { container } = renderExam();
+    await screen.findByRole('heading', { name: 'Backend fundamentals' });
+
+    await user.click(screen.getByRole('button', { name: /turn on camera monitoring/i }));
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: 'Start exam' }));
+    await waitFor(() => expect(screen.queryByRole('checkbox')).not.toBeInTheDocument());
+
+    const selfView = container.querySelector('video')?.parentElement;
+    expect(selfView).toBeTruthy();
+    expect(selfView).toHaveClass('fixed', 'bottom-24');
+    expect(selfView).not.toHaveClass('bottom-4');
+  });
 });
 
 describe('PublicExam - the per-tab token does not outlive a link that cannot be used', () => {

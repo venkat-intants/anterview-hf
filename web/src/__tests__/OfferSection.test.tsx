@@ -1,11 +1,12 @@
 // OfferSection — PH4-A3. The candidate drawer's own view of an application's
-// offer(s): the "Create offer" control is offered only once the application
-// is recorded as a hire (D-05: the decision itself is made elsewhere).
+// offer(s): the "New offer" control is offered only once the application
+// is recorded as a hire (D-05: the decision itself is made elsewhere), and
+// only while no other offer is in play for it.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { OfferOut, OfferTemplate } from '../api/offers';
 
@@ -33,8 +34,20 @@ function renderSection(status: string | undefined) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <OfferSection enrolmentId="enr-1" jobTitle="Backend Engineer" applicationStatus={status} />
+      <MemoryRouter initialEntries={['/drawer']}>
+        <Routes>
+          <Route
+            path="/drawer"
+            element={
+              <OfferSection
+                enrolmentId="enr-1"
+                jobTitle="Backend Engineer"
+                applicationStatus={status}
+              />
+            }
+          />
+          <Route path="/hr/offers/:offerId" element={<p>Offer detail page</p>} />
+        </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -97,16 +110,70 @@ beforeEach(() => {
 });
 
 describe('OfferSection - create only once hired', () => {
-  it('hides "Create offer" for a candidate who is not yet a hire', async () => {
+  it('hides "New offer" for a candidate who is not yet a hire', async () => {
     renderSection('interviewed');
     await screen.findByText(/An offer can be created once this application is recorded as a hire\./);
-    expect(screen.queryByRole('button', { name: 'Create offer' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New offer' })).not.toBeInTheDocument();
   });
 
-  it('offers "Create offer" once the application is a hire', async () => {
+  it('offers "New offer" once the application is a hire', async () => {
     renderSection('hired');
     await screen.findByText('No offer yet for this application.');
-    expect(screen.getByRole('button', { name: 'Create offer' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New offer' })).toBeInTheDocument();
+  });
+
+  it.each(['draft', 'pending_approval', 'approved', 'rejected', 'sent', 'accepted'] as const)(
+    'does not offer a second offer while one is %s (audit OF-L8)',
+    async (status) => {
+      listEnrolmentOffers.mockResolvedValue([
+        { ...OFFER, status, expires_at: '2099-01-01T00:00:00.000Z' },
+      ]);
+      renderSection('hired');
+      expect(
+        await screen.findByText(/This application already has an offer in progress/),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'New offer' })).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    ['withdrawn', null],
+    ['declined', null],
+    ['expired', null],
+    ['sent', '2020-01-01T00:00:00.000Z'], // past its deadline: expired in fact
+  ] as const)('offers a new offer once the last one is %s', async (status, expires) => {
+    listEnrolmentOffers.mockResolvedValue([{ ...OFFER, status, expires_at: expires }]);
+    renderSection('hired');
+    expect(await screen.findByRole('button', { name: 'New offer' })).toBeInTheDocument();
+  });
+
+  it('says when the templates could not be loaded, instead of an empty choice', async () => {
+    const user = userEvent.setup();
+    listOfferTemplates.mockRejectedValue(new Error('down'));
+    renderSection('hired');
+    await user.click(await screen.findByRole('button', { name: 'New offer' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/You can still start from scratch/);
+  });
+
+  it('opens the new offer once it is created', async () => {
+    const user = userEvent.setup();
+    createEnrolmentOffer.mockResolvedValue({ ...OFFER, id: 'offer-9' });
+    renderSection('hired');
+    await user.click(await screen.findByRole('button', { name: 'New offer' }));
+    await user.type(screen.getByLabelText('Base salary'), '1200000');
+    await user.click(screen.getByRole('button', { name: 'Create offer' }));
+    expect(await screen.findByText('Offer detail page')).toBeInTheDocument();
+  });
+
+  it('does not create with a currency that is not three letters', async () => {
+    const user = userEvent.setup();
+    renderSection('hired');
+    await user.click(await screen.findByRole('button', { name: 'New offer' }));
+    await user.type(screen.getByLabelText('Base salary'), '1200000');
+    await user.clear(screen.getByLabelText('Currency'));
+    await user.type(screen.getByLabelText('Currency'), 'IN');
+    expect(screen.getByRole('button', { name: 'Create offer' })).toBeDisabled();
+    expect(screen.getByText(/three-letter code/)).toBeInTheDocument();
   });
 
   it('creates an offer with the chosen template and a base salary', async () => {
@@ -115,7 +182,7 @@ describe('OfferSection - create only once hired', () => {
     renderSection('hired');
     await screen.findByText('No offer yet for this application.');
 
-    await user.click(screen.getByRole('button', { name: 'Create offer' }));
+    await user.click(screen.getByRole('button', { name: 'New offer' }));
     await user.selectOptions(screen.getByLabelText('Template (optional)'), 'tpl-1');
     await user.type(screen.getByLabelText('Base salary'), '1200000');
 
@@ -139,7 +206,7 @@ describe('OfferSection - create only once hired', () => {
     renderSection('hired');
     await screen.findByText('No offer yet for this application.');
 
-    await user.click(screen.getByRole('button', { name: 'Create offer' }));
+    await user.click(screen.getByRole('button', { name: 'New offer' }));
     await user.selectOptions(screen.getByLabelText('Template (optional)'), 'tpl-usd');
     expect(screen.getByLabelText('Currency')).toHaveValue('USD');
     await user.type(screen.getByLabelText('Base salary'), '90000');
@@ -161,6 +228,6 @@ describe('OfferSection - the list', () => {
     await screen.findByText(/Backend Engineer/);
     const link = screen.getByRole('link', { name: /Backend Engineer/ });
     expect(link).toHaveAttribute('href', '/hr/offers/offer-1');
-    expect(screen.getByText('draft')).toBeInTheDocument();
+    expect(screen.getByText('Draft')).toBeInTheDocument();
   });
 });

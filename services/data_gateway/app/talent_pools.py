@@ -21,10 +21,13 @@ ADDING A NAME DOES NOT NEED REDISCOVERY CONSENT; CONTACTING ONE DOES
 The purpose limitation design §4.3 states plainly: rediscovery consent governs
 whether a candidate can be FOUND by a search and CONTACTED about a new
 opening. It does not govern whether HR can see a name it already holds under
-the application consent. So ``add_members`` never checks eligibility for a
-``source="manual"`` add (HR is allowed to put any of its own applicants on its
-own list), and DOES check it for ``source="rediscovery"`` (a result that was
-never eligible should not quietly become a permanent pool row). ``invite_member``
+the application consent. So ``add_members`` does not require rediscovery
+eligibility for a ``source="manual"`` add (HR is allowed to put any of its own
+applicants on its own list), and DOES require it for ``source="rediscovery"``
+(a result that was never eligible should not quietly become a permanent pool
+row). The one refusal that applies to BOTH sources is a pending erasure
+request (audit PL-F5): a person who asked to be erased is never put on a new
+list, whoever is adding them. ``invite_member``
 — the one action that is genuinely "contact about a new opening" — checks
 eligibility for EVERY member regardless of how they got into the pool, via
 ``rediscovery.eligibility_for_applicants``, the single shared definition
@@ -112,7 +115,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
@@ -161,12 +164,20 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _sanitise_match_reason(raw: dict[str, Any] | None) -> dict[str, Any] | None:
+def _sanitise_match_reason(
+    raw: dict[str, Any] | None, *, frozen_at: datetime | None = None,
+) -> dict[str, Any] | None:
     """Defence in depth on the way INTO the database — see the module
     docstring. Re-applies ``rediscovery.FREEZE_KEEP_ITEM_FIELDS`` to every
     ``why`` item regardless of what the caller actually sent, and bounds
     ``query_terms``/the number of ``why`` items so this column cannot become
-    unbounded storage for a hand-crafted request."""
+    unbounded storage for a hand-crafted request.
+
+    ``frozen_at`` is stamped HERE, from the server clock, never taken from the
+    request (audit PL-F2): the pool row labels the snapshot "Added from a
+    rediscovery search on <frozen_at>", and before this nothing on the add
+    path wrote the key, so every rediscovery-sourced member read "on -". A
+    client-sent ``frozen_at`` is dropped with every other unknown key."""
     if not raw or not isinstance(raw, dict):
         return None
     why: list[dict[str, Any]] = []
@@ -188,6 +199,7 @@ def _sanitise_match_reason(raw: dict[str, Any] | None) -> dict[str, Any] | None:
     breakdown = raw.get("breakdown") if isinstance(raw.get("breakdown"), dict) else None
     searched_at = raw.get("searched_at")
     return {
+        "frozen_at": (frozen_at or datetime.now(tz=UTC)).isoformat(),
         "breakdown": breakdown,
         "why": why,
         "searched_at": searched_at if isinstance(searched_at, str) else None,
@@ -217,6 +229,16 @@ def _evidence_review_is_current(reviewed_at: datetime | None, *, now: datetime) 
     if reviewed_at is None:
         return False
     return (now - reviewed_at).days <= int(settings.rediscovery_review_valid_days)
+
+
+def _evidence_review_expires_at(reviewed_at: datetime | None) -> datetime | None:
+    """When a review stops clearing the gate — the same bound
+    ``_evidence_review_is_current`` applies (``.days <= valid_days`` holds
+    until ``valid_days + 1`` whole days have passed), so the screen can say
+    "re-checked on X, valid until Y" (audit PL-F3) without re-deriving it."""
+    if reviewed_at is None:
+        return None
+    return reviewed_at + timedelta(days=int(settings.rediscovery_review_valid_days) + 1)
 
 
 def _match_reason_evidence_freshness(sanitised: dict[str, Any] | None) -> str | None:
@@ -260,6 +282,27 @@ async def _event(
 # ---------------------------------------------------------------------------
 # Pool rows
 # ---------------------------------------------------------------------------
+async def _touch_pool(db: AsyncSession, *, pool_id: uuid.UUID, now: datetime) -> None:
+    """A membership change is a change to the pool (audit PL-L10/F18): the
+    list sorts and labels by ``updated_at``, and a pool whose members changed
+    yesterday must not read as untouched since the day it was created."""
+    await db.execute(
+        text("UPDATE talent_pools SET updated_at = :now WHERE id = :p"),
+        {"now": now, "p": pool_id},
+    )
+
+
+def _refuse_if_archived(pool: Any) -> None:
+    """An archived pool is read-only for anything that grows it or contacts
+    someone from it (audit PL-L3): restore it first. Remove and review stay
+    open, because tidying an archived list is not a new use of it."""
+    if pool["archived_at"] is not None:
+        raise PoolError(
+            409, "pool_archived",
+            "This pool is archived. Restore it before adding or inviting candidates.",
+        )
+
+
 async def _pool_row(db: AsyncSession, *, company_id: uuid.UUID, pool_id: uuid.UUID) -> Any:
     return (
         await db.execute(
@@ -304,12 +347,28 @@ async def list_pools(
             {"c": company_id},
         )
     ).mappings().all()
+    # Counted over every live pool, archived or not, the same set create_pool
+    # checks against the limit, so the screen can say "N archived pools" and
+    # stop offering New pool at the limit (audit F20) even when it is only
+    # listing the active ones.
+    counts = (
+        await db.execute(
+            text(
+                "SELECT count(*) AS total,"
+                " count(*) FILTER (WHERE archived_at IS NOT NULL) AS archived"
+                "  FROM talent_pools WHERE company_id = :c AND deleted_at IS NULL"
+            ),
+            {"c": company_id},
+        )
+    ).mappings().one()
     return {
         "pools": [_pool_out(r) for r in rows],
         "limits": {
             "max_per_company": int(settings.talent_pool_max_per_company),
             "max_members": int(settings.talent_pool_max_members),
         },
+        "pool_count": int(counts["total"] or 0),
+        "archived_count": int(counts["archived"] or 0),
     }
 
 
@@ -331,7 +390,8 @@ async def create_pool(
     if int(count or 0) >= settings.talent_pool_max_per_company:
         raise PoolError(
             409, "pool_limit_reached",
-            f"Your company already has {settings.talent_pool_max_per_company} pools.",
+            f"Your company already has {settings.talent_pool_max_per_company} pools"
+            " (archived pools count). Delete one you no longer need.",
         )
     taken = await db.scalar(
         text(
@@ -519,7 +579,8 @@ async def _list_members(
     elig = await rediscovery.eligibility_for_applicants(
         db, company_id=company_id, applicant_ids=[r["applicant_id"] for r in rows],
     )
-    return [_member_out(r, elig.get(r["applicant_id"], _NOT_ELIGIBLE)) for r in rows]
+    now = datetime.now(tz=UTC)
+    return [_member_out(r, elig.get(r["applicant_id"], _NOT_ELIGIBLE), now=now) for r in rows]
 
 
 #: The fallback for an applicant `eligibility_for_applicants` did not return at
@@ -530,17 +591,52 @@ _NOT_ELIGIBLE: dict[str, Any] = {
 }
 
 
-def _member_out(row: Any, elig: dict[str, Any]) -> dict[str, Any]:
+def _member_out(row: Any, elig: dict[str, Any], *, now: datetime) -> dict[str, Any]:
+    """One member on the wire.
+
+    AN INELIGIBLE MEMBER CARRIES NO EVIDENCE (audit PL-F1, design §7 row 4).
+    Two tiers, both enforced HERE rather than merely hidden by the screen:
+
+    * Not eligible for any reason (including never opted in): the match
+      snapshot, the freshness band and the review stamp are withheld. A
+      never-opted-in manual add keeps its title, company and HR note, because
+      HR holds that person under the application consent (design §4.3).
+    * Consent withdrawn or expired, or erasure requested (``ineligible_reason``
+      set): the row is also reduced to a name, a reason and Remove, so
+      ``current_title``, ``current_company`` and the free-text ``note`` (which
+      may describe the person) are withheld as well.
+
+    What stays on every row is the pool's own provenance: ``added_at``,
+    ``added_by_name`` (a colleague, not the candidate) and ``source``. A
+    client that ignores ``eligible`` still has nothing more to render.
+
+    ``match_reason.frozen_at`` falls back to ``added_at`` for a snapshot
+    written before the add path stamped it (PL-F2): the snapshot is frozen by
+    the same INSERT that sets ``added_at``, so the two are the same moment.
+    """
+    eligible = bool(elig["eligible"])
+    match_reason: dict[str, Any] | None = None
+    if eligible and isinstance(row["match_reason"], dict):
+        match_reason = dict(row["match_reason"])
+        if not match_reason.get("frozen_at"):
+            match_reason["frozen_at"] = _iso(row["added_at"])
+    reviewed_at = row["evidence_reviewed_at"] if eligible else None
+    # A withdrawal, expiry or erasure request reduces the row to a name.
+    profile_shown = eligible or elig["ineligible_reason"] is None
     return {
         "member_id": str(row["member_id"]), "applicant_id": str(row["applicant_id"]),
-        "full_name": row["full_name"], "current_title": row["current_title"],
-        "current_company": row["current_company"], "source": row["source"],
+        "full_name": row["full_name"],
+        "current_title": row["current_title"] if profile_shown else None,
+        "current_company": row["current_company"] if profile_shown else None,
+        "source": row["source"],
         "added_at": _iso(row["added_at"]), "added_by_name": row["added_by_name"],
-        "note": row["note"], "match_reason": row["match_reason"],
-        "evidence_freshness": row["evidence_freshness"],
-        "evidence_reviewed_at": _iso(row["evidence_reviewed_at"]),
-        "evidence_reviewed_by_name": row["evidence_reviewed_by_name"],
-        "eligible": bool(elig["eligible"]),
+        "note": row["note"] if profile_shown else None, "match_reason": match_reason,
+        "evidence_freshness": row["evidence_freshness"] if eligible else None,
+        "evidence_reviewed_at": _iso(reviewed_at),
+        "evidence_reviewed_by_name": row["evidence_reviewed_by_name"] if eligible else None,
+        "review_current": _evidence_review_is_current(reviewed_at, now=now),
+        "review_expires_at": _iso(_evidence_review_expires_at(reviewed_at)),
+        "eligible": eligible,
         "ineligible_reason": elig["ineligible_reason"],
         "opted_in_at": _iso(elig["opted_in_at"]),
         "expires_at": _iso(elig["expires_at"]),
@@ -578,7 +674,9 @@ async def _one_member_out(
     elig = await rediscovery.eligibility_for_applicants(
         db, company_id=company_id, applicant_ids=[row["applicant_id"]],
     )
-    return _member_out(row, elig.get(row["applicant_id"], _NOT_ELIGIBLE))
+    return _member_out(
+        row, elig.get(row["applicant_id"], _NOT_ELIGIBLE), now=datetime.now(tz=UTC),
+    )
 
 
 async def add_members(
@@ -589,12 +687,14 @@ async def add_members(
     pool = await _pool_row(db, company_id=company_id, pool_id=pool_id)
     if pool is None:
         raise PoolError(404, "pool_not_found", "Pool not found.")
+    _refuse_if_archived(pool)
     if source not in MEMBER_SOURCES:
         raise PoolError(422, "invalid_name", "Unknown member source.")
     note = (note or "").strip() or None
     if note and len(note) > 500:
         raise PoolError(422, "invalid_name", "The note is too long (500 characters).")
-    sanitised = _sanitise_match_reason(match_reason)
+    now = datetime.now(tz=UTC)
+    sanitised = _sanitise_match_reason(match_reason, frozen_at=now)
     frozen_freshness = _match_reason_evidence_freshness(sanitised)
 
     ids = list(dict.fromkeys(applicant_ids))  # de-duplicated, order preserved
@@ -622,19 +722,21 @@ async def add_members(
     ).scalars().all()
     already_members = set(existing_rows)
 
-    eligible_map: dict[uuid.UUID, dict[str, Any]] = {}
-    if source == "rediscovery":
-        candidates = [i for i in ids if i in this_company and i not in already_members]
-        eligible_map = await rediscovery.eligibility_for_applicants(
-            db, company_id=company_id, applicant_ids=candidates,
-        )
+    # Eligibility is looked up for BOTH sources. A rediscovery add needs the
+    # person to be eligible; a manual add does not (module docstring), but it
+    # must still refuse someone with a pending erasure request (audit PL-F5):
+    # putting them on a new, durable list is the opposite of what they asked
+    # for, and the row would only ever render "Erasure requested".
+    candidates = [i for i in ids if i in this_company and i not in already_members]
+    eligible_map = await rediscovery.eligibility_for_applicants(
+        db, company_id=company_id, applicant_ids=candidates,
+    )
 
     current_count = int(pool["member_count"])
     max_members = int(settings.talent_pool_max_members)
 
     added: list[str] = []
     skipped: list[dict[str, str]] = []
-    now = datetime.now(tz=UTC)
     for applicant_id in ids:
         if applicant_id not in this_company:
             skipped.append({"applicant_id": str(applicant_id), "reason": "not_this_company"})
@@ -642,7 +744,11 @@ async def add_members(
         if applicant_id in already_members:
             skipped.append({"applicant_id": str(applicant_id), "reason": "already_a_member"})
             continue
-        if source == "rediscovery" and not eligible_map.get(applicant_id, {}).get("eligible"):
+        elig = eligible_map.get(applicant_id, _NOT_ELIGIBLE)
+        if elig.get("ineligible_reason") == "erasure_requested":
+            skipped.append({"applicant_id": str(applicant_id), "reason": "erasure_requested"})
+            continue
+        if source == "rediscovery" and not elig.get("eligible"):
             skipped.append({"applicant_id": str(applicant_id), "reason": "not_eligible"})
             continue
         if current_count >= max_members:
@@ -675,6 +781,7 @@ async def add_members(
         current_count += 1
 
     if added:
+        await _touch_pool(db, pool_id=pool_id, now=now)
         await _audit(
             db, actor=actor, action="pools.member.added", resource_id=pool_id,
             details={
@@ -707,6 +814,7 @@ async def remove_member(
         ),
         {"now": now, "u": actor, "r": reason, "i": member_id},
     )
+    await _touch_pool(db, pool_id=pool_id, now=now)
     await _event(
         db, company_id=company_id, pool_id=pool_id, applicant_id=row["applicant_id"],
         action="member_removed", actor_user_id=actor,
@@ -802,6 +910,10 @@ async def invite_member(
     ``evidence_reviewed_at``/``_by``: an acknowledgement is written onto the
     ``member_invited`` event itself.
     """
+    pool = await _pool_row(db, company_id=company_id, pool_id=pool_id)
+    if pool is None:
+        raise PoolError(404, "pool_not_found", "Pool not found.")
+    _refuse_if_archived(pool)
     row = await _member_row(db, company_id=company_id, pool_id=pool_id, member_id=member_id)
     if row is None:
         raise PoolError(404, "member_not_found", "Pool member not found.")
@@ -866,6 +978,7 @@ async def invite_member(
         # trace is not a control (design §6.6 point 3).
         event_details["acknowledged_stale"] = True
         event_details["freshness"] = band
+    await _touch_pool(db, pool_id=pool_id, now=datetime.now(tz=UTC))
     await _event(
         db, company_id=company_id, pool_id=pool_id, applicant_id=applicant_id,
         action="member_invited", actor_user_id=actor, details=event_details,

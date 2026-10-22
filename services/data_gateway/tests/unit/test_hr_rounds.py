@@ -86,6 +86,13 @@ def _rows(*items: Any) -> MagicMock:
     return result
 
 
+def _tuples(*items: Any) -> MagicMock:
+    """A db.execute() result whose .tuples().all() yields *items*."""
+    result = MagicMock()
+    result.tuples.return_value.all.return_value = list(items)
+    return result
+
+
 def _db(*, scalars: list[Any] | None = None, executes: list[Any] | None = None) -> AsyncMock:
     db = AsyncMock()
     db.scalar = AsyncMock(side_effect=list(scalars or []))
@@ -168,11 +175,13 @@ async def test_get_structure_returns_rounds_with_their_sections() -> None:
     sec = _section(round_id=rnd.id)
     db = _db(
         scalars=[_exam(), 3],  # owned exam, then the section's question count
-        executes=[_rows(rnd), _rows(sec)],  # rounds of the exam, sections of the round
+        # rounds of the exam, attempts per round (one grouped query), sections
+        executes=[_rows(rnd), _tuples((rnd.id, 2)), _rows(sec)],
     )
 
     out = await get_structure(_EXAM, _ctx(), db)
 
+    assert out.rounds[0].attempt_count == 2
     assert out.exam_id == str(_EXAM)
     assert [r.id for r in out.rounds] == [str(rnd.id)]
     assert [s.id for s in out.rounds[0].sections] == [str(sec.id)]
@@ -332,13 +341,18 @@ async def test_delete_round_cascades_the_soft_delete_to_its_sections() -> None:
 
     rnd = _round()
     sec = _section(round_id=rnd.id)
-    db = _db(scalars=[_exam(), rnd, 0, 2], executes=[_rows(sec)])
+    mq = SimpleNamespace(deleted_at=None)
+    cq = SimpleNamespace(deleted_at=None)
+    # sections, then the sections' MCQ and coding questions
+    db = _db(scalars=[_exam(), rnd, 0, 2], executes=[_rows(sec), _rows(mq), _rows(cq)])
 
     resp = await delete_round(_EXAM, rnd.id, _ctx(), db)
 
     assert resp.status_code == 204
     assert rnd.deleted_at is not None
     assert sec.deleted_at == rnd.deleted_at
+    assert mq.deleted_at == rnd.deleted_at
+    assert cq.deleted_at == rnd.deleted_at
     db.commit.assert_awaited_once()
 
 

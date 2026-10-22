@@ -3,7 +3,12 @@
 // answer the one case knowable without a write (see the module comment).
 
 import { describe, it, expect } from 'vitest';
-import { PUBLISHED_REASON, TAKEN_REASON, roundLockReason } from '../lib/examLocks';
+import {
+  PUBLISHED_REASON,
+  TAKEN_REASON,
+  canUnpublishRound,
+  roundLockReason,
+} from '../lib/examLocks';
 
 describe('examLocks', () => {
   it('matches the backend sentences verbatim', () => {
@@ -20,5 +25,17 @@ describe('examLocks', () => {
 
   it('leaves a draft round unlocked', () => {
     expect(roundLockReason('draft')).toBeNull();
+  });
+
+  // Audit E2: a taken round used to offer Unpublish, which the server always
+  // refused with "reload and try again". Its banner now names the real reason
+  // and the only way forward.
+  it('locks a taken round with the taken sentence and offers no unpublish', () => {
+    expect(roundLockReason('published', 3)).toBe(
+      'This round has been taken - its content is fixed. Duplicate it to make changes.',
+    );
+    expect(canUnpublishRound('published', 3)).toBe(false);
+    expect(canUnpublishRound('published', 0)).toBe(true);
+    expect(canUnpublishRound('draft', 0)).toBe(false);
   });
 });

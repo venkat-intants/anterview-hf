@@ -17,8 +17,10 @@
 //
 // `resume_terms.snippet` renders through `RediscoveryWhyPanel`, which parses
 // `[[…]]` bracket markers itself. Nothing in this file touches innerHTML.
+//
+// English-only by design (CLAUDE.md — staff consoles are not translated).
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -33,10 +35,16 @@ import {
   listPools,
   matchReasonFromResult,
   poolErrorMessage,
+  skipReasonLabel,
   type PoolOut,
 } from '@/api/pools';
 import { listRequisitions } from '@/api/requisitions';
 import { toast } from '@/lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
+import { formatScore } from '@/lib/formatters';
+import { invalidateAfterHrMutation } from '@/lib/queryKeys';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
 import { PageHeader, Page } from '@/design/components/page';
@@ -63,6 +71,14 @@ const EMPTY_UNIVERSE_TEXT =
   'No candidates have opted in yet. Rediscovery searches only candidates who chose to be kept for future openings. New applicants can opt in on your application form from today; candidates who applied earlier appear here only if they opt in themselves.';
 const KEYWORD_ONLY_TEXT = 'Semantic search is unavailable - matching keywords only';
 const UNEXPLAINED_HEADING = 'Matched on similarity only - nothing here says why';
+/** The server's largest requisitions page (hr_requisitions.py `_MAX_PAGE`);
+ *  the default of 50 silently dropped the rest (audit F22). */
+const OPENINGS_PAGE = 200;
+const POOL_NAME_MAX = 120;
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
 
 export default function Rediscovery(): JSX.Element {
   const universeQuery = useQuery({
@@ -71,7 +87,7 @@ export default function Rediscovery(): JSX.Element {
   });
   const openingsQuery = useQuery({
     queryKey: ['hr', 'requisitions', 'open-for-rediscovery'],
-    queryFn: () => listRequisitions({ status: 'open' }),
+    queryFn: () => listRequisitions({ status: 'open', limit: OPENINGS_PAGE }),
   });
 
   const [query, setQuery] = useState('');
@@ -84,7 +100,7 @@ export default function Rediscovery(): JSX.Element {
     mutationFn: () =>
       searchRediscovery({ query: query.trim(), requisitionId: requisitionId || null }),
     onSuccess: () => setSelected(new Set()),
-    onError: (e: unknown) => toast.error(rediscoveryErrorMessage(e, 'Could not run that search')),
+    onError: (e: unknown) => toast.error(rediscoveryErrorMessage(e, 'Could not run that search.')),
   });
 
   function handleSubmit(e: FormEvent): void {
@@ -102,6 +118,17 @@ export default function Rediscovery(): JSX.Element {
     });
   }
 
+  /** Drop the people a pool add has dealt with (added, or skipped for a
+   *  reason that would only repeat) from the selection, so the bulk bar does
+   *  not go on offering to add them again (audit PL-F11). */
+  function unselect(ids: string[]): void {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      ids.forEach((id) => next.delete(id));
+      return next;
+    });
+  }
+
   const universe = searchMut.data?.universe ?? universeQuery.data?.universe;
   const eligible = universe?.eligible ?? 0;
   const total = universe?.total ?? 0;
@@ -113,6 +140,7 @@ export default function Rediscovery(): JSX.Element {
   const explained = results.filter((r) => r.explained);
   const unexplained = results.filter((r) => !r.explained);
   const selectedRows = results.filter((r) => selected.has(r.applicant_id));
+  const openings = openingsQuery.data ?? [];
 
   return (
     <Page width="default">
@@ -128,16 +156,18 @@ export default function Rediscovery(): JSX.Element {
           Checking how many candidates can be searched…
         </p>
       ) : universeQuery.isError ? (
-        <p className="text-[12.5px] text-[var(--ui-danger)]">
-          {rediscoveryErrorMessage(
-            universeQuery.error,
-            'Could not check how many candidates are searchable.',
-          )}
-        </p>
+        <QueryErrorPanel
+          title="Could not check how many candidates are searchable."
+          error={universeQuery.error}
+          onRetry={() => void universeQuery.refetch()}
+          retrying={universeQuery.isFetching}
+        />
       ) : universeQuery.data ? (
+        // "The rest" also covers withdrawn, expired and erasure-requested
+        // consent, so the counter says so (audit F24).
         <p role="status" className="text-[12.5px] text-muted-foreground">
-          Searching {eligible.toLocaleString()} of {total.toLocaleString()} applicants - the rest
-          have not opted in.
+          Searching {eligible.toLocaleString('en-IN')} of {total.toLocaleString('en-IN')}{' '}
+          applicants - the rest have not opted in, or their consent has lapsed.
         </p>
       ) : null}
 
@@ -182,25 +212,54 @@ export default function Rediscovery(): JSX.Element {
                     id="rediscovery-opening"
                     value={requisitionId}
                     onChange={(e) => setRequisitionId(e.target.value)}
+                    disabled={openingsQuery.isLoading}
+                    aria-describedby={
+                      openingsQuery.isError || openingsQuery.isSuccess
+                        ? 'rediscovery-opening-help'
+                        : undefined
+                    }
                     className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
                   >
-                    <option value="">None</option>
-                    {(openingsQuery.data ?? []).map((r) => (
+                    <option value="">
+                      {openingsQuery.isLoading ? 'Loading openings…' : 'No opening'}
+                    </option>
+                    {openings.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.title}
                       </option>
                     ))}
                   </select>
                 </div>
-                <button
-                  type="submit"
-                  disabled={!query.trim() || searchMut.isPending}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-primary px-5 min-h-10 text-sm font-semibold text-primary-foreground disabled:opacity-50"
-                >
-                  <Search className="h-3.5 w-3.5" aria-hidden="true" />
+                <Button type="submit" disabled={!query.trim() || searchMut.isPending}>
+                  <Search aria-hidden="true" />
                   {searchMut.isPending ? 'Searching…' : 'Search'}
-                </button>
+                </Button>
               </form>
+              {openingsQuery.isError ? (
+                <p
+                  id="rediscovery-opening-help"
+                  role="alert"
+                  className="mt-2 flex flex-wrap items-center gap-2 text-[12px] text-[var(--ui-danger)]"
+                >
+                  {errorMessage(openingsQuery.error, 'Could not load your openings.')}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void openingsQuery.refetch()}
+                  >
+                    Try again
+                  </Button>
+                </p>
+              ) : openingsQuery.isSuccess && openings.length === 0 ? (
+                <p id="rediscovery-opening-help" className="mt-2 text-[12px] text-muted-foreground">
+                  No openings are open right now, so a search cannot target one.
+                </p>
+              ) : openingsQuery.isSuccess && openings.length >= OPENINGS_PAGE ? (
+                <p id="rediscovery-opening-help" className="mt-2 text-[12px] text-muted-foreground">
+                  Showing the first {OPENINGS_PAGE} open openings.
+                </p>
+              ) : null}
             </GlassCard>
           </Reveal>
 
@@ -217,24 +276,33 @@ export default function Rediscovery(): JSX.Element {
           {selectedRows.length > 0 ? (
             <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2">
               <span className="text-[12.5px] text-foreground">{selectedRows.length} selected</span>
-              <button
-                type="button"
-                onClick={() => setDialogRows(selectedRows)}
-                className="rounded-full bg-primary px-5 min-h-10 text-[12px] font-semibold text-primary-foreground"
-              >
+              <Button type="button" size="sm" onClick={() => setDialogRows(selectedRows)}>
                 Add {selectedRows.length} to pool
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                size="sm"
+                variant="ghost"
                 onClick={() => setSelected(new Set())}
-                className="text-[12px] text-muted-foreground"
               >
                 Clear selection
-              </button>
+              </Button>
             </div>
           ) : null}
 
-          {searchMut.data ? (
+          {searchMut.isPending ? (
+            // Results are cleared while a search runs, so hold their place with
+            // skeleton rows rather than an empty gap (consistency D3).
+            <GlassCard className="space-y-3 p-5" aria-busy="true" data-testid="results-loading">
+              <span className="sr-only" role="status">
+                Searching…
+              </span>
+              <Skeleton className="h-4 w-40" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </GlassCard>
+          ) : searchMut.data ? (
             <Reveal delay={0.08}>
               <GlassCard className="p-5 space-y-4">
                 <p className="text-[12.5px] text-muted-foreground">
@@ -292,7 +360,11 @@ export default function Rediscovery(): JSX.Element {
       )}
 
       {dialogRows ? (
-        <AddToPoolDialog rows={dialogRows} onClose={() => setDialogRows(null)} />
+        <AddToPoolDialog
+          rows={dialogRows}
+          onDone={unselect}
+          onClose={() => setDialogRows(null)}
+        />
       ) : null}
     </Page>
   );
@@ -317,6 +389,7 @@ function ResultRow({
   onSelect: () => void;
   onAddToPool: () => void;
 }): JSX.Element {
+  const whyId = `rediscovery-why-${row.applicant_id}`;
   return (
     <li className="rounded-[12px] border border-border p-3.5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -345,7 +418,10 @@ function ResultRow({
           <StatusTag tone={FRESHNESS_TONE[row.evidence_freshness]} dot>
             {freshnessChipLabel(row.evidence_freshness)}
           </StatusTag>
-          <span className="text-[13px] font-semibold text-foreground">{row.score}</span>
+          {/* A bare "72" said nothing about its scale (audit F24). */}
+          <span className="text-[13px] font-semibold text-foreground">
+            Match {formatScore('resume', row.score)}
+          </span>
         </div>
       </div>
 
@@ -364,6 +440,8 @@ function ResultRow({
         <button
           type="button"
           onClick={onToggle}
+          aria-expanded={expanded}
+          aria-controls={whyId}
           className="inline-flex items-center gap-1 text-[12px] text-[var(--ui-info)] hover:underline"
         >
           {expanded ? (
@@ -373,17 +451,13 @@ function ResultRow({
           )}
           {expanded ? 'Hide why' : 'Why this match?'}
         </button>
-        <button
-          type="button"
-          onClick={onAddToPool}
-          className="rounded-[8px] border border-border px-2.5 py-1 text-[12px] text-foreground"
-        >
+        <Button type="button" size="sm" variant="outline" onClick={onAddToPool}>
           Add to pool
-        </button>
+        </Button>
       </div>
 
       {expanded ? (
-        <div className="mt-3 border-t border-border pt-3">
+        <div id={whyId} className="mt-3 border-t border-border pt-3">
           <RediscoveryWhyPanel items={row.why} />
         </div>
       ) : null}
@@ -397,11 +471,22 @@ function ResultRow({
 // why a bulk add cannot share one match_reason across different people).
 // ---------------------------------------------------------------------------
 
+interface NotAdded {
+  applicantId: string;
+  name: string;
+  reason: string;
+  /** True when the request itself failed, so trying again may work. A skip
+   *  (already a member, consent not active) would only skip again. */
+  retryable: boolean;
+}
+
 function AddToPoolDialog({
   rows,
+  onDone,
   onClose,
 }: {
   rows: RediscoveryResult[];
+  onDone: (applicantIds: string[]) => void;
   onClose: () => void;
 }): JSX.Element {
   const qc = useQueryClient();
@@ -412,98 +497,205 @@ function AddToPoolDialog({
   const [mode, setMode] = useState<'existing' | 'new'>('existing');
   const [poolId, setPoolId] = useState('');
   const [newName, setNewName] = useState('');
+  // The rows still to add. After a partial failure only the retryable ones
+  // stay, so "Try again" never re-sends someone already dealt with.
+  const [pendingRows, setPendingRows] = useState<RediscoveryResult[]>(rows);
+  const [notAdded, setNotAdded] = useState<NotAdded[]>([]);
+  // A pool created by an earlier attempt is reused on retry, rather than a
+  // second create that would fail as "name already taken".
+  const [createdPoolId, setCreatedPoolId] = useState<string | null>(null);
+
+  const pools = poolsQuery.data?.pools ?? [];
+  const noPools = poolsQuery.isSuccess && pools.length === 0;
+  // With no pool to choose, the only way forward is a new one (audit F23).
+  useEffect(() => {
+    if (noPools) setMode('new');
+  }, [noPools]);
 
   const mut = useMutation({
     mutationFn: async () => {
-      let targetId = poolId;
-      if (mode === 'new') {
+      let targetId = mode === 'existing' ? poolId : createdPoolId;
+      if (!targetId) {
         const created = await createPool({ name: newName.trim(), description: null });
         targetId = created.id;
+        setCreatedPoolId(created.id);
       }
-      return Promise.allSettled(
-        rows.map((row) =>
-          addPoolMembers(targetId, {
+      const poolIdUsed = targetId;
+      const outcomes = await Promise.allSettled(
+        pendingRows.map((row) =>
+          addPoolMembers(poolIdUsed, {
             applicantIds: [row.applicant_id],
             source: 'rediscovery',
             matchReason: matchReasonFromResult(row),
           }),
         ),
       );
+      return outcomes;
     },
     onSuccess: (outcomes) => {
       let added = 0;
-      let notAdded = 0;
-      for (const outcome of outcomes) {
+      const failed: NotAdded[] = [];
+      const done: string[] = [];
+      outcomes.forEach((outcome, i) => {
+        const row = pendingRows[i];
         if (outcome.status === 'fulfilled') {
           added += outcome.value.added.length;
-          notAdded += outcome.value.skipped.length;
+          done.push(row.applicant_id);
+          outcome.value.skipped.forEach((s) =>
+            failed.push({
+              applicantId: row.applicant_id,
+              name: row.full_name,
+              reason: skipReasonLabel(s.reason),
+              retryable: false,
+            }),
+          );
         } else {
-          notAdded += 1;
+          failed.push({
+            applicantId: row.applicant_id,
+            name: row.full_name,
+            reason: poolErrorMessage(outcome.reason, 'Could not be added.'),
+            retryable: true,
+          });
         }
+      });
+      if (added > 0) {
+        toast.success(`Added ${plural(added, 'candidate')} to the pool`);
+        void invalidateAfterHrMutation(qc);
       }
-      if (added > 0) toast.success(`Added ${added} to the pool`);
-      if (notAdded > 0) toast.error(`${notAdded} could not be added`);
-      void qc.invalidateQueries({ queryKey: ['hr', 'pools'] });
-      onClose();
+      onDone(done);
+      if (failed.length === 0) {
+        onClose();
+        return;
+      }
+      // Named per person and kept on screen, as the pools page does, rather
+      // than one "N could not be added" toast (audit PL-F11).
+      setNotAdded(failed);
+      const retry = new Set(failed.filter((f) => f.retryable).map((f) => f.applicantId));
+      setPendingRows(pendingRows.filter((r) => retry.has(r.applicant_id)));
     },
-    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not add to a pool')),
+    onError: (e: unknown) => toast.error(poolErrorMessage(e, 'Could not add to a pool.')),
   });
 
-  const canSubmit = mode === 'existing' ? Boolean(poolId) : newName.trim().length > 0;
+  const hasTarget =
+    mode === 'existing' ? Boolean(poolId) : Boolean(createdPoolId) || newName.trim().length > 0;
+  const canSubmit = hasTarget && pendingRows.length > 0;
+  const finished = notAdded.length > 0 && pendingRows.length === 0;
 
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
       <DialogContent aria-describedby={undefined} className="max-w-[420px] space-y-3">
         <DialogHeader>
           <DialogTitle className="text-[17px] font-bold">
-            Add {rows.length} candidate{rows.length === 1 ? '' : 's'} to a pool
+            Add {plural(rows.length, 'candidate')} to a pool
           </DialogTitle>
         </DialogHeader>
-        <div className="flex items-center gap-4 text-[12.5px] text-foreground">
-          <label className="flex items-center gap-1.5">
-            <input
-              type="radio"
-              checked={mode === 'existing'}
-              onChange={() => setMode('existing')}
-            />
-            Existing pool
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input type="radio" checked={mode === 'new'} onChange={() => setMode('new')} />
-            New pool
-          </label>
-        </div>
-        {mode === 'existing' ? (
-          <select
-            value={poolId}
-            onChange={(e) => setPoolId(e.target.value)}
-            aria-label="Pool"
-            className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
-          >
-            <option value="">Choose a pool…</option>
-            {(poolsQuery.data?.pools ?? []).map((p: PoolOut) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+        {notAdded.length === 0 ? (
+          <>
+            <fieldset className="flex items-center gap-4 text-[12.5px] text-foreground">
+              <legend className="sr-only">Add to</legend>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="pool-mode"
+                  value="existing"
+                  checked={mode === 'existing'}
+                  disabled={noPools}
+                  onChange={() => setMode('existing')}
+                />
+                Existing pool
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="radio"
+                  name="pool-mode"
+                  value="new"
+                  checked={mode === 'new'}
+                  onChange={() => setMode('new')}
+                />
+                New pool
+              </label>
+            </fieldset>
+            {mode === 'existing' ? (
+              poolsQuery.isLoading ? (
+                <p className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  Loading your pools…
+                </p>
+              ) : poolsQuery.isError ? (
+                <div className="flex flex-wrap items-center gap-2" role="alert">
+                  <p className="text-[12.5px] text-[var(--ui-danger)]">
+                    {errorMessage(poolsQuery.error, 'Could not load your pools.')}
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void poolsQuery.refetch()}
+                  >
+                    Try again
+                  </Button>
+                </div>
+              ) : (
+                <select
+                  value={poolId}
+                  onChange={(e) => setPoolId(e.target.value)}
+                  aria-label="Pool"
+                  className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
+                >
+                  <option value="">Choose a pool…</option>
+                  {pools.map((p: PoolOut) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              )
+            ) : (
+              <>
+                {noPools ? (
+                  <p className="text-[12px] text-muted-foreground">
+                    You have no pools yet. Name a new one.
+                  </p>
+                ) : null}
+                <input
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="Pool name"
+                  aria-label="New pool name"
+                  maxLength={POOL_NAME_MAX}
+                  className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
+                />
+              </>
+            )}
+          </>
         ) : (
-          <input
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="Pool name"
-            aria-label="New pool name"
-            maxLength={120}
-            className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
-          />
+          <div
+            role="status"
+            className="space-y-1 rounded-[10px] border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] p-2.5"
+          >
+            <p className="text-[12px] font-medium text-[var(--ui-danger)]">Not added</p>
+            <ul className="space-y-0.5 text-[12px] text-[var(--ui-danger)]">
+              {notAdded.map((n) => (
+                <li key={n.applicantId}>
+                  {n.name}: {n.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
         <DialogFooter className="flex-row items-center justify-end gap-2 sm:space-x-0">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            {notAdded.length > 0 ? 'Close' : 'Cancel'}
           </Button>
-          <Button type="button" onClick={() => mut.mutate()} disabled={!canSubmit || mut.isPending}>
-            {mut.isPending ? 'Adding…' : 'Add'}
-          </Button>
+          {finished ? null : (
+            <Button
+              type="button"
+              onClick={() => mut.mutate()}
+              disabled={!canSubmit || mut.isPending}
+            >
+              {mut.isPending ? 'Adding…' : notAdded.length > 0 ? 'Try again' : 'Add'}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

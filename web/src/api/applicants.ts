@@ -54,8 +54,12 @@ export interface Applicant {
   match_score?: number | null;
 }
 
+/** A status the list can be filtered on: any application status, including
+ *  the derived 'interviewed' (HR-L6). */
+export type ApplicantListStatus = ApplicantStatus | 'held' | 'interviewed' | 'hired';
+
 export interface ListApplicantsParams {
-  status?: ApplicantStatus;
+  status?: ApplicantListStatus;
   /** Hybrid semantic + exact-keyword search phrase. */
   q?: string;
   /** Filter by target job title (contains). */

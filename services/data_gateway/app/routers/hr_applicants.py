@@ -1072,10 +1072,21 @@ _PROGRESS = table(
     "application_progress",
     column("applicant_id"),
     column("stored_status"),
+    column("status"),
     column("opening_title"),
     column("target_job_title"),
 )
 _like_literal = like_literal
+
+
+def _status_column(status_filter: str) -> str:
+    """The application_progress column a status filter matches (HR-L6).
+
+    Every status is stored except 'interviewed', which the view derives (a
+    shortlisted application with a completed interview). Filtering it on the
+    stored column would always come back empty.
+    """
+    return "status" if status_filter == "interviewed" else "stored_status"
 
 
 async def _semantic_search(
@@ -1104,7 +1115,7 @@ async def _semantic_search(
     if status_filter:
         where.append(
             "EXISTS (SELECT 1 FROM application_progress p"
-            " WHERE p.applicant_id = a.id AND p.stored_status = :status)"
+            f" WHERE p.applicant_id = a.id AND p.{_status_column(status_filter)} = :status)"
         )
         params["status"] = status_filter
     if job:
@@ -1226,7 +1237,7 @@ async def list_applicants(
         stmt = stmt.where(
             exists().where(
                 _PROGRESS.c.applicant_id == Applicant.id,
-                _PROGRESS.c.stored_status == status_filter,
+                _PROGRESS.c[_status_column(status_filter)] == status_filter,
             )
         )
     if job:

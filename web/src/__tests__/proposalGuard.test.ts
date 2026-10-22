@@ -5,7 +5,11 @@
 // before anything is sent, while every path the backend really emits passes.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { assertSafeProposalRequest, ProposalRejectedError } from '../api/proposalGuard';
+import {
+  assertProposalMatchesKind,
+  assertSafeProposalRequest,
+  ProposalRejectedError,
+} from '../api/proposalGuard';
 
 const ORIGIN = 'https://space.example';
 const ID = '5c0f1a2b-3d4e-4f60-8a71-9b8c7d6e5f41';
@@ -138,6 +142,46 @@ describe('commitProposal', () => {
       const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
       expect(url).toBe(`${base}/hr/applicants/${ID}`);
       expect(init.method).toBe('PATCH');
+    },
+  );
+});
+
+// Audit CP-L4: the checks above keep a proposal on the API and under /hr/;
+// this keeps it on the endpoint its kind is about.
+describe('assertProposalMatchesKind', () => {
+  const KIND_OF: Record<string, string> = {
+    [`POST /hr/interviews`]: 'interview_invite',
+    [`PATCH /hr/applicants/${ID}`]: 'shortlist',
+    [`POST /hr/requisitions/${ID}/workflows/apply`]: 'workflow',
+    [`POST /hr/workflows/${ID}/rounds`]: 'workflow_round',
+    [`PUT /hr/workflows/${ID}/rounds/${ID}/criteria`]: 'workflow_round',
+    [`PATCH /hr/workflows/${ID}`]: 'workflow_settings',
+  };
+
+  it.each(REAL)('accepts %s %s for the kind that drafts it', (method, path) => {
+    const kind = KIND_OF[`${method} ${path}`];
+    expect(kind).toBeDefined();
+    expect(() =>
+      assertProposalMatchesKind(kind, method as 'POST' | 'PATCH' | 'PUT', path),
+    ).not.toThrow();
+  });
+
+  it.each([
+    ['interview_invite', 'PATCH', `/hr/applicants/${ID}`],
+    ['interview_invite', 'POST', `/hr/interviews/${ID}/revoke`],
+    ['shortlist', 'POST', '/hr/interviews'],
+    ['shortlist', 'PATCH', `/hr/applicants/${ID}/status`],
+    ['workflow_settings', 'PUT', `/hr/workflows/${ID}`],
+  ] as const)('refuses a %s card that would fire %s %s', (kind, method, path) => {
+    expect(() => assertProposalMatchesKind(kind, method, path)).toThrow(ProposalRejectedError);
+  });
+
+  it.each(['email', 'note', 'pipeline_decision', 'toString', '__proto__'])(
+    'refuses kind %j, which has no drafting tool',
+    (kind) => {
+      expect(() => assertProposalMatchesKind(kind, 'POST', '/hr/interviews')).toThrow(
+        ProposalRejectedError,
+      );
     },
   );
 });

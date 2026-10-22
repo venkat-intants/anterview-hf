@@ -139,3 +139,31 @@ describe('CandidatePanel - citations', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('CandidatePanel - running it again (audit CP-L9)', () => {
+  it('offers a re-run once a read is on screen, and shows the new read', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Run assessment/ }));
+    await screen.findByText('Consistent across signals.');
+
+    assessCandidate.mockResolvedValue({ ...VERDICT, summary: 'The exam now disagrees.' });
+    await user.click(screen.getByRole('button', { name: 'Run again' }));
+
+    expect(await screen.findByText('The exam now disagrees.')).toBeInTheDocument();
+    expect(assessCandidate).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the previous read when a re-run fails, with a readable reason', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    await user.click(screen.getByRole('button', { name: /Run assessment/ }));
+    await screen.findByText('Consistent across signals.');
+
+    assessCandidate.mockRejectedValue(new TypeError('Failed to fetch'));
+    await user.click(screen.getByRole('button', { name: 'Run again' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/Could not reach the server/);
+    expect(screen.getByText('Consistent across signals.')).toBeInTheDocument();
+  });
+});

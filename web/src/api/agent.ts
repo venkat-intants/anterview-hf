@@ -13,7 +13,11 @@
 // automatically, in a useEffect, or in a loop over `run.proposals`.
 
 import { apiGet, apiPost, apiRequest, dataGatewayBase } from './client';
-import { assertSafeProposalRequest, type ProposalMethod } from './proposalGuard';
+import {
+  assertProposalMatchesKind,
+  assertSafeProposalRequest,
+  type ProposalMethod,
+} from './proposalGuard';
 import { pathId } from './pathId';
 
 /**
@@ -101,9 +105,13 @@ export const CITATION_ROUTES: Record<Citation['kind'], string | null> = {
   audit: null,
 };
 
-/** The request a human commits. Always a relative path on our own API. */
+/**
+ * The request a human commits. Always a relative path on our own API. The
+ * method set is the guard's own: DELETE was removed from the backend
+ * CommitSpec on 2026-10-12 and the guard refuses it, so the type does too.
+ */
 export interface CommitSpec {
-  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+  method: ProposalMethod;
   path: string;
   body: Record<string, unknown>;
   label: string;
@@ -170,6 +178,16 @@ export interface HistoryTurn {
   text: string;
 }
 
+/**
+ * The server's cap on one message (services/data_gateway/app/routers/agent.py
+ * MAX_MESSAGE_CHARS). The composer stops typing here, and every history turn
+ * is trimmed to it before sending.
+ */
+export const AGENT_MESSAGE_MAX_CHARS = 2000;
+
+/** The server's cap on replayed history (MAX_HISTORY_TURNS). */
+export const AGENT_HISTORY_MAX_TURNS = 12;
+
 /** Is the assistant available, and as which console? */
 export function getAgentStatus(): Promise<AgentStatus> {
   return apiGet<AgentStatus>('/agent/status');
@@ -194,11 +212,15 @@ export function askAgent(
   history: HistoryTurn[] = [],
   opts: { surface?: string; surfaceContext?: Record<string, string> } = {},
 ): Promise<AgentChatResponse> {
-  // The server caps history at 12 turns; trimming here too keeps the request
-  // small and makes the cap visible on this side rather than a silent surprise.
+  // The server caps history at 12 turns and each turn's text at the message
+  // cap. Trimming here too keeps the request small, and the text trim is what
+  // stops one long assistant reply from breaking every later message (the
+  // replies themselves have no length cap; audit CP-F2).
   return apiPost<AgentChatResponse>('/agent/chat', {
     message,
-    history: history.slice(-12),
+    history: history
+      .slice(-AGENT_HISTORY_MAX_TURNS)
+      .map((turn) => ({ role: turn.role, text: turn.text.slice(0, AGENT_MESSAGE_MAX_CHARS) })),
     ...(opts.surface ? { surface: opts.surface } : {}),
     ...(opts.surfaceContext ? { surface_context: opts.surfaceContext } : {}),
   });
@@ -225,10 +247,17 @@ export function commitProposal<T = unknown>(proposal: Proposal): Promise<T> {
       dataGatewayBase(),
       typeof window === 'undefined' ? '' : window.location.origin,
     );
+    assertProposalMatchesKind(proposal.kind, safe.method, safe.path);
   } catch (err) {
     return Promise.reject(err instanceof Error ? err : new Error('Proposal refused'));
   }
-  return apiRequest<T>(safe.method, safe.path, body);
+  // The proposal's id names this one approval. Sent on every attempt, so an
+  // endpoint that honours it can recognise a second firing of the same card
+  // (a retry after a dropped connection, a reopened panel) as the same request
+  // rather than a new one (audit CP-F1).
+  return apiRequest<T>(safe.method, safe.path, body, {
+    headers: { 'Idempotency-Key': proposal.id },
+  });
 }
 
 // ── Assessment panel ────────────────────────────────────────────────────────

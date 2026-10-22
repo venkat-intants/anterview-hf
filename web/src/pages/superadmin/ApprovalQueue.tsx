@@ -78,10 +78,21 @@ function Row({ row }: { row: PendingApproval }): JSX.Element {
   // so a second click reached the server and earned a 409.
   const [decided, setDecided] = useState<string | null>(null);
 
-  function done(message: string, verdict: string): void {
+  async function done(message: string, verdict: string): Promise<void> {
     setDecided(verdict);
-    void client.invalidateQueries({ queryKey: ['pending-approvals'] });
     toast.success(message);
+    await client.invalidateQueries({ queryKey: ['pending-approvals'] });
+    // The refetch has settled. A failed one swaps the list for its own retry
+    // panel, and a successful one normally drops this row. If it came back
+    // still listing the row, the lock would never lift, so hand the controls
+    // back rather than leave a spinner with no way out.
+    const state = client.getQueryState<PendingApproval[]>(['pending-approvals']);
+    const stillListed = state?.data?.some((r) => r.id === row.id) ?? false;
+    if (state?.status === 'success' && stillListed) {
+      setDecided(null);
+      setMode(null);
+      setNote('');
+    }
   }
 
   const approve = useMutation({

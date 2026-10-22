@@ -435,4 +435,30 @@ describe('the approval queue', () => {
     expect(screen.queryByRole('button', { name: 'Confirm approval' })).not.toBeInTheDocument();
     expect(approveRequisition).toHaveBeenCalledTimes(1);
   });
+
+  it('hands the controls back if the refetch still lists the row', async () => {
+    // Without this the row stayed on "Updating the queue" for good, with no
+    // decision controls and no retry.
+    listPendingApprovals.mockResolvedValue([pending()]);
+    approveRequisition.mockResolvedValue(requisition());
+    renderQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    expect(await screen.findByRole('button', { name: /^Approve$/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Updating the queue/)).not.toBeInTheDocument();
+    expect(listPendingApprovals).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers a retry when the refetch after a decision fails', async () => {
+    listPendingApprovals.mockResolvedValueOnce([pending()]);
+    approveRequisition.mockResolvedValue(requisition());
+    renderQueue();
+    await userEvent.click(await screen.findByRole('button', { name: /^Approve$/ }));
+    listPendingApprovals.mockRejectedValueOnce(new Error('offline'));
+    await userEvent.click(screen.getByRole('button', { name: 'Confirm approval' }));
+
+    expect(await screen.findByText('Could not load the approval queue.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+  });
 });

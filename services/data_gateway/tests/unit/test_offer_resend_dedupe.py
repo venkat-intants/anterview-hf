@@ -203,4 +203,5 @@ async def test_hr_notice_is_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _patch_send(monkeypatch, offer)
     await offers._tell_hr(_db(), offer, "Offer accepted")
     assert calls == [{"user_id": hr, "kind": "offer_update", "title": "Offer accepted: Asha",
-                      "body": "Welder", "link": "/hr/offers"}]
+                      # The offer itself, not the list (audit OF-L10).
+                      "body": "Welder", "link": f"/hr/offers/{offer['id']}"}]

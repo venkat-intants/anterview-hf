@@ -26,7 +26,6 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
     return (
       <input
         type={type}
-        data-size={size === 'sm' ? 'sm' : undefined}
         aria-invalid={invalid ? true : ariaInvalid}
         className={cn(
           controlSurfaceClass,

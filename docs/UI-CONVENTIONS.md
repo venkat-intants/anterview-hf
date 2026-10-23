@@ -91,8 +91,10 @@ retired (A1).
 ## Forms
 
 One set of controls, one height (G5): `Input` (`ui/input`), `Textarea`
-(`ui/textarea`) and `SelectControl` (`ui/select`, a native `<select>`), with
-`FormField` (`ui/form-field`) for the label, hint and error wiring. The design
+(`ui/textarea`) and `SelectControl` (`ui/select-control`, a native `<select>`), with
+`FormField` (`ui/form-field`) for the label, hint and error wiring. The Radix
+`Select` in `ui/select` is legacy, kept for its single importer (`AdminJobJd`);
+new code uses `SelectControl`. The design
 primitives `Field` (input with a leading icon) and `SelectField` are built on
 `FormField`.
 

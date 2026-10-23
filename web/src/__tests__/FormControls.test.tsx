@@ -33,10 +33,10 @@ describe('one control height', () => {
     const md = screen.getByRole('textbox', { name: 'Default' });
     const sm = screen.getByRole('textbox', { name: 'Compact' });
     expect(md).toHaveClass('h-10', 'rounded-[10px]');
-    expect(md).not.toHaveAttribute('data-size');
     expect(sm).toHaveClass('h-9');
     expect(sm).not.toHaveClass('h-10');
-    expect(sm).toHaveAttribute('data-size', 'sm');
+    // Only the select CSS reads data-size; an input's height is its class.
+    expect(sm).not.toHaveAttribute('data-size');
   });
 
   it('Field draws its box at the same height', () => {

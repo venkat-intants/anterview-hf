@@ -23,7 +23,12 @@
 
 import { getToken, setToken, clearToken } from './tokenStore';
 import { toast } from '../lib/toast';
-import { isReadableMessage, statusMessage, validationMessage } from '../lib/errorMessage';
+import {
+  isReadableMessage,
+  SESSION_EXPIRED_MESSAGE,
+  statusMessage,
+  validationMessage,
+} from '../lib/errorMessage';
 
 /**
  * Error thrown for non-2xx API responses. Carries the HTTP status so callers
@@ -288,7 +293,7 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
     } else {
       // Refresh failed — clear auth, toast, redirect
       clearToken();
-      toast.error('Your session has expired. Sign in again.');
+      toast.error(SESSION_EXPIRED_MESSAGE);
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
       }
@@ -343,7 +348,7 @@ export async function fetchBlobWithAuth(
   if (!refreshed) {
     // Same terminal path as clientFetch — clear, toast, bounce to /login.
     clearToken();
-    toast.error('Your session has expired. Sign in again.');
+    toast.error(SESSION_EXPIRED_MESSAGE);
     if (typeof window !== 'undefined') {
       window.location.href = '/login';
     }
@@ -602,7 +607,7 @@ export async function uploadWithProgress<T>(
     if (!refreshed) {
       // Same terminal path as clientFetch / fetchBlobWithAuth.
       clearToken();
-      toast.error('Your session has expired. Sign in again.');
+      toast.error(SESSION_EXPIRED_MESSAGE);
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
       }

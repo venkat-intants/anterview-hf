@@ -53,6 +53,8 @@ function RaiseForm({ enrolmentId, onRaised }: { enrolmentId: string; onRaised: (
   const qc = useQueryClient();
   const [reason, setReason] = useState('');
   const [ownerId, setOwnerId] = useState('');
+  // Silent on failure by design (here and in ExceptionRow): the owner pickers
+  // still offer "You" / "Unassigned", so an exception can always be raised.
   const owners = useQuery({
     queryKey: ['hr', 'stage-owners'],
     queryFn: listStageOwners,

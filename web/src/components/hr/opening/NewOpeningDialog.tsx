@@ -120,6 +120,8 @@ function DialogBody({
     defaultValues: EMPTY_OPENING,
     mode: 'onTouched',
   });
+  // Silent on failure by design: the owner picker still offers "Me", which is
+  // the default, so the opening can be created either way.
   const team = useQuery({ queryKey: ['hr', 'team'], queryFn: listTeam, staleTime: 60_000 });
 
   const mut = useMutation({

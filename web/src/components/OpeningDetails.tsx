@@ -23,6 +23,8 @@ import { toast } from '@/lib/toast';
 
 export default function OpeningDetails({ requisition: req }: { requisition: Requisition }) {
   const qc = useQueryClient();
+  // Silent on failure by design: the picker still offers "No owner" and the
+  // current owner is kept, so nothing is lost; the next mount retries.
   const team = useQuery({ queryKey: ['hr', 'team'], queryFn: listTeam, staleTime: 60_000 });
   const [owner, setOwner] = useState(req.owner_user_id ?? '');
   const [target, setTarget] = useState(req.target_hires ? String(req.target_hires) : '');

@@ -34,8 +34,12 @@ import { cn } from '@/lib/utils';
 import { GenerationError } from '@/components/bank/GenerationError';
 import { AiDraftPreview } from '@/components/hr/exam/AiDraftPreview';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Textarea } from '@/components/ui/textarea';
+import { plural } from '@/lib/formatters';
 import { toGenerationFailure } from '@/lib/generationError';
-import { inputCls, smallInputCls, plural } from '@/components/hr/exam/examEditorUi';
 
 interface McqComposerProps {
   examId: string;
@@ -231,8 +235,7 @@ export function McqComposer({ examId, sectionId, onChanged }: McqComposerProps) 
       {composerTab === 'manual' && (
         <div {...tabs.panelProps('manual')}>
           <form onSubmit={submitQuestion} className="space-y-2.5" aria-label="New question">
-            <textarea
-              className={cn(inputCls, 'resize-none text-[13px]')}
+            <Textarea
               rows={2}
               maxLength={2000}
               placeholder="Question prompt…"
@@ -251,8 +254,7 @@ export function McqComposer({ examId, sectionId, onChanged }: McqComposerProps) 
                     className="h-3.5 w-3.5 flex-none accent-[var(--accent)]"
                     aria-label={`Mark option ${oi + 1} correct`}
                   />
-                  <input
-                    className={cn(inputCls, 'text-[13px]')}
+                  <Input
                     placeholder={`Option ${oi + 1}`}
                     value={opt}
                     onChange={(e) =>
@@ -288,14 +290,14 @@ export function McqComposer({ examId, sectionId, onChanged }: McqComposerProps) 
               )}
               <label className="ml-auto flex items-center gap-1.5 text-[12px] text-muted-foreground">
                 Points
-                <input
+                <Input
                   type="number"
                   min={1}
                   max={100}
                   step={1}
                   value={points}
                   onChange={(e) => setPoints(e.target.value)}
-                  className={cn(smallInputCls, 'w-16')}
+                  className="w-16"
                   aria-label="Points"
                 />
               </label>
@@ -323,50 +325,55 @@ export function McqComposer({ examId, sectionId, onChanged }: McqComposerProps) 
             }}
             className="space-y-2.5"
           >
-            <input
-              className={cn(inputCls, 'text-[13px]')}
+            <Input
               placeholder="Topic, e.g. React hooks or Junior Python Developer"
               value={aiTopic}
               onChange={(e) => setAiTopic(e.target.value)}
               aria-label="AI topic"
             />
             <div className="flex flex-wrap items-end gap-2">
-              <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
-                Questions
-                <input
-                  type="number"
-                  min={1}
-                  max={30}
-                  value={aiCount}
-                  onChange={(e) => setAiCount(e.target.value)}
-                  className={cn(smallInputCls, 'w-16')}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
-                Difficulty
-                <select
-                  value={aiDifficulty}
-                  onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
-                  className={smallInputCls}
-                >
-                  <option value="easy">Easy</option>
-                  <option value="medium">Medium</option>
-                  <option value="hard">Hard</option>
-                  <option value="mixed">Mixed</option>
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
-                Language
-                <select
-                  value={aiLanguage}
-                  onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
-                  className={smallInputCls}
-                >
-                  <option value="en">English</option>
-                  <option value="hi">हिन्दी</option>
-                  <option value="te">తెలుగు</option>
-                </select>
-              </label>
+              <FormField label="Questions">
+                {(p) => (
+                  <Input
+                    {...p}
+                    type="number"
+                    min={1}
+                    max={30}
+                    value={aiCount}
+                    onChange={(e) => setAiCount(e.target.value)}
+                    className="w-16"
+                  />
+                )}
+              </FormField>
+              <FormField label="Difficulty">
+                {(p) => (
+                  <SelectControl
+                    {...p}
+                    value={aiDifficulty}
+                    onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
+                    className="w-auto"
+                  >
+                    <option value="easy">Easy</option>
+                    <option value="medium">Medium</option>
+                    <option value="hard">Hard</option>
+                    <option value="mixed">Mixed</option>
+                  </SelectControl>
+                )}
+              </FormField>
+              <FormField label="Language">
+                {(p) => (
+                  <SelectControl
+                    {...p}
+                    value={aiLanguage}
+                    onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
+                    className="w-auto"
+                  >
+                    <option value="en">English</option>
+                    <option value="hi">हिन्दी</option>
+                    <option value="te">తెలుగు</option>
+                  </SelectControl>
+                )}
+              </FormField>
               <Button
                 type="submit"
                 className="ml-auto"

@@ -15,7 +15,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useAccentColor } from '@/lib/useAccentColor';
-import { BarChart3, AlertTriangle } from '@/design/components/icons';
+import { BarChart3 } from '@/design/components/icons';
 import {
   BarChart,
   Bar,
@@ -32,6 +32,7 @@ import {
 import { getByRole, getByLanguage, getScoreDistribution } from '@/api/admin';
 import { languageLabel, formatScore } from '@/lib/formatters';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel, type QueryLike } from '@/components/QueryState';
 import { EmptyState, PageHeader, SectionCard, Page } from '@/design/components/page';
 import { AXIS_STYLE, GRID_STROKE, PALETTE, TOOLTIP_STYLE } from '@/lib/chartTheme';
 
@@ -60,12 +61,13 @@ function ChartEmpty() {
   );
 }
 
-function ChartError() {
+function ChartError({ query }: { query: QueryLike<unknown> }) {
   return (
-    <EmptyState
-      icon={AlertTriangle}
+    <QueryErrorPanel
       title="Could not load this chart."
-      description="Reload the page to try again."
+      error={query.error}
+      onRetry={() => void query.refetch()}
+      retrying={query.isFetching}
     />
   );
 }
@@ -274,19 +276,27 @@ function DistributionSection({
       <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 border-t border-border pt-3 text-[13px] text-muted-foreground sm:grid-cols-2">
         <span>
           Communication:{' '}
-          <strong className="font-semibold text-foreground">{formatScore('interview', avgCommunication)}</strong>
+          <strong className="font-semibold text-foreground">
+            {formatScore('interview', avgCommunication)}
+          </strong>
         </span>
         <span>
           Technical:{' '}
-          <strong className="font-semibold text-foreground">{formatScore('interview', avgTechnical)}</strong>
+          <strong className="font-semibold text-foreground">
+            {formatScore('interview', avgTechnical)}
+          </strong>
         </span>
         <span>
           Problem solving:{' '}
-          <strong className="font-semibold text-foreground">{formatScore('interview', avgProblemSolving)}</strong>
+          <strong className="font-semibold text-foreground">
+            {formatScore('interview', avgProblemSolving)}
+          </strong>
         </span>
         <span>
           Confidence:{' '}
-          <strong className="font-semibold text-foreground">{formatScore('interview', avgConfidence)}</strong>
+          <strong className="font-semibold text-foreground">
+            {formatScore('interview', avgConfidence)}
+          </strong>
         </span>
       </div>
     </div>
@@ -296,41 +306,32 @@ function DistributionSection({
 // ── AdminAnalytics page ────────────────────────────────────────────────────────
 
 export default function AdminAnalytics() {
-  const {
-    data: roleData,
-    isLoading: roleLoading,
-    isError: roleError,
-  } = useQuery({
+  const roleQuery = useQuery({
     queryKey: ['admin', 'by-role'],
     queryFn: getByRole,
     staleTime: 5 * 60 * 1000,
     retry: false,
     throwOnError: false,
   });
+  const { data: roleData, isLoading: roleLoading, isError: roleError } = roleQuery;
 
-  const {
-    data: langData,
-    isLoading: langLoading,
-    isError: langError,
-  } = useQuery({
+  const langQuery = useQuery({
     queryKey: ['admin', 'by-language'],
     queryFn: getByLanguage,
     staleTime: 5 * 60 * 1000,
     retry: false,
     throwOnError: false,
   });
+  const { data: langData, isLoading: langLoading, isError: langError } = langQuery;
 
-  const {
-    data: distData,
-    isLoading: distLoading,
-    isError: distError,
-  } = useQuery({
+  const distQuery = useQuery({
     queryKey: ['admin', 'score-distribution'],
     queryFn: getScoreDistribution,
     staleTime: 5 * 60 * 1000,
     retry: false,
     throwOnError: false,
   });
+  const { data: distData, isLoading: distLoading, isError: distError } = distQuery;
 
   // ── Page ──────────────────────────────────────────────────────────────────────
 
@@ -351,7 +352,7 @@ export default function AdminAnalytics() {
           {roleLoading ? (
             <ChartSkeleton height={240} />
           ) : roleError ? (
-            <ChartError />
+            <ChartError query={roleQuery} />
           ) : !roleData || roleData.length === 0 ? (
             <ChartEmpty />
           ) : (
@@ -366,7 +367,7 @@ export default function AdminAnalytics() {
           {roleLoading ? (
             <ChartSkeleton height={240} />
           ) : roleError ? (
-            <ChartError />
+            <ChartError query={roleQuery} />
           ) : !roleData || roleData.length === 0 ? (
             <ChartEmpty />
           ) : (
@@ -381,7 +382,7 @@ export default function AdminAnalytics() {
           {langLoading ? (
             <ChartSkeleton height={180} />
           ) : langError ? (
-            <ChartError />
+            <ChartError query={langQuery} />
           ) : !langData || langData.length === 0 ? (
             <ChartEmpty />
           ) : (
@@ -397,7 +398,7 @@ export default function AdminAnalytics() {
           {distLoading ? (
             <ChartSkeleton height={220} />
           ) : distError ? (
-            <ChartError />
+            <ChartError query={distQuery} />
           ) : !distData ? (
             <ChartEmpty />
           ) : (

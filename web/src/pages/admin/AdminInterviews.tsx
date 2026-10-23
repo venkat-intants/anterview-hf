@@ -7,7 +7,7 @@
 // exportInterviewsCsv, PER_PAGE=20 pagination, row → /admin/interviews/:id
 // (click or Enter/Space), skeleton / empty / error states.
 
-import { useState, useEffect, useCallback, useMemo, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -23,12 +23,28 @@ import type { InterviewListItem, InterviewFilters } from '@/api/admin';
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
 import { QueryErrorPanel } from '@/components/QueryState';
-import { formatDate, formatDuration, formatNumber, statusProps, languageLabel, formatScore } from '@/lib/formatters';
+import {
+  formatDate,
+  formatDuration,
+  formatNumber,
+  statusProps,
+  languageLabel,
+  formatScore,
+} from '@/lib/formatters';
 import { SegTabs, StatusTag, Avatar } from '@/design/components/primitives';
 import { EmptyState, PageHeader, SectionCard, Toolbar, Page } from '@/design/components/page';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -95,40 +111,6 @@ const STATUS_TABS = [
   { key: 'failed', label: 'Failed' },
 ];
 
-// ── Native <select> in the pill style ──────────────────────────────────────────
-
-interface PillSelectProps {
-  value: string;
-  onChange: (v: string) => void;
-  'aria-label': string;
-  className?: string;
-  children: ReactNode;
-}
-
-function PillSelect({
-  value,
-  onChange,
-  'aria-label': ariaLabel,
-  className,
-  children,
-}: PillSelectProps) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      aria-label={ariaLabel}
-      className={cn(
-        'h-10 cursor-pointer rounded-full border border-input bg-card px-4 text-[13.5px] text-foreground',
-        'transition-colors hover:border-[var(--ui-line-strong)]',
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-        className,
-      )}
-    >
-      {children}
-    </select>
-  );
-}
-
 // ── Toolbar ────────────────────────────────────────────────────────────────────
 
 interface FilterBarProps {
@@ -162,24 +144,33 @@ function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
   return (
     <Toolbar
       trailing={
-        <PillSelect value={sortValue} onChange={handleSortChange} aria-label="Sort order">
+        <SelectControl
+          value={sortValue}
+          onChange={(e) => handleSortChange(e.target.value)}
+          aria-label="Sort order"
+          className="w-auto"
+        >
           <option value="created_at_true">Newest first</option>
           <option value="created_at_false">Oldest first</option>
           <option value="composite_score_true">Score (high → low)</option>
           <option value="composite_score_false">Score (low → high)</option>
-        </PillSelect>
+        </SelectControl>
       }
     >
-      <div className="flex h-10 min-w-[200px] flex-1 items-center gap-2 rounded-full border border-input bg-card px-4 transition-colors focus-within:border-[var(--accent)] hover:border-[var(--ui-line-strong)]">
-        <Search size={15} className="shrink-0 text-[var(--ui-faint)]" aria-hidden="true" />
-        <input
+      <div className="relative min-w-[200px] flex-1">
+        <Search
+          size={15}
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ui-faint)]"
+          aria-hidden="true"
+        />
+        <Input
           type="search"
           value={localQ}
           onChange={(e) => setLocalQ(e.target.value)}
           placeholder="Search candidate…"
           aria-label="Search by candidate name or email"
           data-testid="filter-search"
-          className="min-w-0 flex-1 bg-transparent text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
+          className="pl-9"
         />
       </div>
 
@@ -193,16 +184,20 @@ function FilterBar({ filters, onFiltersChange }: FilterBarProps) {
         />
       </div>
 
-      <PillSelect
+      <SelectControl
         value={filters.language ?? '__all__'}
-        onChange={(v) => onFiltersChange({ language: v === '__all__' ? undefined : v, page: 1 })}
+        onChange={(e) => {
+          const v = e.target.value;
+          onFiltersChange({ language: v === '__all__' ? undefined : v, page: 1 });
+        }}
         aria-label="Filter by language"
+        className="w-auto"
       >
         <option value="__all__">All languages</option>
         <option value="en">English</option>
         <option value="hi">Hindi</option>
         <option value="te">Telugu</option>
-      </PillSelect>
+      </SelectControl>
     </Toolbar>
   );
 }
@@ -213,13 +208,13 @@ function LoadingRows() {
   return (
     <>
       {Array.from({ length: 6 }).map((_, i) => (
-        <tr key={i} aria-hidden="true" className="border-b border-border last:border-0">
+        <TableRow key={i} aria-hidden="true" className="border-b border-border last:border-0">
           {COLUMNS.map((c) => (
-            <td key={c} className="px-4 py-3.5">
+            <TableCell key={c} className="px-4 py-3.5">
               <Skeleton className="h-4 w-full min-w-[56px]" />
-            </td>
+            </TableCell>
           ))}
-        </tr>
+        </TableRow>
       ))}
     </>
   );
@@ -258,7 +253,7 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
   const tone = statusTone(item.status);
 
   return (
-    <tr
+    <TableRow
       className="cursor-pointer border-b border-border transition-colors last:border-0 hover:bg-[var(--ui-inset-soft)] focus-visible:bg-[var(--ui-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--accent)]"
       tabIndex={0}
       onClick={() => onClick(item.session_id)}
@@ -272,7 +267,7 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
       }}
     >
       {/* Name + avatar */}
-      <td className="px-4 py-3">
+      <TableCell className="px-4 py-3">
         <div className="flex min-w-[170px] items-center gap-3">
           <Avatar
             initials={initialsOf(item.candidate_name, item.candidate_email)}
@@ -288,27 +283,27 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
             </div>
           </div>
         </div>
-      </td>
+      </TableCell>
 
-      <td className="max-w-[220px] truncate px-4 py-3 text-[13px] text-muted-foreground">
+      <TableCell className="max-w-[220px] truncate px-4 py-3 text-[13px] text-muted-foreground">
         {item.candidate_email}
-      </td>
+      </TableCell>
 
-      <td className="max-w-[200px] truncate px-4 py-3 text-[13.5px] text-[var(--ui-soft)]">
+      <TableCell className="max-w-[200px] truncate px-4 py-3 text-[13.5px] text-[var(--ui-soft)]">
         {item.job_title ?? <span className="text-muted-foreground">-</span>}
-      </td>
+      </TableCell>
 
-      <td className="px-4 py-3">
+      <TableCell className="px-4 py-3">
         <StatusTag tone={tone} dot={item.status === 'in_progress'}>
           {label}
         </StatusTag>
-      </td>
+      </TableCell>
 
-      <td className="whitespace-nowrap px-4 py-3 text-[13px] text-muted-foreground">
+      <TableCell className="whitespace-nowrap px-4 py-3 text-[13px] text-muted-foreground">
         {languageLabel(item.language)}
-      </td>
+      </TableCell>
 
-      <td
+      <TableCell
         className="px-4 py-3 text-[14px] font-semibold tabular-nums"
         style={{
           color:
@@ -318,21 +313,21 @@ function InterviewRow({ item, onClick }: InterviewRowProps) {
         }}
       >
         {formatScore('interview', item.composite_score)}
-      </td>
+      </TableCell>
 
-      <td className="whitespace-nowrap px-4 py-3 text-[13px] text-muted-foreground">
+      <TableCell className="whitespace-nowrap px-4 py-3 text-[13px] text-muted-foreground">
         {formatDate(item.created_at)}
-      </td>
+      </TableCell>
 
-      <td className="px-4 py-3">
+      <TableCell className="px-4 py-3">
         <div className="flex items-center justify-between gap-3">
           <span className="whitespace-nowrap text-[13px] text-muted-foreground">
             {formatDuration(item.duration_seconds)}
           </span>
           <ArrowRight size={15} className="flex-none text-muted-foreground" aria-hidden="true" />
         </div>
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -545,25 +540,27 @@ export default function AdminInterviews() {
               : `${formatNumber(total)} interview${total !== 1 ? 's' : ''} · ${items.length} shown`
           }
         >
+          {/* Table's own wrapper is the scroller (capped at 70vh), so the
+              header sticks to it. */}
           <div
-            className="max-h-[70vh] overflow-auto rounded-[14px] border border-border"
+            className="overflow-hidden rounded-[14px] border border-border [&>div]:max-h-[70vh]"
             aria-busy={isLoading}
           >
-            <table className="w-full min-w-[960px] border-collapse text-left">
-              <thead>
-                <tr>
+            <Table className="min-w-[960px] border-collapse text-left">
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
                   {COLUMNS.map((c) => (
-                    <th
+                    <TableHead
                       key={c}
                       scope="col"
-                      className="sticky top-0 z-10 border-b border-border bg-card px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.5px] text-muted-foreground"
+                      className="sticky top-0 z-10 h-auto border-b border-border bg-card px-4 py-3 text-[12px] font-semibold uppercase tracking-[0.5px] text-muted-foreground"
                     >
                       {c}
-                    </th>
+                    </TableHead>
                   ))}
-                </tr>
-              </thead>
-              <tbody>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
                 {isLoading ? (
                   <LoadingRows />
                 ) : (
@@ -571,8 +568,8 @@ export default function AdminInterviews() {
                     <InterviewRow key={item.session_id} item={item} onClick={handleRowClick} />
                   ))
                 )}
-              </tbody>
-            </table>
+              </TableBody>
+            </Table>
           </div>
 
           {!isLoading && totalPages > 1 && (

@@ -2,7 +2,7 @@
 // Route: /admin/jd (gated by AdminRoute).
 //
 // Layout: reproduced from design screen (AdminJobJd.tsx).
-//   • Page header (title + New role Pill)
+//   • Page header (title + New role button)
 //   • Functional upload card (live: getJobs + uploadJd + FileUploadZone)
 //   (The static design-mock "JD library" grid was removed — QA ANTHIRE-011: it showed
 //   made-up roles as Published on a live admin page.)

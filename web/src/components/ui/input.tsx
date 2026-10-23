@@ -1,14 +1,38 @@
 import * as React from 'react';
 
 import { cn } from '@/lib/utils';
+import {
+  CONTROL_HEIGHT,
+  controlSurfaceClass,
+  controlTextClass,
+  type ControlSize,
+} from './control-styles';
 
-const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<'input'>>(
-  ({ className, type, ...props }, ref) => {
+/**
+ * Input: the one text input. 40px tall (`size="sm"` is 36px), the same height,
+ * radius, border and focus ring as SelectControl and Button, so a row of mixed
+ * controls lines up. `invalid` sets `aria-invalid`, which draws the danger
+ * border. Everything else (ref, type, value/onChange, aria-*) passes through.
+ *
+ * Checkbox, radio, range and file inputs are not text inputs and stay native.
+ */
+export interface InputProps extends Omit<React.ComponentProps<'input'>, 'size'> {
+  size?: ControlSize;
+  invalid?: boolean;
+}
+
+const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, type, size = 'md', invalid, 'aria-invalid': ariaInvalid, ...props }, ref) => {
     return (
       <input
         type={type}
+        data-size={size === 'sm' ? 'sm' : undefined}
+        aria-invalid={invalid ? true : ariaInvalid}
         className={cn(
-          'flex h-11 w-full rounded-[12px] border border-input bg-card px-3.5 py-2 text-base ring-offset-background transition-[border-color,box-shadow,background-color] duration-200 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 md:text-sm',
+          controlSurfaceClass,
+          controlTextClass,
+          CONTROL_HEIGHT[size],
+          'py-0 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground',
           className,
         )}
         ref={ref}

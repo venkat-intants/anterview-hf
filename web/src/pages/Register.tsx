@@ -23,8 +23,9 @@ import { ConsentDisclosure } from '@/components/layout/ConsentDisclosure';
 import type { AuthUser } from '@/types/auth';
 import AuthLayout, { FormError, PasswordField, StatusPanel } from '@/components/layout/AuthLayout';
 import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
-import { Field, Pill } from '@/design/components/primitives';
+import { Field } from '@/design/components/primitives';
 import { User, Mail, Lock, CheckCircle2 } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
 
 // ── Zod schema ────────────────────────────────────────────────────────────────
 // Built per render language so field errors are localised (audit CA-M17).
@@ -238,14 +239,15 @@ export default function Register() {
         )}
 
         {/* Submit — gated by the DPDP consent checkbox directly above it */}
-        <Pill
+        <Button
           type="submit"
           disabled={mutation.isPending || !agreedToDpdp}
           aria-busy={mutation.isPending}
-          className="min-h-11 w-full py-3"
+          size="lg"
+          className="w-full"
         >
           {mutation.isPending ? t('auth.creatingAccount') : t('auth.createAccount')}
-        </Pill>
+        </Button>
       </form>
 
       {/* Divider */}

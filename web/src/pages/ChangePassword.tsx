@@ -14,8 +14,8 @@ import { homePathFor } from '@/components/layout/navSections';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from '@/lib/toast';
 import { CenteredCard, FormError, PasswordField, PasswordStrength } from '@/components/layout/AuthLayout';
-import { Pill } from '@/design/components/primitives';
 import { ShieldCheck, Lock } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
 
 export default function ChangePassword() {
   const { t } = useTranslation();
@@ -108,14 +108,15 @@ export default function ChangePassword() {
 
         <FormError id="cp-error">{error}</FormError>
 
-        <Pill
+        <Button
           type="submit"
           disabled={mutation.isPending}
           aria-busy={mutation.isPending}
-          className="min-h-11 w-full py-3"
+          size="lg"
+          className="w-full"
         >
           {mutation.isPending ? t('changePassword.saving') : t('changePassword.submit')}
-        </Pill>
+        </Button>
       </form>
 
       <p className="mt-6 text-center text-[13px] text-muted-foreground">

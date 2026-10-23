@@ -1,5 +1,5 @@
 // Applicants — HR resume screening dashboard.
-// Layout: design screen Applicants.tsx (GlassCard table, SegTabs, Avatar, StatusTag, Pill).
+// Layout: design screen Applicants.tsx (GlassCard table, SegTabs, Avatar, StatusTag, Button).
 // Behavior: all live logic — listApplicants query, bulk PDF upload into one opening
 //           (stored, then read and scored in the background, with a progress panel
 //           that lists every failed file), shortlist/reject/rescore mutations,

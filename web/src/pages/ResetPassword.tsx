@@ -11,10 +11,10 @@ import { resetPassword } from '@/api/auth';
 import { toast } from '@/lib/toast';
 import AuthLayout, { FormError, PasswordField, PasswordStrength, StatusPanel } from '@/components/layout/AuthLayout';
 import { PRIMARY_LINK_CLASS } from '@/components/layout/authStyles';
-import { Pill } from '@/design/components/primitives';
 import { Lock, KeyRound, AlertCircle } from '@/design/components/icons';
 import { useCandidateError } from '@/lib/candidateCopy';
 import { useFragmentToken } from '@/hooks/useFragmentToken';
+import { Button } from '@/components/ui/button';
 
 export default function ResetPassword() {
   const { t } = useTranslation();
@@ -116,9 +116,9 @@ export default function ResetPassword() {
 
         <FormError id="rp-error">{error}</FormError>
 
-        <Pill type="submit" disabled={mutation.isPending} aria-busy={mutation.isPending} className="min-h-11 w-full py-3">
+        <Button type="submit" disabled={mutation.isPending} aria-busy={mutation.isPending} size="lg" className="w-full">
           {mutation.isPending ? t('auth.updating') : t('auth.updatePassword')}
-        </Pill>
+        </Button>
       </form>
 
       <p className="mt-6 text-center text-[13px] text-muted-foreground">

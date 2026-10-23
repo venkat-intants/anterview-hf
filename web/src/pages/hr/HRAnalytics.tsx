@@ -36,6 +36,9 @@ import { getHrAnalytics, type HrAnalytics } from '@/api/pipeline';
 import { SegTabs } from '@/design/components/primitives';
 import { PageHeader, SectionCard, Page } from '@/design/components/page';
 import { Skeleton } from '@/components/ui/skeleton';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { useAuth } from '@/context/AuthContext';
 import { ApiError, isTransientApiError } from '@/api/client';
 import { listRequisitions, type Requisition } from '@/api/requisitions';
@@ -254,9 +257,6 @@ export default function HRAnalytics() {
 // section past Cohort is imported from components/hr/analytics/ — see the
 // header comment.
 
-const FIELD_CLS =
-  'h-10 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
-
 const COHORT_TABS = [
   { key: 'application', label: 'Application' },
   { key: 'decision', label: 'Decision' },
@@ -345,79 +345,64 @@ function CohortControls({
       </div>
 
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <div>
-          <label
-            htmlFor="an-from"
-            className="mb-1.5 block text-[13px] font-semibold text-foreground"
-          >
-            From
-          </label>
-          <input
-            id="an-from"
-            type="date"
-            value={dates.from}
-            onChange={(e) => changeDate({ from: e.target.value })}
-            aria-invalid={rangeInverted || undefined}
-            aria-describedby={rangeInverted ? 'an-range-error' : undefined}
-            className={FIELD_CLS}
-          />
-        </div>
-        <div>
-          <label htmlFor="an-to" className="mb-1.5 block text-[13px] font-semibold text-foreground">
-            To
-          </label>
-          <input
-            id="an-to"
-            type="date"
-            value={dates.to}
-            onChange={(e) => changeDate({ to: e.target.value })}
-            aria-invalid={rangeInverted || undefined}
-            aria-describedby={rangeInverted ? 'an-range-error' : undefined}
-            className={FIELD_CLS}
-          />
-        </div>
-        <div>
-          <label
-            htmlFor="an-opening"
-            className="mb-1.5 block text-[13px] font-semibold text-foreground"
-          >
-            Opening
-          </label>
-          <select
-            id="an-opening"
-            value={filters.requisitionId}
-            onChange={(e) => onChange({ requisitionId: e.target.value })}
-            className={FIELD_CLS}
-          >
-            <option value="">All openings</option>
-            {openings.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.title}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label
-            htmlFor="an-source"
-            className="mb-1.5 block text-[13px] font-semibold text-foreground"
-          >
-            Source
-          </label>
-          <select
-            id="an-source"
-            value={filters.source}
-            onChange={(e) => onChange({ source: e.target.value })}
-            className={FIELD_CLS}
-          >
-            <option value="">All sources</option>
-            {sourceOptions.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <FormField
+          id="an-from"
+          label="From"
+          describedBy={rangeInverted ? 'an-range-error' : undefined}
+        >
+          {(p) => (
+            <Input
+              {...p}
+              type="date"
+              value={dates.from}
+              onChange={(e) => changeDate({ from: e.target.value })}
+              aria-invalid={rangeInverted || undefined}
+            />
+          )}
+        </FormField>
+        <FormField id="an-to" label="To" describedBy={rangeInverted ? 'an-range-error' : undefined}>
+          {(p) => (
+            <Input
+              {...p}
+              type="date"
+              value={dates.to}
+              onChange={(e) => changeDate({ to: e.target.value })}
+              aria-invalid={rangeInverted || undefined}
+            />
+          )}
+        </FormField>
+        <FormField id="an-opening" label="Opening">
+          {(p) => (
+            <SelectControl
+              {...p}
+              value={filters.requisitionId}
+              onChange={(e) => onChange({ requisitionId: e.target.value })}
+            >
+              <option value="">All openings</option>
+              {openings.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.title}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
+        <FormField id="an-source" label="Source">
+          {(p) => (
+            <SelectControl
+              {...p}
+              value={filters.source}
+              onChange={(e) => onChange({ source: e.target.value })}
+            >
+              <option value="">All sources</option>
+              {sourceOptions.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
         <div>
           <span className="mb-1.5 block text-[13px] font-semibold text-foreground">Group by</span>
           <SegTabs

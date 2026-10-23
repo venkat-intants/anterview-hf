@@ -12,6 +12,14 @@
 // and it has no part in which citations or proposals exist.
 
 import { Fragment, type ReactNode } from 'react';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { CitedText, type CitationLike } from './CitationChips';
 
 type Block =
@@ -186,29 +194,37 @@ export default function AnswerText({
               <code>{b.text}</code>
             </pre>
           ) : (
-            <div className="overflow-x-auto rounded-[10px] border border-border">
-              <table className="w-full border-collapse text-left text-[13px]">
-                <thead className="bg-[var(--ui-inset-soft)]">
-                  <tr>
+            // Table's own wrapper scrolls sideways; this one draws the frame.
+            <div className="overflow-hidden rounded-[10px] border border-border">
+              <Table className="border-collapse text-left text-[13px]">
+                <TableHeader className="bg-[var(--ui-inset-soft)]">
+                  <TableRow className="border-0 hover:bg-transparent">
                     {b.head.map((h, j) => (
-                      <th key={j} scope="col" className="px-3 py-2 font-semibold text-foreground">
+                      <TableHead
+                        key={j}
+                        scope="col"
+                        className="h-auto px-3 py-2 font-semibold text-foreground"
+                      >
                         <Inline text={h} citations={citations} />
-                      </th>
+                      </TableHead>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {b.rows.map((r, j) => (
-                    <tr key={j} className="border-t border-border">
+                    <TableRow
+                      key={j}
+                      className="border-b-0 border-t border-border hover:bg-transparent"
+                    >
                       {r.map((c, k) => (
-                        <td key={k} className="px-3 py-2 align-top">
+                        <TableCell key={k} className="px-3 py-2 align-top">
                           <Inline text={c} citations={citations} />
-                        </td>
+                        </TableCell>
                       ))}
-                    </tr>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </Fragment>

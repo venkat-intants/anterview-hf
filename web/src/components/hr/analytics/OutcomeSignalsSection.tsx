@@ -19,6 +19,16 @@ import {
   type MetricPart,
   type OutcomeCohort,
 } from '@/api/metrics';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { QueryState } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
 import { SegTabs } from '@/design/components/primitives';
 import { SectionCard } from '@/design/components/page';
 import { Info } from '@/design/components/icons';
@@ -30,6 +40,10 @@ const COHORT_TABS = [
   { key: 'hire', label: 'Hire date' },
   { key: 'decision', label: 'Decision date' },
 ] as const;
+
+/** The compact analytics density: this table sits inside a card, not a page. */
+const HEAD = 'h-auto px-0 py-2 pr-3 font-semibold text-muted-foreground';
+const CELL = 'p-0 py-2 pr-3';
 
 interface DrillTarget {
   metric: string;
@@ -70,7 +84,8 @@ export default function OutcomeSignalsSection({
   // Rows are the score bands (below_3, 3_to_4, 4_plus, none) — the overall
   // "All" group this endpoint also returns is not shown as a row here; a
   // band table with an "All" row would double-count every hire.
-  const bandGroups = (signals.data?.groups ?? []).filter((g) => g.key !== null);
+  const bandGroupsOf = (data: NonNullable<typeof signals.data>) =>
+    data.groups.filter((g) => g.key !== null);
 
   return (
     <SectionCard
@@ -95,44 +110,49 @@ export default function OutcomeSignalsSection({
       </div>
 
       <div className="mt-4">
-        {signals.isLoading ? (
-          <p className="text-[13px] text-muted-foreground">Loading…</p>
-        ) : signals.isError ? (
-          <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
-            Could not load outcome signals just now.
-          </p>
-        ) : bandGroups.length === 0 ? (
-          <p className="text-[13px] text-muted-foreground">No data for this period.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[640px] border-collapse text-left text-[13px]">
-              <thead className="sticky top-0 z-10 bg-card">
-                <tr className="border-b border-border">
-                  <th className="py-2 pr-3 font-semibold text-muted-foreground">
-                    Interviewer score
-                  </th>
+        <QueryState
+          query={signals}
+          errorTitle="Could not load outcome signals."
+          loading={
+            <div className="flex flex-col gap-2" aria-busy="true">
+              <span className="sr-only">Loading…</span>
+              <Skeleton className="h-9" />
+              <Skeleton className="h-9" />
+              <Skeleton className="h-9" />
+            </div>
+          }
+          isEmpty={(data) => bandGroupsOf(data).length === 0}
+          empty={<p className="text-[13px] text-muted-foreground">No data for this period.</p>}
+        >
+          {(data) => (
+            <Table className="min-w-[640px] border-collapse text-left text-[13px]">
+              <TableHeader className="sticky top-0 z-10 bg-card">
+                <TableRow className="border-b border-border hover:bg-transparent">
+                  <TableHead className={HEAD}>Interviewer score</TableHead>
                   {names.map((name) => {
                     const def = findDefinition(definitions, name);
                     return (
-                      <th key={name} className="py-2 pr-3 font-semibold text-muted-foreground">
+                      <TableHead key={name} className={HEAD}>
                         {metricLabel(name, def)}
-                      </th>
+                      </TableHead>
                     );
                   })}
-                </tr>
-              </thead>
-              <tbody>
-                {bandGroups.map((g) => (
-                  <tr
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {bandGroupsOf(data).map((g) => (
+                  <TableRow
                     key={g.key}
                     className="border-b border-border last:border-0 hover:bg-[var(--ui-inset-soft)]"
                   >
-                    <td className="py-2 pr-3 font-medium text-foreground">{g.label}</td>
+                    <TableCell className={`${CELL} font-medium text-foreground`}>
+                      {g.label}
+                    </TableCell>
                     {names.map((name) => {
                       const result = g.metrics[name];
                       const def = findDefinition(definitions, name, result?.version);
                       return (
-                        <td key={name} className="py-2 pr-3">
+                        <TableCell key={name} className={CELL}>
                           <MetricCell
                             name={name}
                             result={result}
@@ -142,15 +162,15 @@ export default function OutcomeSignalsSection({
                               setDrillDown({ metric: m, part, cohort, scoreBand: g.key })
                             }
                           />
-                        </td>
+                        </TableCell>
                       );
                     })}
-                  </tr>
+                  </TableRow>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              </TableBody>
+            </Table>
+          )}
+        </QueryState>
       </div>
 
       {infoMetric ? (

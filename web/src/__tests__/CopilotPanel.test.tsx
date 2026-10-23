@@ -143,9 +143,7 @@ describe('CopilotPanel - citations (PH5-E1)', () => {
     renderPanel();
     await ask('what is the notice period?');
 
-    expect(
-      await screen.findByText(/Answered from your records/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Answered from your records/)).toBeInTheDocument();
     const links = await screen.findAllByRole('link');
     expect(links.length).toBeGreaterThanOrEqual(1);
     for (const link of links) {
@@ -158,9 +156,7 @@ describe('CopilotPanel - citations (PH5-E1)', () => {
     renderPanel();
     await ask('is that role easy to hire for?');
 
-    expect(
-      await screen.findByText(/No records were read for this answer/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/No records were read for this answer/)).toBeInTheDocument();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 
@@ -373,7 +369,7 @@ describe('CopilotPanel - dialog behaviour', () => {
     await ask('hello');
     // Any control the user tabbed to inside the dialog while the answer was on
     // its way: a proposal button, a source chip, here the close button.
-    const elsewhere = screen.getByRole('button', { name: 'Close assistant' });
+    const elsewhere = screen.getByRole('button', { name: 'Close' });
     elsewhere.focus();
     answer(UNSOURCED_REPLY);
     await screen.findByText(UNSOURCED_REPLY.reply);
@@ -381,10 +377,11 @@ describe('CopilotPanel - dialog behaviour', () => {
   });
 
   it('locks the page scroll while open and restores it on close', () => {
-    document.body.style.overflow = 'auto';
+    // The Sheet's scroll lock (react-remove-scroll) marks <body> with this
+    // attribute, which its injected style turns into overflow: hidden.
     const { setOpen } = renderToggleablePanel();
-    expect(document.body.style.overflow).toBe('hidden');
+    expect(document.body).toHaveAttribute('data-scroll-locked');
     setOpen(false);
-    expect(document.body.style.overflow).toBe('auto');
+    expect(document.body).not.toHaveAttribute('data-scroll-locked');
   });
 });

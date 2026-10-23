@@ -125,6 +125,10 @@ describe('visible text follows the glossary', () => {
       '// ui-copy-exempt: legal wording',
       "export const L = 'Store my CV';",
       "export const M = 'Your CV';",
+      "export const N = () => toast.error('Failed to save.');",
+      "export const O = () => toast.info('Retry in a minute.');",
+      "export const P = () => console.error('Failed to save.');",
+      "export const Q = () => logger.warn('Failed to save.');",
     ].join('\n');
     const hits = violations(join(SRC, '__probe__.tsx'), sample);
     const ids = hits.map((h) => /\[([\w-]+)\]/.exec(h)?.[1]);
@@ -138,6 +142,8 @@ describe('visible text follows the glossary', () => {
       'american-spelling',
       'practice-verb',
       'cv',
+      'failed-to',
+      'retry',
     ]);
     // The exempt line is skipped; the one after it is not.
     expect(hits.some((h) => h.includes('Store my CV'))).toBe(false);

@@ -79,9 +79,24 @@ const HIDDEN_CALLEES = new Set([
   'getElementById', 'closest', 'createElement', 'getAttribute', 'setAttribute',
   'removeAttribute', 'hasAttribute', 'setRequestHeader', 'getPropertyValue', 'setProperty', 'matchMedia',
   'navigate', 'fetch', 'apiFetch', 'request', 'post', 'put', 'patch', 'encodeURIComponent',
-  'log', 'warn', 'error', 'info', 'debug', 'useTranslation', 'invalidateQueries',
+  'useTranslation', 'invalidateQueries',
   'getQueryData', 'setQueryData', 'Symbol', 'RegExp', 'localeCompare', 'Intl',
 ]);
+
+/**
+ * Logging methods. Their names collide with toast.error / toast.info, whose text
+ * a person does read, so they are hidden only on a logging receiver.
+ */
+const LOG_METHODS = new Set(['log', 'warn', 'error', 'info', 'debug']);
+const LOG_RECEIVERS = new Set(['console', 'logger', 'log']);
+
+function isLogCall(expr: ts.LeftHandSideExpression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    LOG_METHODS.has(expr.name.text) &&
+    LOG_RECEIVERS.has(expr.expression.getText())
+  );
+}
 
 function calleeName(expr: ts.LeftHandSideExpression): string | undefined {
   if (ts.isIdentifier(expr)) return expr.text;
@@ -138,6 +153,7 @@ function isHiddenContext(node: ts.Node): boolean {
   if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
     const name = calleeName(parent.expression);
     if (name && HIDDEN_CALLEES.has(name)) return true;
+    if (isLogCall(parent.expression)) return true;
   }
   // The string is a JSX expression whose attribute is hidden: className={'...'}.
   if (ts.isJsxExpression(parent) && parent.parent && ts.isJsxAttribute(parent.parent)) {

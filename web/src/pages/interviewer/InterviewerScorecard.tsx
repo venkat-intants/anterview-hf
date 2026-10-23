@@ -19,6 +19,7 @@ import { GlassCard, SegTabs, StatusTag, ToggleSwitch } from '@/design/components
 import { Breadcrumbs, PageHeader, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { errorMessage } from '@/lib/errorMessage';
@@ -131,7 +132,7 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
   if (kit.isError || !kit.data) {
     return (
       <p className="py-6 text-[13px] text-[var(--ui-danger)]">
-        {errOrWithdrawn(kit.error, 'Could not load the interview kit')}
+        {errOrWithdrawn(kit.error, 'Could not load the interview kit.')}
       </p>
     );
   }
@@ -240,18 +241,18 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
         </div>
         {notesQuery.isError ? (
           <p className="mt-2 text-[12.5px] text-[var(--ui-danger)]">
-            {errOrWithdrawn(notesQuery.error, 'Could not load your notes')}
+            {errOrWithdrawn(notesQuery.error, 'Could not load your notes.')}
           </p>
         ) : (
           <>
-            <textarea
+            <Textarea
               id="private-notes"
               value={notes}
               maxLength={MAX_NOTES}
               onChange={(e) => setNotes(e.target.value)}
               rows={6}
               placeholder="Jot anything down while you interview - only you can see this."
-              className="mt-2 w-full resize-y rounded-[10px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="mt-2"
             />
             <div className="mt-2 flex items-center justify-between">
               <span className="text-[12px] text-[var(--ui-faint)]">
@@ -337,11 +338,11 @@ function ScoreControl({
                 onClick={() => onChange({ score: n, not_assessed: false })}
                 className={cn(
                   'relative flex h-11 w-11 items-center justify-center rounded-[10px] border text-[15px] font-semibold tabular-nums transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+                  'border-input bg-card text-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
                   // Selected is a fill, a heavier ring AND a check mark, so it
-                  // does not depend on telling two blues apart.
-                  checked
-                    ? 'border-primary bg-primary text-primary-foreground ring-2 ring-primary/30'
-                    : 'border-input bg-card text-foreground hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
+                  // does not depend on telling two blues apart. Keyed to
+                  // aria-checked, so the look always follows the radio state.
+                  'aria-checked:border-primary aria-checked:bg-primary aria-checked:text-primary-foreground aria-checked:ring-2 aria-checked:ring-primary/30 aria-checked:hover:border-primary aria-checked:hover:bg-primary',
                   (disabled || value.not_assessed) && 'cursor-not-allowed opacity-40',
                 )}
               >
@@ -376,9 +377,6 @@ function ScoreControl({
     </div>
   );
 }
-
-const TEXTAREA =
-  'mt-1.5 w-full resize-y rounded-[10px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:bg-[var(--ui-inset-soft)] disabled:opacity-70';
 
 /** How many criteria are settled — scored, or explicitly marked not assessed. */
 function settledCount(detail: ScorecardDetail, scores: ScoreState): number {
@@ -473,7 +471,7 @@ function ScorecardPanel({
               >
                 Evidence
               </label>
-              <textarea
+              <Textarea
                 id={`evidence-${c.competency_id}`}
                 value={v.evidence}
                 disabled={readOnly}
@@ -482,7 +480,7 @@ function ScorecardPanel({
                   setScores({ ...scores, [c.competency_id]: { ...v, evidence: e.target.value } })
                 }
                 rows={2}
-                className={TEXTAREA}
+                className="mt-1.5 min-h-0"
               />
             </div>
           </section>
@@ -494,14 +492,14 @@ function ScorecardPanel({
           Overall summary
         </label>
         <p className="mt-0.5 text-[12.5px] text-muted-foreground">Optional.</p>
-        <textarea
+        <Textarea
           id="scorecard-summary"
           value={summary}
           disabled={readOnly}
           maxLength={MAX_SUMMARY}
           onChange={(e) => setSummary(e.target.value)}
           rows={4}
-          className={TEXTAREA}
+          className="mt-1.5"
         />
       </section>
     </div>
@@ -642,7 +640,7 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
     return (
       <Page width="form">
         <GlassCard className="p-6 text-[13.5px] text-[var(--ui-danger)]">
-          {errOrWithdrawn(detailQuery.error, 'Could not load this scorecard')}
+          {errOrWithdrawn(detailQuery.error, 'Could not load this scorecard.')}
         </GlassCard>
       </Page>
     );
@@ -773,13 +771,13 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
                       >
                         Why does this need correcting? (10 to 1000 characters)
                       </label>
-                      <textarea
+                      <Textarea
                         id="correction-reason"
                         value={correctionReason}
                         onChange={(e) => setCorrectionReason(e.target.value)}
                         maxLength={MAX_CORRECTION_REASON}
                         rows={3}
-                        className={TEXTAREA}
+                        className="mt-1.5"
                       />
                       <div className="flex flex-wrap items-center justify-end gap-2">
                         <Button

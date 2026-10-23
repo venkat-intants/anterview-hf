@@ -60,8 +60,14 @@ import {
 } from '@/api/jobTasks';
 import { downloadUrl } from '@/lib/safeUrl';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Textarea } from '@/components/ui/textarea';
+import { LoadingSkeleton } from '@/components/candidate/LoadingSkeleton';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
+import { cn } from '@/lib/utils';
 import { PublicNext } from '@/components/PublicNext';
 import {
   AlertCircle,
@@ -109,14 +115,14 @@ function fmtDuration(totalSeconds: number): string {
 
 /* ── Shared page chrome — the same frame PublicOffer.tsx uses ──────────────── */
 
-const INPUT =
-  'min-h-11 rounded-[12px] border border-input bg-card px-3 py-2 text-base text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 disabled:opacity-60 md:text-sm';
-const CHIP_BUTTON =
-  'inline-flex min-h-11 items-center justify-center gap-1.5 rounded-full border border-[var(--ui-line-strong)] px-4 text-[13.5px] font-medium text-foreground hover:bg-[var(--ui-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50';
-const DANGER_BUTTON =
-  'inline-flex min-h-11 shrink-0 items-center justify-center gap-1.5 rounded-full border border-[var(--ui-danger)]/50 px-4 text-[13.5px] font-medium text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50';
-const TEXT_BUTTON =
-  'inline-flex min-h-11 items-center text-[13.5px] font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+/** The red tint for an outline Button whose action removes or revokes. */
+const DANGER_OUTLINE =
+  'shrink-0 border-[var(--ui-danger)]/50 text-[var(--ui-danger)] hover:border-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]';
+/** A file input's visible face: a label styled as an outline Button. */
+const UPLOAD_LABEL = cn(
+  buttonVariants({ variant: 'outline', size: 'lg' }),
+  'w-fit cursor-pointer px-4 focus-within:ring-2 focus-within:ring-[var(--accent)]',
+);
 
 function PageWrap({
   children,
@@ -281,14 +287,16 @@ function MaterialRow({
       <span className="min-w-0 truncate text-[13px] text-foreground">{material.title}</span>
       <div className="flex shrink-0 items-center gap-2">
         {error ? <span className="text-[12.5px] text-[var(--ui-danger)]">{error}</span> : null}
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
+          className="gap-1.5 px-3"
           onClick={() => {
             setError(null);
             downloadMut.mutate();
           }}
           disabled={downloadMut.isPending}
-          className="inline-flex items-center gap-1.5 rounded-[8px] border border-[var(--ui-line-strong)] px-2.5 py-1 text-[12px] text-foreground hover:border-[var(--accent)]/60"
         >
           {downloadMut.isPending ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
@@ -296,7 +304,7 @@ function MaterialRow({
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
           )}
           {t('task.download')}
-        </button>
+        </Button>
       </div>
     </li>
   );
@@ -325,16 +333,18 @@ function RemoveWithConfirm({
   }, [asking]);
   if (!asking) {
     return (
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="lg"
         onClick={() => setAsking(true)}
         disabled={disabled}
         aria-label={`${t('task.remove')} ${name}`}
-        className={DANGER_BUTTON}
+        className={cn(DANGER_OUTLINE, 'gap-1.5 px-4')}
       >
         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
         {t('task.remove')}
-      </button>
+      </Button>
     );
   }
   return (
@@ -347,21 +357,23 @@ function RemoveWithConfirm({
       }}
     >
       <span className="text-[12.5px] text-foreground">{t('task.removeConfirm', { name })}</span>
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="lg"
         onClick={() => {
           setAsking(false);
           onConfirm();
         }}
         disabled={pending}
-        className={DANGER_BUTTON}
+        className={cn(DANGER_OUTLINE, 'gap-1.5 px-4')}
       >
         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
         {t('task.remove')}
-      </button>
-      <button ref={keepRef} type="button" onClick={() => setAsking(false)} className={CHIP_BUTTON}>
+      </Button>
+      <Button ref={keepRef} type="button" variant="ghost" size="lg" className="px-4" onClick={() => setAsking(false)}>
         {t('task.keep')}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -424,7 +436,7 @@ function TextItemField({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <textarea
+      <Textarea
         id={`item-${item.key}`}
         value={value}
         disabled={disabled}
@@ -435,7 +447,6 @@ function TextItemField({
         }}
         rows={5}
         placeholder={t('task.textPlaceholder')}
-        className={`w-full resize-y ${INPUT}`}
       />
       <div className="flex items-center justify-between text-[12.5px] text-muted-foreground">
         <span>{t('task.charsRemaining', { count: Math.max(0, limit - value.length) })}</span>
@@ -495,7 +506,7 @@ function LinkItemField({
       <label htmlFor={`item-${item.key}`} className="sr-only">
         {t('task.linkLabel')}
       </label>
-      <input
+      <Input
         id={`item-${item.key}`}
         type="url"
         value={value}
@@ -505,7 +516,6 @@ function LinkItemField({
           if (value !== savedValue) saveMut.mutate(value);
         }}
         placeholder={t('task.linkPlaceholder')}
-        className={`w-full ${INPUT}`}
       />
       <p className="text-[12.5px] text-muted-foreground">
         {t('task.linkDomainsHint', { domains: allowedDomains.join(', ') })}
@@ -604,7 +614,7 @@ function FileItemField({
         </div>
       ) : null}
       {!disabled ? (
-        <label className={`${CHIP_BUTTON} w-fit cursor-pointer focus-within:ring-2 focus-within:ring-[var(--accent)]`}>
+        <label className={UPLOAD_LABEL}>
           {uploadMut.isPending ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
           ) : (
@@ -833,33 +843,35 @@ function AddArtifactForm({
     <div className="flex flex-col gap-2.5 rounded-[10px] border border-border p-3">
       {mode === 'link' ? (
         <>
-          <label className="block text-[13px] font-medium text-foreground">
-            {t('task.linkLabel')}
-            <input
-              type="url"
-              value={linkUrl}
-              onChange={(e) => setLinkUrl(e.target.value)}
-              placeholder={t('task.linkPlaceholder')}
-              className={`mt-1 w-full ${INPUT}`}
-            />
-          </label>
-          <label className="block text-[13px] font-medium text-foreground">
-            {t('task.linkKindLabel')}
-            <select
-              value={linkKind}
-              onChange={(e) => setLinkKind(e.target.value as TaskLinkKind)}
-              className={`mt-1 w-full ${INPUT}`}
-            >
-              {LINK_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {t(`task.linkKinds.${k}`)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <FormField label={t('task.linkLabel')}>
+            {(p) => (
+              <Input
+                {...p}
+                type="url"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                placeholder={t('task.linkPlaceholder')}
+              />
+            )}
+          </FormField>
+          <FormField label={t('task.linkKindLabel')}>
+            {(p) => (
+              <SelectControl
+                {...p}
+                value={linkKind}
+                onChange={(e) => setLinkKind(e.target.value as TaskLinkKind)}
+              >
+                {LINK_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {t(`task.linkKinds.${k}`)}
+                  </option>
+                ))}
+              </SelectControl>
+            )}
+          </FormField>
         </>
       ) : (
-        <label className={`${CHIP_BUTTON} w-fit cursor-pointer focus-within:ring-2 focus-within:ring-[var(--accent)]`}>
+        <label className={UPLOAD_LABEL}>
           <Upload className="h-3.5 w-3.5" aria-hidden="true" />
           {addMut.isPending ? t('task.uploading') : t('task.addFile')}
           <input
@@ -871,42 +883,37 @@ function AddArtifactForm({
           />
         </label>
       )}
-      <label className="block text-[13px] font-medium text-foreground">
-        {t('task.artifactTitleLabel')}
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          className={`mt-1 w-full ${INPUT}`}
-        />
-      </label>
-      <label className="block text-[13px] font-medium text-foreground">
-        {t('task.artifactDescLabel')}
-        <textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          rows={2}
-          className={`mt-1 w-full resize-y ${INPUT}`}
-        />
-      </label>
+      <FormField label={t('task.artifactTitleLabel')}>
+        {(p) => <Input {...p} value={title} onChange={(e) => setTitle(e.target.value)} />}
+      </FormField>
+      <FormField label={t('task.artifactDescLabel')}>
+        {(p) => (
+          <Textarea
+            {...p}
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+          />
+        )}
+      </FormField>
       {error ? <p className="text-[12px] text-[var(--ui-danger)]">{error}</p> : null}
       <div className="flex gap-2">
         {mode === 'link' ? (
-          <button
+          // Outline, not primary: this card's form is secondary to the page's
+          // one primary action, Submit (UI conventions, "Buttons").
+          <Button
             type="button"
+            variant="outline"
+            size="lg"
             onClick={() => addMut.mutate(null)}
             disabled={addMut.isPending || !linkUrl.trim()}
-            className="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 text-[14px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 disabled:opacity-50"
           >
             {addMut.isPending ? t('task.uploading') : t('task.addLink')}
-          </button>
+          </Button>
         ) : null}
-        <button
-          type="button"
-          onClick={reset}
-          className={CHIP_BUTTON}
-        >
+        <Button type="button" variant="ghost" size="lg" className="px-4" onClick={reset}>
           {t('task.cancel')}
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -1140,21 +1147,23 @@ function TaskWorkspace({
                 </p>
                 <p className="text-[12.5px] text-[var(--ui-soft)]">{t('task.confirmSubmitDesc')}</p>
                 <div className="flex gap-2">
-                  <button
+                  <Button
                     type="button"
+                    size="lg"
                     onClick={() => submitMut.mutate()}
                     disabled={submitMut.isPending || unsaved || timeUp}
-                    className="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-5 text-[14px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 disabled:opacity-50"
                   >
                     {submitMut.isPending ? t('task.submitting') : t('task.confirmYes')}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="lg"
+                    className="px-4"
                     onClick={() => setConfirming(false)}
-                    className={CHIP_BUTTON}
                   >
                     {t('task.cancel')}
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : (
@@ -1183,31 +1192,37 @@ function TaskWorkspace({
               <div className="flex flex-col gap-2">
                 <p className="text-[12.5px] text-foreground">{t('task.withdrawConsentConfirm')}</p>
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
+                  <Button
                     type="button"
+                    variant="outline"
+                    size="lg"
+                    className={cn(DANGER_OUTLINE, 'px-4')}
                     disabled={withdrawMut.isPending}
                     onClick={() => withdrawMut.mutate()}
-                    className={DANGER_BUTTON}
                   >
                     {t('task.withdrawConsentYes')}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="lg"
+                    className="px-4"
                     onClick={() => setWithdrawAsking(false)}
-                    className={`${TEXT_BUTTON} text-[var(--ui-soft)] hover:text-foreground`}
                   >
                     {t('task.cancel')}
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : (
-              <button
+              <Button
                 type="button"
+                variant="link"
+                size="lg"
+                className="px-0"
                 onClick={() => setWithdrawAsking(true)}
-                className={`${TEXT_BUTTON} text-[var(--ui-info)] hover:underline`}
               >
                 {t('task.withdrawConsent')}
-              </button>
+              </Button>
             )}
             {withdrawError ? <p className="mt-2 text-[12px] text-[var(--ui-danger)]">{withdrawError}</p> : null}
           </div>
@@ -1272,31 +1287,37 @@ function SubmittedScreen({
               {t('task.withdrawConsentSubmittedConfirm')}
             </p>
             <div className="flex flex-wrap items-center gap-2">
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="lg"
+                className={cn(DANGER_OUTLINE, 'px-4')}
                 disabled={withdrawMut.isPending}
                 onClick={() => withdrawMut.mutate()}
-                className={DANGER_BUTTON}
               >
                 {t('task.withdrawConsentYes')}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
+                variant="ghost"
+                size="lg"
+                className="px-4"
                 onClick={() => setWithdrawAsking(false)}
-                className={`${TEXT_BUTTON} text-[var(--ui-soft)] hover:text-foreground`}
               >
                 {t('task.cancel')}
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
-          <button
+          <Button
             type="button"
+            variant="link"
+            size="lg"
+            className="px-0"
             onClick={() => setWithdrawAsking(true)}
-            className={`${TEXT_BUTTON} text-[var(--ui-info)] hover:underline`}
           >
             {t('task.withdrawConsent')}
-          </button>
+          </Button>
         )}
         {withdrawError ? <p className="mt-2 text-[12px] text-[var(--ui-danger)]">{withdrawError}</p> : null}
       </GlassCard>
@@ -1368,10 +1389,7 @@ export default function PublicTask(): JSX.Element {
   if (view.isLoading || !view.data) {
     return (
       <PageWrap>
-        <div role="status" className="flex flex-col items-center gap-3 py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" aria-hidden="true" />
-          <p className="text-[14px] text-muted-foreground">{t('task.loading')}</p>
-        </div>
+        <LoadingSkeleton label={t('task.loading')} />
       </PageWrap>
     );
   }

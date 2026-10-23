@@ -129,20 +129,30 @@ function ChooseTimeSection({
     <div className="mt-3 rounded-[14px] bg-card p-4">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[14px] font-semibold text-foreground">{t('myInterviews.chooseTime')}</p>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
+          className="px-3 text-[13px] text-muted-foreground hover:text-foreground"
           onClick={() => {
             setChosen(null);
             setOpen(false);
           }}
-          className="min-h-[40px] rounded px-1 text-[13px] font-semibold text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           {t('myInterviews.hideTimes')}
-        </button>
+        </Button>
       </div>
 
       {slots.isLoading ? (
-        <p className="mt-2 text-[13px] text-muted-foreground">{t('myInterviews.slotsLoading')}</p>
+        <div role="status" aria-busy="true" className="mt-2 flex flex-col gap-2">
+          <span className="sr-only">{t('myInterviews.slotsLoading')}</span>
+          <Skeleton aria-hidden="true" className="h-3 w-24" />
+          <div className="flex flex-wrap gap-1.5">
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} aria-hidden="true" className="h-10 w-20 rounded-full" />
+            ))}
+          </div>
+        </div>
       ) : slots.isError ? (
         <p role="alert" className="mt-2 text-[13px] text-[var(--ui-danger)]">
           {errText(slots.error, t('myInterviews.slotsError'))}

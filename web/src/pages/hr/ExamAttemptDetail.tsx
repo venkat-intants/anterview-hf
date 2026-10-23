@@ -21,11 +21,13 @@ import {
 } from '@/api/exams';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { GlassCard, StatCard, StatusTag, Avatar } from '@/design/components/primitives';
-import { CheckCircle2, XCircle, Clock, Code2, Loader2 } from '@/design/components/icons';
+import { CheckCircle2, XCircle, Clock, Code2 } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
 import { PageHeader, Breadcrumbs, Page } from '@/design/components/page';
 import AttemptProctoringSummary from '@/components/hr/AttemptProctoringSummary';
-import { formatDateTime } from '@/lib/formatters';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
+import { formatDateTime, plural } from '@/lib/formatters';
 import { useTabKeys } from '@/lib/tabKeys';
 
 // Code-split: the evidence tab pulls in the read-only CodeEditor (Prism +
@@ -96,8 +98,11 @@ export default function ExamAttemptDetail() {
 
   const {
     data: breakdown,
+    error: breakdownError,
     isLoading,
     isError,
+    isFetching,
+    refetch,
   } = useQuery({
     queryKey: ['hr', 'exam', examId, 'attempt', attemptId, 'breakdown'],
     queryFn: () => getAttemptBreakdown(examId, attemptId),
@@ -210,24 +215,25 @@ export default function ExamAttemptDetail() {
 
       {/* ── Loading / error ── */}
       {isLoading && (
-        <GlassCard className="p-8 text-center">
-          <div
-            className="mx-auto h-7 w-7 animate-spin rounded-full border-2 border-[var(--ui-line-strong)] border-t-[var(--accent)]"
-            role="status"
-            aria-label="Loading attempt"
-          />
-        </GlassCard>
+        <div className="mt-6 flex flex-col gap-4" role="status" aria-label="Loading attempt">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-[92px] rounded-card" />
+            ))}
+          </div>
+          <Skeleton className="h-48 w-full rounded-card" />
+        </div>
       )}
 
+      {/* errorMessage words a 404 or 403 itself, so a removed attempt and one
+          this account cannot see each read as what they are. */}
       {!isLoading && isError && (
-        <GlassCard className="p-8 text-center">
-          <p role="alert" className="text-[14px] font-medium text-foreground">
-            Could not load this attempt
-          </p>
-          <p className="mt-1 text-[13px] text-muted-foreground">
-            It may have been removed, or you don&apos;t have access to it.
-          </p>
-        </GlassCard>
+        <QueryErrorPanel
+          title="Could not load this attempt."
+          error={breakdownError}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       )}
 
       {!isLoading && !isError && breakdown && (
@@ -277,12 +283,9 @@ export default function ExamAttemptDetail() {
             <div className="mt-5" {...tabs.panelProps('code-evidence')}>
               <Suspense
                 fallback={
-                  <GlassCard className="p-8 text-center">
-                    <Loader2
-                      className="mx-auto h-6 w-6 animate-spin text-[var(--ui-info)]"
-                      aria-hidden="true"
-                    />
-                  </GlassCard>
+                  <div role="status" aria-label="Loading code evidence">
+                    <Skeleton className="h-64 w-full rounded-card" />
+                  </div>
                 }
               >
                 <CodeEvidencePanel examId={examId} attemptId={attemptId} />
@@ -312,7 +315,7 @@ export default function ExamAttemptDetail() {
                   <StatCard
                     label="MCQ correct"
                     value={mcqEntries.length > 0 ? `${mcqCorrect}/${mcqEntries.length}` : '-'}
-                    delta={`${totalQuestions} question${totalQuestions !== 1 ? 's' : ''}`}
+                    delta={plural(totalQuestions, 'question')}
                     trend="flat"
                   />
                   <StatCard
@@ -376,8 +379,7 @@ export default function ExamAttemptDetail() {
                 <Reveal delay={0.14}>
                   <GlassCard className="mt-5 overflow-hidden p-0">
                     <div className="border-b border-border px-6 py-3.5 text-[12px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-soft)]">
-                      Coding · {codingEntries.length} question
-                      {codingEntries.length !== 1 ? 's' : ''}
+                      Coding · {plural(codingEntries.length, 'question')}
                     </div>
                     <Stagger className="flex flex-col">
                       {codingEntries.map(([qid, r], i) => {

@@ -34,8 +34,12 @@ import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { Page, PageHeader, EmptyState, Toolbar } from '@/design/components/page';
 import { Card } from '@/design/components/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { errorMessage } from '@/lib/errorMessage';
+import { plural } from '@/lib/formatters';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
@@ -67,13 +71,12 @@ const STATUS_TONE: Record<BankQuestionStatus, TagTone> = {
   retired: 'ember',
 };
 
-const field =
-  'h-10 rounded-[10px] border border-input bg-card px-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+/** A toolbar filter select sizes to its longest option, not the whole row. */
+const FILTER_SELECT = 'w-auto';
 
-// Rename / Archive are occasional actions: ghost, icon plus label, 40px targets,
-// no border or fill until hovered.
-const QUIET =
-  'inline-flex min-h-10 items-center gap-1.5 rounded-[10px] px-3 text-[13px] font-medium text-[var(--ui-soft)] hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+// Rename / Archive are occasional actions: the ghost Button, icon plus label,
+// 40px targets, no border or fill until hovered.
+const QUIET = 'gap-1.5 px-3 text-[13px] font-medium text-[var(--ui-soft)]';
 
 // Applied to a wrapper: the idle ConfirmDeleteButton is its only <button> child.
 const QUIET_ARCHIVE =
@@ -107,7 +110,7 @@ export default function QuestionBanks(): JSX.Element {
   const [filter, setFilter] = useState<BankListFilter>('all');
   const [kindFilter, setKindFilter] = useState<BankKindFilter>('all');
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, error, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['hr', 'question-banks'],
     queryFn: listQuestionBanks,
   });
@@ -173,12 +176,12 @@ export default function QuestionBanks(): JSX.Element {
           ))}
         </div>
       ) : isError ? (
-        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
-          Could not load question banks.{' '}
-          <button type="button" className="font-semibold underline" onClick={() => void refetch()}>
-            Try again
-          </button>
-        </p>
+        <QueryErrorPanel
+          title="Could not load question banks."
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       ) : allBanks.length === 0 ? (
         <EmptyState
           icon={Library}
@@ -197,7 +200,7 @@ export default function QuestionBanks(): JSX.Element {
             className="mb-0"
             trailing={
               <span className="text-[13px] tabular-nums text-muted-foreground" role="status">
-                {banks.length} of {allBanks.length} bank{allBanks.length === 1 ? '' : 's'}
+                {banks.length} of {plural(allBanks.length, 'bank')}
               </span>
             }
           >
@@ -207,41 +210,41 @@ export default function QuestionBanks(): JSX.Element {
                 aria-hidden="true"
                 className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
               />
-              <input
+              <Input
                 type="search"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search banks"
                 aria-label="Search banks"
-                className={cn(field, 'w-full pl-8')}
+                className="pl-8"
               />
             </div>
-            <select
+            <SelectControl
               value={filter}
               onChange={(e) => setFilter(e.target.value as BankListFilter)}
               aria-label="Filter banks by status"
-              className={field}
+              className={FILTER_SELECT}
             >
               {BANK_LIST_FILTERS.map((f) => (
                 <option key={f.value} value={f.value}>
                   {f.label}
                 </option>
               ))}
-            </select>
+            </SelectControl>
             {hasKinds ? (
-              <select
+              <SelectControl
                 value={kindFilter}
                 onChange={(e) => setKindFilter(e.target.value as BankKindFilter)}
                 aria-label="Filter banks by question type"
                 data-testid="bank-kind-filter"
-                className={field}
+                className={FILTER_SELECT}
               >
                 {BANK_KIND_FILTERS.map((f) => (
                   <option key={f.value} value={f.value}>
                     {f.label}
                   </option>
                 ))}
-              </select>
+              </SelectControl>
             ) : null}
           </Toolbar>
 
@@ -273,19 +276,27 @@ export default function QuestionBanks(): JSX.Element {
                                 renameMut.mutate({ id: b.id, name: next });
                               }}
                             >
-                              <input
+                              <Input
+                                size="sm"
                                 aria-label={`New name for ${b.name}`}
                                 value={renaming.name}
                                 onChange={(e) => setRenaming({ id: b.id, name: e.target.value })}
-                                className={cn(field, 'min-w-0 flex-1')}
+                                className="w-auto min-w-0 flex-1"
                               />
-                              <Button type="submit" size="sm" disabled={renameMut.isPending}>
+                              {/* A row edit inside the list card: New bank stays
+                                  the page's one primary. */}
+                              <Button
+                                type="submit"
+                                size="sm"
+                                variant="outline"
+                                disabled={renameMut.isPending}
+                              >
                                 Save
                               </Button>
                               <Button
                                 type="button"
                                 size="sm"
-                                variant="outline"
+                                variant="ghost"
                                 onClick={() => setRenaming(null)}
                               >
                                 Cancel
@@ -332,7 +343,7 @@ export default function QuestionBanks(): JSX.Element {
                               {counts.length > 0 || kindSummary(b) ? (
                                 <span aria-hidden="true">· </span>
                               ) : null}
-                              Used in {b.used_in_exams} exam{b.used_in_exams === 1 ? '' : 's'}
+                              Used in {plural(b.used_in_exams, 'exam')}
                             </span>
                           </div>
                         </div>
@@ -340,14 +351,15 @@ export default function QuestionBanks(): JSX.Element {
                           <NextActionLink bank={b} action={action} />
                           {renaming?.id === b.id ? null : (
                             <div className="flex items-center gap-1">
-                              <button
+                              <Button
                                 type="button"
+                                variant="ghost"
                                 onClick={() => setRenaming({ id: b.id, name: b.name })}
                                 className={QUIET}
                               >
-                                <Pencil size={14} aria-hidden="true" />
+                                <Pencil aria-hidden="true" />
                                 Rename
-                              </button>
+                              </Button>
                               {/* ConfirmDeleteButton has no className prop, and its
                                   armed Sure?/Archive/Cancel state must stay as it is, so
                                   the idle button is quieted from outside. The pair it

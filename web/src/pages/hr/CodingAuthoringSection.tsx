@@ -34,6 +34,7 @@ import {
 import { saveCodingQuestionToBank, type SaveToBankInput } from '@/api/questionBanks';
 import { errorMessage } from '@/lib/errorMessage';
 import { examEditorMutationKey } from '@/lib/examEditor';
+import { plural } from '@/lib/formatters';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { useTabKeys } from '@/lib/tabKeys';
 import { toast } from '@/lib/toast';
@@ -43,8 +44,12 @@ import { QueryErrorPanel } from '@/components/QueryState';
 import { StatusTag } from '@/design/components/primitives';
 import { EmptyState } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { BankQuestionPicker } from '@/components/bank/BankQuestionPicker';
 import { SaveToBankButton } from '@/components/bank/SaveToBankButton';
 import { SourceBankUnverifiedBadge } from '@/components/bank/SourceBankUnverifiedBadge';
@@ -66,18 +71,14 @@ const LANG_LABEL: Record<string, string> = {
   rust: 'Rust',
 };
 
-// Native <select>/<textarea> in the same look as the shared Input.
-const FIELD_CLS =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground ' +
-  'placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] ' +
-  'focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 ' +
-  'focus-visible:ring-[var(--accent)]/30';
-const SELECT_CLS = cn(FIELD_CLS, 'h-11 py-0');
-const LABEL_CLS = 'mb-1.5 block text-[13px] font-semibold text-foreground';
+// The heading over a group that is not one control (chips, a code editor),
+// in the FormField label look.
+const GROUP_LABEL = cn(fieldLabelClass, 'mb-1.5 block');
 const CHIP =
   'inline-flex min-h-10 items-center rounded-full border px-4 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
-const ICON_BTN =
-  'flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+// A remove button: the ghost icon Button, tinted danger on hover.
+const REMOVE_BTN =
+  'shrink-0 text-muted-foreground hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]';
 
 const emptyTest = (): CodingTestCase => ({
   stdin: '',
@@ -143,8 +144,9 @@ function TestCasesEditor({
         {tests.map((tc, ti) => (
           <div key={ti} className="rounded-[16px] border border-border bg-card p-3">
             <div className="grid gap-3 sm:grid-cols-2">
-              <textarea
-                className={cn(FIELD_CLS, 'min-h-[56px] resize-y font-mono text-[13px]')}
+              <Textarea
+                rows={2}
+                className="min-h-[56px] font-mono md:text-[13px]"
                 placeholder="stdin (input fed to the program)"
                 value={tc.stdin}
                 onChange={(e) =>
@@ -152,8 +154,9 @@ function TestCasesEditor({
                 }
                 aria-label={`Test ${ti + 1} input`}
               />
-              <textarea
-                className={cn(FIELD_CLS, 'min-h-[56px] resize-y font-mono text-[13px]')}
+              <Textarea
+                rows={2}
+                className="min-h-[56px] font-mono md:text-[13px]"
                 placeholder="expected stdout"
                 value={tc.expected_output}
                 onChange={(e) =>
@@ -196,14 +199,16 @@ function TestCasesEditor({
                 />
               </label>
               {tests.length > 1 && (
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   aria-label="Remove test case"
-                  className={cn(ICON_BTN, 'ml-auto')}
+                  className={cn(REMOVE_BTN, 'ml-auto')}
                   onClick={() => setTests((p) => p.filter((_, j) => j !== ti))}
                 >
-                  <Trash2 size={16} aria-hidden="true" />
-                </button>
+                  <Trash2 aria-hidden="true" />
+                </Button>
               )}
             </div>
           </div>
@@ -325,13 +330,13 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
       }
       return drafts.length;
     },
-    onSuccess: (n) => toast.success(`${n} coding problem${n === 1 ? '' : 's'} added`),
+    onSuccess: (n) => toast.success(`${plural(n, 'coding problem')} added`),
     onError: (e: unknown) => {
       const base = errorMessage(e, 'Could not add the generated problems.');
       const saved = savedCount.current;
       toast.error(
         saved > 0
-          ? `${base} ${saved} problem${saved === 1 ? ' was' : 's were'} added; the rest are still in the list.`
+          ? `${base} ${plural(saved, 'problem')} ${saved === 1 ? 'was' : 'were'} added; the rest are still in the list.`
           : base,
       );
     },
@@ -451,8 +456,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                         </StatusTag>
                       ))}
                       <span className="text-[12.5px] text-muted-foreground">
-                        {q.test_cases.length} test{q.test_cases.length === 1 ? '' : 's'} · {sampleN}{' '}
-                        sample
+                        {plural(q.test_cases.length, 'test')} · {sampleN} sample
                       </span>
                     </div>
                     {/* One control, not two: SaveToBankButton renders its
@@ -548,47 +552,51 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                   aria-label="Topic"
                 />
                 <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-3">
-                  <label className="flex flex-col text-[13px] font-semibold text-foreground">
-                    <span className="mb-1.5">Problems</span>
-                    <Input
-                      type="number"
-                      min={1}
-                      max={8}
-                      value={aiCount}
-                      onChange={(e) => setAiCount(e.target.value)}
-                      aria-label="Number of problems"
-                    />
-                  </label>
-                  <label className="flex flex-col text-[13px] font-semibold text-foreground">
-                    <span className="mb-1.5">Difficulty</span>
-                    <select
-                      value={aiDifficulty}
-                      onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
-                      className={cn(SELECT_CLS, 'font-normal')}
-                    >
-                      <option value="easy">Easy</option>
-                      <option value="medium">Medium</option>
-                      <option value="hard">Hard</option>
-                      <option value="mixed">Mixed</option>
-                    </select>
-                  </label>
-                  <label className="flex flex-col text-[13px] font-semibold text-foreground">
-                    <span className="mb-1.5">Statement language</span>
-                    <select
-                      value={aiLanguage}
-                      onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
-                      className={cn(SELECT_CLS, 'font-normal')}
-                    >
-                      <option value="en">English</option>
-                      <option value="hi">हिन्दी</option>
-                      <option value="te">తెలుగు</option>
-                    </select>
-                  </label>
+                  <FormField label="Problems">
+                    {(p) => (
+                      <Input
+                        {...p}
+                        type="number"
+                        min={1}
+                        max={8}
+                        value={aiCount}
+                        onChange={(e) => setAiCount(e.target.value)}
+                        aria-label="Number of problems"
+                      />
+                    )}
+                  </FormField>
+                  <FormField label="Difficulty">
+                    {(p) => (
+                      <SelectControl
+                        {...p}
+                        value={aiDifficulty}
+                        onChange={(e) => setAiDifficulty(e.target.value as ExamDifficulty)}
+                      >
+                        <option value="easy">Easy</option>
+                        <option value="medium">Medium</option>
+                        <option value="hard">Hard</option>
+                        <option value="mixed">Mixed</option>
+                      </SelectControl>
+                    )}
+                  </FormField>
+                  <FormField label="Statement language">
+                    {(p) => (
+                      <SelectControl
+                        {...p}
+                        value={aiLanguage}
+                        onChange={(e) => setAiLanguage(e.target.value as ExamLanguage)}
+                      >
+                        <option value="en">English</option>
+                        <option value="hi">हिन्दी</option>
+                        <option value="te">తెలుగు</option>
+                      </SelectControl>
+                    )}
+                  </FormField>
                 </div>
 
                 {/* Allowed languages (shared with the manual composer) */}
                 <div>
-                  <span className={LABEL_CLS}>Candidates may solve in</span>
+                  <span className={GROUP_LABEL}>Candidates may solve in</span>
                   <LanguageChips langs={langs} onToggle={toggleLang} />
                 </div>
 
@@ -650,14 +658,16 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                               )}
                             </div>
                           </div>
-                          <button
+                          <Button
                             type="button"
+                            variant="ghost"
+                            size="icon"
                             aria-label={`Discard draft ${i + 1}`}
-                            className={ICON_BTN}
+                            className={REMOVE_BTN}
                             onClick={() => setAiPreview((p) => p.filter((_, j) => j !== i))}
                           >
-                            <X size={16} aria-hidden="true" />
-                          </button>
+                            <X aria-hidden="true" />
+                          </Button>
                         </div>
                       </div>
                     );
@@ -674,7 +684,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                       ) : (
                         <Plus aria-hidden="true" />
                       )}
-                      Add {aiPreview.length} problem{aiPreview.length === 1 ? '' : 's'}
+                      Add {plural(aiPreview.length, 'problem')}
                     </Button>
                     <Button
                       type="button"
@@ -696,8 +706,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
             <form onSubmit={submit} className="space-y-5" aria-label="New coding question">
               <div>
                 <h3 className="mb-3 text-[15px] font-bold text-foreground">Problem</h3>
-                <textarea
-                  className={cn(FIELD_CLS, 'resize-y')}
+                <Textarea
                   rows={3}
                   placeholder="Problem statement - describe the task, input format, and output format…"
                   value={prompt}
@@ -712,13 +721,13 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
                 </h3>
                 {/* Allowed languages */}
                 <div>
-                  <span className={LABEL_CLS}>Allowed languages</span>
+                  <span className={GROUP_LABEL}>Allowed languages</span>
                   <LanguageChips langs={langs} onToggle={toggleLang} />
                 </div>
 
                 {/* Starter code */}
                 <div>
-                  <span className={LABEL_CLS}>
+                  <span className={GROUP_LABEL}>
                     Starter code (optional) - {LANG_LABEL[editorLang]}
                   </span>
                   <Suspense fallback={<Skeleton className="h-28 rounded-[12px]" />}>

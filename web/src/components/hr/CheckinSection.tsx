@@ -286,7 +286,7 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
             </select>
             {!employedAvailable ? (
               <p className="mt-1 text-[12px] text-muted-foreground">
-                Available from {win.employed_from ? formatDate(win.employed_from) : '-'}
+                {win.employed_from ? `Available from ${formatDate(win.employed_from)}` : 'Available from: not set'}
               </p>
             ) : null}
           </div>

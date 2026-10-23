@@ -454,7 +454,7 @@ function HumanInterviewSection({
           onClick={() => setAssigning((v) => !v)}
           disabled={!assigning && (roundsLoading || assignBlocked !== null)}
         >
-          {assigning ? 'Close' : 'Assign interviewers'}
+          {assigning ? 'Cancel' : 'Assign interviewers'}
         </Button>
       </div>
       {assignBlocked ? (

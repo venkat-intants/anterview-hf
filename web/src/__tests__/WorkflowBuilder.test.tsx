@@ -1211,3 +1211,13 @@ describe('WorkflowBuilder - discarding a draft (HR-M2)', () => {
     await waitFor(() => expect(discardDraft).toHaveBeenCalledWith('wf-draft'));
   });
 });
+
+describe('WorkflowBuilder - a failed check is not an empty one', () => {
+  it('says the coverage check failed instead of asking for a round', async () => {
+    validateWorkflow.mockRejectedValue(new Error('offline'));
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    expect(await screen.findByText('Could not check what this process measures.')).toBeTruthy();
+    expect(screen.queryByText('Add a round to see what this process measures.')).toBeNull();
+  });
+});

@@ -1256,6 +1256,15 @@ export default function WorkflowBuilder(): JSX.Element {
                   report={validation.data}
                   loading={validation.isFetching}
                   blockersShownElsewhere={blockers.length > 0 && Boolean(trackInput)}
+                  failure={
+                    validation.isError
+                      ? {
+                          error: validation.error,
+                          retry: () => void validation.refetch(),
+                          retrying: validation.isFetching,
+                        }
+                      : undefined
+                  }
                 />
               </Section>
             </Card>

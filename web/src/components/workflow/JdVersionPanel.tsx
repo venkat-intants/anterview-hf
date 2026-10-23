@@ -36,14 +36,15 @@ import { invalidateAfterHrMutation, queryKeys } from '@/lib/queryKeys';
 import { GlassCard } from '@/design/components/primitives';
 import { AlertCircle, XCircle } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryState } from '@/components/QueryState';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 import { formatDate } from '@/lib/formatters';
-
-const INPUT =
-  'w-full rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
-const LABEL = 'mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]';
 
 const STATUS_LABEL: Record<JdVersion['status'], string> = {
   draft: 'Draft',
@@ -177,33 +178,41 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
           publish the draft.
         </p>
 
-        <div className="mt-4">
-          <label htmlFor="jd-draft-text" className={LABEL}>
-            {draft ? `Draft (v${draft.version})` : 'New draft'}
-          </label>
-          <textarea
-            id="jd-draft-text"
-            rows={10}
-            value={text}
-            onChange={(e) => setDraftText(e.target.value)}
-            placeholder="What this role does, who it reports to, what success looks like…"
-            className={INPUT}
-          />
-        </div>
+        <FormField
+          id="jd-draft-text"
+          className="mt-4"
+          label={draft ? `Draft (v${draft.version})` : 'New draft'}
+        >
+          {(p) => (
+            <Textarea
+              {...p}
+              rows={10}
+              value={text}
+              onChange={(e) => setDraftText(e.target.value)}
+              placeholder="What this role does, who it reports to, what success looks like…"
+            />
+          )}
+        </FormField>
 
-        <div className="mt-3">
-          <label htmlFor="jd-change-note" className={LABEL}>
-            What changed <span className="text-[var(--ui-faint)]">(optional)</span>
-          </label>
-          <input
-            id="jd-change-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Added the on-call expectation"
-            maxLength={500}
-            className={INPUT}
-          />
-        </div>
+        <FormField
+          id="jd-change-note"
+          className="mt-3"
+          label={
+            <>
+              What changed <span className="text-[var(--ui-faint)]">(optional)</span>
+            </>
+          }
+        >
+          {(p) => (
+            <Input
+              {...p}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder="Added the on-call expectation"
+              maxLength={500}
+            />
+          )}
+        </FormField>
 
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
           {/* One primary action: Publish when there is a draft, Save otherwise. */}
@@ -267,55 +276,70 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
             persistKey={historyKey}
             data-testid="jd-version-history"
           >
-            {history.isLoading ? (
-              <p className="text-[12.5px] text-muted-foreground">Loading…</p>
-            ) : versions.length === 0 ? (
-              <p className="text-[12.5px] text-muted-foreground">
-                No versions recorded yet. The next edit will create version 1.
-              </p>
-            ) : (
-              <ProgressiveList
-                items={versions}
-                initial={5}
-                noun="versions"
-                getKey={(v) => v.id}
-                className="flex flex-col gap-1.5"
-                renderItem={(v) => (
-                  <li className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[13px] font-medium text-foreground">v{v.version}</span>
-                        <span
-                          className={`rounded-full border px-2 py-0.5 text-[12px] ${STATUS_TONE[v.status]}`}
-                        >
-                          {STATUS_LABEL[v.status]}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 text-[12px] text-muted-foreground">
-                        {formatDate(v.created_at)}
-                        {v.created_by_name ? ` · ${v.created_by_name}` : ''}
-                        {liveWindow(v) ? ` · ${liveWindow(v)}` : ''}
-                      </p>
-                      {v.change_note ? (
-                        <p className="mt-0.5 truncate text-[12px] text-[var(--ui-soft)]">
-                          {v.change_note}
+            <QueryState
+              query={history}
+              errorTitle="Could not load the version history."
+              loading={
+                <div className="flex flex-col gap-1.5" aria-busy="true">
+                  <span className="sr-only">Loading…</span>
+                  <Skeleton className="h-14" />
+                  <Skeleton className="h-14" />
+                </div>
+              }
+              isEmpty={(h) => h.versions.length === 0}
+              empty={
+                <p className="text-[12.5px] text-muted-foreground">
+                  No versions recorded yet. The next edit will create version 1.
+                </p>
+              }
+            >
+              {(h) => (
+                <ProgressiveList
+                  items={h.versions}
+                  initial={5}
+                  noun="versions"
+                  getKey={(v) => v.id}
+                  className="flex flex-col gap-1.5"
+                  renderItem={(v) => (
+                    <li className="flex flex-wrap items-center justify-between gap-2 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] font-medium text-foreground">
+                            v{v.version}
+                          </span>
+                          <span
+                            className={`rounded-full border px-2 py-0.5 text-[12px] ${STATUS_TONE[v.status]}`}
+                          >
+                            {STATUS_LABEL[v.status]}
+                          </span>
+                        </div>
+                        <p className="mt-0.5 text-[12px] text-muted-foreground">
+                          {formatDate(v.created_at)}
+                          {v.created_by_name ? ` · ${v.created_by_name}` : ''}
+                          {liveWindow(v) ? ` · ${liveWindow(v)}` : ''}
                         </p>
+                        {v.change_note ? (
+                          <p className="mt-0.5 truncate text-[12px] text-[var(--ui-soft)]">
+                            {v.change_note}
+                          </p>
+                        ) : null}
+                      </div>
+                      {v.status === 'archived' ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => restore.mutate(v.id)}
+                          disabled={restore.isPending}
+                          className="shrink-0"
+                        >
+                          Restore
+                        </Button>
                       ) : null}
-                    </div>
-                    {v.status === 'archived' ? (
-                      <button
-                        type="button"
-                        onClick={() => restore.mutate(v.id)}
-                        disabled={restore.isPending}
-                        className="inline-flex min-h-10 shrink-0 items-center rounded-[10px] border border-border px-3 text-[12px] text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
-                      >
-                        Restore
-                      </button>
-                    ) : null}
-                  </li>
-                )}
-              />
-            )}
+                    </li>
+                  )}
+                />
+              )}
+            </QueryState>
             <p className="mt-2 text-[12px] text-[var(--ui-soft)]">
               Restoring publishes that wording again as a new live version. Nothing in the history
               is overwritten.

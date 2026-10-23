@@ -18,9 +18,7 @@ const publishJdVersion = vi.fn();
 const discardJdDraft = vi.fn();
 
 vi.mock('../api/requisitions', async () => {
-  const actual = await vi.importActual<typeof import('../api/requisitions')>(
-    '../api/requisitions',
-  );
+  const actual = await vi.importActual<typeof import('../api/requisitions')>('../api/requisitions');
   return {
     ...actual,
     getJdHistory: (...a: unknown[]) => getJdHistory(...a) as unknown,
@@ -129,9 +127,7 @@ describe('a draft is not what candidates see', () => {
       history([version(), version({ id: 'v-2', version: 2, status: 'draft', published_at: null })]),
     );
     renderPanel();
-    expect(
-      await screen.findByText(/not visible to candidates/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/not visible to candidates/)).toBeInTheDocument();
   });
 
   it('offers publishing as a separate act from saving', async () => {
@@ -256,6 +252,14 @@ describe('history', () => {
     await openHistory();
     expect(await screen.findByText(/next edit will create version 1/)).toBeInTheDocument();
   });
+
+  it('says the history could not load, rather than calling it empty', async () => {
+    getJdHistory.mockRejectedValue(new Error('offline'));
+    renderPanel();
+    await openHistory();
+    expect(await screen.findByText('Could not load the version history.')).toBeInTheDocument();
+    expect(screen.queryByText(/next edit will create version 1/)).not.toBeInTheDocument();
+  });
 });
 
 describe('saving', () => {
@@ -292,7 +296,13 @@ describe('publishing never loses unsaved edits', () => {
   const withDraft = () =>
     history([
       version(),
-      version({ id: 'v-2', version: 2, status: 'draft', jd_text: 'Saved draft.', published_at: null }),
+      version({
+        id: 'v-2',
+        version: 2,
+        status: 'draft',
+        jd_text: 'Saved draft.',
+        published_at: null,
+      }),
     ]);
 
   it('saves the typed text first, then publishes the version that save returned', async () => {

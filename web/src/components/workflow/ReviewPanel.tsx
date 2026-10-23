@@ -11,7 +11,11 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2 } from '@/design/components/icons';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
@@ -44,10 +48,6 @@ const ACTION_WORDS: Record<ReviewAction, string> = {
   changes_requested: 'Changes requested',
   reopened: 'Reopened for edits',
 };
-
-function errText(e: unknown, fallback: string): string {
-  return errorMessage(e, fallback.endsWith('.') ? fallback : `${fallback}.`);
-}
 
 interface Props {
   workflowId: string;
@@ -102,7 +102,7 @@ export default function ReviewPanel({
         }
         toast.error(detail.message);
       } else {
-        toast.error(errText(e, 'Could not submit for review'));
+        toast.error(errorMessage(e, 'Could not submit for review.'));
       }
     },
   });
@@ -113,7 +113,7 @@ export default function ReviewPanel({
       applyState(state);
       toast.success('Withdrawn from review');
     },
-    onError: (e) => toast.error(errText(e, 'Could not withdraw this version from review')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not withdraw this version from review.')),
   });
 
   const reopenMut = useMutation({
@@ -123,22 +123,27 @@ export default function ReviewPanel({
       applyState(state);
       toast.success('Reopened for edits - it will need approving again before it can be published');
     },
-    onError: (e) => toast.error(errText(e, 'Could not reopen this version')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not reopen this version.')),
   });
 
-  if (review.isLoading) {
+  if (review.data === undefined) {
+    if (review.isError) {
+      return (
+        <QueryErrorPanel
+          title="Could not load this version's review status."
+          error={review.error}
+          onRetry={() => void review.refetch()}
+          retrying={review.isFetching}
+        />
+      );
+    }
     return (
-      <p className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-        Loading review status…
-      </p>
-    );
-  }
-  if (review.isError || !review.data) {
-    return (
-      <p className="text-[12px] text-[var(--ui-danger)]">
-        Could not load this version&rsquo;s review status.
-      </p>
+      <div className="flex flex-col gap-2" aria-busy="true">
+        <span className="sr-only">Loading review status…</span>
+        <Skeleton className="h-6 w-28 rounded-full" />
+        <Skeleton className="h-10" />
+        <Skeleton className="h-9 w-36 rounded-full" />
+      </div>
     );
   }
 
@@ -205,24 +210,19 @@ export default function ReviewPanel({
 
       {state.review_status === 'draft' || state.review_status === 'changes_requested' ? (
         <div className="flex flex-col gap-2">
-          <label htmlFor="review-note" className="text-[12px] font-medium text-[var(--ui-soft)]">
-            Note for the reviewer (optional)
-          </label>
-          <input
-            id="review-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          />
-          <button
+          <FormField id="review-note" label="Note for the reviewer (optional)">
+            {(p) => <Input {...p} value={note} onChange={(e) => setNote(e.target.value)} />}
+          </FormField>
+          <Button
             type="button"
+            size="sm"
             onClick={() => submitMut.mutate()}
             disabled={submitMut.isPending || submitBlockedReason !== null}
             aria-describedby={submitBlockedReason ? 'review-submit-blocked' : undefined}
-            className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+            className="self-start"
           >
             {submitMut.isPending ? 'Submitting…' : 'Submit for review'}
-          </button>
+          </Button>
           {submitBlockedReason ? (
             <p id="review-submit-blocked" className="text-[12px] text-muted-foreground">
               {submitBlockedReason}
@@ -236,37 +236,35 @@ export default function ReviewPanel({
           <p className="text-[12px] text-muted-foreground">
             Locked while a company super admin reviews it.
           </p>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => withdrawMut.mutate()}
             disabled={withdrawMut.isPending}
-            className="self-start rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
+            className="self-start"
           >
             {withdrawMut.isPending ? 'Withdrawing…' : 'Withdraw from review'}
-          </button>
+          </Button>
         </div>
       ) : null}
 
       {state.review_status === 'approved' ? (
         <div className="flex flex-col gap-2">
-          <label htmlFor="reopen-note" className="text-[12px] font-medium text-[var(--ui-soft)]">
-            Note (optional)
-          </label>
-          <input
-            id="reopen-note"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          />
-          <button
+          <FormField id="reopen-note" label="Note (optional)">
+            {(p) => <Input {...p} value={note} onChange={(e) => setNote(e.target.value)} />}
+          </FormField>
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => reopenMut.mutate()}
             disabled={reopenMut.isPending}
             title="It will need approving again before it can be published"
-            className="self-start rounded-[10px] border border-[var(--ui-line-strong)] px-4 py-2 text-[12.5px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
+            className="self-start"
           >
             {reopenMut.isPending ? 'Reopening…' : 'Reopen for edits'}
-          </button>
+          </Button>
           <p className="text-[12px] text-muted-foreground">
             Reopening clears the approval - it will need approving again before it can go live.
           </p>

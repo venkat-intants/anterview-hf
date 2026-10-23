@@ -32,13 +32,12 @@ import { cn } from '@/lib/utils';
 import { SectionCard } from '@/design/components/page';
 import { AlertCircle, Plus, X } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
+import { fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { errorMessage } from '@/lib/errorMessage';
 
-// Native <select> in the same look as the shared Input.
-const SELECT =
-  'h-10 w-full rounded-[10px] border border-input bg-card px-3.5 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
-const LABEL = 'mb-1.5 block text-[13px] font-semibold text-foreground';
 // A hairline-divided group inside the card, titled like the drawer's sections.
 const GROUP = 'mt-6 border-t border-border pt-5';
 const GROUP_TITLE = 'mb-3 text-[15px] font-bold text-foreground';
@@ -75,57 +74,60 @@ function ListField({
   }
 
   return (
-    <div>
-      <label htmlFor={id} className={LABEL}>
-        {label}
-      </label>
-      {list.length > 0 ? (
-        <ul className="mb-2 flex flex-col gap-1.5">
-          {list.map((item, i) => (
-            <li
-              key={`${item}-${i}`}
-              className="flex items-center justify-between gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] py-0.5 pl-3.5 pr-1"
+    <FormField id={id} label={label}>
+      {(p) => (
+        <>
+          {list.length > 0 ? (
+            <ul className="mb-0.5 flex flex-col gap-1.5">
+              {list.map((item, i) => (
+                <li
+                  key={`${item}-${i}`}
+                  className="flex items-center justify-between gap-2 rounded-[12px] border border-border bg-[var(--ui-inset-soft)] py-0.5 pl-3.5 pr-1"
+                >
+                  <span className="min-w-0 break-words py-1.5 text-[14px] text-foreground">
+                    {item}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${item}`}
+                    onClick={() => onChange(list.filter((_, j) => j !== i))}
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="flex gap-2">
+            <Input
+              {...p}
+              value={draft}
+              disabled={full}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  add();
+                }
+              }}
+              placeholder={full ? 'Twenty is the limit' : hint}
+              className="min-w-0 flex-1"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={add}
+              disabled={full || !draft.trim()}
+              aria-label={`Add to ${label}`}
             >
-              <span className="min-w-0 break-words py-1.5 text-[14px] text-foreground">{item}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${item}`}
-                onClick={() => onChange(list.filter((_, j) => j !== i))}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              >
-                <X size={16} aria-hidden="true" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-      <div className="flex gap-2">
-        <Input
-          id={id}
-          value={draft}
-          disabled={full}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              add();
-            }
-          }}
-          placeholder={full ? 'Twenty is the limit' : hint}
-          className="min-w-0 flex-1"
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          onClick={add}
-          disabled={full || !draft.trim()}
-          aria-label={`Add to ${label}`}
-        >
-          <Plus aria-hidden="true" />
-        </Button>
-      </div>
-    </div>
+              <Plus aria-hidden="true" />
+            </Button>
+          </div>
+        </>
+      )}
+    </FormField>
   );
 }
 
@@ -170,8 +172,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
       void client.invalidateQueries({ queryKey: queryKeys.jdHistory(requisition.id) });
       toast.success('Public details saved');
     },
-    onError: (err: unknown) =>
-      toast.error(errorMessage(err, 'Could not save the public details.')),
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not save the public details.')),
   });
 
   const num = (v: string): number | null => (v === '' ? null : Number(v));
@@ -183,52 +184,46 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
     >
       <h3 className={GROUP_TITLE}>Basics</h3>
       <div className="grid gap-4 sm:grid-cols-2">
+        <FormField id="p-department" label="Department">
+          {(p) => (
+            <Input
+              {...p}
+              value={form.department ?? ''}
+              onChange={(e) => set('department', e.target.value || null)}
+              placeholder="Engineering"
+            />
+          )}
+        </FormField>
+        <FormField id="p-location" label="Location">
+          {(p) => (
+            <Input
+              {...p}
+              value={form.location ?? ''}
+              onChange={(e) => set('location', e.target.value || null)}
+              placeholder="Bengaluru"
+            />
+          )}
+        </FormField>
+        <FormField id="p-type" label="Employment type">
+          {(p) => (
+            <SelectControl
+              {...p}
+              value={form.employment_type ?? ''}
+              onChange={(e) =>
+                set('employment_type', (e.target.value || null) as EmploymentType | null)
+              }
+            >
+              <option value="">Not specified</option>
+              {(Object.keys(EMPLOYMENT_TYPE_LABELS) as EmploymentType[]).map((t) => (
+                <option key={t} value={t}>
+                  {EMPLOYMENT_TYPE_LABELS[t]}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
         <div>
-          <label htmlFor="p-department" className={LABEL}>
-            Department
-          </label>
-          <Input
-            id="p-department"
-            value={form.department ?? ''}
-            onChange={(e) => set('department', e.target.value || null)}
-            placeholder="Engineering"
-            className="h-10 rounded-[10px]"
-          />
-        </div>
-        <div>
-          <label htmlFor="p-location" className={LABEL}>
-            Location
-          </label>
-          <Input
-            id="p-location"
-            value={form.location ?? ''}
-            onChange={(e) => set('location', e.target.value || null)}
-            placeholder="Bengaluru"
-            className="h-10 rounded-[10px]"
-          />
-        </div>
-        <div>
-          <label htmlFor="p-type" className={LABEL}>
-            Employment type
-          </label>
-          <select
-            id="p-type"
-            value={form.employment_type ?? ''}
-            onChange={(e) =>
-              set('employment_type', (e.target.value || null) as EmploymentType | null)
-            }
-            className={SELECT}
-          >
-            <option value="">Not specified</option>
-            {(Object.keys(EMPLOYMENT_TYPE_LABELS) as EmploymentType[]).map((t) => (
-              <option key={t} value={t}>
-                {EMPLOYMENT_TYPE_LABELS[t]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <span className={LABEL}>Experience (years)</span>
+          <span className={cn(fieldLabelClass, 'mb-1.5 block')}>Experience (years)</span>
           <div className="flex items-center gap-2">
             <Input
               aria-label="Minimum experience in years"
@@ -237,7 +232,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
               max={60}
               value={form.experience_min_years ?? ''}
               onChange={(e) => set('experience_min_years', num(e.target.value))}
-              className="h-10 min-w-0 flex-1 rounded-[10px]"
+              className="min-w-0 flex-1"
             />
             <span className="text-muted-foreground">to</span>
             <Input
@@ -247,7 +242,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
               max={60}
               value={form.experience_max_years ?? ''}
               onChange={(e) => set('experience_max_years', num(e.target.value))}
-              className="h-10 min-w-0 flex-1 rounded-[10px]"
+              className="min-w-0 flex-1"
             />
           </div>
           {experienceError ? (
@@ -270,16 +265,13 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
         {/* Below sm the currency sits above the range (two lines that always
             fit); from sm up it is one row. The min / to / max trio is its own
             flex row so it never needs the phone's full width twice. */}
-        <div
-          className="flex flex-col gap-2 sm:flex-row sm:items-center"
-          data-testid="salary-row"
-        >
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="salary-row">
           <Input
             aria-label="Salary currency"
             value={form.salary_currency ?? ''}
             onChange={(e) => set('salary_currency', e.target.value || null)}
             placeholder="INR"
-            className={cn('h-10 w-20 shrink-0 rounded-[10px]')}
+            className={cn('w-20 shrink-0')}
           />
           <div className="flex min-w-0 flex-1 items-center gap-2">
             <Input

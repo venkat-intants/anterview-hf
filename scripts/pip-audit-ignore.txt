@@ -180,3 +180,24 @@ GHSA-f4xh-w4cj-qxq8
 # moves livekit 1.1.8 → 1.1.18 and all five livekit-plugins-* in lockstep,
 # i.e. the whole real-time interview path. It needs a live-call test pass.
 GHSA-xf7x-x43h-rpqh
+#
+# --- opentelemetry-api 1.39.1 — UPGRADE-BLOCKED (interview_core), 2026-10-23 --
+# CVE-2026-114603 / GHSA-xcq7-p3pf-p88h: unbounded `tracestate` parsing, a DoS
+# when a crafted header reaches TraceState.from_header. Fixed in 1.45.1.
+#
+# NOT REACHABLE HERE. The only caller of TraceState.from_header is
+# TraceContextTextMapPropagator.extract — the propagator that reads inbound
+# traceparent/tracestate headers. Nothing extracts trace context: our code
+# never imports opentelemetry (grep services/ shared/), and livekit-agents
+# 1.5.15 calls no propagator (grep of its installed sources for propagate /
+# extract / TraceContext / tracestate finds nothing). opentelemetry is here only
+# because livekit-agents depends on it, for its own outbound telemetry.
+#
+# Unblock = livekit-agents >= 1.8.8, the first release whose range admits
+# opentelemetry-api 1.45 (1.5.15 pins ~=1.39; 1.6.x-1.8.7 cap it <1.45). That
+# is a three-minor jump of the real-time interview worker and every
+# livekit-plugins-* with it, so like the LangGraph block above it needs a live
+# call to verify, not just a resolve. Re-check reachability if anything starts
+# extracting trace context (an otel FastAPI/ASGI instrumentation, a propagator
+# in the worker).
+CVE-2026-114603

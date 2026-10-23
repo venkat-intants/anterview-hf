@@ -32,9 +32,9 @@ export default function UpcomingInterviews(): JSX.Element {
     <section>
       {/* The list starts yesterday, so it holds sessions that just finished,
           were missed or were cancelled too (AD-F30): the heading says so. */}
-      <h2 className="text-[16px] font-semibold text-foreground">Your interview sessions</h2>
+      <h2 className="text-[16px] font-semibold text-foreground">Your interviews</h2>
       <p className="mt-1 text-[12.5px] text-muted-foreground">
-        Sessions you are on, from yesterday onward - in your own local time ({browserTimezone()}).
+        Interviews you are on, from yesterday onward - in your own local time ({browserTimezone()}).
       </p>
 
       {isLoading ? (
@@ -45,7 +45,7 @@ export default function UpcomingInterviews(): JSX.Element {
       ) : isError ? (
         <QueryErrorPanel
           className="mt-3"
-          title="Could not load your interview sessions."
+          title="Could not load your interviews."
           error={error}
           onRetry={() => void refetch()}
           retrying={isFetching}

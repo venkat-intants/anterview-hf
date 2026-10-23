@@ -103,7 +103,7 @@ export function setupDots(r: ListFields): SetupDot[] {
   })();
   const live = isAcceptingApplications(r);
   return [
-    serverStage('role', 'Role and posting', r.has_published_jd, 'job description published', 'no published job description'),
+    serverStage('role', 'Opening and job description', r.has_published_jd, 'job description published', 'no published job description'),
     serverStage('process', 'Hiring process', r.has_published_workflow, 'workflow published', 'no published workflow'),
     approval,
     {

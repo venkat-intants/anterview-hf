@@ -124,7 +124,7 @@ function failureFrom(err: unknown, proposal: Proposal): CommitOutcome {
   if (isNetworkError(err)) {
     // No response arrived, so the request may or may not have been applied.
     // Say so rather than invite a blind second click.
-    const where = proposal.kind === 'interview_invite' ? ' Check Interviews' : ' Check the record';
+    const where = proposal.kind === 'interview_invite' ? ' Check AI interviews' : ' Check the record';
     return {
       state: 'failed',
       message: `Could not confirm whether this went through.${where} before you try again.`,
@@ -214,7 +214,7 @@ export default function ProposalCard({
       // second click that fails identically.
       focusStatusOnDone.current = false;
       record(failureFrom(err, proposal));
-      toast.error(`Could not complete: ${proposal.title}`);
+      toast.error(`Could not complete “${proposal.title}”.`);
     }
   }
 

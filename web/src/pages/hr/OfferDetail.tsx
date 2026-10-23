@@ -648,7 +648,7 @@ function useOfferLifecycle(offer: OfferDetailShape) {
   const resendMut = useMutation({
     mutationFn: () => resendOffer(offer.id),
     onSuccess: () => {
-      toast.success('Sent a fresh link. The old one no longer works.');
+      toast.success('Sent a fresh link', { description: 'The old one no longer works.' });
       void invalidate();
     },
     // A refusal (an offer that has just expired) changes the offer too.

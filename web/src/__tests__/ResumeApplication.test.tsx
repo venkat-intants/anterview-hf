@@ -199,14 +199,14 @@ describe('the confirmation step', () => {
       draft({ full_name: 'Priya S. Sharma', parsed: { full_name: 'Priya Sharma', email: null } }),
     );
     renderPage();
-    expect(await screen.findByText(/Your CV says/)).toBeInTheDocument();
+    expect(await screen.findByText(/Your resume says/)).toBeInTheDocument();
   });
 
   it('does not claim to have read anything when the parser found nothing', async () => {
     getDraft.mockResolvedValue(draft({ has_resume: true }));
     renderPage();
     expect(await screen.findByText(/Please fill these in/)).toBeInTheDocument();
-    expect(screen.queryByText(/We read these from your CV/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/We read these from your resume/)).not.toBeInTheDocument();
   });
 
   it('will not confirm an empty name', async () => {
@@ -233,7 +233,7 @@ describe('the confirmation step', () => {
 describe('submitting', () => {
   it('is blocked, and says why, with no CV', async () => {
     renderPage();
-    expect(await screen.findByText(/CV uploaded - still needed/)).toBeInTheDocument();
+    expect(await screen.findByText(/Resume uploaded - still needed/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Submit application/ })).toBeDisabled();
   });
 
@@ -490,7 +490,7 @@ describe('deleting a saved application', () => {
       screen.getByRole('button', { name: /Confirm - delete everything/ }),
     );
     expect(await screen.findByText(/has been deleted/)).toBeInTheDocument();
-    expect(screen.getByText(/CV you uploaded/)).toBeInTheDocument();
+    expect(screen.getByText(/resume you uploaded/)).toBeInTheDocument();
   });
 });
 
@@ -535,8 +535,8 @@ describe('ResumeApplication - localisation', () => {
   });
 
   it.each([
-    ['hi', 'अपने विवरण जाँचें', 'आपका CV'],
-    ['te', 'మీ వివరాలను సరిచూడండి', 'మీ CV'],
+    ['hi', 'अपने विवरण जाँचें', 'आपका रेज़्यूमे'],
+    ['te', 'మీ వివరాలను సరిచూడండి', 'మీ రెజ్యూమే'],
   ])('renders the confirmation screen in %s', async (lng, checkTitle, cvTitle) => {
     getDraft.mockResolvedValue(draft({ has_resume: true }));
     await i18n.changeLanguage(lng);

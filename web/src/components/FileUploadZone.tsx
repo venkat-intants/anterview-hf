@@ -3,6 +3,7 @@
 
 import { useCallback, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { formatNumber, uiLocale } from '@/lib/formatters';
 
 export interface FileUploadZoneProps {
   /** Human-readable label, e.g. "Upload Resume" */
@@ -38,7 +39,7 @@ export default function FileUploadZone({
   onUpload,
   existingFileLabel,
 }: FileUploadZoneProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploadState, setUploadState] = useState<UploadState>({ status: 'idle' });
@@ -162,7 +163,7 @@ export default function FileUploadZone({
             <p className="text-body-sm font-medium text-foreground">
               {t('fileUpload.processed', {
                 label,
-                chars: uploadState.textLength.toLocaleString(),
+                chars: formatNumber(uploadState.textLength, uiLocale(i18n.language)),
               })}
             </p>
             <button

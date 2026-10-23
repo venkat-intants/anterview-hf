@@ -25,6 +25,7 @@ import {
 } from 'livekit-client';
 import { getRoomToken } from '../api/rooms';
 import { toast } from '../lib/toast';
+import { errorMessage } from '@/lib/errorMessage';
 
 // In this 1-on-1 interview the only REMOTE participants are agent-side:
 //   - voice-only mode: 'interviewer-{room}' publishes the TTS audio track
@@ -236,10 +237,10 @@ export function useLiveKitInterview(
     try {
       tokenData = await getRoomToken(sessionIdRef.current);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to get room token';
+      const msg = err instanceof Error ? err.message : 'Could not get a room token.';
       setError(msg);
       setStatus('error');
-      toast.error(`Interview connection failed: ${msg}`);
+      toast.error(errorMessage(err, 'Could not connect to the interview.'));
       isConnectingRef.current = false;
       return;
     }
@@ -261,10 +262,10 @@ export function useLiveKitInterview(
     try {
       await room.connect(tokenData.url, tokenData.token);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to connect to room';
+      const msg = err instanceof Error ? err.message : 'Could not connect to the room.';
       setError(msg);
       setStatus('error');
-      toast.error(`Interview connection failed: ${msg}`);
+      toast.error(errorMessage(err, 'Could not connect to the interview.'));
       isConnectingRef.current = false;
       return;
     }

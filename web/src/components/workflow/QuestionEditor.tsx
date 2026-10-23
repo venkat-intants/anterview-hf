@@ -75,7 +75,7 @@ function QuestionRow({
     mutationFn: () => retireQuestion(question.id),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ['questions', requisitionId] });
-      toast.success('Question retired. Existing answers are still on file.');
+      toast.success('Question retired', { description: 'Existing answers are still on file.' });
     },
     // HR-M2: this used to fail silently.
     onError: (err: unknown) => toast.error(errorMessage(err, 'Could not retire that question.')),
@@ -299,7 +299,7 @@ export default function QuestionEditor({ requisitionId }: { requisitionId: strin
           Application questions
         </h2>
         <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-muted-foreground">
-          Asked on the application form, after the CV. Leave this empty and the form simply does not
+          Asked on the application form, after the resume. Leave this empty and the form simply does not
           have a questions step.
         </p>
       </div>

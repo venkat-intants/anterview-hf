@@ -187,7 +187,7 @@ export default function QuestionBanks(): JSX.Element {
           description="A bank holds questions you review once and reuse across exams. Start one and fill it by writing, by AI, or from a file."
           action={
             <Button asChild variant="outline">
-              <Link to="/hr/question-banks/new">Create your first bank</Link>
+              <Link to="/hr/question-banks/new">New bank</Link>
             </Button>
           }
         />

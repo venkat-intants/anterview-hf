@@ -335,7 +335,7 @@ function DeleteCompanyForm({
           aria-hidden="true"
         />
         <ul className="list-disc space-y-1 pl-4">
-          <li>Every login in this company is removed ({memberSummary}).</li>
+          <li>Every account in this company is removed ({memberSummary}).</li>
           <li>Everyone signed in to it is signed out straight away.</li>
           <li>Its openings, applicants, exams and interviews can no longer be opened.</li>
         </ul>

@@ -985,7 +985,7 @@ export default function DecisionQueue(): JSX.Element {
             <Link to={`/hr/requisitions/${requisitionId}/workflow`}>Workflow</Link>
           </Button>
         }
-        title={`Decisions - ${req.data?.title ?? 'this opening'}`}
+        title={`${req.data?.title ?? 'This opening'} · Decisions`}
         description="Everyone the workflow has taken as far as it can. Scores rank and explain; nothing here was decided automatically, and nothing here moves until you move it."
       />
 

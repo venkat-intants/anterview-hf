@@ -141,7 +141,7 @@ export default function ProfileView() {
                 ? 'Only HR managers and admins can view other people’s profiles.'
                 : notFound
                   ? 'The link may be out of date, or the person may have left. Go back and try another.'
-                  : errorMessage(error, 'Something went wrong. Go back and try again.')
+                  : errorMessage(error, 'Could not load this profile. Go back and try again.')
             }
             action={
               <Button type="button" variant="outline" onClick={() => void navigate(-1)}>

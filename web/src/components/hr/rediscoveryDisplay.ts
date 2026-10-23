@@ -43,7 +43,7 @@ export function freshnessChipLabel(
 }
 
 export const SIGNAL_LABEL: Record<RediscoverySignal, string> = {
-  resume_similarity: 'CV similarity',
+  resume_similarity: 'Resume similarity',
   resume_terms: 'Matched terms',
   interviewer_scorecard: 'Interview scorecard',
   round_result: 'Round result',

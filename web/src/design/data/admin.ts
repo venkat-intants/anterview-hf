@@ -140,7 +140,7 @@ export const FEATURE_FLAGS: FeatureFlag[] = [
   { id: 'ff1', name: 'Telugu speech model', desc: 'Sarvam TE pipeline for South India tenants', on: true },
   { id: 'ff2', name: 'Avatar proctoring v2', desc: 'MediaPipe gaze + multi-face detection', on: true },
   { id: 'ff3', name: 'Self-serve billing', desc: 'Let admins manage seats without sales', on: false },
-  { id: 'ff4', name: 'Resume auto-parse', desc: 'Extract skills from uploaded CVs', on: true },
+  { id: 'ff4', name: 'Resume auto-parse', desc: 'Extract skills from uploaded resumes', on: true },
 ];
 
 export interface AuditEntry {

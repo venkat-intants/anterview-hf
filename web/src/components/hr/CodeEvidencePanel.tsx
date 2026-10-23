@@ -47,6 +47,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import CodeSimilarityCompare from './CodeSimilarityCompare';
+import { formatDateTime } from '@/lib/formatters';
 
 const CodeEditor = lazy(() => import('@/components/CodeEditor'));
 
@@ -91,7 +92,7 @@ function QualityMetrics({ report }: { report: CodeQualityReport }) {
   if (report.status === 'failed') {
     return (
       <p className="text-[13px] text-[var(--ui-warn)]">
-        Analysis failed{report.error_class ? ` (${report.error_class})` : ''} - the submission
+        Could not run the analysis{report.error_class ? ` (${report.error_class})` : ''} - the submission
         itself is unaffected.
       </p>
     );
@@ -366,7 +367,7 @@ function IntegrityFindingsCard({ findings }: { findings: IntegrityFinding[] }) {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <StatusTag tone={OUTCOME_TONE[f.outcome]}>{OUTCOME_LABEL[f.outcome]}</StatusTag>
                 <span className="text-[12px] text-muted-foreground">
-                  {new Date(f.created_at).toLocaleString()} · recorded by{' '}
+                  {formatDateTime(f.created_at)} · recorded by{' '}
                   {shortId(f.recorded_by_user_id)}
                 </span>
               </div>

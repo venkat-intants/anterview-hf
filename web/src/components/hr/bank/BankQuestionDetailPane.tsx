@@ -230,7 +230,7 @@ export function BankQuestionDetailPane({
           className="inline-flex min-h-10 items-center gap-1.5 self-start rounded-[10px] text-[13px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] lg:hidden"
         >
           <ArrowLeft size={14} aria-hidden="true" />
-          Back to the list
+          Back to questions
         </button>
       ) : null}
 

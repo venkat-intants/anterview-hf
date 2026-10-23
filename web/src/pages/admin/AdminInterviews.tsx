@@ -23,7 +23,7 @@ import type { InterviewListItem, InterviewFilters } from '@/api/admin';
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
 import { QueryErrorPanel } from '@/components/QueryState';
-import { formatDate, formatDuration, statusProps, languageLabel, formatScore } from '@/lib/formatters';
+import { formatDate, formatDuration, formatNumber, statusProps, languageLabel, formatScore } from '@/lib/formatters';
 import { SegTabs, StatusTag, Avatar } from '@/design/components/primitives';
 import { EmptyState, PageHeader, SectionCard, Toolbar, Page } from '@/design/components/page';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -353,7 +353,7 @@ function PaginationBar({ page, totalPages, total, perPage, onPrev, onNext }: Pag
   return (
     <div className="flex flex-wrap items-center justify-between gap-2" aria-label="Pagination">
       <span className="text-[13px] text-muted-foreground tabular-nums">
-        {total > 0 ? `${start}-${end} of ${total.toLocaleString()}` : '0 results'}
+        {total > 0 ? `${start}-${end} of ${formatNumber(total)}` : '0 results'}
       </span>
       <div className="flex items-center gap-2">
         <Button
@@ -542,7 +542,7 @@ export default function AdminInterviews() {
           description={
             isLoading
               ? 'Loading…'
-              : `${total.toLocaleString()} interview${total !== 1 ? 's' : ''} · ${items.length} shown`
+              : `${formatNumber(total)} interview${total !== 1 ? 's' : ''} · ${items.length} shown`
           }
         >
           <div

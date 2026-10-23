@@ -238,7 +238,7 @@ describe('CompanyAdminConsole - scoping', () => {
     expect(within(list).getByText('Chetan Iyer')).toBeInTheDocument();
     // The bootstrap state is visible, so an operator can see who has not yet
     // set a password rather than assuming the invite worked.
-    expect(within(list).getByText(/pending first login/i)).toBeInTheDocument();
+    expect(within(list).getByText(/pending first sign-in/i)).toBeInTheDocument();
     expect(within(list).getByText(/^active$/i)).toBeInTheDocument();
   });
 
@@ -267,7 +267,7 @@ describe('CompanyAdminConsole - creating an HR manager', () => {
       screen.getByLabelText(/full name/i, { selector: '#hr-name' }),
       '  Deepa Menon  ',
     );
-    await user.click(screen.getByRole('button', { name: /^add hr$/i }));
+    await user.click(screen.getByRole('button', { name: /^create hr manager$/i }));
 
     await waitFor(() =>
       expect(api.createMyHrManager).toHaveBeenCalledWith({
@@ -318,7 +318,7 @@ describe('CompanyAdminConsole - creating an HR manager', () => {
       screen.getByLabelText(/^email$/i, { selector: '#hr-email' }),
       'only.email@acme.edu',
     );
-    await user.click(screen.getByRole('button', { name: /^add hr$/i }));
+    await user.click(screen.getByRole('button', { name: /^create hr manager$/i }));
 
     expect(api.createMyHrManager).not.toHaveBeenCalled();
     // The rule is unchanged (both fields required); it is now said beside the field.
@@ -335,7 +335,7 @@ describe('CompanyAdminConsole - creating an HR manager', () => {
     await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
     await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'dupe@acme.edu');
     await user.type(screen.getByLabelText(/full name/i, { selector: '#hr-name' }), 'Dupe');
-    await user.click(screen.getByRole('button', { name: /^add hr$/i }));
+    await user.click(screen.getByRole('button', { name: /^create hr manager$/i }));
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Email already registered'));
     // The dialog stays open with the values and the reason, so nothing is lost.
@@ -397,7 +397,7 @@ describe('CompanyAdminConsole - interviewers (D4-1)', () => {
       screen.getByLabelText(/full name/i, { selector: '#interviewer-name' }),
       'New Interviewer',
     );
-    await user.click(screen.getByRole('button', { name: /^add interviewer$/i }));
+    await user.click(screen.getByRole('button', { name: /^create interviewer$/i }));
 
     await waitFor(() =>
       expect(api.createMyInterviewer).toHaveBeenCalledWith({
@@ -569,7 +569,7 @@ describe('CompanyAdminConsole - the set-password email (AD-F8)', () => {
     await user.click(screen.getByRole('button', { name: /^new hr manager$/i }));
     await user.type(screen.getByLabelText(/^email$/i, { selector: '#hr-email' }), 'n@acme.edu');
     await user.type(screen.getByLabelText(/full name/i, { selector: '#hr-name' }), 'N');
-    await user.click(screen.getByRole('button', { name: /^add hr$/i }));
+    await user.click(screen.getByRole('button', { name: /^create hr manager$/i }));
   }
 
   it('warns instead of claiming the email went when it was not queued', async () => {
@@ -633,7 +633,7 @@ describe('CompanyAdminConsole - one name for the page and one status label (AD-F
   it('uses the same pending label on rows and in the summary', async () => {
     renderConsole();
     await screen.findByText('Chetan Iyer');
-    expect(screen.getAllByText('Pending first login').length).toBeGreaterThan(1);
+    expect(screen.getAllByText('Pending first sign-in').length).toBeGreaterThan(1);
     expect(screen.queryByText(/awaiting first login/i)).not.toBeInTheDocument();
   });
 });

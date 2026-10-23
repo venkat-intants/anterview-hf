@@ -120,7 +120,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
     mutationFn: () =>
       splitRequisition(req.id, { enrolment_ids: picked, new_title: newTitle.trim() }),
     onSuccess: (res) => {
-      toast.success(`Moved ${res.moved} candidate(s) into “${res.title}”`);
+      toast.success(`Moved ${res.moved} ${res.moved === 1 ? 'candidate' : 'candidates'} into “${res.title}”`);
       setSplitting(false);
       setPicked([]);
       setNewTitle('');
@@ -135,7 +135,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
   const mergeMut = useMutation({
     mutationFn: () => mergeRequisition(req.id, into),
     onSuccess: (res) => {
-      toast.success(`Moved ${res.moved} candidate(s) into “${res.title}”`);
+      toast.success(`Moved ${res.moved} ${res.moved === 1 ? 'candidate' : 'candidates'} into “${res.title}”`);
       setMerging(false);
       setMergeConfirming(false);
       invalidate();

@@ -34,6 +34,7 @@ import { Briefcase, MapPin, Search, X } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { EmptyState } from '@/design/components/page';
+import { formatDate, formatNumber, uiLocale } from '@/lib/formatters';
 
 // Employment types are a closed server vocabulary, so they are looked up by
 // key. An unknown value falls back to the raw string rather than rendering a
@@ -74,11 +75,11 @@ function experienceLine(t: TFunction, job: JobCard): string | null {
     : t('careers.yearsMax', { hi });
 }
 
-function salaryLine(t: TFunction, job: JobCard): string | null {
+function salaryLine(t: TFunction, job: JobCard, locale: string): string | null {
   const { salary_min: lo, salary_max: hi } = job;
   if (lo == null && hi == null) return null;
   const currency = job.salary_currency ?? '';
-  const money = (n: number) => `${currency} ${n.toLocaleString()}`.trim();
+  const money = (n: number) => `${currency} ${formatNumber(n, locale)}`.trim();
   if (lo != null && hi != null) {
     return t('careers.salaryRange', { lo: money(lo), hi: money(hi) });
   }
@@ -88,19 +89,20 @@ function salaryLine(t: TFunction, job: JobCard): string | null {
 }
 
 /** "2 days ago" — recency is what a candidate reads, not a date. */
-function postedLine(t: TFunction, iso: string): string {
+function postedLine(t: TFunction, iso: string, locale: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
   if (days <= 0) return t('careers.postedToday');
   if (days === 1) return t('careers.postedYesterday');
   if (days < 30) return t('careers.postedDaysAgo', { count: days });
-  return t('careers.postedOn', { date: new Date(iso).toLocaleDateString() });
+  return t('careers.postedOn', { date: formatDate(iso, locale) });
 }
 
 function Card({ job }: { job: JobCard }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = uiLocale(i18n.language);
   const meta = metaLine(t, job);
   const experience = experienceLine(t, job);
-  const salary = salaryLine(t, job);
+  const salary = salaryLine(t, job, locale);
   return (
     <Link
       // Tagged at source (PH3-B1). An application that arrives from the
@@ -137,7 +139,7 @@ function Card({ job }: { job: JobCard }) {
 
       <p className="mt-3 text-[12.5px] text-[var(--ui-soft)]">
         {levelLabel(t, job.level)}
-        {experience ? ` · ${experience}` : ''} · {postedLine(t, job.posted_at)}
+        {experience ? ` · ${experience}` : ''} · {postedLine(t, job.posted_at, locale)}
       </p>
     </Link>
   );
@@ -208,7 +210,7 @@ export default function Careers() {
   const goToPage = (page: number) => update('page', String(page));
 
   useEffect(() => {
-    if (board.data) document.title = `Careers · ${board.data.company_name}`;
+    if (board.data) document.title = `${board.data.company_name} · Careers`;
   }, [board.data]);
 
   if (board.isError) {

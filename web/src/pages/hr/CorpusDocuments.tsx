@@ -666,7 +666,7 @@ export default function CorpusDocuments(): JSX.Element {
                                   type="button"
                                   onClick={() => reindexMut.mutate(d.id)}
                                   disabled={reindexMut.isPending}
-                                  aria-label={`Retry indexing ${d.title}`}
+                                  aria-label={`Try indexing ${d.title} again`}
                                   className="mt-1.5 inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-40"
                                 >
                                   <RefreshCw
@@ -678,7 +678,7 @@ export default function CorpusDocuments(): JSX.Element {
                                     )}
                                     aria-hidden="true"
                                   />
-                                  Retry
+                                  Try again
                                 </button>
                               </>
                             ) : null}

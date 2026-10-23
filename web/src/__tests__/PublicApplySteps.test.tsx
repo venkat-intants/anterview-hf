@@ -113,7 +113,7 @@ describe('PublicApply - stepping', () => {
     renderPage();
     await screen.findByText('Backend Engineer');
     expect(screen.getByLabelText('Your name')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Your CV (PDF)')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Your resume (PDF)')).not.toBeInTheDocument();
   });
 
   it('will not advance without a name and an email', async () => {
@@ -140,7 +140,7 @@ describe('PublicApply - stepping', () => {
     await cont(user);
 
     await user.click(screen.getByRole('button', { name: 'Skip' }));
-    expect(screen.getByLabelText('Your CV (PDF)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Your resume (PDF)')).toBeInTheDocument();
   });
 
   it('never blocks on an optional answer', async () => {
@@ -184,7 +184,7 @@ describe('PublicApply - consent stays last', () => {
     await identity(user);
     await cont(user);
     await cont(user);
-    await user.upload(screen.getByLabelText('Your CV (PDF)'), pdf());
+    await user.upload(screen.getByLabelText('Your resume (PDF)'), pdf());
     await cont(user);
   }
 
@@ -239,7 +239,7 @@ describe('PublicApply - the review step', () => {
     await user.type(screen.getByLabelText('Years of experience'), '6');
     await user.type(screen.getByLabelText('Current company'), 'Globex');
     await cont(user);
-    await user.upload(screen.getByLabelText('Your CV (PDF)'), pdf('priya_cv.pdf'));
+    await user.upload(screen.getByLabelText('Your resume (PDF)'), pdf('priya_cv.pdf'));
     await cont(user);
   }
 
@@ -263,7 +263,7 @@ describe('PublicApply - the review step', () => {
     await identity(user);
     await cont(user);
     await cont(user);
-    await user.upload(screen.getByLabelText('Your CV (PDF)'), pdf());
+    await user.upload(screen.getByLabelText('Your resume (PDF)'), pdf());
     await cont(user);
 
     expect(screen.getAllByText('Not provided').length).toBeGreaterThan(0);
@@ -298,7 +298,7 @@ describe('PublicApply - the review step', () => {
     await identity(user);
     await cont(user);
     await cont(user);
-    await user.upload(screen.getByLabelText('Your CV (PDF)'), pdf());
+    await user.upload(screen.getByLabelText('Your resume (PDF)'), pdf());
     await cont(user);
     await user.click(consentCheckbox());
     await user.click(screen.getByRole('button', { name: 'Send application' }));

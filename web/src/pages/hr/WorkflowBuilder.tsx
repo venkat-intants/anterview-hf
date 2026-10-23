@@ -1249,7 +1249,7 @@ export default function WorkflowBuilder(): JSX.Element {
       {/* The opening's own setup — budget, approval, JD and posting — lives on
           the opening, not here: this page is the workflow and only the workflow. */}
       <p className="text-[13px] leading-relaxed text-muted-foreground" data-testid="setup-link">
-        Budget, approval, job description and posting now live on the opening&rsquo;s{' '}
+        Budget, approval, job description and public details now live on the opening&rsquo;s{' '}
         <Link
           to={`/hr/requisitions/${requisitionId}?tab=setup`}
           className="font-medium text-[var(--accent)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"

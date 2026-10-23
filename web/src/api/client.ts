@@ -288,7 +288,7 @@ async function clientFetch<T>(url: string, options: ClientOptions = {}): Promise
     } else {
       // Refresh failed — clear auth, toast, redirect
       clearToken();
-      toast.error('Session expired - please sign in');
+      toast.error('Your session has expired. Sign in again.');
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
       }
@@ -343,7 +343,7 @@ export async function fetchBlobWithAuth(
   if (!refreshed) {
     // Same terminal path as clientFetch — clear, toast, bounce to /login.
     clearToken();
-    toast.error('Session expired - please sign in');
+    toast.error('Your session has expired. Sign in again.');
     if (typeof window !== 'undefined') {
       window.location.href = '/login';
     }
@@ -602,7 +602,7 @@ export async function uploadWithProgress<T>(
     if (!refreshed) {
       // Same terminal path as clientFetch / fetchBlobWithAuth.
       clearToken();
-      toast.error('Session expired - please sign in');
+      toast.error('Your session has expired. Sign in again.');
       if (typeof window !== 'undefined') {
         window.location.href = '/login';
       }

@@ -356,7 +356,7 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
 
     await user.click(await screen.findByRole('button', { name: /select nova polytechnic/i }));
 
-    await user.click(await screen.findByRole('button', { name: /^add super admin$/i }));
+    await user.click(await screen.findByRole('button', { name: /^new super admin$/i }));
     await user.type(await screen.findByLabelText(/^email$/i), 'boss@nova.edu');
     await user.type(screen.getByLabelText(/full name/i), 'Nova Boss');
     await user.click(screen.getByRole('button', { name: /create super admin/i }));
@@ -378,7 +378,7 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
     renderConsole();
 
     await user.click(await screen.findByRole('button', { name: /select nova polytechnic/i }));
-    await user.click(await screen.findByRole('button', { name: /^add super admin$/i }));
+    await user.click(await screen.findByRole('button', { name: /^new super admin$/i }));
     await user.type(await screen.findByLabelText(/^email$/i), 'boss@nova.edu');
     await user.type(screen.getByLabelText(/full name/i), 'Nova Boss');
     await user.click(screen.getByRole('button', { name: /create super admin/i }));
@@ -423,7 +423,7 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
     await user.click(await screen.findByRole('button', { name: /delete company/i }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText(/every login in this company is removed/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/every account in this company is removed/i)).toBeInTheDocument();
     expect(within(dialog).getByText(/signed out straight away/i)).toBeInTheDocument();
     const confirm = within(dialog).getByRole('button', { name: 'Delete company' });
     expect(confirm).toBeDisabled();
@@ -617,7 +617,7 @@ describe('PlatformOwnerConsole - only a 404 means "no super admin" (AD-F5)', () 
     renderConsole();
 
     await user.click(await screen.findByRole('button', { name: /select nova polytechnic/i }));
-    expect(await screen.findByRole('button', { name: /^add super admin$/i })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^new super admin$/i })).toBeInTheDocument();
   });
 });
 
@@ -631,7 +631,7 @@ describe('PlatformOwnerConsole - the set-password email (AD-F8)', () => {
     renderConsole();
 
     await user.click(await screen.findByRole('button', { name: /select nova polytechnic/i }));
-    await user.click(await screen.findByRole('button', { name: /^add super admin$/i }));
+    await user.click(await screen.findByRole('button', { name: /^new super admin$/i }));
     await user.type(await screen.findByLabelText(/^email$/i), 'boss@nova.edu');
     await user.type(screen.getByLabelText(/full name/i), 'Nova Boss');
     await user.click(screen.getByRole('button', { name: /create super admin/i }));

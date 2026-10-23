@@ -1241,7 +1241,7 @@ export default function InterviewLoopsSection({
             aria-expanded={creating}
             className={linkBtnCls}
           >
-            {creating ? 'Close' : 'New loop'}
+            {creating ? 'Cancel' : 'New loop'}
           </button>
         ) : null}
       </div>

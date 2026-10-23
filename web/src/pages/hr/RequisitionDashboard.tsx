@@ -691,7 +691,7 @@ function PipelineTab({
         </p>
         {readOnly ? null : (
           <Button type="button" variant="outline" className="mt-3" onClick={onOpenSetup}>
-            Open Setup
+            Open setup
           </Button>
         )}
       </Section>
@@ -794,7 +794,7 @@ function PipelineTab({
           {still_being_read > 0 && !data.attention.some((a) => /being read/i.test(a.title)) ? (
             <p className="mt-4 flex items-center gap-2 border-t border-border pt-3 text-[13px] text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden="true" />
-              {still_being_read} CV{still_being_read === 1 ? '' : 's'} still being read and scored.
+              {still_being_read} {still_being_read === 1 ? 'resume' : 'resumes'} still being read and scored.
               Their names and fit scores fill in shortly.
             </p>
           ) : null}

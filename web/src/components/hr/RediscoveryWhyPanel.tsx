@@ -21,7 +21,7 @@ import { FRESHNESS_TONE, freshnessChipLabel, signalLabel } from './rediscoveryDi
 import { appPath } from '@/lib/safeUrl';
 
 const SIMILARITY_LINE =
-  'Their CV reads as similar to what you searched for. That is a similarity score, not a stated fact - open the CV to check.';
+  'Their resume reads as similar to what you searched for. That is a similarity score, not a stated fact - open the resume to check.';
 
 function Snippet({ text }: { text: string }) {
   const segments = parseBracketHighlights(text);

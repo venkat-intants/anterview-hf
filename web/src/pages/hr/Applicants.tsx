@@ -583,8 +583,8 @@ function ApplicantDrawer({
                             <ViewCvButton
                               applicantId={a.id}
                               enrolmentId={app.enrolment_id}
-                              label="CV"
-                              ariaLabel={`View the CV sent for ${app.opening_title ?? 'this opening'}`}
+                              label="Resume"
+                              ariaLabel={`View the resume sent for ${app.opening_title ?? 'this opening'}`}
                             />
                           ) : null}
                           <ShortlistAction
@@ -1180,7 +1180,7 @@ export default function Applicants() {
       } else if (res.remaining > 0) {
         toast.error('Some resumes could not be indexed - try again shortly.');
       } else {
-        toast.success('All resumes are now searchable.');
+        toast.success('All resumes are now searchable');
       }
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not index the resumes.')),

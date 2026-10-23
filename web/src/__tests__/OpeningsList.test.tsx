@@ -82,7 +82,7 @@ describe('setup dots are only as sure as the list payload', () => {
   it('approved and accepting applications: still does not claim the JD or the process', () => {
     const r = opening({ approval_status: 'approved', public_apply_enabled: true });
     expect(states(r)).toEqual(['unknown', 'unknown', 'done', 'done', 'optional']);
-    expect(setupDots(r)[0].text).toBe('Role and posting: open to check');
+    expect(setupDots(r)[0].text).toBe('Opening and job description: open to check');
     expect(setupDots(r)[1].text).toBe('Hiring process: open to check');
   });
 
@@ -118,7 +118,7 @@ describe('has_published_jd / has_published_workflow, when the server sends them'
       over: { has_published_jd: true, has_published_workflow: true },
       role: 'done',
       process: 'done',
-      roleText: 'Role and posting: job description published',
+      roleText: 'Opening and job description: job description published',
       processText: 'Hiring process: workflow published',
     },
     {
@@ -126,7 +126,7 @@ describe('has_published_jd / has_published_workflow, when the server sends them'
       over: { has_published_jd: false, has_published_workflow: false },
       role: 'open',
       process: 'open',
-      roleText: 'Role and posting: no published job description',
+      roleText: 'Opening and job description: no published job description',
       processText: 'Hiring process: no published workflow',
     },
     {
@@ -134,7 +134,7 @@ describe('has_published_jd / has_published_workflow, when the server sends them'
       over: { has_published_jd: true, has_published_workflow: false },
       role: 'done',
       process: 'open',
-      roleText: 'Role and posting: job description published',
+      roleText: 'Opening and job description: job description published',
       processText: 'Hiring process: no published workflow',
     },
     {
@@ -142,7 +142,7 @@ describe('has_published_jd / has_published_workflow, when the server sends them'
       over: {},
       role: 'unknown',
       process: 'unknown',
-      roleText: 'Role and posting: open to check',
+      roleText: 'Opening and job description: open to check',
       processText: 'Hiring process: open to check',
     },
     {
@@ -150,7 +150,7 @@ describe('has_published_jd / has_published_workflow, when the server sends them'
       over: { has_published_jd: true },
       role: 'done',
       process: 'unknown',
-      roleText: 'Role and posting: job description published',
+      roleText: 'Opening and job description: job description published',
       processText: 'Hiring process: open to check',
     },
   ];
@@ -350,7 +350,7 @@ describe('the list on screen', () => {
       'unknown', 'unknown', 'done', 'done', 'optional',
     ]);
     // never colour alone: every dot carries its words
-    expect(dots[0].textContent).toMatch(/Role and posting: open to check/);
+    expect(dots[0].textContent).toMatch(/Opening and job description: open to check/);
     expect(dots[2].textContent).toMatch(/Budget and approval: approved/);
     expect(within(live).getByTestId('setup-dots').getAttribute('aria-label')).toMatch(/2 of 4/);
   });

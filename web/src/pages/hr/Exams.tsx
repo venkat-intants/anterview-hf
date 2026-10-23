@@ -335,11 +335,11 @@ export default function Exams() {
             'transition-colors hover:bg-[var(--ui-inset-soft)]',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
           )}
-          aria-label="Create new exam"
+          aria-label="New exam"
         >
           <Plus size={28} aria-hidden="true" />
           <span className="text-[14px] font-semibold">
-            {exams?.length === 0 ? 'Create your first exam' : 'Create new exam'}
+            New exam
           </span>
         </button>
 

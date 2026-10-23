@@ -165,7 +165,7 @@ function DotLegend(): JSX.Element {
     <p className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 pb-3 text-[12px] text-muted-foreground">
       <span className="font-semibold text-foreground">Setup dots, in order:</span>
       <span>
-        role and posting, hiring process, approval, go live, documents. Approval can be submitted
+        opening and job description, hiring process, approval, go live, documents. Approval can be submitted
         while the first two are still open.
       </span>
       {items.map((i) => (

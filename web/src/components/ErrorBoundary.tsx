@@ -58,7 +58,7 @@ export class ErrorBoundary extends Component<Props, State> {
     setTimeout(() => {
       // The exception text can carry a URL, an id or a server fragment, so it is
       // shown in development only.
-      toast.error(import.meta.env.DEV ? `App error: ${msg}` : 'Something went wrong.');
+      toast.error(import.meta.env.DEV ? `App error: ${msg}` : 'Could not show this page. Reload it to try again.');
     }, 0);
     // In production you would send to Sentry here:
     // Sentry.captureException(error, { extra: info });

@@ -218,7 +218,7 @@ export default function OfferSection({
         </h3>
         {canCreate ? (
           <Button type="button" variant="outline" onClick={() => setCreating((v) => !v)}>
-            {creating ? 'Close' : 'New offer'}
+            {creating ? 'Cancel' : 'New offer'}
           </Button>
         ) : null}
       </div>

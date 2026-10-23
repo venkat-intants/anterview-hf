@@ -108,7 +108,7 @@ async function toQuestions(user: User): Promise<void> {
   await user.type(screen.getByLabelText('Email'), 'priya@example.com');
   await cont(user);
   await cont(user);
-  await user.upload(screen.getByLabelText('Your CV (PDF)'), pdf());
+  await user.upload(screen.getByLabelText('Your resume (PDF)'), pdf());
   await cont(user);
 }
 

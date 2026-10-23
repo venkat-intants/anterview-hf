@@ -57,6 +57,7 @@ import {
   type SimulationRound,
   type WorkflowReviewDetail,
 } from '@/api/workflowReview';
+import { formatDate, formatDateTime } from '@/lib/formatters';
 
 const CHANGES_NOTE_MIN = 10;
 
@@ -575,7 +576,7 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
             nounPlural="entries"
             latest={
               newestEntry
-                ? `${ACTION_WORDS[newestEntry.action]}${newestEntry.actor_name ? ` by ${newestEntry.actor_name}` : ''}, ${new Date(newestEntry.at).toLocaleDateString()}`
+                ? `${ACTION_WORDS[newestEntry.action]}${newestEntry.actor_name ? ` by ${newestEntry.actor_name}` : ''}, ${formatDate(newestEntry.at)}`
                 : undefined
             }
             persistKey={historyKey}
@@ -596,7 +597,7 @@ function ReviewDetail({ workflowId }: { workflowId: string }): JSX.Element {
                     {ACTION_WORDS[h.action]}
                     {h.actor_name ? ` - ${h.actor_name}` : ''}
                     <span className="ml-1.5 text-[12px] text-[var(--ui-faint)]">
-                      {new Date(h.at).toLocaleString()}
+                      {formatDateTime(h.at)}
                     </span>
                     {h.note ? (
                       <span className="block text-[12px] text-muted-foreground">{h.note}</span>

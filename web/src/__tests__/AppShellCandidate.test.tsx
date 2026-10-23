@@ -83,7 +83,7 @@ describe('AppShell - candidate', () => {
       ['My applications', '/applications'],
       ['Jobs', '/jobs'],
       ['Practice interview', '/start'],
-      ['History', '/history'],
+      ['Interview history', '/history'],
       ['Resume', '/resume'],
     ]);
     // The second group is named; the first is not.

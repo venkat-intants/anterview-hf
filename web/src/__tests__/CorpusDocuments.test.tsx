@@ -213,7 +213,7 @@ describe('CorpusDocuments - failed row', () => {
     renderPage();
     expect(
       await screen.findByText(
-        'Indexing failed because search was unavailable. The file is stored; press Retry to index it.',
+        'Could not index this file because search was unavailable. The file is stored; press Try again to index it.',
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText('embedding_unavailable')).not.toBeInTheDocument();
@@ -249,7 +249,7 @@ describe('CorpusDocuments - retry indexing', () => {
     api.reindexCorpusDocument.mockResolvedValue(doc({ status: 'parsed', failure_code: null }));
 
     renderPage();
-    await user.click(await screen.findByRole('button', { name: /retry indexing/i }));
+    await user.click(await screen.findByRole('button', { name: /try indexing .* again/i }));
 
     await waitFor(() => expect(api.reindexCorpusDocument).toHaveBeenCalledWith(FAILED.id));
     // The list is re-read, not patched locally — the status the server now holds
@@ -269,7 +269,7 @@ describe('CorpusDocuments - retry indexing', () => {
     );
 
     renderPage();
-    await user.click(await screen.findByRole('button', { name: /retry indexing/i }));
+    await user.click(await screen.findByRole('button', { name: /try indexing .* again/i }));
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith(
@@ -794,7 +794,7 @@ describe('CorpusDocuments - row copy and states', () => {
       doc({ status: 'failed', failure_code: 'embedding_unavailable' }),
     ]);
     renderPage();
-    expect(await screen.findByText(/press Retry to index it/)).toBeInTheDocument();
+    expect(await screen.findByText(/press Try again to index it/)).toBeInTheDocument();
     expect(screen.queryByText(/indexed automatically/)).not.toBeInTheDocument();
   });
 
@@ -844,13 +844,13 @@ describe('CorpusDocuments - row copy and states', () => {
 describe('CorpusDocuments - naming', () => {
   // PL-L9: the nav said "Documents", the same word offers use for candidate
   // preboarding documents ("Documents & preboarding").
-  it("is called Library in both consoles' nav, and the page says Document library", async () => {
+  it("is called Document library in both consoles' nav, the same as the page title", async () => {
     const { NAV_SECTIONS } = await import('../components/layout/navSections');
     const libraryItems = NAV_SECTIONS.flatMap((s) => s.items).filter((i) =>
       /\/library$/.test(i.to),
     );
     expect(libraryItems.map((i) => i.to).sort()).toEqual(['/hr/library', '/superadmin/library']);
-    libraryItems.forEach((i) => expect(i.label).toBe('Library'));
+    libraryItems.forEach((i) => expect(i.label).toBe('Document library'));
 
     renderPage();
     expect(

@@ -152,7 +152,7 @@ const HR_NAV: NavItem[] = [
   },
   {
     to: '/hr/interviews',
-    label: 'Interviews',
+    label: 'AI interviews',
     icon: <Video className={ICON} aria-hidden="true" />,
   },
   // PH4 Wave 3 (O5) — panel workload, availability and calibration.
@@ -186,7 +186,7 @@ const HR_NAV: NavItem[] = [
   // the screen was reachable only by typing the URL, so "authorised HR users
   // can upload documents" was not true of the product.
   // "Library", not "Documents": offers have their own "Documents & preboarding" (audit PL-L9).
-  { to: '/hr/library', label: 'Library', icon: <BookText className={ICON} aria-hidden="true" /> },
+  { to: '/hr/library', label: 'Document library', icon: <BookText className={ICON} aria-hidden="true" /> },
   // PH5-E3 — talent pools (HR-curated lists for future openings) and the
   // rediscovery search behind them. `hr_manager` only: a pool and a
   // rediscovery result both name a candidate, and `candidate_pii` is
@@ -299,7 +299,7 @@ const SUPER_NAV: NavItem[] = [
   // HRRoute admits only hr_manager, so an /hr link from here would bounce.
   {
     to: '/superadmin/library',
-    label: 'Library',
+    label: 'Document library',
     icon: <BookText className={ICON} aria-hidden="true" />,
   },
 ];

@@ -46,7 +46,7 @@ import type {
 import { ApiError } from '@/api/client';
 import { errorMessage } from '@/lib/errorMessage';
 import { QueryErrorPanel } from '@/components/QueryState';
-import { formatDate, formatDuration, statusProps, languageLabel, formatScore } from '@/lib/formatters';
+import { formatDate, formatDuration, formatTime, statusProps, languageLabel, formatScore } from '@/lib/formatters';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
@@ -126,7 +126,7 @@ function fmtClock(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime())
     ? ''
-    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    : formatTime(iso, { seconds: true });
 }
 
 // ── Axis definitions ───────────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ type AxisKey = 'communication' | 'technical' | 'problem_solving' | 'confidence';
 const AXIS_LABELS: Record<AxisKey, string> = {
   communication: 'Communication',
   technical: 'Technical',
-  problem_solving: 'Problem Solving',
+  problem_solving: 'Problem solving',
   confidence: 'Confidence',
 };
 
@@ -654,7 +654,7 @@ export default function AdminInterviewDetail() {
       </div>
 
       {/* Session metadata grid */}
-      <SectionCard title="Session Details">
+      <SectionCard title="Session details">
         <DataList
           columns={3}
           items={[
@@ -664,7 +664,7 @@ export default function AdminInterviewDetail() {
             { label: 'Started', value: data.started_at ? formatDate(data.started_at) : '-' },
             { label: 'Completed', value: data.completed_at ? formatDate(data.completed_at) : '-' },
             {
-              label: 'Preferred Language',
+              label: 'Preferred language',
               value: data.candidate_preferred_language
                 ? languageLabel(data.candidate_preferred_language)
                 : '-',
@@ -720,7 +720,7 @@ export default function AdminInterviewDetail() {
 
           {/* Radar chart */}
           <SectionCard
-            title="Score Radar"
+            title="Score radar"
             description="Performance across all four competency axes (0-10)."
           >
             <ScorecardRadar scorecard={sc} />
@@ -728,7 +728,7 @@ export default function AdminInterviewDetail() {
 
           {/* Strengths */}
           {sc.strengths && sc.strengths.length > 0 && (
-            <SectionCard title="Key Strengths">
+            <SectionCard title="Key strengths">
               <ul className="space-y-2.5" aria-label="Key strengths">
                 {sc.strengths.map((s, idx) => (
                   <li key={idx} className="flex gap-2.5">
@@ -745,7 +745,7 @@ export default function AdminInterviewDetail() {
 
           {/* Improvements */}
           {sc.improvements && sc.improvements.length > 0 && (
-            <SectionCard title="Areas for Improvement">
+            <SectionCard title="Areas for improvement">
               <ul className="space-y-2.5" aria-label="Areas for improvement">
                 {sc.improvements.map((item, idx) => (
                   <li key={idx} className="flex gap-2.5">

@@ -1,4 +1,4 @@
-// "View CV" beside the score: the CV opens in a new tab from an authenticated
+// "View resume" beside the score: the CV opens in a new tab from an authenticated
 // fetch, the application's own CV when one is named, and a failure says why.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -105,11 +105,11 @@ describe('openApplicantCv', () => {
     } as unknown as Response);
     const user = userEvent.setup();
     render(<ViewCvButton applicantId={AP} />);
-    await user.click(screen.getByRole('button', { name: 'View CV' }));
+    await user.click(screen.getByRole('button', { name: 'View resume' }));
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith('The CV file could not be found in storage.'),
     );
-    expect(screen.getByRole('button', { name: 'View CV' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'View resume' })).toBeEnabled();
   });
 
   it('says what failed in plain words on a server error with no sentence (audit C1)', async () => {
@@ -120,9 +120,9 @@ describe('openApplicantCv', () => {
     } as unknown as Response);
     const user = userEvent.setup();
     render(<ViewCvButton applicantId={AP} />);
-    await user.click(screen.getByRole('button', { name: 'View CV' }));
+    await user.click(screen.getByRole('button', { name: 'View resume' }));
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith('Could not open the CV. Try again in a moment.'),
+      expect(toastError).toHaveBeenCalledWith('Could not open the resume. Try again in a moment.'),
     );
   });
 });

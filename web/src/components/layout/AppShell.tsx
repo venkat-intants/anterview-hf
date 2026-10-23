@@ -59,6 +59,7 @@ import {
 } from './navSections';
 import { appPath } from '@/lib/safeUrl';
 import { readPref, writePref } from '@/lib/localPref';
+import { formatDate, uiLocale } from '@/lib/formatters';
 
 // The interview-language localStorage key (separate concern from UI language)
 const INTERVIEW_LANGUAGE_KEY = 'intants:interview-language';
@@ -83,13 +84,13 @@ function getRoleLabel(roles: string[], candidateLabel: string): string {
     if (roles.includes(r)) {
       switch (r) {
         case 'platform_owner':
-          return 'Platform Owner';
+          return 'Platform owner';
         case 'super_admin':
-          return 'Super Admin';
+          return 'Super admin';
         case 'admin':
-          return 'Platform Admin';
+          return 'Platform admin';
         case 'hr_manager':
-          return 'HR Manager';
+          return 'HR manager';
         case 'interviewer':
           return 'Interviewer';
       }
@@ -507,7 +508,7 @@ function SkipToContent() {
 // ── Notifications bell (live — backed by data_gateway /notifications) ──────────
 
 /** Compact relative-time label, e.g. "5m", "3h", "2d". */
-function relTime(iso: string, justNow: string): string {
+function relTime(iso: string, justNow: string, locale: string): string {
   const then = new Date(iso).getTime();
   const diff = Math.max(0, Date.now() - then);
   const mins = Math.floor(diff / 60000);
@@ -516,11 +517,11 @@ function relTime(iso: string, justNow: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h`;
   const days = Math.floor(hrs / 24);
-  return days < 7 ? `${days}d` : new Date(iso).toLocaleDateString();
+  return days < 7 ? `${days}d` : formatDate(iso, locale);
 }
 
 function NotificationsBell() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -640,7 +641,7 @@ function NotificationsBell() {
                     </span>
                   )}
                   <span className="mt-1 block text-[11.5px] text-[var(--ui-faint)]">
-                    {relTime(n.created_at, t('shell.justNow'))}
+                    {relTime(n.created_at, t('shell.justNow'), uiLocale(i18n.language))}
                   </span>
                 </span>
               </button>

@@ -198,9 +198,9 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
 
   return (
     <SectionCard
-      title={`Super admin - ${company.name}`}
+      title={`${company.name} · Super admin`}
       icon={ShieldCheck}
-      description="One super admin per company. They log in, set a password, then create HR managers and interviewers."
+      description="One super admin per company. They sign in, set a password, then create HR managers and interviewers."
       action={
         /* Delete the whole company (and all its member logins): a dialog that
            states the consequences and asks for the name (AD-F13). */
@@ -254,7 +254,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
             {admin.must_change_password ? (
               <>
                 <Badge variant="outline" className="text-xs">
-                  Pending first login
+                  Pending first sign-in
                 </Badge>
                 <Button
                   type="button"
@@ -293,7 +293,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
             action={
               <Button type="button" onClick={() => setCreateOpen(true)} className="gap-1.5">
                 <UserPlus className="h-4 w-4" aria-hidden="true" />
-                Add super admin
+                New super admin
               </Button>
             }
           />
@@ -317,7 +317,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
         description="One per company. They create the company's HR managers and interviewers."
         submitLabel="Create super admin"
         emailPlaceholder="admin@company.com"
-        namePlaceholder="Company Super Admin"
+        namePlaceholder="Company super admin"
         pending={createMut.isPending}
         error={createMut.isError ? createMut.error : null}
         onSubmit={(v) => createMut.mutate(v)}
@@ -348,7 +348,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
                 </div>
                 {hr.must_change_password ? (
                   <Badge variant="outline" className="shrink-0 text-xs">
-                    Pending first login
+                    Pending first sign-in
                   </Badge>
                 ) : (
                   <Badge variant="success" className="shrink-0 text-xs">

@@ -261,13 +261,13 @@ describe('Careers board', () => {
   it('distinguishes "nothing matched" from "nothing open"', async () => {
     getCareersBoard.mockResolvedValue(board({ total: 0, items: [] }));
     renderBoard('/careers/acme-test?department=Design');
-    expect(await screen.findByText('No roles match those filters')).toBeInTheDocument();
+    expect(await screen.findByText('No jobs match those filters')).toBeInTheDocument();
   });
 
   it('says a company is simply not hiring when it has no filters applied', async () => {
     getCareersBoard.mockResolvedValue(board({ total: 0, items: [] }));
     renderBoard();
-    expect(await screen.findByText('No open roles right now')).toBeInTheDocument();
+    expect(await screen.findByText('No open jobs right now')).toBeInTheDocument();
     expect(screen.getByText(/not advertising anything/)).toBeInTheDocument();
   });
 
@@ -280,7 +280,7 @@ describe('Careers board', () => {
   it('says something different when the server actually failed', async () => {
     getCareersBoard.mockRejectedValue(new ApiError('boom', 500));
     renderBoard();
-    expect(await screen.findByText('Could not load these roles')).toBeInTheDocument();
+    expect(await screen.findByText('Could not load these jobs')).toBeInTheDocument();
   });
 
   it('renders an opening that has no advert at all', async () => {

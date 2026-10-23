@@ -544,7 +544,7 @@ describe('Dashboard - profile load failure', () => {
     renderDashboard();
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Failed to load profile');
+    expect(alert).toHaveTextContent('Could not load your profile.');
     expect(alert).not.toHaveTextContent('upstream 502');
 
     await userEvent.click(within(alert).getByRole('button', { name: 'Try again' }));

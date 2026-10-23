@@ -24,7 +24,7 @@ import {
 import { getOverview, getTrends, getScoreDistribution, getSystemHealth } from '@/api/admin';
 import type { TrendItem, ScoreBucket } from '@/api/admin';
 import { QueryErrorPanel } from '@/components/QueryState';
-import { formatDuration, formatScore } from '@/lib/formatters';
+import { formatDuration, formatScore, formatTime } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatCard, StatusTag } from '@/design/components/primitives';
@@ -122,7 +122,7 @@ function TrendsChart({ items }: { items: TrendItem[] }) {
           contentStyle={TOOLTIP_STYLE}
           formatter={(value, name) => {
             if (name === 'interview_count') return [value ?? 0, 'Interviews'];
-            return [`${Number(value ?? 0)} / 10`, 'Avg Score'];
+            return [`${Number(value ?? 0)} / 10`, 'Average score'];
           }}
         />
         <Line
@@ -258,11 +258,11 @@ export default function AdminOverview() {
           ) : (
             <>
               <StatCard
-                label="Total Candidates"
+                label="Total candidates"
                 value={(overview?.total_candidates ?? 0).toLocaleString('en-IN')}
               />
               <StatCard
-                label="Total Interviews"
+                label="Total interviews"
                 value={(overview?.total_interviews ?? 0).toLocaleString('en-IN')}
               />
               <StatCard
@@ -271,12 +271,12 @@ export default function AdminOverview() {
                 delta={`${fmtPct(overview?.completion_rate ?? 0)} completion rate`}
               />
               <StatCard
-                label="Avg Composite Score"
+                label="Average composite score"
                 value={formatScore('interview', overview?.avg_composite_score ?? null)}
                 delta="interview average"
               />
               <StatCard
-                label="Avg Duration"
+                label="Average duration"
                 value={fmtDurationSecs(overview?.avg_duration_seconds ?? null)}
               />
               <StatCard
@@ -341,7 +341,7 @@ export default function AdminOverview() {
                   </strong>
                 </span>
                 <span>
-                  Problem Solving:{' '}
+                  Problem solving:{' '}
                   <strong className="font-semibold text-foreground">
                     {formatScore('interview', distData.avg_problem_solving)}
                   </strong>
@@ -450,7 +450,7 @@ export default function AdminOverview() {
                   ))}
               </div>
               <p className="mt-4 text-[12.5px] text-muted-foreground">
-                Checked {new Date(health.checked_at).toLocaleTimeString()}
+                Checked {formatTime(health.checked_at)}
               </p>
             </>
           ) : (

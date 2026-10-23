@@ -1311,7 +1311,7 @@ function AddCandidatesDialog({
       if (res.skipped.length > 0) {
         // Surfaced, not swallowed: named per candidate, in words an HR
         // manager can act on, and left on screen rather than a toast alone.
-        toast.error(`${plural(res.skipped.length, 'candidate')} could not be added`);
+        toast.error(`${plural(res.skipped.length, 'candidate')} could not be added.`);
         setSkipped(
           res.skipped.map((s) => ({
             applicantId: s.applicant_id,

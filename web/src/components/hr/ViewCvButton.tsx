@@ -14,7 +14,7 @@ import { errorMessage } from '@/lib/errorMessage';
 export default function ViewCvButton({
   applicantId,
   enrolmentId,
-  label = 'View CV',
+  label = 'View resume',
   ariaLabel,
 }: {
   applicantId: string;
@@ -35,7 +35,7 @@ export default function ViewCvButton({
         setBusy(true);
         openApplicantCv(applicantId, enrolmentId)
           .catch((e: unknown) =>
-            toast.error(errorMessage(e, 'Could not open the CV.')),
+            toast.error(errorMessage(e, 'Could not open the resume.')),
           )
           .finally(() => setBusy(false));
       }}

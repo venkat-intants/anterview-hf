@@ -142,7 +142,7 @@ export default function GovernancePanel({
       }),
     onSuccess: (updated) => {
       client.setQueryData(queryKeys.requisition(requisition.id), updated);
-      toast.success('Budget saved.');
+      toast.success('Budget saved');
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not save the budget.')),
   });
@@ -152,7 +152,7 @@ export default function GovernancePanel({
     onSuccess: () => {
       setSubmitNote('');
       refresh();
-      toast.success('Sent to your company admin for approval.');
+      toast.success('Sent to your company admin for approval');
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not submit for approval.')),
   });
@@ -166,7 +166,7 @@ export default function GovernancePanel({
     onSuccess: () => {
       setPublishAt('');
       refresh();
-      toast.success('Scheduled.');
+      toast.success('Scheduled');
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not schedule publication.')),
   });
@@ -175,7 +175,7 @@ export default function GovernancePanel({
     mutationFn: () => cancelPublishSchedule(requisition.id),
     onSuccess: () => {
       refresh();
-      toast.success('Scheduled publication cancelled.');
+      toast.success('Scheduled publication cancelled');
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not cancel the schedule.')),
   });

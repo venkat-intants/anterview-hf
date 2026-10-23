@@ -47,8 +47,13 @@ import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { DataList, Stepper } from '@/design/components/page';
 import type { DataItem } from '@/design/components/page';
 import { WhatNext } from '@/design/components/next-step';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { LoadingSkeleton } from '@/components/candidate/LoadingSkeleton';
+import { Skeleton } from '@/components/ui/skeleton';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
+import { cn } from '@/lib/utils';
 import {
   documentsRemaining,
   offerStep,
@@ -104,14 +109,15 @@ function ResendCode({
   }, []);
   const wait = Math.max(0, RESEND_COOLDOWN_SECONDS - Math.floor((now - sentAt) / 1000));
   return (
-    <button
+    <Button
       type="button"
+      variant="link"
       onClick={onResend}
       disabled={pending || wait > 0}
-      className="inline-flex min-h-10 items-center self-start rounded text-[13px] font-semibold text-[var(--ui-info)] underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:text-muted-foreground disabled:no-underline"
+      className="self-start px-0 text-[13px] disabled:text-muted-foreground disabled:no-underline"
     >
       {wait > 0 ? t('offer.resendIn', { count: wait }) : t('offer.resendCode')}
-    </button>
+    </Button>
   );
 }
 
@@ -139,9 +145,9 @@ function money(offer: PublicOfferShape, locale: string): string | null {
 
 /* ── Shared page chrome ───────────────────────────────────────────────────── */
 
-const FIELD =
-  'mt-1.5 flex min-h-11 w-full rounded-[12px] border border-input bg-card px-3.5 py-2 text-base text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm';
-const FIELD_LABEL = 'block text-[13px] font-medium text-foreground';
+/** The red tint for an outline Button whose action revokes something. */
+const DANGER_OUTLINE =
+  'border-[var(--ui-danger)] text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]';
 
 function PageWrap({ children, company }: { children: React.ReactNode; company?: string | null }) {
   return (
@@ -374,34 +380,32 @@ function AnswerPanel({
               over (audit CA-M28). */}
           <ResendCode sentAt={sentAt} pending={codeMut.isPending} onResend={() => codeMut.mutate()} />
           <div className="mt-4 flex flex-col gap-3">
-            <label className={FIELD_LABEL}>
-              {t('offer.codeLabel')}
-              <input
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-                inputMode="numeric" autoComplete="one-time-code"
-                className={FIELD}
-              />
-            </label>
+            <FormField label={t('offer.codeLabel')}>
+              {(p) => (
+                <Input
+                  {...p}
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                />
+              )}
+            </FormField>
             {purpose === 'accept' ? (
-              <label className={FIELD_LABEL}>
-                {t('offer.fullNameLabel')}
-                <input
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder={t('offer.fullNamePlaceholder')}
-                  className={FIELD}
-                />
-              </label>
+              <FormField label={t('offer.fullNameLabel')}>
+                {(p) => (
+                  <Input
+                    {...p}
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder={t('offer.fullNamePlaceholder')}
+                  />
+                )}
+              </FormField>
             ) : (
-              <label className={FIELD_LABEL}>
-                {t('offer.reasonLabel')}
-                <input
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                  className={FIELD}
-                />
-              </label>
+              <FormField label={t('offer.reasonLabel')}>
+                {(p) => <Input {...p} value={reason} onChange={(e) => setReason(e.target.value)} />}
+              </FormField>
             )}
             {purpose === 'accept' ? (
               <>
@@ -442,13 +446,9 @@ function AnswerPanel({
         </p>
       ) : null}
 
-      <button
-        type="button"
-        onClick={onCancel}
-        className="mt-4 inline-flex min-h-11 items-center text-[14px] font-medium text-[var(--ui-soft)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-      >
+      <Button type="button" variant="ghost" size="lg" className="mt-4 px-4" onClick={onCancel}>
         {t('offer.cancel')}
-      </button>
+      </Button>
     </GlassCard>
   );
 }
@@ -579,18 +579,25 @@ function DocumentRow({
       {canUpload(item) ? (
         <div className="mt-3 flex flex-col gap-2">
           {item.requires_expiry ? (
-            <label className={FIELD_LABEL}>
-              {t('offer.documents.expiryLabel')}
-              <input
-                type="date"
-                value={expiresOn}
-                onChange={(e) => setExpiresOn(e.target.value)}
-                min={new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}
-                className="mt-1 flex min-h-11 rounded-[12px] border border-input bg-card px-3 text-base text-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm"
-              />
-            </label>
+            <FormField label={t('offer.documents.expiryLabel')}>
+              {(p) => (
+                <Input
+                  {...p}
+                  type="date"
+                  value={expiresOn}
+                  onChange={(e) => setExpiresOn(e.target.value)}
+                  min={new Date(Date.now() + 86_400_000).toISOString().slice(0, 10)}
+                  className="w-auto"
+                />
+              )}
+            </FormField>
           ) : null}
-          <label className="inline-flex min-h-11 w-fit cursor-pointer items-center gap-2 rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13.5px] font-medium text-foreground hover:bg-[var(--ui-inset)] focus-within:ring-2 focus-within:ring-[var(--accent)]">
+          <label
+            className={cn(
+              buttonVariants({ variant: 'outline', size: 'lg' }),
+              'w-fit cursor-pointer px-4 focus-within:ring-2 focus-within:ring-[var(--accent)]',
+            )}
+          >
             <Upload className="h-3.5 w-3.5" aria-hidden="true" />
             {uploadMut.isPending
               ? t('offer.documents.uploading')
@@ -738,15 +745,17 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
                 pending={codeMut.isPending}
                 onResend={() => codeMut.mutate()}
               />
-              <label className={FIELD_LABEL}>
-                {t('offer.codeLabel')}
-                <input
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  inputMode="numeric" autoComplete="one-time-code"
-                  className={FIELD}
-                />
-              </label>
+              <FormField label={t('offer.codeLabel')}>
+                {(p) => (
+                  <Input
+                    {...p}
+                    value={code}
+                    onChange={(e) => setCode(e.target.value)}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                  />
+                )}
+              </FormField>
               <Button
                 className="h-12 w-full sm:w-auto"
                 disabled={sessionMut.isPending || code.trim().length < 4}
@@ -766,7 +775,11 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
           ) : null}
         </div>
       ) : checklist.isLoading ? (
-        <p className="mt-4 text-[13px] text-muted-foreground">{t('offer.documents.loading')}</p>
+        <div role="status" aria-busy="true" className="mt-4 flex flex-col gap-3">
+          <span className="sr-only">{t('offer.documents.loading')}</span>
+          <Skeleton aria-hidden="true" className="h-16 w-full rounded-[12px]" />
+          <Skeleton aria-hidden="true" className="h-16 w-full rounded-[12px]" />
+        </div>
       ) : checklist.isError ? (
         <p className="mt-4 text-[13px] text-[var(--ui-danger)]">
           {isUnauthorized(checklist.error)
@@ -809,23 +822,26 @@ function DocumentsSection({ token, offer }: { token: string; offer: PublicOfferS
                   variant="outline"
                   disabled={withdrawMut.isPending}
                   onClick={() => withdrawMut.mutate()}
-                  className="h-11 border-[var(--ui-danger)] text-[var(--ui-danger)] hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]"
+                  size="lg"
+                  className={DANGER_OUTLINE}
                 >
                   {t('offer.documents.withdrawYes')}
                 </Button>
-                <Button type="button" variant="ghost" className="h-11" onClick={() => setAsking(false)}>
+                <Button type="button" variant="ghost" size="lg" onClick={() => setAsking(false)}>
                   {t('offer.cancel')}
                 </Button>
               </div>
             </div>
           ) : (
-            <button
+            <Button
               type="button"
+              variant="link"
+              size="lg"
+              className="px-0"
               onClick={() => setAsking(true)}
-              className="inline-flex min-h-11 items-center text-[13.5px] font-medium text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {t('offer.documents.withdraw')}
-            </button>
+            </Button>
           )}
         </div>
       ) : null}
@@ -1024,10 +1040,7 @@ export default function PublicOffer(): JSX.Element {
   if (view.isLoading || !view.data) {
     return (
       <PageWrap>
-        <div role="status" className="flex flex-col items-center gap-3 py-16">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" aria-hidden="true" />
-          <p className="text-[14px] text-muted-foreground">{t('offer.loading')}</p>
-        </div>
+        <LoadingSkeleton label={t('offer.loading')} />
       </PageWrap>
     );
   }

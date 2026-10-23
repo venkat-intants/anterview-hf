@@ -144,4 +144,18 @@ describe('StageSettings', () => {
       ),
     );
   });
+
+  it('says the settings could not load, and loads them again on Try again', async () => {
+    getStages.mockRejectedValueOnce(new Error('offline'));
+    getStages.mockResolvedValue([
+      { round_id: 'r-1', stage: 'Fundamentals', kind: 'mcq', owner_user_id: null, owner_name: null, sla_hours: null },
+    ]);
+    const user = userEvent.setup();
+    renderPanel('r-1', 'Fundamentals');
+
+    expect(await screen.findByText('Could not load the stage owner or SLA.')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/owner/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByLabelText(/owner/i)).toHaveValue('');
+  });
 });

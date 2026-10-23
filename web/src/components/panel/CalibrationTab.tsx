@@ -140,6 +140,9 @@ function useRoundOptions(requisitionId: string): {
   options: RoundOption[];
   isLoading: boolean;
   hiddenArchivedCount: number;
+  /** A workflow failed to load, so the list may be missing rounds. */
+  isError: boolean;
+  retry: () => void;
 } {
   const workflows = useQuery({
     queryKey: ['hr', 'workflows', requisitionId],
@@ -184,6 +187,13 @@ function useRoundOptions(requisitionId: string): {
     options,
     isLoading: workflows.isLoading || workflowQueries.some((q) => q.isLoading),
     hiddenArchivedCount,
+    isError: workflows.isError || workflowQueries.some((q) => q.isError),
+    retry: () => {
+      if (workflows.isError) void workflows.refetch();
+      workflowQueries.forEach((q) => {
+        if (q.isError) void q.refetch();
+      });
+    },
   };
 }
 
@@ -413,7 +423,12 @@ export default function CalibrationTab(): JSX.Element {
     queryKey: ['hr', 'requisitions'],
     queryFn: () => listRequisitions(),
   });
-  const { options: rounds, hiddenArchivedCount } = useRoundOptions(requisitionId);
+  const {
+    options: rounds,
+    hiddenArchivedCount,
+    isError: roundsFailed,
+    retry: retryRounds,
+  } = useRoundOptions(requisitionId);
 
   const calibration = useQuery({
     queryKey: ['hr', 'panel', 'calibration', start, end, requisitionId, roundId],
@@ -544,6 +559,20 @@ export default function CalibrationTab(): JSX.Element {
               </SelectControl>
             )}
           </FormField>
+          {roundsFailed ? (
+            // A failed list is not "this opening has no rounds"; "All rounds"
+            // still works.
+            <p className="mt-1 text-[12px] text-[var(--ui-danger)]" role="alert">
+              Could not load the rounds.{' '}
+              <button
+                type="button"
+                onClick={retryRounds}
+                className="underline hover:no-underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              >
+                Try again
+              </button>
+            </p>
+          ) : null}
           {hiddenArchivedCount > 0 ? (
             <p className="mt-1 text-[12px] text-muted-foreground">
               {hiddenArchivedCount} older archived{' '}

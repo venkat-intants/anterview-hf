@@ -714,4 +714,21 @@ describe('CalibrationTab - a failed openings list (IV-L10)', () => {
     renderTab();
     expect(await screen.findByText(/Could not load openings\./)).toBeInTheDocument();
   });
+
+  it('says the rounds could not load, and retries them', async () => {
+    schedulingApi.getCalibration.mockResolvedValue(calibration());
+    workflowsApi.listWorkflows.mockRejectedValueOnce(new Error('boom'));
+    const user = userEvent.setup();
+    renderTab();
+
+    await screen.findByRole('option', { name: 'Backend Engineer' });
+    await user.selectOptions(screen.getByLabelText('Opening'), 'req-1');
+    expect(await screen.findByText(/Could not load the rounds\./)).toBeInTheDocument();
+
+    workflowsApi.listWorkflows.mockResolvedValue([]);
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() =>
+      expect(screen.queryByText(/Could not load the rounds\./)).not.toBeInTheDocument(),
+    );
+  });
 });

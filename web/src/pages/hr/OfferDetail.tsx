@@ -742,6 +742,9 @@ function useCompleteBlockReason(offer: OfferDetailShape, wanted: boolean): strin
     queryFn: () => getOfferDocuments(offer.id),
     enabled: wanted,
   });
+  // No error branch on purpose: this only explains a disabled button. If it
+  // fails the button stays enabled, the server still refuses an incomplete
+  // offer, and the Documents tab shows the load failure.
   if (!wanted || !docs.data || docs.data.complete_ready) return undefined;
   const missing = docs.data.outstanding;
   return missing.length > 0

@@ -95,7 +95,7 @@ export default function AdminJobJd() {
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <PageHeader
         title="Practice JDs"
-        description="Attach a job description to a role in the platform-wide practice catalogue that candidates use for practice interviews. A company's own openings are not managed here - each company's HR adds the job description on the opening itself (Openings → the opening → Role and posting)."
+        description="Attach a job description to a role in the platform-wide practice catalogue that candidates use for practice interviews. A company's own openings are not managed here - each company's HR adds the job description on the opening itself (Openings → the opening → Opening and job description)."
       />
 
       {/* ══════════════════════════════════════════════════════════════════════

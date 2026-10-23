@@ -130,7 +130,7 @@ type RecInfo = { label: string; tone: TagTone };
  */
 function atsInfo(a: { ats_recommendation: string | null; pending_enrichment?: boolean }) {
   if (a.pending_enrichment) {
-    return { label: 'Reading CV…', tone: 'electric' as const };
+    return { label: 'Reading resume…', tone: 'electric' as const };
   }
   return recInfo(a.ats_recommendation);
 }

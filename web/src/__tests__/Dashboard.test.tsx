@@ -298,7 +298,7 @@ describe('Dashboard page', () => {
     renderDashboard();
     const link = await screen.findByRole('link', { name: 'Set target role' });
     expect(link).toHaveAttribute('href', '/onboarding');
-    expect(screen.queryByRole('link', { name: /personalize/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /personalise/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /start a mock interview/i })).not.toBeInTheDocument();
   });
 

@@ -36,6 +36,10 @@ import {
 import { cn } from '@/lib/utils';
 import { GlassCard } from '@/design/components/primitives';
 import { Button } from '@/components/ui/button';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import { useCandidateError } from '@/lib/candidateCopy';
 
 const CodeEditor = lazy(() => import('@/components/CodeEditor'));
 
@@ -93,6 +97,7 @@ type Props = StandaloneProps | EmbeddedProps;
 
 export default function CodingTaking(props: Props) {
   const { t } = useTranslation();
+  const errorText = useCandidateError();
 
   // Resolve the question list regardless of mode.
   const questions = useMemo<PublicCodingQuestion[]>(() => {
@@ -276,27 +281,23 @@ export default function CodingTaking(props: Props) {
             <label htmlFor={`lang-${q.id}`} className="text-[13px] font-medium text-foreground">
               {t('publicExam.codingLanguageLabel')}
             </label>
-            <select
+            <SelectControl
               id={`lang-${q.id}`}
               value={lang[q.id]}
               onChange={(e) => setLang((p) => ({ ...p, [q.id]: e.target.value }))}
-              className="h-11 rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20"
+              className="w-auto"
             >
               {q.allowed_languages.map((l) => (
                 <option key={l} value={l}>
                   {LANG_LABEL[l] ?? l}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </div>
 
           {/* Editor */}
           <Suspense
-            fallback={
-              <div className="flex h-40 items-center justify-center rounded-[16px] border border-border bg-card">
-                <Loader2 className="h-5 w-5 animate-spin text-[var(--accent)]" aria-hidden="true" />
-              </div>
-            }
+            fallback={<Skeleton aria-hidden="true" className="h-40 w-full rounded-[16px]" />}
           >
             <CodeEditor
               language={lang[q.id] ?? 'python'}
@@ -388,15 +389,19 @@ export default function CodingTaking(props: Props) {
           {/* Custom input panel */}
           {isCustomOpen && (
             <div className="space-y-2 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
-              <label className="text-[13px] font-medium text-foreground">
+              <label
+                htmlFor={`custom-input-${q.id}`}
+                className="block text-[13px] font-medium text-foreground"
+              >
                 {t('publicExam.customInputLabel')}
               </label>
-              <textarea
+              <Textarea
+                id={`custom-input-${q.id}`}
                 value={customInput[q.id] ?? ''}
                 onChange={(e) => setCustomInput((p) => ({ ...p, [q.id]: e.target.value }))}
                 rows={4}
                 placeholder={t('publicExam.customInputPlaceholder')}
-                className="w-full resize-y rounded-[12px] border border-input bg-card px-3 py-2.5 font-mono text-[13px] text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20"
+                className="font-mono md:text-[13px]"
                 aria-label={t('publicExam.customInputLabel')}
               />
               <div className="flex items-center gap-3">
@@ -516,9 +521,7 @@ export default function CodingTaking(props: Props) {
         </div>
         {submitMut.isError && (
           <p role="alert" className="text-right text-[14px] text-[var(--ui-danger)]">
-            {submitMut.error instanceof Error
-              ? submitMut.error.message
-              : t('publicExam.submitFailed')}
+            {errorText(submitMut.error, t('publicExam.submitFailed'))}
           </p>
         )}
         {submitMut.isPending && (

@@ -305,9 +305,10 @@ export default function JobsList() {
           {t('jobs.practiceTitle')}
         </h2>
 
-        {/* Toolbar: search, level pills, interview language, count. The native
-            language <select> stays native — it is the most reliable control on
-            a phone and carries the label tests and screen readers rely on. */}
+        {/* Toolbar: search, level pills, interview language, count. The language
+            control is the shared SelectControl, which is still a native <select>
+            with the shared styling: the most reliable control on a phone, and it
+            keeps the label that tests and screen readers rely on. */}
         <div className="flex flex-wrap items-center gap-3">
           <div className="relative w-full sm:w-[280px]">
             <Search

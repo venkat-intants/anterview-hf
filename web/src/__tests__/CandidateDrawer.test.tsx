@@ -627,7 +627,7 @@ describe('CandidateDrawer', () => {
       // Rendering a failed read as "no scores" would mislead a decision.
       listRoundResults.mockRejectedValue(new Error('boom'));
       renderDrawer();
-      expect(await screen.findByText(/Scores could not be loaded/)).toBeInTheDocument();
+      expect(await screen.findByText(/Could not load the scores/)).toBeInTheDocument();
     });
   });
 

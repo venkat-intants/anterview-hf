@@ -239,13 +239,9 @@ export default function ExceptionsSection({ enrolmentId }: { enrolmentId: string
           <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
           Exceptions{openCount > 0 ? ` (${openCount} open)` : ''}
         </h3>
-        <button
-          type="button"
-          onClick={() => setRaising((v) => !v)}
-          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-        >
+        <Button type="button" variant="outline" size="sm" onClick={() => setRaising((v) => !v)}>
           {raising ? 'Cancel' : 'Raise exception'}
-        </button>
+        </Button>
       </div>
       <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
         An exception records what is blocking this application for a person to act on. It never

@@ -734,13 +734,9 @@ function HistoryRow({
           <ReviseForm applicantId={applicantId} row={row} onDone={() => setRevising(false)} />
         ) : (
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setRevising(true)}
-              className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            >
+            <Button type="button" variant="outline" size="sm" onClick={() => setRevising(true)}>
               Revise
-            </button>
+            </Button>
             <Input
               type="text"
               size="sm"
@@ -808,13 +804,9 @@ export default function AccommodationsSection({
           <Clock size={13} aria-hidden="true" />
           Accommodations{rows.length > 0 ? ` (${rows.length})` : ''}
         </h3>
-        <button
-          type="button"
-          onClick={() => setRecording((v) => !v)}
-          className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-        >
+        <Button type="button" variant="outline" size="sm" onClick={() => setRecording((v) => !v)}>
           {recording ? 'Cancel' : 'Record adjustment'}
-        </button>
+        </Button>
       </div>
 
       {enrolmentId && effective.data?.effective ? (

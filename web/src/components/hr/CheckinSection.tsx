@@ -237,13 +237,15 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
           <div className="flex items-center justify-between gap-3">
             <span className="text-[13px] text-foreground">{summaryLine(live)}</span>
             {win.open ? (
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
                 onClick={() => startCorrection(live)}
-                className="shrink-0 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
                 Correct
-              </button>
+              </Button>
             ) : null}
           </div>
           <p className="mt-1 text-[12px] text-muted-foreground">{recordedByLine(live)}</p>

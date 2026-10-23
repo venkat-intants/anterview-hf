@@ -26,6 +26,7 @@ import {
   type ActivationTarget,
 } from '@/api/publicApply';
 import { toast } from '@/lib/toast';
+import { useCandidateError } from '@/lib/candidateCopy';
 import AuthLayout, { FormError, PasswordField, PasswordStrength, StatusPanel } from '@/components/layout/AuthLayout';
 import { TEXT_LINK_CLASS } from '@/components/layout/authStyles';
 import {
@@ -43,6 +44,7 @@ type Phase = 'checking' | 'ready' | 'expired' | 'done';
 
 export default function ActivateAccount() {
   const { t } = useTranslation();
+  const errorText = useCandidateError();
   const navigate = useNavigate();
   // Read once, then removed from the address bar and history entry, and held
   // in memory only. This token sets a password on an account: kept in tab
@@ -77,12 +79,10 @@ export default function ActivateAccount() {
         setPhase('ready');
       })
       .catch((err: unknown) => {
-        setCheckError(
-          err instanceof Error ? err.message : t('public.activate.invalidLink'),
-        );
+        setCheckError(errorText(err, t('public.activate.invalidLink')));
         setPhase('expired');
       });
-  }, [token, t]);
+  }, [token, t, errorText]);
 
   const mutation = useMutation({
     mutationFn: () => activateAccount(token, pw),
@@ -97,7 +97,7 @@ export default function ActivateAccount() {
       );
     },
     onError: (err: unknown) => {
-      setError(err instanceof Error ? err.message : t('public.activate.setupError'));
+      setError(errorText(err, t('public.activate.setupError')));
     },
   });
 

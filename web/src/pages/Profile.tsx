@@ -10,7 +10,7 @@
 // The API only writes the fields it is sent, so each dialog sends just its own.
 // Every string goes through t() under `profile.*`.
 
-import { useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -26,7 +26,10 @@ import { cn } from '@/lib/utils';
 import { safeAvatarSrc } from '@/lib/safeUrl';
 
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Dialog,
@@ -87,24 +90,6 @@ const LANGUAGE_LABEL: Record<string, string> = {
 
 // ── Small building blocks ───────────────────────────────────────────────────
 
-const CONTROL_CLS =
-  'w-full rounded-[10px] border border-input bg-card px-3.5 text-base text-foreground ring-offset-background transition-[border-color,box-shadow] placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm';
-
-/** A label bound to a single control, with an optional hint read out after it. */
-function FormField({
-  label, hint, children,
-}: { label: string; hint?: string; children: (ids: { id: string; describedBy?: string }) => ReactNode }) {
-  const id = useId();
-  const hintId = `${id}-hint`;
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor={id} className="block text-[13px] font-semibold text-foreground">{label}</label>
-      {children({ id, describedBy: hint ? hintId : undefined })}
-      {hint && <p id={hintId} className="text-[12.5px] text-muted-foreground">{hint}</p>}
-    </div>
-  );
-}
-
 function TextField({
   label, hint, value, onChange, placeholder, type = 'text', maxLength,
 }: {
@@ -113,10 +98,9 @@ function TextField({
 }) {
   return (
     <FormField label={label} hint={hint}>
-      {({ id, describedBy }) => (
+      {(p) => (
         <Input
-          id={id}
-          aria-describedby={describedBy}
+          {...p}
           type={type}
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -424,19 +408,21 @@ export default function Profile() {
               ) : (
                 <Avatar initials={initials} gradient={gradient} size={96} className="border-4 border-card" />
               )}
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="icon"
                 onClick={pickPhoto}
                 disabled={avatarMutation.isPending}
                 aria-label={t('profile.changePhoto')}
-                className="absolute -bottom-1 -right-1 inline-flex h-10 w-10 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-card transition-colors hover:bg-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
+                className="absolute -bottom-1 -right-1 border-border text-foreground shadow-card hover:bg-secondary"
               >
                 {avatarMutation.isPending ? (
                   <Loader2 size={16} className="animate-spin" aria-hidden="true" />
                 ) : (
                   <Camera size={16} aria-hidden="true" />
                 )}
-              </button>
+              </Button>
             </div>
             <Button type="button" variant="outline" onClick={() => openEditor('profile')} aria-label={t('profile.editProfile')}>
               <Pencil aria-hidden="true" /> {t('profile.edit')}
@@ -690,11 +676,10 @@ export default function Profile() {
                     label={isCandidate ? t('profile.emptyAboutCandTitle') : t('profile.description')}
                     hint={isCandidate ? t('profile.aboutHint') : undefined}
                   >
-                    {({ id, describedBy }) => (
-                      <textarea
-                        id={id}
-                        aria-describedby={describedBy}
-                        className={cn(CONTROL_CLS, 'min-h-[140px] resize-y py-2.5 leading-relaxed')}
+                    {(p) => (
+                      <Textarea
+                        {...p}
+                        className="min-h-[140px] py-2.5"
                         value={draft.bio}
                         onChange={(e) => set('bio', e.target.value)}
                         placeholder={
@@ -713,31 +698,29 @@ export default function Profile() {
                 {shown === 'career' && isCandidate && (
                   <>
                     <FormField label={t('profile.currentStatus')}>
-                      {({ id }) => (
-                        <select
-                          id={id}
-                          className={cn(CONTROL_CLS, 'h-11')}
+                      {(p) => (
+                        <SelectControl
+                          {...p}
                           value={draft.employment_status}
                           onChange={(e) => set('employment_status', e.target.value)}
                         >
                           <option value="">{t('profile.preferNotToSay')}</option>
                           <option value="student">{t('profile.statusStudent')}</option>
                           <option value="employed">{t('profile.statusEmployed')}</option>
-                        </select>
+                        </SelectControl>
                       )}
                     </FormField>
                     <FormField label={t('profile.preferredLanguage')}>
-                      {({ id }) => (
-                        <select
-                          id={id}
-                          className={cn(CONTROL_CLS, 'h-11')}
+                      {(p) => (
+                        <SelectControl
+                          {...p}
                           value={draft.preferred_language}
                           onChange={(e) => set('preferred_language', e.target.value)}
                         >
                           <option value="en">{LANGUAGE_LABEL.en}</option>
                           <option value="hi">{LANGUAGE_LABEL.hi}</option>
                           <option value="te">{LANGUAGE_LABEL.te}</option>
-                        </select>
+                        </SelectControl>
                       )}
                     </FormField>
                     <TextField
@@ -761,8 +744,8 @@ export default function Profile() {
                       placeholder="you@company.com"
                     />
                     <FormField label={t('profile.company')}>
-                      {({ id }) => (
-                        <Input id={id} value={me.company_name ?? '-'} readOnly aria-readonly="true" className="bg-[var(--ui-inset-soft)] text-[var(--ui-soft)]" />
+                      {(p) => (
+                        <Input {...p} value={me.company_name ?? '-'} readOnly aria-readonly="true" className="bg-[var(--ui-inset-soft)] text-[var(--ui-soft)]" />
                       )}
                     </FormField>
                   </>
@@ -771,8 +754,8 @@ export default function Profile() {
                 {shown === 'contact' && (
                   <>
                     <FormField label={t('profile.accountEmail')}>
-                      {({ id }) => (
-                        <Input id={id} value={me.email} readOnly aria-readonly="true" className="bg-[var(--ui-inset-soft)] text-[var(--ui-soft)]" />
+                      {(p) => (
+                        <Input {...p} value={me.email} readOnly aria-readonly="true" className="bg-[var(--ui-inset-soft)] text-[var(--ui-soft)]" />
                       )}
                     </FormField>
                     <TextField label={t('profile.phone')} value={draft.phone} onChange={(v) => set('phone', v)} placeholder="+91 …" />
@@ -783,7 +766,7 @@ export default function Profile() {
               </div>
 
               <DialogFooter className="gap-2 sm:gap-0">
-                <Button type="button" variant="outline" onClick={closeEditor} disabled={mutation.isPending}>
+                <Button type="button" variant="ghost" onClick={closeEditor} disabled={mutation.isPending}>
                   {t('profile.cancel')}
                 </Button>
                 <Button type="submit" disabled={mutation.isPending}>

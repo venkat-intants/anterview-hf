@@ -16,6 +16,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { getMyOfferLink, listMyOffers, type CandidateOffer, type OfferStatus } from '@/api/offers';
 import { sameOriginUrl } from '@/lib/safeUrl';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard } from '@/design/components/page';
@@ -26,10 +27,6 @@ function localeFor(lang: string): string {
   if (lang.startsWith('hi')) return 'hi-IN';
   if (lang.startsWith('te')) return 'te-IN';
   return 'en-IN';
-}
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
 }
 
 const STATUS_TONE: Record<OfferStatus, TagTone> = {
@@ -64,6 +61,7 @@ function OfferCard({
   embedded?: boolean;
 }) {
   const { t } = useTranslation();
+  const errText = useCandidateError();
   const [error, setError] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
 
@@ -181,6 +179,7 @@ interface YourOffersProps {
 
 export default function YourOffers({ exclude }: YourOffersProps = {}): JSX.Element | null {
   const { t, i18n } = useTranslation();
+  const errText = useCandidateError();
   const locale = localeFor(i18n.language);
 
   const { data, isLoading, isError, error } = useQuery({

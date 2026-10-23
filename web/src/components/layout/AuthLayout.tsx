@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next';
 import { Sparkles, Languages, ShieldCheck } from '@/design/components/icons';
 import type { LucideIcon } from '@/design/components/icons';
 import ModeSwitch from '@/components/ModeSwitch';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
 interface Feature {
@@ -264,7 +265,9 @@ export function FormError({ id, children }: { id?: string; children?: ReactNode 
   );
 }
 
-type PasswordFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type'> & {
+// `size` is left out: the shared Input owns it (the control height), and no
+// caller sets the HTML character-width attribute on a password.
+type PasswordFieldProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'size'> & {
   label: string;
   icon?: ReactNode;
   hint?: string;
@@ -294,25 +297,21 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
         <label htmlFor={fieldId} className="text-[13px] font-semibold text-foreground">
           {label}
         </label>
-        <div
-          className={cn(
-            'flex items-center gap-2.5 rounded-[12px] border bg-card py-1 pl-3.5 pr-1.5 transition-[border-color,box-shadow] focus-within:shadow-[0_0_0_3px_rgba(var(--accent-rgb),0.16)]',
-            invalid
-              ? 'border-[var(--ui-danger)]'
-              : 'border-input hover:border-[var(--ui-line-strong)] focus-within:border-[var(--accent)]',
-          )}
-        >
-          {icon ? <span className="text-[var(--ui-faint)]">{icon}</span> : null}
-          <input
+        {/* The shared Input draws the box; the icon and the toggle sit on top
+            of it, and the input's own padding keeps text clear of both. */}
+        <div className="relative">
+          {icon ? (
+            <span className="pointer-events-none absolute start-3.5 top-1/2 flex -translate-y-1/2 text-[var(--ui-faint)]">
+              {icon}
+            </span>
+          ) : null}
+          <Input
             ref={ref}
             id={fieldId}
             type={visible ? 'text' : 'password'}
-            aria-invalid={invalid ? true : undefined}
+            invalid={invalid}
             aria-describedby={describedIds}
-            className={cn(
-              'min-h-10 w-full min-w-0 bg-transparent text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none',
-              className,
-            )}
+            className={cn('pe-20', icon && 'ps-10', className)}
             {...rest}
           />
           <button
@@ -321,7 +320,7 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
             onClick={() => {
               setVisible((v) => !v);
             }}
-            className="inline-flex min-h-10 min-w-10 flex-none items-center justify-center rounded-[8px] px-2 text-[12.5px] font-semibold text-[var(--ui-info)] transition-colors hover:bg-[var(--ui-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="absolute end-1 top-1/2 inline-flex h-8 min-w-10 -translate-y-1/2 items-center justify-center rounded-[8px] px-2 text-[12.5px] font-semibold text-[var(--ui-info)] transition-colors hover:bg-[var(--ui-inset)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             {visible ? t('auth.hidePassword') : t('auth.showPassword')}
           </button>

@@ -346,6 +346,17 @@ describe('Dashboard page', () => {
       within(empty.closest('section') as HTMLElement).queryByRole('link', { name: /start/i }),
     ).not.toBeInTheDocument();
   });
+
+  // A failed load is not "no interviews yet" (UI conventions, D1).
+  it('says the recent interviews could not load, with a retry, instead of calling them empty', async () => {
+    vi.mocked(listSessions).mockRejectedValueOnce(new Error('boom'));
+    renderDashboard();
+    const panel = await screen.findByText(/could not load your interview history/i);
+    expect(screen.queryByText(/no practice interviews yet/i)).not.toBeInTheDocument();
+    expect(
+      within(panel.closest('[role="alert"]') as HTMLElement).getByRole('button', { name: /try again/i }),
+    ).toBeInTheDocument();
+  });
 });
 
 describe('Dashboard - an account with applications', () => {

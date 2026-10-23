@@ -57,10 +57,6 @@ function GoogleBadge() {
   );
 }
 
-// ── Base button classes reused across SSO buttons ─────────────────────────────
-const ssoBase =
-  'flex min-h-11 w-full items-center justify-center gap-2.5 rounded-full px-5 py-3 text-[14px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background';
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function Register() {
@@ -260,17 +256,19 @@ export default function Register() {
       {/* SSO buttons */}
       <div className="flex flex-col gap-2.5">
         {/* Google — gated on DPDP consent; passes the consent signal through. */}
-        <button
+        <Button
           type="button"
           disabled={!agreedToDpdp}
           aria-disabled={!agreedToDpdp}
           aria-describedby={agreedToDpdp ? undefined : 'reg-consent-help'}
-          className={`${ssoBase} border border-[var(--ui-line-strong)] bg-card text-foreground hover:bg-[var(--ui-inset)] disabled:cursor-not-allowed disabled:opacity-50`}
+          variant="outline"
+          size="lg"
+          className="w-full gap-2.5 px-5 text-[14px]"
           onClick={() => { window.location.assign(googleLoginUrl('/dashboard', agreedToDpdp, 1)); }}
         >
           <GoogleBadge />
           {t('auth.signUpWithGoogle')}
-        </button>
+        </Button>
       </div>
 
       {/* Footer link */}

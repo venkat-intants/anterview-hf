@@ -112,6 +112,15 @@ export function formatNumber(n: number | null | undefined, locale = 'en-IN'): st
   return n.toLocaleString(locale);
 }
 
+/**
+ * "1 candidate", "3 candidates", "12,400 resumes": a count with a real plural,
+ * never "candidate(s)". `many` defaults to `one` + "s". Staff screens only;
+ * candidate text pluralises through i18n (`_one` / `_other`).
+ */
+export function plural(count: number, one: string, many = `${one}s`, locale = 'en-IN'): string {
+  return `${formatNumber(count, locale)} ${count === 1 ? one : many}`;
+}
+
 // ── Money ──────────────────────────────────────────────────────────────────────
 
 /**

@@ -34,10 +34,14 @@ import { createCustomJob } from '@/api/jobs';
 import { createSession } from '@/api/sessions';
 import { getAvatars } from '@/api/avatars';
 import { toast } from '@/lib/toast';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { cn } from '@/lib/utils';
 import ConsentModal from '@/components/ConsentModal';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { Page, PageHeader, SectionCard, Stepper } from '@/design/components/page';
 import { StatusTag, WaveBars } from '@/design/components/primitives';
 import { initialsOf } from '@/design/data/shared';
@@ -69,14 +73,6 @@ interface FormValues {
 // Shared input / textarea class
 // ---------------------------------------------------------------------------
 
-const inputCls =
-  'w-full rounded-[10px] border border-input bg-card px-3.5 py-3 ' +
-  'text-[15px] text-foreground placeholder:text-[var(--ui-faint)] ' +
-  'transition-[border-color,box-shadow] hover:border-[var(--ui-line-strong)] ' +
-  'focus-visible:outline-none focus-visible:border-[var(--accent)] ' +
-  'focus-visible:ring-[3px] focus-visible:ring-[rgba(var(--accent-rgb),0.2)]';
-
-const inputErrCls = 'border-[var(--ui-danger)] bg-[var(--ui-danger-wash)]';
 
 // ---------------------------------------------------------------------------
 // Step number — a neutral outlined numeral (primary is reserved for the action)
@@ -129,29 +125,6 @@ function StepCard({
 // ---------------------------------------------------------------------------
 // Labeled field wrapper
 // ---------------------------------------------------------------------------
-
-interface FieldWrapProps {
-  id: string;
-  label: ReactNode;
-  error?: string | null;
-  children: ReactNode;
-}
-
-function FieldWrap({ id, label, error, children }: FieldWrapProps) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <label htmlFor={id} className="text-[13px] font-semibold text-foreground">
-        {label}
-      </label>
-      {children}
-      {error && (
-        <p id={`${id}-error`} role="alert" className="text-[13px] text-[var(--ui-danger)]">
-          {error}
-        </p>
-      )}
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Choice pills — native radios, so arrow keys and Space work for free. The
@@ -461,6 +434,7 @@ export default function StartInterview() {
   const navigate = useNavigate();
   const { consented, loading: consentLoading, recordConsent } = useConsent();
   const deviceCheck = useDeviceCheck();
+  const errorText = useCandidateError();
 
   // ── Language options ────────────────────────────────────────────────────────
   const LANG_TABS: { key: Language; label: string }[] = [
@@ -600,12 +574,8 @@ export default function StartInterview() {
     [createJobMutation, createSessionMutation],
   );
 
-  const apiError =
-    createJobMutation.error instanceof Error
-      ? createJobMutation.error.message
-      : createSessionMutation.error instanceof Error
-        ? createSessionMutation.error.message
-        : null;
+  const failure = createJobMutation.error ?? createSessionMutation.error;
+  const apiError = failure ? errorText(failure, t('jobs.startError')) : null;
 
   useEffect(() => {
     if (apiError) {
@@ -645,11 +615,11 @@ export default function StartInterview() {
       setShowConsent(false);
       await proceedToSession(values);
     } catch (err) {
-      setConsentError(err instanceof Error ? err.message : t('jobs.consentError'));
+      setConsentError(errorText(err, t('jobs.consentError')));
     } finally {
       setIsSubmittingConsent(false);
     }
-  }, [recordConsent, proceedToSession, values, t]);
+  }, [recordConsent, proceedToSession, values, t, errorText]);
 
   const handleDecline = useCallback(() => {
     setShowConsent(false);
@@ -746,7 +716,7 @@ export default function StartInterview() {
               title={t('startInterview.step1Title')}
               description={t('startInterview.step1Desc')}
             >
-              <FieldWrap
+              <FormField
                 id="si-title"
                 label={
                   <>
@@ -754,26 +724,26 @@ export default function StartInterview() {
                     <span aria-hidden="true" className="text-[var(--ui-danger)]">*</span>
                   </>
                 }
-                error={titleError}
+                error={titleError ?? undefined}
               >
-                <input
-                  id="si-title"
-                  type="text"
-                  required
-                  aria-required="true"
-                  aria-describedby={titleError ? 'si-title-error' : undefined}
-                  aria-invalid={titleError !== null}
-                  value={values.title}
-                  onChange={(e) => {
-                    setValues((v) => ({ ...v, title: e.target.value }));
-                    if (titleError) setTitleError(null);
-                  }}
-                  placeholder={t('startInterview.jobTitlePlaceholder')}
-                  className={cn(inputCls, titleError && inputErrCls)}
-                />
-              </FieldWrap>
+                {(p) => (
+                  <Input
+                    {...p}
+                    type="text"
+                    required
+                    aria-required="true"
+                    aria-invalid={titleError !== null}
+                    value={values.title}
+                    onChange={(e) => {
+                      setValues((v) => ({ ...v, title: e.target.value }));
+                      if (titleError) setTitleError(null);
+                    }}
+                    placeholder={t('startInterview.jobTitlePlaceholder')}
+                  />
+                )}
+              </FormField>
 
-              <FieldWrap
+              <FormField
                 id="si-company"
                 label={
                   <>
@@ -784,17 +754,18 @@ export default function StartInterview() {
                   </>
                 }
               >
-                <input
-                  id="si-company"
-                  type="text"
-                  value={values.company_name}
-                  onChange={(e) => setValues((v) => ({ ...v, company_name: e.target.value }))}
-                  placeholder={t('startInterview.companyPlaceholder')}
-                  className={inputCls}
-                />
-              </FieldWrap>
+                {(p) => (
+                  <Input
+                    {...p}
+                    type="text"
+                    value={values.company_name}
+                    onChange={(e) => setValues((v) => ({ ...v, company_name: e.target.value }))}
+                    placeholder={t('startInterview.companyPlaceholder')}
+                  />
+                )}
+              </FormField>
 
-              <FieldWrap
+              <FormField
                 id="si-jd"
                 label={
                   <>
@@ -805,15 +776,17 @@ export default function StartInterview() {
                   </>
                 }
               >
-                <textarea
-                  id="si-jd"
-                  rows={4}
-                  value={values.jd_text}
-                  onChange={(e) => setValues((v) => ({ ...v, jd_text: e.target.value }))}
-                  placeholder={t('startInterview.jdPlaceholder')}
-                  className={cn(inputCls, 'min-h-[96px] resize-y')}
-                />
-              </FieldWrap>
+                {(p) => (
+                  <Textarea
+                    {...p}
+                    rows={4}
+                    value={values.jd_text}
+                    onChange={(e) => setValues((v) => ({ ...v, jd_text: e.target.value }))}
+                    placeholder={t('startInterview.jdPlaceholder')}
+                    className="min-h-[96px]"
+                  />
+                )}
+              </FormField>
             </StepCard>
 
             {/* Step 2: Avatar picker */}

@@ -479,8 +479,8 @@ function ScorecardPanel({
                 onChange={(e) =>
                   setScores({ ...scores, [c.competency_id]: { ...v, evidence: e.target.value } })
                 }
-                rows={2}
-                className="mt-1.5 min-h-0"
+                rows={3}
+                className="mt-1.5"
               />
             </div>
           </section>

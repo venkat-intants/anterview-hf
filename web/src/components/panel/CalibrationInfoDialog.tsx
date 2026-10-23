@@ -117,7 +117,7 @@ export default function CalibrationInfoDialog({
             variant="outline"
             size="sm"
             onClick={() => void copyHash()}
-            className="h-8 shrink-0 px-3 text-[12px]"
+            className="shrink-0 px-3 text-[12px]"
           >
             <Copy aria-hidden="true" /> {copied ? 'Copied' : 'Copy'}
           </Button>

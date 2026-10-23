@@ -69,7 +69,7 @@ function FormFooter({
 }) {
   return (
     <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
-      <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>
+      <Button type="button" variant="ghost" disabled={pending} onClick={onCancel}>
         Cancel
       </Button>
       <Button type="submit" disabled={pending} aria-busy={pending}>
@@ -349,7 +349,7 @@ function DeleteCompanyForm({
         disabled={pending}
       />
       <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
-        <Button type="button" variant="outline" disabled={pending} onClick={onCancel}>
+        <Button type="button" variant="ghost" disabled={pending} onClick={onCancel}>
           Cancel
         </Button>
         <Button

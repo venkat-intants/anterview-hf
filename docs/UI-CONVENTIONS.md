@@ -92,9 +92,9 @@ retired (A1).
 
 One set of controls, one height (G5): `Input` (`ui/input`), `Textarea`
 (`ui/textarea`) and `SelectControl` (`ui/select-control`, a native `<select>`), with
-`FormField` (`ui/form-field`) for the label, hint and error wiring. The Radix
-`Select` in `ui/select` is legacy, kept for its single importer (`AdminJobJd`);
-new code uses `SelectControl`. The design
+`FormField` (`ui/form-field`) for the label, hint and error wiring. There is no
+Radix `Select`: the legacy `ui/select` was deleted once its last importer moved to
+`SelectControl`. The design
 primitives `Field` (input with a leading icon) and `SelectField` are built on
 `FormField`.
 
@@ -157,6 +157,10 @@ in a row, not ad-hoc text (D4).
 `Dialog` and `Sheet` (`ui/dialog`, `ui/sheet`, Radix) for every modal and side
 panel: they trap focus, close on Escape and return focus. A hand-built
 `role="dialog"` is allowed only for the documented exceptions below (G4).
+
+Removing or deleting a user or a tenant opens a `Dialog` that names the object
+(B4), as `StaffRoster` in `CompanyAdminConsole` and `DeleteCompanyDialog` do; an
+inline `ConfirmDeleteButton` (above) covers every other destructive action.
 
 ## Documented exceptions
 

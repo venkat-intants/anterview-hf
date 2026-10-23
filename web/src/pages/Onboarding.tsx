@@ -110,6 +110,7 @@ export default function Onboarding(): JSX.Element {
   const { t, i18n } = useTranslation();
   const { user, updateUser } = useAuth();
 
+  // No error branch on purpose: this only prefills the form, which works blank.
   const { data: status } = useQuery({
     queryKey: ['onboarding-status'],
     queryFn: getOnboardingStatus,
@@ -147,7 +148,8 @@ export default function Onboarding(): JSX.Element {
 
   const debouncedRole = useDebounced(role.trim(), 450);
 
-  // Live "did we understand the job?" check on step 3.
+  // Live "did we understand the job?" check on step 3. Silent when it fails:
+  // the preview is a hint, and the step can be finished without it.
   const { data: preview, isFetching: previewing } = useQuery({
     queryKey: ['practice-preview', debouncedRole, level],
     queryFn: () => previewPracticePlan(debouncedRole, level),

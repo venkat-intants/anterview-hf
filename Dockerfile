@@ -96,7 +96,8 @@ RUN python -m venv /venvs/tools && /venvs/tools/bin/pip install --no-cache-dir "
 # refreshed far more often than the release image, so building the SAME pinned
 # version with it picks up Go stdlib security fixes as soon as Go ships them,
 # instead of arguing a toolchain CVE into .trivyignore.
-# Bump CADDY_VERSION deliberately; never build an untagged tree.
+# Bump CADDY_VERSION deliberately; never build an untagged tree. infra/caddy/
+# Dockerfile does the same build for docker-compose.prod.yml: bump both together.
 FROM caddy:2.11.7-builder-alpine AS caddybuild
 ARG CADDY_VERSION=v2.11.7
 # CGO off: the binary is built on Alpine (musl) but runs on Debian (glibc), so

@@ -154,7 +154,7 @@ describe('CalibrationTab - states', () => {
   it('shows a loading state', () => {
     schedulingApi.getCalibration.mockImplementation(() => new Promise(() => undefined));
     renderTab();
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByLabelText('Loading calibration')).toHaveAttribute('aria-busy', 'true');
   });
 
   it('shows an error state', async () => {
@@ -469,7 +469,9 @@ describe('CalibrationTab - judgements drill-down', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Show judgements' }));
     const dialog = await screen.findByRole('dialog');
-    await waitFor(() => expect(within(dialog).getByLabelText('Close')).toHaveFocus());
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveFocus(),
+    );
 
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

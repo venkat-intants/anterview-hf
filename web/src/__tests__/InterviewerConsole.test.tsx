@@ -166,7 +166,7 @@ describe('InterviewerConsole - listing assignments', () => {
     listAssignments.mockImplementation(() => new Promise(() => undefined));
     renderConsole();
 
-    expect(screen.getByText(/Loading your interviews/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Loading your interviews')).toHaveAttribute('aria-busy', 'true');
   });
 
   it('never shows another interviewer’s work - only what the endpoint returns', async () => {

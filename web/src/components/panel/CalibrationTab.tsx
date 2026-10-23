@@ -28,9 +28,20 @@ import {
   HUMAN_EVALUATED_KINDS,
   type WorkflowSummary,
 } from '@/api/workflows';
-import { Loader2 } from '@/design/components/icons';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { QueryErrorPanel } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import CalibrationInfoDialog from './CalibrationInfoDialog';
 import CalibrationJudgementsDialog from './CalibrationJudgementsDialog';
 
@@ -176,6 +187,10 @@ function useRoundOptions(requisitionId: string): {
   };
 }
 
+/** The criteria table keeps its compact rhythm inside the card. */
+const HEAD = 'h-auto px-0 py-2 pr-3 font-medium text-muted-foreground';
+const CELL = 'px-0 py-2 pr-3';
+
 function CriteriaTable({
   criteria,
   minCandidates,
@@ -191,32 +206,32 @@ function CriteriaTable({
         The panel&apos;s own distribution on each frozen criterion - never an interviewer&apos;s
         figure.
       </p>
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[640px] border-collapse text-left text-[12.5px]">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="py-2 pr-3 font-medium text-muted-foreground">Criterion</th>
-              <th className="py-2 pr-3 font-medium text-muted-foreground">Round</th>
-              <th className="py-2 pr-3 font-medium text-muted-foreground">Distribution (1-5)</th>
-              <th className="py-2 pr-3 font-medium text-muted-foreground">Mean</th>
-              <th className="py-2 pr-3 font-medium text-muted-foreground">Disagreement</th>
-            </tr>
-          </thead>
-          <tbody>
+      <div className="mt-3">
+        <Table className="min-w-[640px] border-collapse text-left text-[12.5px]">
+          <TableHeader>
+            <TableRow className="border-border hover:bg-transparent">
+              <TableHead scope="col" className={HEAD}>Criterion</TableHead>
+              <TableHead scope="col" className={HEAD}>Round</TableHead>
+              <TableHead scope="col" className={HEAD}>Distribution (1-5)</TableHead>
+              <TableHead scope="col" className={HEAD}>Mean</TableHead>
+              <TableHead scope="col" className={HEAD}>Disagreement</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {criteria.map((c) => (
-              <tr key={c.criterion_key} className="border-b border-border last:border-0 align-top">
-                <td className="py-2 pr-3 text-foreground">{c.competency_name}</td>
-                <td className="py-2 pr-3 text-muted-foreground">
+              <TableRow key={c.criterion_key} className="border-border align-top hover:bg-transparent">
+                <TableCell className={`${CELL} text-foreground`}>{c.competency_name}</TableCell>
+                <TableCell className={`${CELL} text-muted-foreground`}>
                   {c.round_title ?? '-'}
                   {c.workflow_version ? ` (v${c.workflow_version})` : ''}
-                </td>
+                </TableCell>
                 {c.suppressed ? (
-                  <td colSpan={3} className="py-2 pr-3 text-muted-foreground">
+                  <TableCell colSpan={3} className={`${CELL} text-muted-foreground`}>
                     too few to compare ({c.candidates} of the {minCandidates} needed)
-                  </td>
+                  </TableCell>
                 ) : (
                   <>
-                    <td className="py-2 pr-3">
+                    <TableCell className={CELL}>
                       <div className="flex items-center gap-2 text-[12px] text-[var(--ui-soft)]">
                         {(['1', '2', '3', '4', '5'] as const).map((k) => (
                           <span key={k}>
@@ -224,9 +239,9 @@ function CriteriaTable({
                           </span>
                         ))}
                       </div>
-                    </td>
-                    <td className="py-2 pr-3 text-foreground">{oneDp(c.mean)}</td>
-                    <td className="py-2 pr-3">
+                    </TableCell>
+                    <TableCell className={`${CELL} text-foreground`}>{oneDp(c.mean)}</TableCell>
+                    <TableCell className={CELL}>
                       <div className="flex flex-wrap items-center gap-1.5">
                         <span className="text-foreground">{oneDp(c.disagreement)}</span>
                         {c.signal === 'wide_disagreement' ? (
@@ -238,17 +253,20 @@ function CriteriaTable({
                           {disagreementSentence(c)}
                         </p>
                       ) : null}
-                    </td>
+                    </TableCell>
                   </>
                 )}
-              </tr>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       </div>
     </GlassCard>
   );
 }
+
+/** A text action sitting in running copy: the link button without its box. */
+const TEXT_LINK = 'h-auto px-0 py-0 text-[12px] font-normal';
 
 function CalibrationRowCard({
   row,
@@ -283,13 +301,15 @@ function CalibrationRowCard({
               {row.flag === 'higher' ? 'Scores higher' : 'Scores lower'}
             </StatusTag>
           ) : null}
-          <button
+          <Button
             type="button"
+            variant="link"
+            size="sm"
             onClick={() => onShowJudgements(undefined)}
-            className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className={TEXT_LINK}
           >
             Show judgements
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -355,13 +375,15 @@ function CalibrationRowCard({
                       ? criterionGapSentence(label, g.signal, g.gap, g.shared_judgements)
                       : `${label}: ${signed(g.gap)} across ${g.shared_judgements} shared judgements`}
                   </span>
-                  <button
+                  <Button
                     type="button"
+                    variant="link"
+                    size="sm"
                     onClick={() => onShowJudgements(g.criterion_key)}
-                    className="shrink-0 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    className={`shrink-0 ${TEXT_LINK}`}
                   >
                     Show
-                  </button>
+                  </Button>
                 </li>
               );
             })}
@@ -438,60 +460,56 @@ export default function CalibrationTab(): JSX.Element {
           them.
         </p>
         {data ? (
-          <button
+          <Button
             type="button"
+            variant="link"
+            size="sm"
             onClick={() => setShowInfo(true)}
-            className="mt-2 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className={`mt-2 ${TEXT_LINK}`}
           >
             How is this calculated?
-          </button>
+          </Button>
         ) : null}
       </GlassCard>
 
       <div className="mt-4 flex flex-wrap items-end gap-3">
-        <div>
-          <label
-            htmlFor="calib-period"
-            className="block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
-            Period
-          </label>
-          <select
-            id="calib-period"
-            value={period}
-            onChange={(e) => setPeriod(Number(e.target.value) as Period)}
-            className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            {PERIODS.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label
-            htmlFor="calib-opening"
-            className="block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
-            Opening
-          </label>
-          <select
-            id="calib-opening"
-            value={requisitionId}
-            onChange={(e) => {
-              setRequisitionId(e.target.value);
-              setRoundId('');
-            }}
-            className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            <option value="">All openings</option>
-            {(openings.data ?? []).map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.title}
-              </option>
-            ))}
-          </select>
+        <FormField id="calib-period" label="Period" className="min-w-[180px]">
+          {(p) => (
+            <SelectControl
+              {...p}
+              size="sm"
+              value={period}
+              onChange={(e) => setPeriod(Number(e.target.value) as Period)}
+            >
+              {PERIODS.map((o) => (
+                <option key={o.key} value={o.key}>
+                  {o.label}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
+        <div className="min-w-[200px]">
+          <FormField id="calib-opening" label="Opening">
+            {(p) => (
+              <SelectControl
+                {...p}
+                size="sm"
+                value={requisitionId}
+                onChange={(e) => {
+                  setRequisitionId(e.target.value);
+                  setRoundId('');
+                }}
+              >
+                <option value="">All openings</option>
+                {(openings.data ?? []).map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.title}
+                  </option>
+                ))}
+              </SelectControl>
+            )}
+          </FormField>
           {openings.isError ? (
             // Without this a failed list reads as "you have no openings"
             // (IV-L10); "All openings" still works.
@@ -507,27 +525,25 @@ export default function CalibrationTab(): JSX.Element {
             </p>
           ) : null}
         </div>
-        <div>
-          <label
-            htmlFor="calib-round"
-            className="block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
-            Round
-          </label>
-          <select
-            id="calib-round"
-            value={roundId}
-            onChange={(e) => setRoundId(e.target.value)}
-            disabled={!requisitionId}
-            className="mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            <option value="">All rounds</option>
-            {rounds.map((r) => (
-              <option key={r.id} value={r.id}>
-                {roundOptionLabel(r)}
-              </option>
-            ))}
-          </select>
+        <div className="min-w-[200px]">
+          <FormField id="calib-round" label="Round">
+            {(p) => (
+              <SelectControl
+                {...p}
+                size="sm"
+                value={roundId}
+                onChange={(e) => setRoundId(e.target.value)}
+                disabled={!requisitionId}
+              >
+                <option value="">All rounds</option>
+                {rounds.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {roundOptionLabel(r)}
+                  </option>
+                ))}
+              </SelectControl>
+            )}
+          </FormField>
           {hiddenArchivedCount > 0 ? (
             <p className="mt-1 text-[12px] text-muted-foreground">
               {hiddenArchivedCount} older archived{' '}
@@ -538,9 +554,10 @@ export default function CalibrationTab(): JSX.Element {
       </div>
 
       {calibration.isLoading ? (
-        <div className="mt-4 flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading…
+        <div className="mt-4 flex flex-col gap-3" aria-busy="true" aria-label="Loading calibration">
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-36 w-full" />
+          <Skeleton className="h-36 w-full" />
         </div>
       ) : calibration.isError && !calibration.data ? (
         <QueryErrorPanel

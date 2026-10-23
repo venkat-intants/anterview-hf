@@ -408,7 +408,6 @@ export default function GovernancePanel({
                         className="mt-2"
                         label="Go live at"
                         describedBy={!approved ? 'schedule-gate' : undefined}
-                        hint={sched.tolerance || undefined}
                       >
                         {(p) => (
                           <Input
@@ -420,6 +419,12 @@ export default function GovernancePanel({
                           />
                         )}
                       </FormField>
+                      {/* Not a FormField hint: the control is described only by
+                          the gate, so the reason a screen reader hears is the
+                          one that stops it. */}
+                      {sched.tolerance ? (
+                        <p className="mt-1 text-[12px] text-[var(--ui-soft)]">{sched.tolerance}</p>
+                      ) : null}
                       <div className="mt-3">
                         {/* Primary only once it can act: before approval, Submit for
                       approval is the one primary action on this card. */}

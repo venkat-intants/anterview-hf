@@ -41,20 +41,19 @@ import { formatDate } from '@/lib/formatters';
 import { localInputToIso, toLocalInputValue } from '@/lib/localDatetime';
 import { toast } from '@/lib/toast';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryState } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { StatusTag } from '@/design/components/primitives';
 import { Clock, Info, Loader2, Ban } from '@/design/components/icons';
+import { errorMessage } from '@/lib/errorMessage';
 
-const inputCls =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
-const labelCls = 'text-[13px] font-semibold text-foreground';
-const noteWarnCls =
-  'mt-1 flex items-start gap-1.5 text-[12px] leading-relaxed text-muted-foreground';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+const noteWarnCls = 'flex items-start gap-1.5 text-[12px] leading-relaxed text-muted-foreground';
 
 type Scope = 'applicant' | 'application' | 'round' | 'exam_round';
 
@@ -194,34 +193,36 @@ function AdjustmentFields({
   return (
     <div className="flex flex-col gap-3">
       <div className="grid gap-2.5 sm:grid-cols-2">
-        <label className="block">
-          <span className={labelCls}>Extra time (10-200%)</span>
-          <input
-            type="number"
-            min={10}
-            max={200}
-            disabled={disabled}
-            value={fields.extraTimePercent}
-            onChange={(e) => set('extraTimePercent', e.target.value)}
-            placeholder="e.g. 50"
-            className={inputCls}
-            aria-label="Extra time percent"
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Deadline extension (1-30 days)</span>
-          <input
-            type="number"
-            min={1}
-            max={30}
-            disabled={disabled}
-            value={fields.deadlineExtensionDays}
-            onChange={(e) => set('deadlineExtensionDays', e.target.value)}
-            placeholder="e.g. 3"
-            className={inputCls}
-            aria-label="Deadline extension days"
-          />
-        </label>
+        <FormField label="Extra time (10-200%)">
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={10}
+              max={200}
+              disabled={disabled}
+              value={fields.extraTimePercent}
+              onChange={(e) => set('extraTimePercent', e.target.value)}
+              placeholder="e.g. 50"
+              aria-label="Extra time percent"
+            />
+          )}
+        </FormField>
+        <FormField label="Deadline extension (1-30 days)">
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={1}
+              max={30}
+              disabled={disabled}
+              value={fields.deadlineExtensionDays}
+              onChange={(e) => set('deadlineExtensionDays', e.target.value)}
+              placeholder="e.g. 3"
+              aria-label="Deadline extension days"
+            />
+          )}
+        </FormField>
       </div>
 
       <label className="flex items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
@@ -235,84 +236,101 @@ function AdjustmentFields({
         Relax auto-submit on proctoring flags
       </label>
 
-      <label className="block">
-        <span className={labelCls}>Other adjustment</span>
-        <textarea
-          disabled={disabled}
-          value={fields.otherAdjustment}
-          onChange={(e) => set('otherAdjustment', e.target.value)}
-          maxLength={500}
-          rows={2}
-          placeholder="A plain description of the adjustment itself"
-          className={`${inputCls} resize-y`}
-        />
-        <p className={noteWarnCls}>
-          <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-          HR only. The candidate is told only that an adjustment was recorded, never this text - and
-          an interviewer never sees it either.
-        </p>
-      </label>
+      <FormField
+        id={`${uidPrefix}-other`}
+        label="Other adjustment"
+        hint={
+          <span className={noteWarnCls}>
+            <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
+            HR only. The candidate is told only that an adjustment was recorded, never this text -
+            and an interviewer never sees it either.
+          </span>
+        }
+      >
+        {(p) => (
+          <Textarea
+            {...p}
+            disabled={disabled}
+            value={fields.otherAdjustment}
+            onChange={(e) => set('otherAdjustment', e.target.value)}
+            maxLength={500}
+            rows={2}
+            placeholder="A plain description of the adjustment itself"
+          />
+        )}
+      </FormField>
 
-      <label className="block">
-        <span className={labelCls}>Interviewer note (optional)</span>
-        <textarea
-          id={`${uidPrefix}-ivnote`}
-          aria-describedby={`${uidPrefix}-ivnote-warn`}
-          disabled={disabled}
-          value={fields.interviewerNote}
-          onChange={(e) => set('interviewerNote', e.target.value)}
-          maxLength={500}
-          rows={2}
-          placeholder="What an interviewer needs to know to run this round fairly"
-          className={`${inputCls} resize-y`}
-        />
-        <p id={`${uidPrefix}-ivnote-warn`} className={noteWarnCls}>
-          <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-          Shown to interviewers assigned to this candidate&rsquo;s rounds. Write only what the
-          interview needs - never a diagnosis. The candidate never sees it.
-        </p>
-      </label>
+      <FormField
+        id={`${uidPrefix}-ivnote`}
+        label="Interviewer note (optional)"
+        hint={
+          <span className={noteWarnCls}>
+            <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
+            Shown to interviewers assigned to this candidate&rsquo;s rounds. Write only what the
+            interview needs - never a diagnosis. The candidate never sees it.
+          </span>
+        }
+      >
+        {(p) => (
+          <Textarea
+            {...p}
+            disabled={disabled}
+            value={fields.interviewerNote}
+            onChange={(e) => set('interviewerNote', e.target.value)}
+            maxLength={500}
+            rows={2}
+            placeholder="What an interviewer needs to know to run this round fairly"
+          />
+        )}
+      </FormField>
 
-      <label className="block">
-        <span className={labelCls}>Internal note (optional)</span>
-        <textarea
-          aria-describedby={`${uidPrefix}-inote-warn`}
-          disabled={disabled}
-          value={fields.internalNote}
-          onChange={(e) => set('internalNote', e.target.value)}
-          maxLength={1000}
-          rows={2}
-          placeholder="For HR's own record"
-          className={`${inputCls} resize-y`}
-        />
-        <p id={`${uidPrefix}-inote-warn`} className={noteWarnCls}>
-          <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
-          HR only. Interviewers do not see this note, and neither does the candidate - it never
-          leaves this record.
-        </p>
-      </label>
+      <FormField
+        id={`${uidPrefix}-inote`}
+        label="Internal note (optional)"
+        hint={
+          <span className={noteWarnCls}>
+            <Info size={12} className="mt-0.5 shrink-0" aria-hidden="true" />
+            HR only. Interviewers do not see this note, and neither does the candidate - it never
+            leaves this record.
+          </span>
+        }
+      >
+        {(p) => (
+          <Textarea
+            {...p}
+            disabled={disabled}
+            value={fields.internalNote}
+            onChange={(e) => set('internalNote', e.target.value)}
+            maxLength={1000}
+            rows={2}
+            placeholder="For HR's own record"
+          />
+        )}
+      </FormField>
 
       <div className="grid gap-2.5 sm:grid-cols-2">
-        <label className="block">
-          <span className={labelCls}>Effective from (optional)</span>
-          <input
-            type="datetime-local"
-            disabled={disabled}
-            value={fields.effectiveFrom}
-            onChange={(e) => set('effectiveFrom', e.target.value)}
-            className={inputCls}
-          />
-        </label>
-        <label className="block">
-          <span className={labelCls}>Effective until (optional)</span>
-          <input
-            type="datetime-local"
-            disabled={disabled}
-            value={fields.effectiveUntil}
-            onChange={(e) => set('effectiveUntil', e.target.value)}
-            className={inputCls}
-          />
-        </label>
+        <FormField label="Effective from (optional)">
+          {(p) => (
+            <Input
+              {...p}
+              type="datetime-local"
+              disabled={disabled}
+              value={fields.effectiveFrom}
+              onChange={(e) => set('effectiveFrom', e.target.value)}
+            />
+          )}
+        </FormField>
+        <FormField label="Effective until (optional)">
+          {(p) => (
+            <Input
+              {...p}
+              type="datetime-local"
+              disabled={disabled}
+              value={fields.effectiveUntil}
+              onChange={(e) => set('effectiveUntil', e.target.value)}
+            />
+          )}
+        </FormField>
       </div>
     </div>
   );
@@ -369,7 +387,7 @@ function RecordForm({
       onDone();
     },
     onError: (e) => {
-      const msg = errText(e, 'Could not record this accommodation');
+      const msg = errorMessage(e, 'Could not record this accommodation.');
       setError(msg);
       toast.error(msg);
     },
@@ -396,7 +414,7 @@ function RecordForm({
       aria-label="Record an accommodation"
     >
       <fieldset className="flex flex-col gap-1.5">
-        <legend className={labelCls}>Scope</legend>
+        <legend className={fieldLabelClass}>Scope</legend>
         <label className="flex items-center gap-2 text-[12.5px] text-foreground">
           <input
             type="radio"
@@ -445,46 +463,52 @@ function RecordForm({
       </fieldset>
 
       {scope === 'round' ? (
-        <label className="block">
-          <span className={labelCls}>Round</span>
-          <select
-            value={roundId}
-            onChange={(e) => setRoundId(e.target.value)}
-            className={inputCls}
-            aria-label="Workflow round"
-          >
-            <option value="">{roundsLoading ? 'Loading rounds…' : 'Choose a round…'}</option>
-            {rounds.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.title}
-              </option>
-            ))}
-          </select>
-        </label>
+        <FormField label="Round">
+          {(p) => (
+            <SelectControl
+              {...p}
+              value={roundId}
+              onChange={(e) => setRoundId(e.target.value)}
+              aria-label="Workflow round"
+            >
+              <option value="">{roundsLoading ? 'Loading rounds…' : 'Choose a round…'}</option>
+              {rounds.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.title}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
       ) : null}
 
       {scope === 'exam_round' ? (
-        <label className="block">
-          <span className={labelCls}>Exam round</span>
-          <select
-            value={examRoundId}
-            onChange={(e) => setExamRoundId(e.target.value)}
-            className={inputCls}
-            aria-label="Exam round"
-          >
-            <option value="">{roundsLoading ? 'Loading rounds…' : 'Choose an exam round…'}</option>
-            {examRounds.map((r) => (
-              <option key={r.id} value={r.exam_round_id as string}>
-                {r.title}
+        <FormField
+          label="Exam round"
+          hint={
+            !roundsLoading && examRounds.length === 0
+              ? 'No exam-backed round found on this application’s published workflow.'
+              : undefined
+          }
+        >
+          {(p) => (
+            <SelectControl
+              {...p}
+              value={examRoundId}
+              onChange={(e) => setExamRoundId(e.target.value)}
+              aria-label="Exam round"
+            >
+              <option value="">
+                {roundsLoading ? 'Loading rounds…' : 'Choose an exam round…'}
               </option>
-            ))}
-          </select>
-          {!roundsLoading && examRounds.length === 0 ? (
-            <p className="mt-1 text-[12px] text-muted-foreground">
-              No exam-backed round found on this application&rsquo;s published workflow.
-            </p>
-          ) : null}
-        </label>
+              {examRounds.map((r) => (
+                <option key={r.id} value={r.exam_round_id as string}>
+                  {r.title}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
       ) : null}
 
       <AdjustmentFields
@@ -495,7 +519,7 @@ function RecordForm({
       />
 
       <fieldset className="flex flex-col gap-1.5">
-        <legend className={labelCls}>Basis</legend>
+        <legend className={fieldLabelClass}>Basis</legend>
         <label className="flex items-center gap-2 text-[12.5px] text-foreground">
           <input
             type="radio"
@@ -523,23 +547,15 @@ function RecordForm({
       {error ? <p className="text-[12px] text-[var(--ui-danger)]">{error}</p> : null}
 
       <div className="flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onDone}
-          className="rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground"
-        >
+        <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={recordMut.isPending}
-          className="inline-flex items-center gap-1.5 rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
-        >
+        </Button>
+        <Button type="submit" disabled={recordMut.isPending}>
           {recordMut.isPending ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
           ) : null}
           Record accommodation
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -580,7 +596,7 @@ function ReviseForm({
       onDone();
     },
     onError: (e) => {
-      const msg = errText(e, 'Could not revise this accommodation');
+      const msg = errorMessage(e, 'Could not revise this accommodation.');
       setError(msg);
       toast.error(msg);
     },
@@ -615,23 +631,15 @@ function ReviseForm({
       />
       {error ? <p className="text-[12px] text-[var(--ui-danger)]">{error}</p> : null}
       <div className="flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onDone}
-          className="rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground"
-        >
+        <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={reviseMut.isPending}
-          className="inline-flex items-center gap-1.5 rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
-        >
+        </Button>
+        <Button type="submit" disabled={reviseMut.isPending}>
           {reviseMut.isPending ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
           ) : null}
           Save revision
-        </button>
+        </Button>
       </div>
     </form>
   );
@@ -663,7 +671,7 @@ function HistoryRow({
       toast.success('Accommodation revoked');
       invalidate();
     },
-    onError: (e) => toast.error(errText(e, 'Could not revoke this accommodation')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not revoke this accommodation.')),
   });
 
   const parts = adjustmentSummary(row);
@@ -733,14 +741,15 @@ function HistoryRow({
             >
               Revise
             </button>
-            <input
+            <Input
               type="text"
+              size="sm"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               maxLength={500}
               placeholder="Revoke reason (optional)"
               aria-label={`Revoke reason for ${scopeLabel(row, rounds)}`}
-              className="w-full max-w-[220px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="max-w-[220px]"
             />
             <ConfirmDeleteButton
               label="Revoke"
@@ -836,26 +845,32 @@ export default function AccommodationsSection({
         />
       ) : null}
 
-      {list.isLoading ? (
-        <p className="mt-2 flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          Loading…
-        </p>
-      ) : list.isError ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">
-          Could not load this applicant&rsquo;s accommodations.
-        </p>
-      ) : rows.length === 0 ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">
-          No accommodation recorded for this applicant.
-        </p>
-      ) : (
-        <ul className="mt-2 flex flex-col gap-2">
-          {rows.map((row) => (
-            <HistoryRow key={row.id} applicantId={applicantId} row={row} rounds={rounds} />
-          ))}
-        </ul>
-      )}
+      <div className="mt-2">
+        <QueryState
+          query={list}
+          errorTitle="Could not load this applicant’s accommodations."
+          loading={
+            <div className="flex flex-col gap-2" aria-busy="true">
+              <span className="sr-only">Loading…</span>
+              <Skeleton className="h-16" />
+            </div>
+          }
+          isEmpty={(d) => d.length === 0}
+          empty={
+            <p className="text-[12.5px] text-muted-foreground">
+              No accommodation recorded for this applicant.
+            </p>
+          }
+        >
+          {() => (
+            <ul className="flex flex-col gap-2">
+              {rows.map((row) => (
+                <HistoryRow key={row.id} applicantId={applicantId} row={row} rounds={rounds} />
+              ))}
+            </ul>
+          )}
+        </QueryState>
+      </div>
     </div>
   );
 }

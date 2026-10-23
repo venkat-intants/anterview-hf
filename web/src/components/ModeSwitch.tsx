@@ -34,6 +34,9 @@ export default function ModeSwitch({ className }: { className?: string }) {
     >
       {options.map(({ id, label, title, Icon }) => {
         const active = mode === id;
+        // A radio segment, not an action button (UI conventions, "Buttons":
+        // raw <button> for toggles), so the selected look follows its
+        // aria-checked state rather than a button variant.
         return (
           <button
             key={id}
@@ -44,12 +47,7 @@ export default function ModeSwitch({ className }: { className?: string }) {
             title={title}
             data-testid={`mode-${id}`}
             onClick={() => setMode(id)}
-            className={cn(
-              'inline-flex h-7 w-8 items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',
-              active
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
+            className="inline-flex h-7 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] aria-checked:bg-primary aria-checked:text-primary-foreground aria-checked:hover:text-primary-foreground"
           >
             <Icon size={14} aria-hidden="true" />
           </button>

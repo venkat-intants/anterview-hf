@@ -49,6 +49,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel, QueryState, type QueryLike } from '@/components/QueryState';
 import { EditorHeader, DocStatusPill } from '@/components/hr/EditorHeader';
 import { toast } from '@/lib/toast';
 import { queryKeys } from '@/lib/queryKeys';
@@ -111,14 +115,6 @@ type InspectorTab = 'round' | 'settings' | 'assistant';
 
 /** What the right-hand sheet is showing: the submit step, or the review and dry-run record. */
 type SheetKind = 'submit' | 'details' | null;
-
-const PRIMARY_CLASS =
-  'inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-40';
-
-/** The shared error copy (errorMessage), with this page's period-less fallbacks. */
-function errText(e: unknown, fallback: string): string {
-  return errorMessage(e, `${fallback}.`);
-}
 
 /* ── Settings panel — C9 ─────────────────────────────────────────────────────
  *
@@ -198,8 +194,8 @@ function AutoShortlistToggle({
             : !autoAssign
               ? 'Turn on “Send the first round automatically” first - otherwise applicants would be shortlisted and then left with nothing started.'
               : on
-              ? `Applicants who applied through your careers page, scored ${bar * 10}/100 or higher and confirmed their email start round one with no one confirming them. Everyone else - below the bar, uploaded by HR, or not yet confirmed - stays in your queue. The final decision is still yours.`
-              : 'Off: you confirm every shortlist. Turn on to let applicants above the bar start on their own.'}
+                ? `Applicants who applied through your careers page, scored ${bar * 10}/100 or higher and confirmed their email start round one with no one confirming them. Everyone else - below the bar, uploaded by HR, or not yet confirmed - stays in your queue. The final decision is still yours.`
+                : 'Off: you confirm every shortlist. Turn on to let applicants above the bar start on their own.'}
         </div>
         {on && (
           <p className="mt-1.5 text-[11.5px] leading-snug text-[var(--ui-warn)]">
@@ -280,7 +276,9 @@ function SettingsPanel({
 
       <div className="border-t border-border pt-4">
         <label htmlFor="ats-threshold" className="block text-[13px] text-foreground">
-          {s.auto_shortlist ? 'Shortlist automatically at ATS score' : 'Suggest shortlisting at ATS score'}
+          {s.auto_shortlist
+            ? 'Shortlist automatically at ATS score'
+            : 'Suggest shortlisting at ATS score'}
         </label>
         <p className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
           {s.auto_shortlist
@@ -345,7 +343,7 @@ function EmptyState({
   onTemplate: (key: string) => void;
   busy: boolean;
   /** Built on the server against this role's competencies (D4). */
-  templates: WorkflowTemplateSummary[] | undefined;
+  templates: QueryLike<WorkflowTemplateSummary[]>;
 }) {
   return (
     <GlassCard className="p-8">
@@ -356,49 +354,68 @@ function EmptyState({
       </p>
 
       <div className="mt-5 grid gap-3 md:grid-cols-3">
-        {templates === undefined ? (
-          <p className="text-[12.5px] text-muted-foreground">Loading templates for this role…</p>
-        ) : null}
-        {(templates ?? []).map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            disabled={busy}
-            onClick={() => onTemplate(t.key)}
-            aria-label={`Start from the ${t.name} template`}
-            data-testid={`template-${t.key}`}
-            className={cn(
-              'flex flex-col rounded-[16px] border p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-[var(--ui-inset-soft)] disabled:opacity-50',
-              t.recommended ? 'border-[var(--accent)]/40' : 'border-border',
-            )}
-          >
-            <span className="flex items-center justify-between gap-2">
-              <span className="text-[14px] font-medium text-foreground">{t.name}</span>
-              {t.recommended ? (
-                <span className="rounded-pill bg-[var(--accent)]/15 px-2 py-0.5 text-[12px] text-[var(--accent)]">
-                  Suits this role
-                </span>
-              ) : null}
-            </span>
-            <span className="mt-1 text-[12px] leading-snug text-muted-foreground">
-              {t.description}
-            </span>
-            {/* What it would actually create, for this role: each round and
-                the competencies it would assess. */}
-            <ol className="mt-3 flex flex-col gap-1.5">
-              {t.rounds.map((r, i) => (
-                <li key={`${r.kind}-${i}`} className="text-[12px] leading-snug">
-                  <span className="font-medium text-[var(--ui-soft)]">
-                    {i + 1}. {ROUND_KIND_META[r.kind].label}
-                  </span>
-                  {r.competencies.length > 0 ? (
-                    <span className="text-[var(--ui-faint)]"> - {r.competencies.join(', ')}</span>
+        {/* A failed load still leaves the empty canvas below as a way in. */}
+        <QueryState
+          query={templates}
+          errorTitle="Could not load the templates for this role."
+          errorClassName="md:col-span-3"
+          loading={
+            <>
+              <span className="sr-only" role="status">
+                Loading templates for this role…
+              </span>
+              <Skeleton className="h-40 rounded-[16px]" />
+              <Skeleton className="h-40 rounded-[16px]" />
+              <Skeleton className="h-40 rounded-[16px]" />
+            </>
+          }
+        >
+          {(list) =>
+            list.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                disabled={busy}
+                onClick={() => onTemplate(t.key)}
+                aria-label={`Start from the ${t.name} template`}
+                data-testid={`template-${t.key}`}
+                className={cn(
+                  'flex flex-col rounded-[16px] border p-4 text-left transition-colors hover:border-[var(--accent)]/50 hover:bg-[var(--ui-inset-soft)] disabled:opacity-50',
+                  t.recommended ? 'border-[var(--accent)]/40' : 'border-border',
+                )}
+              >
+                <span className="flex items-center justify-between gap-2">
+                  <span className="text-[14px] font-medium text-foreground">{t.name}</span>
+                  {t.recommended ? (
+                    <span className="rounded-pill bg-[var(--accent)]/15 px-2 py-0.5 text-[12px] text-[var(--accent)]">
+                      Suits this role
+                    </span>
                   ) : null}
-                </li>
-              ))}
-            </ol>
-          </button>
-        ))}
+                </span>
+                <span className="mt-1 text-[12px] leading-snug text-muted-foreground">
+                  {t.description}
+                </span>
+                {/* What it would actually create, for this role: each round and
+                the competencies it would assess. */}
+                <ol className="mt-3 flex flex-col gap-1.5">
+                  {t.rounds.map((r, i) => (
+                    <li key={`${r.kind}-${i}`} className="text-[12px] leading-snug">
+                      <span className="font-medium text-[var(--ui-soft)]">
+                        {i + 1}. {ROUND_KIND_META[r.kind].label}
+                      </span>
+                      {r.competencies.length > 0 ? (
+                        <span className="text-[var(--ui-faint)]">
+                          {' '}
+                          - {r.competencies.join(', ')}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ol>
+              </button>
+            ))
+          }
+        </QueryState>
       </div>
       <p className="mt-3 text-[12px] leading-relaxed text-[var(--ui-faint)]">
         A template fills in the rounds, what each assesses, timings and settings. Test rounds still
@@ -570,7 +587,7 @@ export default function WorkflowBuilder(): JSX.Element {
     onSuccess: applyWorkflow,
     onError: (e) => {
       setFailedSaves((n) => n + 1);
-      toast.error(errText(e, 'That change did not save'));
+      toast.error(errorMessage(e, 'Could not save that change.'));
     },
   });
 
@@ -592,7 +609,7 @@ export default function WorkflowBuilder(): JSX.Element {
             : 'Dry run found errors',
       );
     },
-    onError: (e) => toast.error(errText(e, 'Could not run the dry run')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not run the dry run.')),
   });
 
   // ── Creating ──────────────────────────────────────────────────────────────
@@ -610,7 +627,7 @@ export default function WorkflowBuilder(): JSX.Element {
       applyWorkflow(draft);
       toast.success('Draft created');
     },
-    onError: (e) => toast.error(errText(e, 'Could not start a draft')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not start a draft.')),
   });
 
   const publishMut = useMutation({
@@ -638,7 +655,7 @@ export default function WorkflowBuilder(): JSX.Element {
       // The 422 carries the reasons. Refetching validate puts them in the panel
       // where they can be acted on, rather than in a toast that scrolls away.
       void qc.invalidateQueries({ queryKey: ['hr', 'workflow', workflowId, 'validate'] });
-      toast.error(errText(e, 'This workflow is not ready to publish'));
+      toast.error(errorMessage(e, 'Could not publish this workflow.'));
     },
   });
 
@@ -651,7 +668,7 @@ export default function WorkflowBuilder(): JSX.Element {
         `Editing as version ${draft.version} - version ${draft.version - 1} stays live`,
       );
     },
-    onError: (e) => toast.error(errText(e, 'Could not open a new version')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not open a new version.')),
   });
 
   const discardMut = useMutation({
@@ -662,7 +679,7 @@ export default function WorkflowBuilder(): JSX.Element {
       void qc.invalidateQueries({ queryKey: ['hr', 'workflows', requisitionId] });
       toast.success('Draft discarded');
     },
-    onError: (e) => toast.error(errText(e, 'Could not discard this draft')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not discard this draft.')),
   });
 
   const selected: Round | undefined = workflow?.rounds.find((r) => r.id === selectedRound);
@@ -690,7 +707,11 @@ export default function WorkflowBuilder(): JSX.Element {
 
   // ── Render ────────────────────────────────────────────────────────────────
   if (!requisitionId) {
-    return <div className="p-8 text-[13px] text-muted-foreground">No opening selected.</div>;
+    return (
+      <Page width="workspace">
+        <p className="text-[13px] text-muted-foreground">No opening selected.</p>
+      </Page>
+    );
   }
 
   return (
@@ -785,14 +806,14 @@ export default function WorkflowBuilder(): JSX.Element {
                 />
               ) : null}
               {(versions.data ?? []).length > 1 ? (
-                <select
+                <SelectControl
                   aria-label="Workflow version"
                   value={workflow.id}
                   onChange={(e) => {
                     setActiveId(e.target.value);
                     setSelectedRound(null);
                   }}
-                  className="min-h-[40px] rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus:outline-none"
+                  className="w-auto"
                 >
                   {(versions.data ?? []).map((v) => (
                     <option key={v.id} value={v.id}>
@@ -800,12 +821,12 @@ export default function WorkflowBuilder(): JSX.Element {
                       {v.enrolled_candidates > 0 ? ` · ${v.enrolled_candidates} inside` : ''}
                     </option>
                   ))}
-                </select>
+                </SelectControl>
               ) : null}
 
               <Link
                 to={`/hr/requisitions/${requisitionId}/decisions`}
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                className={buttonVariants({ variant: 'outline' })}
               >
                 <Users className="h-3.5 w-3.5" aria-hidden="true" />
                 Decision queue
@@ -818,34 +839,32 @@ export default function WorkflowBuilder(): JSX.Element {
           // dry run → submit → publish → edit as a new version. A version
           // waiting on its reviewer has none; its quiet moves are in the sheet.
           workflow && action === 'dry_run' ? (
-            <button
+            <Button
               type="button"
               data-primary="true"
               data-testid="run-dry-run"
               onClick={() => runDryRunMut.mutate()}
               disabled={runDryRunMut.isPending}
-              className={PRIMARY_CLASS}
             >
               {runDryRunMut.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                <Loader2 className="animate-spin" aria-hidden="true" />
               ) : (
-                <Play className="h-3.5 w-3.5" aria-hidden="true" />
+                <Play aria-hidden="true" />
               )}
               Run dry run
-            </button>
+            </Button>
           ) : workflow && action === 'submit' ? (
-            <button
+            <Button
               type="button"
               data-primary="true"
               data-testid="submit-review"
               onClick={() => setSheet('submit')}
-              className={PRIMARY_CLASS}
             >
-              <Send className="h-3.5 w-3.5" aria-hidden="true" />
+              <Send aria-hidden="true" />
               Submit for review
-            </button>
+            </Button>
           ) : workflow && action === 'publish' ? (
-            <button
+            <Button
               type="button"
               data-primary="true"
               onClick={() => setConfirmPublish(true)}
@@ -855,31 +874,32 @@ export default function WorkflowBuilder(): JSX.Element {
               // version, so the button does not offer what cannot work.
               disabled={publishMut.isPending || publishBlockedReason !== null}
               title={publishBlockedReason ?? undefined}
-              className={PRIMARY_CLASS}
+              // Button drops pointer events when disabled; keep them so the
+              // reason in the title still shows on hover.
+              className="disabled:pointer-events-auto disabled:cursor-not-allowed"
             >
               {publishMut.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                <Loader2 className="animate-spin" aria-hidden="true" />
               ) : (
-                <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                <CheckCircle2 aria-hidden="true" />
               )}
               Publish
-            </button>
+            </Button>
           ) : workflow && action === 'edit_new_version' ? (
-            <button
+            <Button
               type="button"
               data-primary="true"
               onClick={() => cloneMut.mutate()}
               data-testid="edit-as-new-version"
               disabled={cloneMut.isPending}
-              className={PRIMARY_CLASS}
             >
               {cloneMut.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                <Loader2 className="animate-spin" aria-hidden="true" />
               ) : (
-                <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                <Copy aria-hidden="true" />
               )}
               Edit as new version
-            </button>
+            </Button>
           ) : undefined
         }
       />
@@ -897,13 +917,9 @@ export default function WorkflowBuilder(): JSX.Element {
             review={review.data}
             secondary={
               workflow.status === 'draft' ? (
-                <button
-                  type="button"
-                  onClick={() => setSheet('details')}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                >
+                <Button type="button" variant="outline" onClick={() => setSheet('details')}>
                   Review and dry-run details
-                </button>
+                </Button>
               ) : undefined
             }
           />
@@ -928,55 +944,54 @@ export default function WorkflowBuilder(): JSX.Element {
               rounds they began with.
             </div>
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmPublish(false)}
-                className="min-h-[40px] rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              >
+              {/* Cancel role, so ghost (UI conventions, Buttons). */}
+              <Button type="button" variant="ghost" onClick={() => setConfirmPublish(false)}>
                 Not yet
-              </button>
+              </Button>
               {/* HR-M3: guarded like the header button, so a double click
                   cannot send two publishes. */}
-              <button
+              <Button
                 type="button"
                 onClick={() => publishMut.mutate()}
                 disabled={publishMut.isPending}
                 aria-busy={publishMut.isPending}
                 data-testid="confirm-publish"
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
               >
                 {publishMut.isPending ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  <Loader2 className="animate-spin" aria-hidden="true" />
                 ) : null}
                 Publish version {workflow.version}
-              </button>
+              </Button>
             </div>
           </div>
         </Card>
       ) : null}
 
       {versions.isLoading || (workflowId && wf.isLoading) ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          <span role="status">Loading workflow…</span>
+        <div
+          className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]"
+          aria-busy="true"
+        >
+          <span role="status" className="sr-only">
+            Loading workflow…
+          </span>
+          <div className="flex flex-col gap-3">
+            <Skeleton className="h-24 rounded-[16px]" />
+            <Skeleton className="h-24 rounded-[16px]" />
+            <Skeleton className="h-24 rounded-[16px]" />
+          </div>
+          <Skeleton className="h-80 rounded-[16px]" />
         </div>
       ) : versions.isError || wf.isError ? (
-        <div
-          role="alert"
-          className="flex flex-wrap items-center gap-3 text-[13px] text-[var(--ui-danger)]"
-        >
-          Could not load this opening&rsquo;s workflow.
-          <button
-            type="button"
-            onClick={() => {
-              void versions.refetch();
-              void wf.refetch();
-            }}
-            className="inline-flex min-h-[40px] items-center rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            Try again
-          </button>
-        </div>
+        <QueryErrorPanel
+          title="Could not load this opening's workflow."
+          error={versions.error ?? wf.error}
+          onRetry={() => {
+            void versions.refetch();
+            void wf.refetch();
+          }}
+          retrying={versions.isFetching || wf.isFetching}
+        />
       ) : !workflow ? (
         // Three ways in, side by side (D4): a template, an empty canvas, or a
         // conversation. The copilot belongs most here — "design a process for
@@ -986,7 +1001,7 @@ export default function WorkflowBuilder(): JSX.Element {
             busy={createMut.isPending}
             onBlank={() => createMut.mutate(null)}
             onTemplate={(key) => createMut.mutate(key)}
-            templates={templates.data}
+            templates={templates}
           />
           {copilotAvailable ? (
             <GlassCard className="flex h-[440px] flex-col p-5">
@@ -1041,19 +1056,23 @@ export default function WorkflowBuilder(): JSX.Element {
               ) : null;
             })()}
 
-            <button
+            <Button
               type="button"
+              variant="outline"
               onClick={() => setPreviewOpen((open) => !open)}
-              className="mb-4 min-h-[40px] rounded-pill border border-border px-4 py-1.5 text-[13px] text-[var(--ui-soft)] hover:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              aria-expanded={previewOpen}
+              className="mb-4"
             >
               {previewOpen ? 'Hide candidate preview' : 'Preview as a candidate'}
-            </button>
+            </Button>
 
             {previewOpen ? (
               <Well className="mb-5">
                 <CandidatePreview
                   autoShortlistBar={
-                    workflow.settings.auto_shortlist ? workflow.settings.shortlist_ats_threshold : null
+                    workflow.settings.auto_shortlist
+                      ? workflow.settings.shortlist_ats_threshold
+                      : null
                   }
                   title={req.data?.title ?? 'this opening'}
                   rounds={workflow.rounds}
@@ -1189,9 +1208,7 @@ export default function WorkflowBuilder(): JSX.Element {
                     the conversation and any run in flight are the copilot's own
                     state, so unmounting on a tab switch would discard them. */}
                 {copilotAvailable ? (
-                  <div
-                    className={activeTab === 'assistant' ? 'flex h-[440px] flex-col' : 'hidden'}
-                  >
+                  <div className={activeTab === 'assistant' ? 'flex h-[440px] flex-col' : 'hidden'}>
                     <WorkflowCopilot
                       requisitionId={requisitionId}
                       jobTitle={req.data?.title ?? 'this role'}
@@ -1264,7 +1281,9 @@ export default function WorkflowBuilder(): JSX.Element {
       <Sheet open={sheet !== null} onOpenChange={(open) => (open ? undefined : setSheet(null))}>
         <SheetContent side="right" className="w-full overflow-y-auto sm:max-w-lg">
           <SheetHeader>
-            <SheetTitle>{sheet === 'submit' ? 'Submit for review' : 'Review and dry run'}</SheetTitle>
+            <SheetTitle>
+              {sheet === 'submit' ? 'Submit for review' : 'Review and dry run'}
+            </SheetTitle>
             <SheetDescription>
               {sheet === 'submit'
                 ? 'A company super admin reviews this version. Nothing goes live until they approve it and you publish.'
@@ -1274,7 +1293,11 @@ export default function WorkflowBuilder(): JSX.Element {
           {workflow && sheet !== null ? (
             <div className="mt-6 flex flex-col gap-6">
               {sheet === 'submit' ? (
-                <SubmitBlockers errors={blockers} rounds={workflow.rounds} onGoToRound={goToRound} />
+                <SubmitBlockers
+                  errors={blockers}
+                  rounds={workflow.rounds}
+                  onGoToRound={goToRound}
+                />
               ) : null}
               {/* PH4-O6 / O2 — where this version stands with the reviewer, and
                   whether a dry run of its routing comes back clean. */}

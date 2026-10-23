@@ -715,6 +715,16 @@ describe('WorkflowBuilder - starting from nothing', () => {
     expect(screen.getByText('Start from an empty canvas instead')).toBeTruthy();
   });
 
+  it('says the templates could not load, and still offers the empty canvas', async () => {
+    listWorkflows.mockResolvedValue([]);
+    listWorkflowTemplates.mockRejectedValue(new Error('offline'));
+    renderBuilder();
+
+    expect(await screen.findByText('Could not load the templates for this role.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.getByText('Start from an empty canvas instead')).toBeTruthy();
+  });
+
   it('creates a template as one draft on the server, not round by round', async () => {
     const user = userEvent.setup();
     listWorkflows.mockResolvedValue([]);

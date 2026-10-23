@@ -241,7 +241,7 @@ describe('InterviewerConsole - upcoming interviews', () => {
     schedulingApi.getMySessions.mockRejectedValue(new Error('Could not reach the server'));
     renderConsole();
 
-    const title = await screen.findByText('Could not load your interview sessions.');
+    const title = await screen.findByText('Could not load your interviews.');
     expect(title.closest('[role="alert"]')).not.toBeNull();
   });
 
@@ -250,7 +250,7 @@ describe('InterviewerConsole - upcoming interviews', () => {
     renderConsole();
 
     expect(
-      await screen.findByRole('heading', { name: 'Your interview sessions' }),
+      await screen.findByRole('heading', { name: 'Your interviews' }),
     ).toBeInTheDocument();
     expect(await screen.findByText('No show')).toBeInTheDocument();
   });

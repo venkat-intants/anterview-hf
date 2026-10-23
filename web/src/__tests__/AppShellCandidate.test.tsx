@@ -83,7 +83,7 @@ describe('AppShell - candidate', () => {
       ['My applications', '/applications'],
       ['Jobs', '/jobs'],
       ['Practice interview', '/start'],
-      ['History', '/history'],
+      ['Interview history', '/history'],
       ['Resume', '/resume'],
     ]);
     // The second group is named; the first is not.
@@ -138,7 +138,7 @@ describe('AppShell - candidate', () => {
       expect(screen.getByRole('searchbox', { name: c.search })).toBeInTheDocument();
       expect(screen.getAllByText(c.roleLabel).length).toBeGreaterThan(0);
       // None of the English literals this shell used to hard-code.
-      expect(screen.queryByText('Ready to practice?')).not.toBeInTheDocument();
+      expect(screen.queryByText('Ready to practise?')).not.toBeInTheDocument();
       expect(screen.queryByRole('link', { name: 'Practice interview' })).not.toBeInTheDocument();
     } finally {
       await i18n.changeLanguage('en');

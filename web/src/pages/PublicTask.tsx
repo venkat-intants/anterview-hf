@@ -77,6 +77,7 @@ import {
   forgetFragmentToken,
   useFragmentToken,
 } from '@/hooks/useFragmentToken';
+import { formatDateTime, uiLocale } from '@/lib/formatters';
 
 const MAX_MATERIAL_BYTES = 10 * 1024 * 1024;
 const ACCEPTED_ARTIFACT_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
@@ -151,7 +152,7 @@ function CenteredMessage({
  *  consent. Shared between the pre-start gate and the working page so the
  *  candidate reads the same header in both. */
 function TaskHeader({ data }: { data: PublicTaskShape }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   return (
     <GlassCard className="w-full p-5 sm:p-6">
       <StatusTag tone="electric" dot>
@@ -166,7 +167,7 @@ function TaskHeader({ data }: { data: PublicTaskShape }) {
         {data.due_at ? (
           <span className="inline-flex items-center gap-1.5">
             <Clock className="h-3.5 w-3.5" aria-hidden="true" />
-            {t('task.dueBy', { date: new Date(data.due_at).toLocaleString() })}
+            {t('task.dueBy', { date: formatDateTime(data.due_at, { locale: uiLocale(i18n.language) }) })}
           </span>
         ) : null}
         {data.time_limit_seconds && !data.started_at ? (

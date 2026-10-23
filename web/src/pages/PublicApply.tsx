@@ -59,6 +59,7 @@ import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { PublicNext } from '@/components/PublicNext';
 import { SUPPORT_EMAIL } from '@/lib/contact';
 import { ProgressMeter } from '@/design/components/page';
+import { formatDate, formatNumber, uiLocale } from '@/lib/formatters';
 
 const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -206,7 +207,7 @@ function SeedPanel({
       </div>
 
       <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
-        Development build only - this panel is not in a production bundle. Each CV is sent
+        Development build only - this panel is not in a production bundle. Each resume is sent
         as its own application with a name guessed from the filename and a
         {' '}<code className="text-[var(--ui-soft)]">@seed.example.com</code> address, so nothing here can
         email a real person. Sent one at a time: the endpoint allows six a minute and this
@@ -308,11 +309,11 @@ function experienceLine(t: TFunction, job: Posting): string | null {
  * for both a withheld salary and an unrecorded one — so there is deliberately
  * no "salary not specified" copy here to distinguish them.
  */
-function salaryLine(t: TFunction, job: Posting): string | null {
+function salaryLine(t: TFunction, job: Posting, locale: string): string | null {
   const { salary_min: lo, salary_max: hi } = job;
   if (lo == null && hi == null) return null;
   const currency = job.salary_currency ?? '';
-  const money = (n: number) => `${currency} ${n.toLocaleString()}`.trim();
+  const money = (n: number) => `${currency} ${formatNumber(n, locale)}`.trim();
   if (lo != null && hi != null) {
     return t('careers.salaryRange', { lo: money(lo), hi: money(hi) });
   }
@@ -770,13 +771,13 @@ export default function PublicApply(): JSX.Element {
           {experienceLine(t, job) ? ` · ${experienceLine(t, job)}` : ''}
           {job.closes_at
             ? ` · ${t('apply.closesOn', {
-                date: new Date(job.closes_at).toLocaleDateString(),
+                date: formatDate(job.closes_at, uiLocale(i18n.language)),
               })}`
             : ''}
         </div>
-        {salaryLine(t, job) ? (
+        {salaryLine(t, job, uiLocale(i18n.language)) ? (
           <div className="mt-3 inline-block rounded-full border border-border bg-[var(--ui-inset)] px-3.5 py-1.5 text-[13.5px] font-medium text-foreground">
-            {salaryLine(t, job)}
+            {salaryLine(t, job, uiLocale(i18n.language))}
           </div>
         ) : null}
       </header>
@@ -1266,7 +1267,7 @@ export default function PublicApply(): JSX.Element {
               onClick={() => folderInput.current?.click()}
               className="text-[12px] text-[var(--ui-soft)] underline-offset-2 hover:text-muted-foreground hover:underline"
             >
-              Dev: drop or choose a folder of CVs to seed test applications
+              Dev: drop or choose a folder of resumes to seed test applications
             </button>
             <input
               ref={folderInput}

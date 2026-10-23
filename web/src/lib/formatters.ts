@@ -76,12 +76,49 @@ export function formatDateTime(iso: string | null | undefined, opts: DateTimeOpt
   }
 }
 
-/** Format a duration in whole seconds as "Xm Ys", or '-' when null. */
+/**
+ * "15:30" or, with `seconds`, "15:30:05": a 24-hour clock time for an event
+ * already past (a log line, a "checked at"). It carries no zone, so it is not
+ * for a future or scheduled time: use formatDateTime for those. '-' for a
+ * missing or unreadable value.
+ */
+export function formatTime(
+  iso: string | null | undefined,
+  opts: { locale?: string; seconds?: boolean } = {},
+): string {
+  const d = parseInstant(iso);
+  if (!d) return MISSING;
+  return d.toLocaleTimeString(opts.locale ?? 'en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(opts.seconds ? { second: '2-digit' } : {}),
+    hourCycle: 'h23',
+  });
+}
+
+/** Format a duration in whole seconds as "Xm Ys", or MISSING ('-') when null. */
 export function formatDuration(seconds: number | null): string {
-  if (seconds === null) return '-';
+  if (seconds === null) return MISSING;
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return `${m}m ${s}s`;
+}
+
+// ── Numbers ────────────────────────────────────────────────────────────────────
+
+/** "12,34,567": a count grouped for the locale. '-' for a missing value. */
+export function formatNumber(n: number | null | undefined, locale = 'en-IN'): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return MISSING;
+  return n.toLocaleString(locale);
+}
+
+/**
+ * "1 candidate", "3 candidates", "12,400 resumes": a count with a real plural,
+ * never "candidate(s)". `many` defaults to `one` + "s". Staff screens only;
+ * candidate text pluralises through i18n (`_one` / `_other`).
+ */
+export function plural(count: number, one: string, many = `${one}s`, locale = 'en-IN'): string {
+  return `${formatNumber(count, locale)} ${count === 1 ? one : many}`;
 }
 
 // ── Money ──────────────────────────────────────────────────────────────────────
@@ -172,7 +209,7 @@ export function statusProps(status: string): { label: string; variant: StatusVar
     case 'completed':
       return { label: 'Completed', variant: 'default' };
     case 'in_progress':
-      return { label: 'In Progress', variant: 'secondary' };
+      return { label: 'In progress', variant: 'secondary' };
     case 'abandoned':
       return { label: 'Abandoned', variant: 'outline' };
     case 'failed':

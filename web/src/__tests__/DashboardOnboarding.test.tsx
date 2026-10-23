@@ -291,7 +291,7 @@ describe('Dashboard ↔ onboarding handoff', () => {
     expect(within(strip).getByRole('heading', { name: 'Start your first practice interview' })).toBeInTheDocument();
     expect(within(strip).getByRole('link', { name: 'Start practice' })).toHaveAttribute('href', '/start');
     // ...and personalising is a quieter, separate offer on the plan card.
-    expect(screen.getByRole('link', { name: /personalize/i })).toHaveAttribute('href', '/onboarding');
+    expect(screen.getByRole('link', { name: /personalise/i })).toHaveAttribute('href', '/onboarding');
   });
 
   it('carries exactly one practice call to action once a plan exists', async () => {

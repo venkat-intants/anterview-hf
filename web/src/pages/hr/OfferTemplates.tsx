@@ -336,11 +336,11 @@ function TemplateRow({ template }: { template: OfferTemplate }) {
           <button
             type="button"
             onClick={() => setEditing((v) => !v)}
-            aria-label={`${editing ? 'Close' : 'Edit'} ${template.name}`}
+            aria-label={editing ? `Cancel editing ${template.name}` : `Edit ${template.name}`}
             aria-expanded={editing}
             className="min-h-[40px] rounded-full px-3 text-[13px] font-medium text-[var(--ui-info)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
-            {editing ? 'Close' : 'Edit'}
+            {editing ? 'Cancel' : 'Edit'}
           </button>
           <ConfirmDeleteButton
             title={`Delete ${template.name}`}
@@ -415,7 +415,7 @@ export default function OfferTemplates() {
               onClick={() => setCreating((v) => !v)}
               className="min-h-[40px] rounded-full border border-[var(--ui-line-strong)] px-4 py-1.5 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
-              {creating ? 'Close' : 'New template'}
+              {creating ? 'Cancel' : 'New template'}
             </button>
           </>
         }

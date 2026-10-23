@@ -1308,7 +1308,7 @@ describe('CandidateDrawer', () => {
 });
 
 
-describe('CandidateDrawer - View CV beside the resume match', () => {
+describe('CandidateDrawer - View resume beside the resume match', () => {
   it('opens the CV behind the score', async () => {
     getApplicant.mockResolvedValue(applicant({ has_cv: true }));
     listRoundResults.mockResolvedValue([]);
@@ -1316,7 +1316,7 @@ describe('CandidateDrawer - View CV beside the resume match', () => {
     openApplicantCv.mockResolvedValue(undefined);
     const user = userEvent.setup();
     renderDrawer();
-    await user.click(await screen.findByRole('button', { name: 'View CV' }));
+    await user.click(await screen.findByRole('button', { name: 'View resume' }));
     expect(openApplicantCv).toHaveBeenCalledWith('ap-1', undefined);
   });
 
@@ -1326,6 +1326,6 @@ describe('CandidateDrawer - View CV beside the resume match', () => {
     listAnswers.mockResolvedValue([]);
     renderDrawer();
     await screen.findByText('A solid backend match.');
-    expect(screen.queryByRole('button', { name: 'View CV' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View resume' })).not.toBeInTheDocument();
   });
 });

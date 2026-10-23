@@ -454,7 +454,7 @@ describe('Applicants - search-index backfill', () => {
     await user.click(screen.getByRole('button', { name: /make searchable/i }));
 
     await waitFor(() => expect(reindexApplicants).toHaveBeenCalled());
-    expect(toastSuccess).toHaveBeenCalledWith('All resumes are now searchable.');
+    expect(toastSuccess).toHaveBeenCalledWith('All resumes are now searchable');
   });
 
   it('reports honestly when a backfill leaves resumes unindexed', async () => {
@@ -718,12 +718,12 @@ describe('Applicants - the open applicant survives a round trip (QA ANTHIRE-004)
   });
 });
 
-describe('Applicants - View CV beside the score', () => {
+describe('Applicants - View resume beside the score', () => {
   it('offers the CV when one is stored', async () => {
     listApplicants.mockResolvedValue([{ ...SCORED, has_cv: true }]);
     renderPage('/hr/applicants?view=ap-1');
     const dialog = await screen.findByLabelText('Bhavya Nair applicant details');
-    expect(within(dialog).getByRole('button', { name: 'View CV' })).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'View resume' })).toBeInTheDocument();
   });
 
   it('with one application, the header opens the CV that application was sent with', async () => {
@@ -736,7 +736,7 @@ describe('Applicants - View CV beside the score', () => {
     await waitFor(() => expect(listApplications).toHaveBeenCalled());
     await waitFor(async () => {
       openApplicantCv.mockClear();
-      await user.click(within(dialog).getByRole('button', { name: 'View CV' }));
+      await user.click(within(dialog).getByRole('button', { name: 'View resume' }));
       expect(openApplicantCv).toHaveBeenCalledWith('ap-1', 'en-ap-1');
     });
   });
@@ -752,10 +752,10 @@ describe('Applicants - View CV beside the score', () => {
     const user = userEvent.setup();
     renderPage('/hr/applicants?view=ap-1');
     await user.click(
-      await screen.findByRole('button', { name: 'View the CV sent for Backend Engineer' }),
+      await screen.findByRole('button', { name: 'View the resume sent for Backend Engineer' }),
     );
     expect(openApplicantCv).toHaveBeenCalledWith('ap-1', 'en-ap-1');
-    await user.click(screen.getByRole('button', { name: 'View the CV sent for Data Analyst' }));
+    await user.click(screen.getByRole('button', { name: 'View the resume sent for Data Analyst' }));
     expect(openApplicantCv).toHaveBeenLastCalledWith('ap-1', 'en-2');
   });
 
@@ -763,7 +763,7 @@ describe('Applicants - View CV beside the score', () => {
     listApplicants.mockResolvedValue([{ ...SCORED, has_cv: false }]);
     renderPage('/hr/applicants?view=ap-1');
     const dialog = await screen.findByLabelText('Bhavya Nair applicant details');
-    expect(within(dialog).queryByRole('button', { name: 'View CV' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'View resume' })).not.toBeInTheDocument();
   });
 });
 

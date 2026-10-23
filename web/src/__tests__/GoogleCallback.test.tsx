@@ -97,7 +97,7 @@ describe('GoogleCallback page', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
-        /missing authorization code/i,
+        /missing authorisation code/i,
       );
     });
     expect(mockComplete).not.toHaveBeenCalled();
@@ -130,7 +130,7 @@ describe('GoogleCallback page', () => {
     renderAt('/auth/google/callback?code=abc&state=xyz');
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(/google sign-in failed/i);
+      expect(screen.getByRole('alert')).toHaveTextContent(/could not sign in with google/i);
     });
     expect(screen.getByRole('alert')).not.toHaveTextContent('SOME_NEW_CODE');
   });
@@ -148,7 +148,7 @@ describe('GoogleCallback page', () => {
   it('offers no reload retry on failure, only the way back to sign in', async () => {
     mockComplete.mockRejectedValue(new Error('nope'));
     renderAt('/auth/google/callback?code=abc&state=xyz');
-    expect(await screen.findByRole('heading', { name: 'Sign-in failed' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Could not sign you in' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /retry|try again/i })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Back to sign in' })).toHaveAttribute('href', '/login');
   });

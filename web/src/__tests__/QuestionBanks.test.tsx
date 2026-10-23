@@ -74,7 +74,7 @@ describe('QuestionBanks - the list', () => {
     listQuestionBanks.mockResolvedValue([]);
     renderPage();
     expect(await screen.findByText('No banks yet')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Create your first bank' })).toHaveAttribute(
+    expect(screen.getAllByRole('link', { name: 'New bank' })[1]).toHaveAttribute(
       'href',
       '/hr/question-banks/new',
     );

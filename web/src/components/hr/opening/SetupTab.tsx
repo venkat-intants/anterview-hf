@@ -93,7 +93,7 @@ export interface RoleStepRequest {
 
 const ROLE_STEPS: { key: RoleStep; label: string }[] = [
   { key: 'details', label: 'Opening details' },
-  { key: 'posting', label: 'Posting' },
+  { key: 'posting', label: 'Public details' },
   { key: 'jd', label: 'Job description' },
   { key: 'questions', label: 'Application questions' },
 ];
@@ -151,7 +151,7 @@ function RoleStage({
 
   return (
     <div className="flex flex-col gap-4" data-testid="role-stage">
-      <nav aria-label="Role and posting steps">
+      <nav aria-label="Opening and job description steps">
         <ol className="flex flex-wrap gap-2">
           {ROLE_STEPS.map((st, i) => {
             const on = st.key === current;
@@ -207,7 +207,7 @@ function RoleStage({
           </Button>
         ) : (
           <span className="text-[13px] text-muted-foreground">
-            That is the last step of Role and posting.
+            That is the last step of Opening and job description.
           </span>
         )}
       </div>

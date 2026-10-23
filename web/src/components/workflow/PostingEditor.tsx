@@ -168,17 +168,17 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
       // Saving the posting publishes a JD version, so the setup rail's JD tick
       // has to be re-read.
       void client.invalidateQueries({ queryKey: queryKeys.jdHistory(requisition.id) });
-      toast.success('Posting updated.');
+      toast.success('Public details saved');
     },
     onError: (err: unknown) =>
-      toast.error(errorMessage(err, 'Could not save the posting.')),
+      toast.error(errorMessage(err, 'Could not save the public details.')),
   });
 
   const num = (v: string): number | null => (v === '' ? null : Number(v));
 
   return (
     <SectionCard
-      title="The posting"
+      title="Public details"
       description="What a candidate sees on the job board and before applying. Everything here is optional - leave a field blank and it simply is not shown."
     >
       <h3 className={GROUP_TITLE}>Basics</h3>
@@ -368,7 +368,7 @@ export default function PostingEditor({ requisition }: { requisition: Requisitio
           onClick={() => save.mutate()}
           disabled={save.isPending || Boolean(experienceError || salaryError)}
         >
-          {save.isPending ? 'Saving…' : 'Save posting'}
+          {save.isPending ? 'Saving…' : 'Save public details'}
         </Button>
         {experienceError || salaryError ? (
           <span className="text-[13px] text-muted-foreground">Fix the range above to save.</span>

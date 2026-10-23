@@ -160,6 +160,6 @@ describe('OpenRoles - nothing to show', () => {
   it('says so when the list could not be loaded', async () => {
     listOpenRoles.mockRejectedValue(new Error('boom'));
     renderRoles();
-    expect(await screen.findByText(/Could not load open roles/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not load open jobs/)).toBeInTheDocument();
   });
 });

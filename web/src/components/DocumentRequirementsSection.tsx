@@ -237,7 +237,7 @@ export default function DocumentRequirementsSection({ requisitionId }: { requisi
       description="What a candidate who accepts an offer for this opening must upload."
       action={
         <Button type="button" variant="outline" onClick={() => setAdding((v) => !v)}>
-          {adding ? 'Close' : 'Add requirement'}
+          {adding ? 'Cancel' : 'Add requirement'}
         </Button>
       }
     >

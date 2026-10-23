@@ -46,6 +46,7 @@ import { Breadcrumbs, PageHeader, SectionCard } from '@/design/components/page';
 import { ScoreRing, StatusTag, type TagTone } from '@/design/components/primitives';
 import { Collapsible } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
+import { formatTime } from '@/lib/formatters';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -357,7 +358,7 @@ function fmtOffset(eventIso: string, sessionStartIso: string | null): string {
   const d = new Date(eventIso);
   return Number.isNaN(d.getTime())
     ? ''
-    : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    : formatTime(eventIso, { seconds: true });
 }
 
 function IntegrityPanel({ report }: { report: IntegrityReport }) {

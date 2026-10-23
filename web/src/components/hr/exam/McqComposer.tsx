@@ -385,7 +385,7 @@ export function McqComposer({ examId, sectionId, onChanged }: McqComposerProps) 
 
           {generateMut.isError ? (
             <GenerationError
-              failure={toGenerationFailure(generateMut.error, 'Generation failed.')}
+              failure={toGenerationFailure(generateMut.error, 'Could not generate questions.')}
               onRetry={() => generateMut.mutate()}
               retryDisabled={generateMut.isPending || !aiTopic.trim()}
             />

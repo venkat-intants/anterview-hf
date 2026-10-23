@@ -116,15 +116,15 @@ const MOCK_SCORECARD: ScorecardData = {
   ],
   improvements: [
     {
-      area: 'Technical Depth',
-      suggestion: 'Practice system design concepts and discuss trade-offs explicitly.',
+      area: 'Technical depth',
+      suggestion: 'Practise system design concepts and discuss trade-offs explicitly.',
     },
     {
       area: 'Confidence',
       suggestion: 'Speak at a measured pace and avoid filler words.',
     },
     {
-      area: 'Problem Solving',
+      area: 'Problem solving',
       suggestion: 'State your assumptions clearly before diving into a solution.',
     },
   ],

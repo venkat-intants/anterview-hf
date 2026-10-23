@@ -37,6 +37,7 @@ import {
   type ScoreInput,
 } from '@/api/interviewer';
 import SubmissionPanel from '@/components/interviewer/SubmissionPanel';
+import { formatDateTime } from '@/lib/formatters';
 
 /** PH4-D4 — only these two round kinds carry a submission to review. */
 const TASK_ROUND_KINDS = new Set(['job_simulation', 'portfolio']);
@@ -255,7 +256,7 @@ function KitPanel({ scorecardId }: { scorecardId: string }) {
             <div className="mt-2 flex items-center justify-between">
               <span className="text-[12px] text-[var(--ui-faint)]">
                 {notesQuery.data?.updated_at
-                  ? `Saved ${new Date(notesQuery.data.updated_at).toLocaleString()}`
+                  ? `Saved ${formatDateTime(notesQuery.data.updated_at)}`
                   : 'Not saved yet'}
               </span>
               <Button

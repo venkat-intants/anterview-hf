@@ -667,7 +667,7 @@ export default function HRInterviews() {
     mutationFn: ({ id, reason }: { id: string; reason: EndInterviewReason }) =>
       endStartedInterview(id, reason),
     onSuccess: (inv) => {
-      toast.success(`Interview ended for ${inv.applicant_name}. You can now send a new link.`);
+      toast.success(`Interview ended for ${inv.applicant_name}`, { description: 'You can now send a new link.' });
       void invalidateAfterHrMutation(qc);
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not end the interview.')),

@@ -454,7 +454,7 @@ function HumanInterviewSection({
           onClick={() => setAssigning((v) => !v)}
           disabled={!assigning && (roundsLoading || assignBlocked !== null)}
         >
-          {assigning ? 'Close' : 'Assign interviewers'}
+          {assigning ? 'Cancel' : 'Assign interviewers'}
         </Button>
       </div>
       {assignBlocked ? (
@@ -823,7 +823,7 @@ export default function CandidateDrawer({
                     aria-hidden="true"
                   />
                   <span>
-                    Their CV reads{' '}
+                    Their resume reads{' '}
                     <span className="text-foreground">{candidate.parsed_full_name}</span>. The name
                     above is what
                     {candidate.full_name_source === 'candidate' ? ' they typed' : ' is on file'}.

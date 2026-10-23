@@ -28,7 +28,6 @@ import {
 import { toast } from '@/lib/toast';
 import AuthLayout, { FormError, PasswordField, PasswordStrength, StatusPanel } from '@/components/layout/AuthLayout';
 import { TEXT_LINK_CLASS } from '@/components/layout/authStyles';
-import { Pill } from '@/design/components/primitives';
 import {
   AlertCircle,
   CheckCircle2,
@@ -38,6 +37,7 @@ import {
 } from '@/design/components/icons';
 import { useFragmentToken } from '@/hooks/useFragmentToken';
 import { useTranslation } from 'react-i18next';
+import { Button } from '@/components/ui/button';
 
 type Phase = 'checking' | 'ready' | 'expired' | 'done';
 
@@ -160,9 +160,9 @@ export default function ActivateAccount() {
               : t('public.activate.doneNewTitle')
           }
           actions={
-            <Pill className="min-h-11 w-full py-3" onClick={() => void navigate('/login', { replace: true })}>
+            <Button size="lg" className="w-full" onClick={() => void navigate('/login', { replace: true })}>
               {t('public.activate.signIn')}
-            </Pill>
+            </Button>
           }
         >
           {linked === 'existing' ? (
@@ -239,14 +239,15 @@ export default function ActivateAccount() {
 
         <FormError id="ac-error">{error}</FormError>
 
-        <Pill
+        <Button
           type="submit"
           disabled={mutation.isPending}
           aria-busy={mutation.isPending}
-          className="min-h-11 w-full py-3"
+          size="lg"
+          className="w-full"
         >
           {mutation.isPending ? t('public.activate.settingUp') : t('public.activate.create')}
-        </Pill>
+        </Button>
       </form>
 
       <p className="mt-6 text-center">

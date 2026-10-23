@@ -10,9 +10,10 @@ import { Trans, useTranslation } from 'react-i18next';
 import { forgotPassword } from '@/api/auth';
 import AuthLayout, { FormError, StatusPanel } from '@/components/layout/AuthLayout';
 import { TEXT_LINK_CLASS } from '@/components/layout/authStyles';
-import { Field, Pill } from '@/design/components/primitives';
+import { Field } from '@/design/components/primitives';
 import { Mail, CheckCircle2, ArrowLeft } from '@/design/components/icons';
 import { useCandidateError } from '@/lib/candidateCopy';
+import { Button } from '@/components/ui/button';
 
 export default function ForgotPassword() {
   const { t } = useTranslation();
@@ -85,9 +86,9 @@ export default function ForgotPassword() {
 
         <FormError id="fp-error">{error}</FormError>
 
-        <Pill type="submit" disabled={mutation.isPending} aria-busy={mutation.isPending} className="min-h-11 w-full py-3">
+        <Button type="submit" disabled={mutation.isPending} aria-busy={mutation.isPending} size="lg" className="w-full">
           {mutation.isPending ? t('auth.sending') : t('auth.sendResetLink')}
-        </Pill>
+        </Button>
       </form>
 
       <p className="mt-6 text-center text-[13px] text-muted-foreground">

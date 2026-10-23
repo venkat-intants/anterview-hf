@@ -1109,7 +1109,7 @@ function LoopCard({
             aria-expanded={addingSession}
             className={linkBtnCls}
           >
-            {addingSession ? 'Close' : 'Add interview'}
+            {addingSession ? 'Cancel' : 'Add interview'}
           </button>
           {addingSession ? (
             <AddSessionForm
@@ -1241,7 +1241,7 @@ export default function InterviewLoopsSection({
             aria-expanded={creating}
             className={linkBtnCls}
           >
-            {creating ? 'Close' : 'New loop'}
+            {creating ? 'Cancel' : 'New loop'}
           </button>
         ) : null}
       </div>

@@ -180,7 +180,7 @@ describe('ProposalCard - commit gate', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Send invite' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/Could not confirm whether this went through\. Check Interviews/);
+    expect(alert).toHaveTextContent(/Could not confirm whether this went through\. Check AI interviews/);
     expect(alert).not.toHaveTextContent(/Failed to fetch/);
   });
 

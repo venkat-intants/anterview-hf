@@ -328,7 +328,7 @@ describe('Rediscovery - the why panel', () => {
     await user.click(await screen.findByRole('button', { name: /why this match/i }));
     expect(
       await screen.findByText(
-        /Their CV reads as similar to what you searched for\. That is a similarity score, not a stated fact/,
+        /Their resume reads as similar to what you searched for\. That is a similarity score, not a stated fact/,
       ),
     ).toBeInTheDocument();
   });

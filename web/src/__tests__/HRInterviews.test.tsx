@@ -704,9 +704,9 @@ describe('HRInterviews - time, window and expiry (IV-H1, IV-M1, IV-M10)', () => 
     );
     expect(revokeInvite).not.toHaveBeenCalled();
     await waitFor(() =>
-      expect(toastSuccess).toHaveBeenCalledWith(
-        'Interview ended for Bhavya Nair. You can now send a new link.',
-      ),
+      expect(toastSuccess).toHaveBeenCalledWith('Interview ended for Bhavya Nair', {
+        description: 'You can now send a new link.',
+      }),
     );
   });
 

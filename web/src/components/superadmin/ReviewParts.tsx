@@ -31,6 +31,7 @@ import {
 import { ApprovalTrack, type ApprovalStep } from '@/design/components/approval-track';
 import { Card } from '@/design/components/card';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/formatters';
 
 /* ───────────────────────────────  Queue  ─────────────────────────────── */
 
@@ -242,7 +243,7 @@ interface ReviewTrackProps {
 }
 
 function dateOnly(iso: string | null | undefined): string | undefined {
-  return iso ? new Date(iso).toLocaleDateString() : undefined;
+  return iso ? formatDate(iso) : undefined;
 }
 
 /**

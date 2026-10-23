@@ -1,5 +1,5 @@
 // Applicants — HR resume screening dashboard.
-// Layout: design screen Applicants.tsx (GlassCard table, SegTabs, Avatar, StatusTag, Pill).
+// Layout: design screen Applicants.tsx (GlassCard table, SegTabs, Avatar, StatusTag, Button).
 // Behavior: all live logic — listApplicants query, bulk PDF upload into one opening
 //           (stored, then read and scored in the background, with a progress panel
 //           that lists every failed file), shortlist/reject/rescore mutations,
@@ -130,7 +130,7 @@ type RecInfo = { label: string; tone: TagTone };
  */
 function atsInfo(a: { ats_recommendation: string | null; pending_enrichment?: boolean }) {
   if (a.pending_enrichment) {
-    return { label: 'Reading CV…', tone: 'electric' as const };
+    return { label: 'Reading resume…', tone: 'electric' as const };
   }
   return recInfo(a.ats_recommendation);
 }
@@ -583,8 +583,8 @@ function ApplicantDrawer({
                             <ViewCvButton
                               applicantId={a.id}
                               enrolmentId={app.enrolment_id}
-                              label="CV"
-                              ariaLabel={`View the CV sent for ${app.opening_title ?? 'this opening'}`}
+                              label="Resume"
+                              ariaLabel={`View the resume sent for ${app.opening_title ?? 'this opening'}`}
                             />
                           ) : null}
                           <ShortlistAction
@@ -1180,7 +1180,7 @@ export default function Applicants() {
       } else if (res.remaining > 0) {
         toast.error('Some resumes could not be indexed - try again shortly.');
       } else {
-        toast.success('All resumes are now searchable.');
+        toast.success('All resumes are now searchable');
       }
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not index the resumes.')),

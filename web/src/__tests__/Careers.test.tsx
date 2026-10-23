@@ -122,17 +122,17 @@ describe('Careers board', () => {
   });
 
   it('shows a published salary, grouped for the reader', async () => {
-    // Formatted with toLocaleString, so the grouping follows the VIEWER —
-    // 18,00,000 for an Indian candidate, 1,800,000 elsewhere. That is the
-    // behaviour we want on a candidate-facing page, so the expectation is
-    // computed the same way rather than pinning one locale into the test.
+    // Grouped for the UI language through lib/formatters, not the browser's
+    // own locale: English renders en-IN (18,00,000) on every machine. The
+    // expectation is pinned, so a CI runner in another locale cannot pass or
+    // fail it differently from a developer's laptop.
     getCareersBoard.mockResolvedValue(
       board({
         items: [job({ salary_min: 1_800_000, salary_max: 3_000_000, salary_currency: 'INR' })],
       }),
     );
     renderBoard();
-    const expected = `INR ${(1_800_000).toLocaleString()} - INR ${(3_000_000).toLocaleString()}`;
+    const expected = 'INR 18,00,000 - INR 30,00,000';
     expect(await screen.findByText(expected)).toBeInTheDocument();
   });
 
@@ -261,13 +261,13 @@ describe('Careers board', () => {
   it('distinguishes "nothing matched" from "nothing open"', async () => {
     getCareersBoard.mockResolvedValue(board({ total: 0, items: [] }));
     renderBoard('/careers/acme-test?department=Design');
-    expect(await screen.findByText('No roles match those filters')).toBeInTheDocument();
+    expect(await screen.findByText('No jobs match those filters')).toBeInTheDocument();
   });
 
   it('says a company is simply not hiring when it has no filters applied', async () => {
     getCareersBoard.mockResolvedValue(board({ total: 0, items: [] }));
     renderBoard();
-    expect(await screen.findByText('No open roles right now')).toBeInTheDocument();
+    expect(await screen.findByText('No open jobs right now')).toBeInTheDocument();
     expect(screen.getByText(/not advertising anything/)).toBeInTheDocument();
   });
 
@@ -280,7 +280,7 @@ describe('Careers board', () => {
   it('says something different when the server actually failed', async () => {
     getCareersBoard.mockRejectedValue(new ApiError('boom', 500));
     renderBoard();
-    expect(await screen.findByText('Could not load these roles')).toBeInTheDocument();
+    expect(await screen.findByText('Could not load these jobs')).toBeInTheDocument();
   });
 
   it('renders an opening that has no advert at all', async () => {

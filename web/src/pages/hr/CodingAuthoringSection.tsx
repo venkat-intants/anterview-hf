@@ -608,7 +608,7 @@ export default function CodingAuthoringSection({ examId, sectionId, locked }: Pr
 
                 {generateMut.isError ? (
                   <GenerationError
-                    failure={toGenerationFailure(generateMut.error, 'AI generation failed.')}
+                    failure={toGenerationFailure(generateMut.error, 'Could not generate a coding question.')}
                     onRetry={() => generateMut.mutate()}
                     retryDisabled={generateMut.isPending || !aiTopic.trim() || langs.length === 0}
                   />

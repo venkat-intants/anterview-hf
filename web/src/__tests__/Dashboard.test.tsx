@@ -298,7 +298,7 @@ describe('Dashboard page', () => {
     renderDashboard();
     const link = await screen.findByRole('link', { name: 'Set target role' });
     expect(link).toHaveAttribute('href', '/onboarding');
-    expect(screen.queryByRole('link', { name: /personalize/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /personalise/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /start a mock interview/i })).not.toBeInTheDocument();
   });
 
@@ -544,7 +544,7 @@ describe('Dashboard - profile load failure', () => {
     renderDashboard();
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Failed to load profile');
+    expect(alert).toHaveTextContent('Could not load your profile.');
     expect(alert).not.toHaveTextContent('upstream 502');
 
     await userEvent.click(within(alert).getByRole('button', { name: 'Try again' }));

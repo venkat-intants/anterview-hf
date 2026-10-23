@@ -804,7 +804,7 @@ export default function AccommodationsSection({
           onClick={() => setRecording((v) => !v)}
           className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
-          {recording ? 'Close' : 'Record adjustment'}
+          {recording ? 'Cancel' : 'Record adjustment'}
         </button>
       </div>
 

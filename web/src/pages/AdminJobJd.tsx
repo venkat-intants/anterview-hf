@@ -2,7 +2,7 @@
 // Route: /admin/jd (gated by AdminRoute).
 //
 // Layout: reproduced from design screen (AdminJobJd.tsx).
-//   • Page header (title + New role Pill)
+//   • Page header (title + New role button)
 //   • Functional upload card (live: getJobs + uploadJd + FileUploadZone)
 //   (The static design-mock "JD library" grid was removed — QA ANTHIRE-011: it showed
 //   made-up roles as Published on a live admin page.)
@@ -94,8 +94,8 @@ export default function AdminJobJd() {
     <Page width="default">
       {/* ── Page header ──────────────────────────────────────────────────── */}
       <PageHeader
-        title="Practice-interview job descriptions"
-        description="Attach a job description to a role in the platform-wide practice catalogue that candidates use for practice interviews. A company's own openings are not managed here - each company's HR adds the job description on the opening itself (Openings → the opening → Role and posting)."
+        title="Practice JDs"
+        description="Attach a job description to a role in the platform-wide practice catalogue that candidates use for practice interviews. A company's own openings are not managed here - each company's HR adds the job description on the opening itself (Openings → the opening → Opening and job description)."
       />
 
       {/* ══════════════════════════════════════════════════════════════════════

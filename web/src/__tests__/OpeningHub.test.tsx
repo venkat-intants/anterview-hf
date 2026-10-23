@@ -324,18 +324,18 @@ describe('unsaved typing survives leaving a stage or the tab', () => {
 
   it('keeps stage 1 typing across a different stage', async () => {
     renderHub('?tab=setup');
-    await stageBtn(/Role and posting/);
+    await stageBtn(/Opening and job description/);
     const hires = await screen.findByLabelText<HTMLInputElement>('Hires wanted');
     await userEvent.clear(hires);
     await userEvent.type(hires, '9');
     await userEvent.click(await stageBtn(/Hiring process/));
-    await userEvent.click(await stageBtn(/Role and posting/));
+    await userEvent.click(await stageBtn(/Opening and job description/));
     expect((await screen.findByLabelText<HTMLInputElement>('Hires wanted')).value).toBe('9');
   });
 
   it('keeps stage 1 typing across a trip to the Pipeline tab', async () => {
     renderHub('?tab=setup');
-    await stageBtn(/Role and posting/);
+    await stageBtn(/Opening and job description/);
     const hires = await screen.findByLabelText<HTMLInputElement>('Hires wanted');
     await userEvent.clear(hires);
     await userEvent.type(hires, '9');
@@ -347,7 +347,7 @@ describe('unsaved typing survives leaving a stage or the tab', () => {
 
   it('does not mount a stage nobody has opened', async () => {
     renderHub('?tab=setup');
-    await stageBtn(/Role and posting/);
+    await stageBtn(/Opening and job description/);
     await screen.findByLabelText('Owner');
     expect(screen.queryByTestId('stage-panel-approval')).toBeNull();
     expect(screen.queryByTestId('stage-panel-documents')).toBeNull();
@@ -378,7 +378,7 @@ describe('the rail tells the truth', () => {
     await waitFor(() => expect(within(rail).getByText(/JD v2 published/)).toBeTruthy());
     const items = within(rail).getAllByRole('listitem').filter((li) => li.querySelector('button'));
     const byTitle = (t: string) => items.find((li) => li.textContent?.includes(t));
-    expect(byTitle('Role and posting')?.textContent).toMatch(/Done/);
+    expect(byTitle('Opening and job description')?.textContent).toMatch(/Done/);
     expect(byTitle('Hiring process')?.textContent).toMatch(/Done/);
     expect(byTitle('Budget and approval')?.textContent).toMatch(/Done/);
     // preboarding is never ticked
@@ -504,8 +504,8 @@ describe('inventory: every control that existed before is reachable, by role and
 
   it('stage 1: four sub-steps, one panel in view at a time, each reachable directly', async () => {
     renderHub('?tab=setup');
-    await stageButton(/Role and posting/);
-    const steps = await screen.findByRole('navigation', { name: 'Role and posting steps' });
+    await stageButton(/Opening and job description/);
+    const steps = await screen.findByRole('navigation', { name: 'Opening and job description steps' });
     const stepBtn = (name: RegExp) => within(steps).getByRole('button', { name });
 
     // 1 Opening details — the first, so it is the one in view.
@@ -514,12 +514,12 @@ describe('inventory: every control that existed before is reachable, by role and
     expect(screen.getByLabelText('Hires wanted')).toBeTruthy();
     expect(screen.getByLabelText('Closes on')).toBeTruthy();
     // ...and the others are not on screen yet.
-    expect(screen.queryByRole('heading', { name: 'The posting' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Public details' })).toBeNull();
 
-    // 2 Posting, reached directly.
-    await userEvent.click(stepBtn(/Posting/));
-    expect(await screen.findByRole('heading', { name: 'The posting' })).toBeTruthy();
-    expect(stepBtn(/Posting/).getAttribute('aria-current')).toBe('step');
+    // 2 Public details, reached directly.
+    await userEvent.click(stepBtn(/Public details/));
+    expect(await screen.findByRole('heading', { name: 'Public details' })).toBeTruthy();
+    expect(stepBtn(/Public details/).getAttribute('aria-current')).toBe('step');
     // The first panel is kept (hidden), so nothing typed there is lost.
     expect(screen.getByLabelText('Owner').closest('[hidden]')).not.toBeNull();
 
@@ -534,12 +534,12 @@ describe('inventory: every control that existed before is reachable, by role and
 
   it('stage 1: Next and Back walk the sub-steps in order', async () => {
     renderHub('?tab=setup');
-    await stageButton(/Role and posting/);
+    await stageButton(/Opening and job description/);
     await screen.findByLabelText('Owner');
     expect(screen.queryByRole('button', { name: /^Back:/ })).toBeNull();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Next: Posting' }));
-    expect(await screen.findByRole('heading', { name: 'The posting' })).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Next: Public details' }));
+    expect(await screen.findByRole('heading', { name: 'Public details' })).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Next: Job description' }));
     expect(await screen.findByRole('heading', { name: 'Job description' })).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Next: Application questions' }));
@@ -552,19 +552,19 @@ describe('inventory: every control that existed before is reachable, by role and
 
   it('stage 1: what was typed in a sub-step survives going to another and back', async () => {
     renderHub('?tab=setup');
-    await stageButton(/Role and posting/);
+    await stageButton(/Opening and job description/);
     const hires = await screen.findByLabelText('Hires wanted');
     await userEvent.clear(hires);
     await userEvent.type(hires, '7');
-    await userEvent.click(screen.getByRole('button', { name: 'Next: Posting' }));
-    await screen.findByRole('heading', { name: 'The posting' });
+    await userEvent.click(screen.getByRole('button', { name: 'Next: Public details' }));
+    await screen.findByRole('heading', { name: 'Public details' });
     await userEvent.click(screen.getByRole('button', { name: 'Back: Opening details' }));
     expect((await screen.findByLabelText<HTMLInputElement>('Hires wanted')).value).toBe('7');
   });
 
   it('stage 1: a sub-step nobody has opened has not asked the server for anything', async () => {
     renderHub('?tab=setup');
-    await stageButton(/Role and posting/);
+    await stageButton(/Opening and job description/);
     await screen.findByLabelText('Owner');
     await new Promise((r) => setTimeout(r, 30));
     expect(m.listQuestions).not.toHaveBeenCalled();
@@ -648,7 +648,7 @@ describe('inventory: every control that existed before is reachable, by role and
 
   it('Pipeline hands off to Setup for the apply switch', async () => {
     renderHub('?tab=pipeline');
-    await userEvent.click(await screen.findByRole('button', { name: 'Open Setup' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Open setup' }));
     expect((await tab('Setup')).getAttribute('aria-selected')).toBe('true');
     expect(await screen.findByRole('switch', { name: 'Accept public applications' })).toBeTruthy();
   });

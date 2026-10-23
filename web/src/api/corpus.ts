@@ -109,9 +109,9 @@ export const CORPUS_FAILURE_SENTENCES: Record<string, string> = {
   too_many_chunks: 'This document is longer than we index (about 400,000 characters). Split it.',
   quota_exceeded: 'Your library is full (200 documents). Delete one first.',
   // Only ever on a row the reconciler has parked, which nothing indexes again
-  // without Retry, so the sentence beside that button says so (audit PL-F9).
+  // without Try again, so the sentence beside that button says so (audit PL-F9).
   embedding_unavailable:
-    'Indexing failed because search was unavailable. The file is stored; press Retry to index it.',
+    'Could not index this file because search was unavailable. The file is stored; press Try again to index it.',
 };
 
 /** The sentence for a row whose `failure_code` is set. Falls back to a

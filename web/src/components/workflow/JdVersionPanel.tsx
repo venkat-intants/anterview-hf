@@ -108,7 +108,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
       setDraftText(null);
       setNote('');
       refresh();
-      toast.success('Draft saved. Candidates still see the published version.');
+      toast.success('Draft saved', { description: 'Candidates still see the published version.' });
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not save the draft.')),
   });
@@ -127,7 +127,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
       setDraftText(null);
       setNote('');
       refresh();
-      toast.success(`Version ${v.version} is now the published job description.`);
+      toast.success(`Version ${v.version} is now the published job description`);
     },
     onError: (e: unknown) => {
       refresh();
@@ -140,7 +140,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
     mutationFn: (versionId: string) => publishJdVersion(requisition.id, versionId),
     onSuccess: (v) => {
       refresh();
-      toast.success(`Version ${v.version} is now the published job description.`);
+      toast.success(`Version ${v.version} is now the published job description`);
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not restore that version.')),
   });
@@ -150,7 +150,7 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
     onSuccess: () => {
       setDraftText(null);
       refresh();
-      toast.success('Draft discarded. The published version is unchanged.');
+      toast.success('Draft discarded', { description: 'The published version is unchanged.' });
     },
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not discard the draft.')),
   });

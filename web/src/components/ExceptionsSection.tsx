@@ -242,7 +242,7 @@ export default function ExceptionsSection({ enrolmentId }: { enrolmentId: string
           onClick={() => setRaising((v) => !v)}
           className="text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
-          {raising ? 'Close' : 'Raise exception'}
+          {raising ? 'Cancel' : 'Raise exception'}
         </button>
       </div>
       <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">

@@ -198,7 +198,7 @@ describe('Profile - rendering', () => {
     getMe.mockRejectedValueOnce(new Error('boom'));
     renderProfile();
 
-    expect(await screen.findByRole('alert')).toHaveTextContent(/couldn't load your profile/i);
+    expect(await screen.findByRole('alert')).toHaveTextContent(/could not load your profile/i);
     await userEvent.setup().click(screen.getByRole('button', { name: /try again/i }));
     expect(await screen.findByRole('heading', { name: 'Bhavya Nair' })).toBeInTheDocument();
   });

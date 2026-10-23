@@ -153,7 +153,7 @@ function sub(state: StepState): SubstepState {
 /* ── Stage 1 ────────────────────────────────────────────────────────────── */
 
 function roleStage(i: OpeningSetupInput): OpeningStage {
-  const base = { key: 'role', title: 'Role and posting' } as const;
+  const base = { key: 'role', title: 'Opening and job description' } as const;
   if (!i.jd) {
     return { ...base, state: 'todo', fact: 'Checking the job description…', loading: true };
   }

@@ -96,7 +96,7 @@ describe('AdminJobJd', () => {
   it('renders the page and loads the job list', async () => {
     renderPage();
 
-    expect(screen.getByRole('heading', { name: /practice-interview job descriptions/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^practice jds$/i })).toBeInTheDocument();
     await waitFor(() => expect(getJobs).toHaveBeenCalled());
     expect(await screen.findByLabelText(/select a practice role/i)).toBeInTheDocument();
   });
@@ -171,7 +171,7 @@ describe('AdminJobJd', () => {
     });
     renderPage();
 
-    expect(screen.getByRole('heading', { name: /practice-interview job descriptions/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /^practice jds$/i })).toBeInTheDocument();
     await waitFor(() => expect(getJobs).not.toHaveBeenCalled());
   });
 });

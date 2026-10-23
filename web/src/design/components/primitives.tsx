@@ -1,11 +1,13 @@
 import {
   forwardRef, memo, useEffect, useId, useRef, useState,
-  type AriaRole, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes,
+  type AriaRole, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes,
 } from 'react';
 import { animate, motion, useInView, useMotionValue } from 'framer-motion';
 import { cn } from '../lib/cn';
 import { useAccentColor } from '@/lib/useAccentColor';
 import { SelectControl } from '@/components/ui/select-control';
+import { FormField } from '@/components/ui/form-field';
+import { CONTROL_HEIGHT } from '@/components/ui/control-styles';
 
 /* ─────────────────────────  AnimatedNumber  ───────────────────────── */
 
@@ -195,42 +197,6 @@ export function WaveBars({ active = true, bars = 28, color = 'var(--accent)', cl
   );
 }
 
-/* ─────────────────────────  Pill (button)  ───────────────────────── */
-
-type PillVariant = 'primary' | 'ghost' | 'outline' | 'accent' | 'danger';
-
-interface PillProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: PillVariant;
-  children: ReactNode;
-}
-
-const PILL_STYLES: Record<PillVariant, string> = {
-  primary: 'bg-primary text-primary-foreground hover:bg-primary/90',
-  ghost: 'bg-[var(--ui-inset)] text-foreground border border-transparent hover:bg-[var(--ui-inset-strong)]',
-  outline: 'bg-card text-foreground border border-input hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)]',
-  accent: 'bg-[var(--ui-info-wash)] text-[var(--ui-info)] border border-transparent hover:bg-[rgba(var(--accent-rgb),0.16)]',
-  danger: 'bg-[var(--ui-danger-wash)] text-[var(--ui-danger)] border border-[var(--ui-danger)]/35 hover:brightness-95',
-};
-
-export const Pill = forwardRef<HTMLButtonElement, PillProps>(
-  ({ variant = 'primary', className, children, ...rest }, ref) => (
-    <button
-      ref={ref}
-      className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-[9999px] px-5 py-2.5 text-[14px] font-semibold',
-        'transition-[background-color,border-color,transform] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-        'disabled:cursor-not-allowed disabled:opacity-50',
-        PILL_STYLES[variant],
-        className,
-      )}
-      {...rest}
-    >
-      {children}
-    </button>
-  ),
-);
-Pill.displayName = 'Pill';
-
 /* ─────────────────────────  Marquee  ───────────────────────── */
 
 interface MarqueeProps {
@@ -317,21 +283,17 @@ interface FieldProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: string;
 }
 
+/** A labelled text input with an optional leading icon, built on FormField.
+ *  The box is the shared control height (40px), so it lines up with Input,
+ *  SelectControl and Button. */
 export const Field = forwardRef<HTMLInputElement, FieldProps>(
-  ({ label, icon, hint, error, id, className, 'aria-describedby': describedBy, ...rest }, ref) => {
-    const autoId = useId();
-    const fieldId = id ?? autoId;
-    const hintId = `${fieldId}-hint`;
-    const errorId = `${fieldId}-error`;
-    // A caller's own aria-describedby is kept and ours appended to it.
-    const describedIds =
-      [describedBy, error ? errorId : null, hint ? hintId : null].filter(Boolean).join(' ') || undefined;
-    return (
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={fieldId} className="text-[13px] font-semibold text-foreground">{label}</label>
+  ({ label, icon, hint, error, id, className, 'aria-describedby': describedBy, ...rest }, ref) => (
+    <FormField label={label} hint={hint} error={error} id={id} describedBy={describedBy}>
+      {(control) => (
         <div
           className={cn(
-            'flex items-center gap-2.5 rounded-[12px] border bg-card px-3.5 py-3 transition-[border-color,box-shadow] focus-within:shadow-[0_0_0_3px_rgba(var(--accent-rgb),0.16)]',
+            'flex items-center gap-2.5 rounded-[10px] border bg-card px-3 transition-[border-color,box-shadow] focus-within:shadow-[0_0_0_3px_rgba(var(--accent-rgb),0.16)]',
+            CONTROL_HEIGHT.md,
             error
               ? 'border-[var(--ui-danger)]'
               : 'border-input hover:border-[var(--ui-line-strong)] focus-within:border-[var(--accent)]',
@@ -340,20 +302,14 @@ export const Field = forwardRef<HTMLInputElement, FieldProps>(
           {icon ? <span className="text-[var(--ui-faint)]">{icon}</span> : null}
           <input
             ref={ref}
-            id={fieldId}
-            aria-invalid={error ? true : undefined}
-            aria-describedby={describedIds}
+            {...control}
             className={cn('w-full min-w-0 bg-transparent text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none', className)}
             {...rest}
           />
         </div>
-        {error ? (
-          <span id={errorId} role="alert" className="text-[12.5px] font-medium text-[var(--ui-danger)]">{error}</span>
-        ) : null}
-        {hint ? <span id={hintId} className="text-[12.5px] text-muted-foreground">{hint}</span> : null}
-      </div>
-    );
-  },
+      )}
+    </FormField>
+  ),
 );
 Field.displayName = 'Field';
 
@@ -368,38 +324,26 @@ interface SelectFieldProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>,
   leadingIcon?: ReactNode;
 }
 
-/** The select counterpart of <Field>: a label, the native dropdown (styled by the
- *  base layer in index.css, so it matches Field's height and focus ring), and the
- *  hint/error wiring. Children are the <option>s. */
+/** The select counterpart of <Field>: FormField around the native dropdown
+ *  (styled by the base layer in index.css, so it matches Field's height and
+ *  focus ring). Children are the <option>s. */
 export const SelectField = forwardRef<HTMLSelectElement, SelectFieldProps>(
-  ({ label, hint, error, id, size, leadingIcon, children, 'aria-describedby': describedBy, ...rest }, ref) => {
-    const autoId = useId();
-    const fieldId = id ?? autoId;
-    const hintId = `${fieldId}-hint`;
-    const errorId = `${fieldId}-error`;
-    const describedIds =
-      [describedBy, error ? errorId : null, hint ? hintId : null].filter(Boolean).join(' ') || undefined;
-    return (
-      <div className="flex flex-col gap-1.5">
-        <label htmlFor={fieldId} className="text-[13px] font-semibold text-foreground">{label}</label>
+  ({ label, hint, error, id, size, leadingIcon, children, 'aria-describedby': describedBy, ...rest }, ref) => (
+    <FormField label={label} hint={hint} error={error} id={id} describedBy={describedBy}>
+      {(control) => (
         <SelectControl
           ref={ref}
-          id={fieldId}
+          {...control}
           size={size}
           invalid={Boolean(error)}
           leadingIcon={leadingIcon}
-          aria-describedby={describedIds}
           {...rest}
         >
           {children}
         </SelectControl>
-        {error ? (
-          <span id={errorId} role="alert" className="text-[12.5px] font-medium text-[var(--ui-danger)]">{error}</span>
-        ) : null}
-        {hint ? <span id={hintId} className="text-[12.5px] text-muted-foreground">{hint}</span> : null}
-      </div>
-    );
-  },
+      )}
+    </FormField>
+  ),
 );
 SelectField.displayName = 'SelectField';
 

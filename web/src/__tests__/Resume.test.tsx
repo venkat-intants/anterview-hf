@@ -102,7 +102,7 @@ describe('Resume page', () => {
   it('renders the page heading', async () => {
     renderResume();
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /resume manager/i })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /^resume$/i })).toBeInTheDocument();
     });
   });
 

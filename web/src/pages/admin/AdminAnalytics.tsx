@@ -101,7 +101,7 @@ function ByRoleChart({
           contentStyle={TOOLTIP_STYLE}
           formatter={(value, name) => {
             if (name === 'interview_count') return [value ?? 0, 'Interviews'];
-            return [`${Number(value ?? 0)} / 10`, 'Avg Score'];
+            return [`${Number(value ?? 0)} / 10`, 'Average score'];
           }}
         />
         <Bar dataKey="interview_count" radius={[0, 4, 4, 0]}>
@@ -132,7 +132,7 @@ function ByRoleScoreChart({
     name: d.job_title.length > 18 ? `${d.job_title.slice(0, 16)}…` : d.job_title,
     Communication: d.avg_communication ?? 0,
     Technical: d.avg_technical ?? 0,
-    'Problem Solving': d.avg_problem_solving ?? 0,
+    'Problem solving': d.avg_problem_solving ?? 0,
     Confidence: d.avg_confidence ?? 0,
   }));
 
@@ -150,7 +150,7 @@ function ByRoleScoreChart({
         <Legend wrapperStyle={{ fontSize: 12, color: AXIS_STYLE.stroke }} />
         <Bar dataKey="Communication" fill={PALETTE[0]} fillOpacity={0.8} radius={[2, 2, 0, 0]} />
         <Bar dataKey="Technical" fill={PALETTE[1]} fillOpacity={0.8} radius={[2, 2, 0, 0]} />
-        <Bar dataKey="Problem Solving" fill={PALETTE[2]} fillOpacity={0.8} radius={[2, 2, 0, 0]} />
+        <Bar dataKey="Problem solving" fill={PALETTE[2]} fillOpacity={0.8} radius={[2, 2, 0, 0]} />
         <Bar dataKey="Confidence" fill={PALETTE[3]} fillOpacity={0.8} radius={[2, 2, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>
@@ -281,7 +281,7 @@ function DistributionSection({
           <strong className="font-semibold text-foreground">{formatScore('interview', avgTechnical)}</strong>
         </span>
         <span>
-          Problem Solving:{' '}
+          Problem solving:{' '}
           <strong className="font-semibold text-foreground">{formatScore('interview', avgProblemSolving)}</strong>
         </span>
         <span>
@@ -345,7 +345,7 @@ export default function AdminAnalytics() {
       {/* Row 1: by-role count + by-role axis-score breakdown */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <SectionCard
-          title="Interviews by Role"
+          title="Interviews by role"
           description="How many interviews each role has had, across all companies."
         >
           {roleLoading ? (
@@ -360,7 +360,7 @@ export default function AdminAnalytics() {
         </SectionCard>
 
         <SectionCard
-          title="Avg Axis Scores by Role"
+          title="Average axis scores by role"
           description="Average communication, technical, problem-solving and confidence score for each role."
         >
           {roleLoading ? (
@@ -377,7 +377,7 @@ export default function AdminAnalytics() {
 
       {/* Row 2: by-language pie + score distribution */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        <SectionCard title="Language Mix" description="Share of interviews by interview language.">
+        <SectionCard title="Language mix" description="Share of interviews by interview language.">
           {langLoading ? (
             <ChartSkeleton height={180} />
           ) : langError ? (
@@ -390,7 +390,7 @@ export default function AdminAnalytics() {
         </SectionCard>
 
         <SectionCard
-          title="Score Distribution"
+          title="Score distribution"
           description="How composite scores spread across score bands, with the average for each axis."
           className="lg:col-span-2"
         >

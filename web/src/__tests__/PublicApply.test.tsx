@@ -117,7 +117,7 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>, file = pdf()):
   await user.type(screen.getByLabelText('Email'), 'priya@example.com');
   await nextStep(user); // -> Experience
   await nextStep(user); // -> Your CV (everything on Experience is optional)
-  await user.upload(screen.getByLabelText('Your CV (PDF)'), file);
+  await user.upload(screen.getByLabelText('Your resume (PDF)'), file);
 }
 
 /** Walk all the way to the review step, still without consenting. */
@@ -409,7 +409,7 @@ describe('PublicApply - the file', () => {
     await screen.findByText('Backend Engineer');
 
     await goToCvStep(user);
-    await user.upload(screen.getByLabelText('Your CV (PDF)'), pdf('big.pdf', 6 * 1024 * 1024));
+    await user.upload(screen.getByLabelText('Your resume (PDF)'), pdf('big.pdf', 6 * 1024 * 1024));
 
     expect(screen.getByText(/over 5 MB/)).toBeTruthy();
     // Used to assert the submit button stayed disabled; submit is two steps

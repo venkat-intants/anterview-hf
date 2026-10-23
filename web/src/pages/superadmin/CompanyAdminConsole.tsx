@@ -60,7 +60,7 @@ import { listOfferApprovals } from '@/api/offers';
 import { listAdminQuestionReviews } from '@/api/questionBanks';
 
 /** The account status every staff roster shows, worded once. */
-const PENDING_FIRST_LOGIN = 'Pending first login';
+const PENDING_FIRST_LOGIN = 'Pending first sign-in';
 
 /**
  * One roster (HR managers, or interviewers) — the list plus its create dialog.
@@ -451,8 +451,8 @@ export default function CompanyAdminConsole() {
         heading="HR managers"
         singular="HR manager"
         createTitle="Create an HR manager"
-        createBlurb={(name) => `They log in, reset the password, then run hiring for ${name}.`}
-        addLabel="Add HR"
+        createBlurb={(name) => `They sign in, reset the password, then run hiring for ${name}.`}
+        addLabel="Create HR manager"
         openLabel="New HR manager"
         showOpenButton={false}
         emptyText="No HR managers yet - add your first one above."
@@ -478,7 +478,7 @@ export default function CompanyAdminConsole() {
         singular="Interviewer"
         createTitle="Create an interviewer"
         createBlurb={(name) => `They see only the interviews assigned to them at ${name}.`}
-        addLabel="Add interviewer"
+        addLabel="Create interviewer"
         openLabel="New interviewer"
         showOpenButton
         emptyText="No interviewers yet - add your first one above."

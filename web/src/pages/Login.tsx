@@ -22,8 +22,9 @@ import { rememberReturnPath, safeReturnPath } from '@/lib/returnTo';
 import { ConsentDisclosure } from '@/components/layout/ConsentDisclosure';
 import type { AuthUser } from '@/types/auth';
 import AuthLayout, { FormError, PasswordField } from '@/components/layout/AuthLayout';
-import { Field, Pill } from '@/design/components/primitives';
+import { Field } from '@/design/components/primitives';
 import { Mail, Lock } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
 
 // ── Zod schema ────────────────────────────────────────────────────────────────
 // Built per render language so field errors are localised (audit CA-M17).
@@ -185,15 +186,16 @@ export default function Login() {
         </div>
 
         {/* Submit */}
-        <Pill
+        <Button
           type="submit"
           data-testid="login-submit"
           disabled={mutation.isPending}
           aria-busy={mutation.isPending}
-          className="min-h-11 w-full py-3"
+          size="lg"
+          className="w-full"
         >
           {mutation.isPending ? t('auth.signingIn') : t('auth.signIn')}
-        </Pill>
+        </Button>
       </form>
 
       {/* Divider */}

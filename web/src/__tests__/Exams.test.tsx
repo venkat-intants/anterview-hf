@@ -125,7 +125,7 @@ describe('Exams - list', () => {
     // skeletons, so awaiting it is what proves the EMPTY result was rendered
     // rather than the still-loading state.
     expect(await screen.findByText(/no exams yet/i)).toBeInTheDocument();
-    expect(screen.getByText(/create your first exam/i)).toBeInTheDocument();
+    expect(screen.getByText(/new exam/i)).toBeInTheDocument();
   });
 
   it('opens the editor for the exam whose Edit was pressed', async () => {
@@ -164,7 +164,7 @@ describe('Exams - closed and returned-to-draft exams (audit E17)', () => {
     renderExams();
 
     await screen.findByText('React Deep Dive');
-    await user.click(screen.getByRole('button', { name: /create new exam/i }));
+    await user.click(screen.getByRole('button', { name: /new exam/i }));
     await user.type(screen.getByLabelText(/exam title/i), 'Warm-up');
     await user.clear(screen.getByLabelText(/pass threshold percent/i));
     await user.type(screen.getByLabelText(/pass threshold percent/i), '0');
@@ -184,7 +184,7 @@ describe('Exams - create form', () => {
     await screen.findByText('React Deep Dive');
     expect(screen.queryByRole('heading', { name: /new exam/i })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /create new exam/i }));
+    await user.click(screen.getByRole('button', { name: /new exam/i }));
     expect(screen.getByRole('heading', { name: /new exam/i })).toBeInTheDocument();
   });
 
@@ -193,7 +193,7 @@ describe('Exams - create form', () => {
     renderExams();
 
     await screen.findByText('React Deep Dive');
-    await user.click(screen.getByRole('button', { name: /create new exam/i }));
+    await user.click(screen.getByRole('button', { name: /new exam/i }));
 
     await user.type(screen.getByLabelText(/exam title/i), 'SQL Screening');
     await user.clear(screen.getByLabelText(/pass threshold percent/i));
@@ -220,7 +220,7 @@ describe('Exams - create form', () => {
     renderExams();
 
     await screen.findByText('React Deep Dive');
-    await user.click(screen.getByRole('button', { name: /create new exam/i }));
+    await user.click(screen.getByRole('button', { name: /new exam/i }));
     await user.type(screen.getByLabelText(/exam title/i), 'Untimed');
     await user.click(screen.getByRole('button', { name: /^create exam$/i }));
 
@@ -236,7 +236,7 @@ describe('Exams - create form', () => {
     renderExams();
 
     await screen.findByText('React Deep Dive');
-    await user.click(screen.getByRole('button', { name: /create new exam/i }));
+    await user.click(screen.getByRole('button', { name: /new exam/i }));
     await user.type(screen.getByLabelText(/exam title/i), '   ');
     await user.click(screen.getByRole('button', { name: /^create exam$/i }));
 
@@ -249,7 +249,7 @@ describe('Exams - create form', () => {
     renderExams();
 
     await screen.findByText('React Deep Dive');
-    await user.click(screen.getByRole('button', { name: /create new exam/i }));
+    await user.click(screen.getByRole('button', { name: /new exam/i }));
     await user.type(screen.getByLabelText(/exam title/i), 'SQL Screening');
     await user.click(screen.getByRole('button', { name: /^create exam$/i }));
 
@@ -262,7 +262,7 @@ describe('Exams - create form', () => {
     renderExams();
 
     await screen.findByText('React Deep Dive');
-    await user.click(screen.getByRole('button', { name: /create new exam/i }));
+    await user.click(screen.getByRole('button', { name: /new exam/i }));
     await user.type(screen.getByLabelText(/exam title/i), 'SQL Screening');
     await user.click(screen.getByRole('button', { name: /^create exam$/i }));
 

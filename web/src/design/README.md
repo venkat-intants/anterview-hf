@@ -1,5 +1,10 @@
 # ADR-FE-001 — Which frontend design system to use for new work
 
+> Which word, button, form control, state and layout a screen uses is in
+> [`docs/UI-CONVENTIONS.md`](../../../docs/UI-CONVENTIONS.md). Since 2026-10-23
+> `Pill` is retired (use `Button`) and the `ui/` primitives nothing imported
+> (avatar, form, label, switch, tooltip, progress, separator) are deleted.
+
 **Status:** Accepted · **Date:** 2026-08-07 · **Closes the cheap half of** `FE-4`
 (`docs/code-review-2026-08-07-domains.md`)
 

@@ -7,7 +7,10 @@ import {
   formatDate,
   formatDateTime,
   formatMoney,
+  formatNumber,
   formatScore,
+  formatTime,
+  plural,
   uiLocale,
 } from '../lib/formatters';
 
@@ -90,6 +93,33 @@ describe('formatMoney', () => {
     expect(formatMoney(null, 'INR')).toBe(MISSING);
     expect(formatMoney('', 'INR')).toBe(MISSING);
     expect(formatMoney('lots', 'INR')).toBe(MISSING);
+  });
+});
+
+describe('formatNumber', () => {
+  it('groups for the locale and writes a missing value as the placeholder', () => {
+    expect(formatNumber(1234567)).toBe('12,34,567');
+    expect(formatNumber(1234567, 'en-GB')).toBe('1,234,567');
+    expect(formatNumber(null)).toBe(MISSING);
+    expect(formatNumber(Number.NaN)).toBe(MISSING);
+  });
+});
+
+describe('formatTime', () => {
+  it('writes a 24-hour clock time, with seconds only when asked', () => {
+    expect(formatTime(INSTANT)).toMatch(/^\d{2}:\d{2}$/);
+    expect(formatTime(INSTANT, { seconds: true })).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(formatTime(null)).toBe(MISSING);
+    expect(formatTime('not a date')).toBe(MISSING);
+  });
+});
+
+describe('plural', () => {
+  it('uses the singular for one and the plural otherwise, never "(s)"', () => {
+    expect(plural(1, 'candidate')).toBe('1 candidate');
+    expect(plural(0, 'candidate')).toBe('0 candidates');
+    expect(plural(3, 'entry', 'entries')).toBe('3 entries');
+    expect(plural(12400, 'resume')).toBe('12,400 resumes');
   });
 });
 

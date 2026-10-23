@@ -1,0 +1,7 @@
+components/agent/CopilotPanel.tsx
+components/hr/CodeSimilarityCompare.tsx
+components/hr/analytics/MembersDrillDown.tsx
+components/hr/analytics/MetricInfoDialog.tsx
+components/panel/CalibrationInfoDialog.tsx
+components/panel/CalibrationJudgementsDialog.tsx
+pages/hr/RequisitionDashboard.tsx

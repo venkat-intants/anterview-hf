@@ -101,7 +101,7 @@ describe('PostingEditor - the salary switch', () => {
     const user = userEvent.setup();
     renderEditor(requisition({ salary_min: 1_800_000, salary_max: 3_000_000 }));
     await user.click(screen.getByRole('checkbox', { name: /Show this range/ }));
-    await user.click(screen.getByRole('button', { name: 'Save posting' }));
+    await user.click(screen.getByRole('button', { name: 'Save public details' }));
 
     await waitFor(() =>
       expect(updateRequisition).toHaveBeenCalledWith(
@@ -125,7 +125,7 @@ describe('PostingEditor - ranges', () => {
 
     expect(screen.getByText(/Minimum salary cannot be more/)).toBeInTheDocument();
     expect(
-      screen.getByRole<HTMLButtonElement>('button', { name: 'Save posting' }).disabled,
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Save public details' }).disabled,
     ).toBe(true);
     expect(updateRequisition).not.toHaveBeenCalled();
   });
@@ -146,7 +146,7 @@ describe('PostingEditor - ranges', () => {
 
     expect(screen.queryByText(/cannot be more/)).not.toBeInTheDocument();
     expect(
-      screen.getByRole<HTMLButtonElement>('button', { name: 'Save posting' }).disabled,
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Save public details' }).disabled,
     ).toBe(false);
   });
 });
@@ -156,7 +156,7 @@ describe('PostingEditor - the lists', () => {
     const user = userEvent.setup();
     renderEditor();
     await user.type(screen.getByLabelText('Required skills'), 'Python{Enter}');
-    await user.click(screen.getByRole('button', { name: 'Save posting' }));
+    await user.click(screen.getByRole('button', { name: 'Save public details' }));
 
     await waitFor(() =>
       expect(updateRequisition).toHaveBeenCalledWith(
@@ -170,7 +170,7 @@ describe('PostingEditor - the lists', () => {
     const user = userEvent.setup();
     renderEditor(requisition({ required_skills: ['Python', 'Go'] }));
     await user.click(screen.getByRole('button', { name: 'Remove Go' }));
-    await user.click(screen.getByRole('button', { name: 'Save posting' }));
+    await user.click(screen.getByRole('button', { name: 'Save public details' }));
 
     await waitFor(() =>
       expect(updateRequisition).toHaveBeenCalledWith(
@@ -195,7 +195,7 @@ describe('PostingEditor - everything is optional', () => {
     // of them unsaveable.
     const user = userEvent.setup();
     renderEditor();
-    await user.click(screen.getByRole('button', { name: 'Save posting' }));
+    await user.click(screen.getByRole('button', { name: 'Save public details' }));
     await waitFor(() => expect(updateRequisition).toHaveBeenCalled());
   });
 

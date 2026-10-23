@@ -945,7 +945,7 @@ describe('TalentPools - add candidates manually', () => {
       expect(toastSuccess).toHaveBeenCalledWith('Added 1 candidate to the pool'),
     );
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith('1 candidate could not be added'),
+      expect(toastError).toHaveBeenCalledWith('1 candidate could not be added.'),
     );
     // The dialog stays open on a partial skip, and its footer now offers
     // Close instead of Cancel (the dialog's own corner X is also "Close").

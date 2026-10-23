@@ -10,8 +10,15 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { AlertCircle, Loader2 } from '@/design/components/icons';
+import { AlertCircle } from '@/design/components/icons';
 import { StatusTag } from '@/design/components/primitives';
+import { QueryState } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { formatDate } from '@/lib/formatters';
 import { listStageOwners } from '@/api/stageSla';
@@ -24,10 +31,6 @@ import {
 } from '@/api/stageSla';
 
 const REASON_MIN = 10;
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 /** Open first, newest first within each group — the server already orders by
  *  raised_at DESC, so a stable sort on status alone keeps that. */
@@ -65,7 +68,7 @@ function RaiseForm({ enrolmentId, onRaised }: { enrolmentId: string; onRaised: (
       refreshExceptionViews(qc, enrolmentId);
       onRaised();
     },
-    onError: (e) => toast.error(errText(e, 'Could not raise this exception')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not raise this exception.')),
   });
 
   const ready = reason.trim().length >= REASON_MIN;
@@ -81,23 +84,23 @@ function RaiseForm({ enrolmentId, onRaised }: { enrolmentId: string; onRaised: (
       <label htmlFor="exception-reason" className="text-[12px] font-medium text-[var(--ui-soft)]">
         What is blocking this application?
       </label>
-      <textarea
+      <Textarea
         id="exception-reason"
         value={reason}
         onChange={(e) => setReason(e.target.value)}
         rows={2}
         placeholder={`At least ${REASON_MIN} characters`}
-        className="resize-y rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
       />
       <div className="flex flex-wrap items-center gap-2">
         <label htmlFor="exception-owner" className="text-[12px] text-[var(--ui-soft)]">
           Owner
         </label>
-        <select
+        <SelectControl
           id="exception-owner"
+          size="sm"
+          className="w-auto"
           value={ownerId}
           onChange={(e) => setOwnerId(e.target.value)}
-          className="rounded-[10px] border border-border bg-secondary px-2.5 py-1.5 text-[12.5px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
         >
           <option value="">You</option>
           {(owners.data ?? []).map((o) => (
@@ -105,14 +108,10 @@ function RaiseForm({ enrolmentId, onRaised }: { enrolmentId: string; onRaised: (
               {o.full_name}
             </option>
           ))}
-        </select>
-        <button
-          type="submit"
-          disabled={!ready || raiseMut.isPending}
-          className="ml-auto rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
-        >
+        </SelectControl>
+        <Button type="submit" disabled={!ready || raiseMut.isPending} className="ml-auto">
           {raiseMut.isPending ? 'Raising…' : 'Raise exception'}
-        </button>
+        </Button>
       </div>
       {!ready && reason.length > 0 ? (
         <p className="text-[12px] text-[var(--ui-warn)]">Write at least {REASON_MIN} characters.</p>
@@ -138,7 +137,7 @@ function ExceptionRow({ exc }: { exc: StageException }) {
       toast.success('Exception resolved');
       invalidate();
     },
-    onError: (e) => toast.error(errText(e, 'Could not resolve this exception')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not resolve this exception.')),
   });
 
   const reassignMut = useMutation({
@@ -147,7 +146,7 @@ function ExceptionRow({ exc }: { exc: StageException }) {
       toast.success('Reassigned');
       invalidate();
     },
-    onError: (e) => toast.error(errText(e, 'Could not reassign this exception')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not reassign this exception.')),
   });
 
   return (
@@ -179,14 +178,15 @@ function ExceptionRow({ exc }: { exc: StageException }) {
             >
               Reassign to
             </label>
-            <select
+            <SelectControl
               id={`reassign-${exc.exception_id}`}
+              size="sm"
+              className="w-auto"
               value={exc.owner_user_id ?? ''}
               onChange={(e) => {
                 if (e.target.value) reassignMut.mutate(e.target.value);
               }}
               disabled={reassignMut.isPending}
-              className="h-9 rounded-[10px] border border-border bg-secondary ps-2.5 text-[12px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               <option value="">Unassigned</option>
               {(owners.data ?? []).map((o) => (
@@ -194,25 +194,27 @@ function ExceptionRow({ exc }: { exc: StageException }) {
                   {o.full_name}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <input
+            <Input
               type="text"
+              size="sm"
               value={note}
               onChange={(e) => setNote(e.target.value)}
               placeholder="Resolution note (optional)"
               aria-label={`Resolution note for ${exc.stage} exception`}
-              className="min-w-0 flex-1 rounded-[9px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="w-auto min-w-0 flex-1"
             />
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={() => resolveMut.mutate()}
               disabled={resolveMut.isPending}
-              className="rounded-[9px] border border-[var(--ui-line-strong)] px-3 py-1 text-[12px] font-medium text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
             >
               {resolveMut.isPending ? 'Resolving…' : 'Resolve'}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -256,24 +258,32 @@ export default function ExceptionsSection({ enrolmentId }: { enrolmentId: string
         </div>
       ) : null}
 
-      {exceptions.isLoading ? (
-        <p className="mt-2 flex items-center gap-1.5 text-[12.5px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          Loading…
-        </p>
-      ) : exceptions.isError ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">Could not load exceptions.</p>
-      ) : rows.length === 0 ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">
-          No exceptions raised for this application.
-        </p>
-      ) : (
-        <ul className="mt-2 flex flex-col gap-2">
-          {rows.map((exc) => (
-            <ExceptionRow key={exc.exception_id} exc={exc} />
-          ))}
-        </ul>
-      )}
+      <div className="mt-2">
+        <QueryState
+          query={exceptions}
+          errorTitle="Could not load exceptions."
+          loading={
+            <div className="flex flex-col gap-2" aria-busy="true">
+              <span className="sr-only">Loading…</span>
+              <Skeleton className="h-14" />
+            </div>
+          }
+          isEmpty={(d) => d.length === 0}
+          empty={
+            <p className="text-[12.5px] text-muted-foreground">
+              No exceptions raised for this application.
+            </p>
+          }
+        >
+          {() => (
+            <ul className="flex flex-col gap-2">
+              {rows.map((exc) => (
+                <ExceptionRow key={exc.exception_id} exc={exc} />
+              ))}
+            </ul>
+          )}
+        </QueryState>
+      </div>
     </div>
   );
 }

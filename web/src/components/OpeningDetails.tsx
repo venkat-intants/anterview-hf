@@ -15,10 +15,11 @@ import {
 } from '@/api/requisitions';
 import { SectionCard } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
-
-const field =
-  'h-10 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 export default function OpeningDetails({ requisition: req }: { requisition: Requisition }) {
   const qc = useQueryClient();
@@ -51,53 +52,48 @@ export default function OpeningDetails({ requisition: req }: { requisition: Requ
       toast.success('Opening updated');
       void qc.invalidateQueries({ queryKey: ['hr'] });
     },
-    onError: (e: unknown) =>
-      toast.error(e instanceof Error ? e.message : 'Could not update the opening'),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not update the opening.')),
   });
 
   return (
     <SectionCard title="Opening details">
       <div className="grid gap-3 sm:grid-cols-3">
-        <label className="block text-[13px] font-semibold text-foreground">
-          Owner
-          <select
-            className={`mt-1.5 ${field}`}
-            value={owner}
-            onChange={(e) => setOwner(e.target.value)}
-            aria-label="Owner"
-          >
-            <option value="">No owner</option>
-            {(team.data ?? []).map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.full_name || m.email}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-[13px] font-semibold text-foreground">
-          Hires wanted
-          <input
-            className={`mt-1.5 ${field}`}
-            type="number"
-            min={1}
-            max={10000}
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
-            placeholder="-"
-            aria-label="Hires wanted"
-          />
-        </label>
-        <label className="block text-[13px] font-semibold text-foreground">
-          Closes on
-          <input
-            className={`mt-1.5 ${field}`}
-            type="date"
-            min={new Date().toISOString().slice(0, 10)}
-            value={closes}
-            onChange={(e) => setCloses(e.target.value)}
-            aria-label="Closes on"
-          />
-        </label>
+        <FormField label="Owner">
+          {(p) => (
+            <SelectControl {...p} value={owner} onChange={(e) => setOwner(e.target.value)}>
+              <option value="">No owner</option>
+              {(team.data ?? []).map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.full_name || m.email}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
+        <FormField label="Hires wanted">
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={1}
+              max={10000}
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              placeholder="-"
+            />
+          )}
+        </FormField>
+        <FormField label="Closes on">
+          {(p) => (
+            <Input
+              {...p}
+              type="date"
+              min={new Date().toISOString().slice(0, 10)}
+              value={closes}
+              onChange={(e) => setCloses(e.target.value)}
+            />
+          )}
+        </FormField>
       </div>
       <div className="mt-3 flex justify-end">
         <Button

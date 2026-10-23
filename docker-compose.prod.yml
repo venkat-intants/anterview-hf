@@ -55,7 +55,12 @@ services:
   # Caddy — TLS termination and reverse proxy (the ONLY public-facing service)
   # --------------------------------------------------------------------------
   caddy:
-    image: caddy:2-alpine
+    # Pinned to the Caddy release the main image builds (Dockerfile stage 2b,
+    # CADDY_VERSION=v2.11.7), so both deploy paths run the same proxy. A floating
+    # `2-alpine` tag changed underneath us on every pull. This prebuilt image is
+    # only as current as the Go toolchain upstream released it with (see the
+    # Dockerfile note on CVE-2026-111943); bump it together with CADDY_VERSION.
+    image: caddy:2.11.7-alpine
     <<: [*logging, *hardening]
     # Caddy binds privileged ports 80/443 — restore just that one capability.
     cap_add:

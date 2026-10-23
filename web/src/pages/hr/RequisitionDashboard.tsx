@@ -250,7 +250,11 @@ function CloseUnresolvedPanel({
   // HR-M6: "unresolved" counts everyone without a final decision, including
   // new and mid-round candidates the decision queue does not list. Say which
   // is which, so "Review N" does not open a queue showing fewer, or nobody.
-  const count = pendingClose ?? 0;
+  // pendingClose goes null the moment the dialog closes, but the content is
+  // still on screen while it animates out. Keep the last count it opened with,
+  // so the fade does not flash "0 candidates" with the lists gone.
+  const [count, setCount] = useState(pendingClose ?? 0);
+  if (pendingClose !== null && pendingClose !== count) setCount(pendingClose);
   const waiting = Math.min(awaiting, count);
   const inProgress = count - waiting;
   return (

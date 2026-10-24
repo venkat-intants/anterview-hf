@@ -122,7 +122,7 @@ describe('OfferSection - create only once hired', () => {
     expect(screen.getByRole('button', { name: 'New offer' })).toBeInTheDocument();
   });
 
-  it.each(['draft', 'pending_approval', 'approved', 'rejected', 'sent', 'accepted'] as const)(
+  it.each(['draft', 'pending_approval', 'approved', 'rejected', 'sent'] as const)(
     'does not offer a second offer while one is %s (audit OF-L8)',
     async (status) => {
       listEnrolmentOffers.mockResolvedValue([
@@ -135,6 +135,18 @@ describe('OfferSection - create only once hired', () => {
       expect(screen.queryByRole('button', { name: 'New offer' })).not.toBeInTheDocument();
     },
   );
+
+  it('says an accepted offer is final, without promising a new one after it ends', async () => {
+    listEnrolmentOffers.mockResolvedValue([
+      { ...OFFER, status: 'accepted', expires_at: '2099-01-01T00:00:00.000Z' },
+    ]);
+    renderSection('hired');
+    expect(
+      await screen.findByText(/This application already has an accepted offer/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/declined, withdrawn or expired/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'New offer' })).not.toBeInTheDocument();
+  });
 
   it.each([
     ['withdrawn', null],

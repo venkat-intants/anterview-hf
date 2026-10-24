@@ -391,6 +391,21 @@ describe('Rediscovery - add to pool', () => {
       expect.objectContaining({ applicantIds: ['app-2'] }),
     );
   });
+
+  it('keeps Search the one primary action while rows are selected', async () => {
+    const user = userEvent.setup();
+    rediscoveryApi.searchRediscovery.mockResolvedValue(
+      searchResponse({ results: [result({ applicant_id: 'app-1', full_name: 'Asha K' })] }),
+    );
+    renderPage();
+    await screen.findByText(/Searching 14 of/);
+    await runSearch(user);
+    await user.click(await screen.findByRole('checkbox', { name: 'Select Asha K' }));
+
+    const primary = /(?:^|\s)bg-primary(?=\s|$)/;
+    expect(screen.getByRole('button', { name: 'Add 1 to pool' }).className).not.toMatch(primary);
+    expect(screen.getByRole('button', { name: 'Search' }).className).toMatch(primary);
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -46,6 +46,7 @@ import { isTransientApiError } from '@/api/client';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { ProgressMeter } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { LoadingSkeleton } from '@/components/candidate/LoadingSkeleton';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { PublicNext } from '@/components/PublicNext';
 import CodingTaking from '@/pages/exam/CodingTaking';
@@ -576,10 +577,7 @@ export default function PublicExam() {
   if (examQ.isLoading || !examQ.data) {
     return (
       <PageWrap>
-        <div role="status" className="flex flex-col items-center gap-3 py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" aria-hidden="true" />
-          <p className="text-[14px] text-muted-foreground">{t('publicExam.loading')}</p>
-        </div>
+        <LoadingSkeleton label={t('publicExam.loading')} />
       </PageWrap>
     );
   }

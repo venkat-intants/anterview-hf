@@ -715,6 +715,16 @@ describe('WorkflowBuilder - starting from nothing', () => {
     expect(screen.getByText('Start from an empty canvas instead')).toBeTruthy();
   });
 
+  it('says the templates could not load, and still offers the empty canvas', async () => {
+    listWorkflows.mockResolvedValue([]);
+    listWorkflowTemplates.mockRejectedValue(new Error('offline'));
+    renderBuilder();
+
+    expect(await screen.findByText('Could not load the templates for this role.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.getByText('Start from an empty canvas instead')).toBeTruthy();
+  });
+
   it('creates a template as one draft on the server, not round by round', async () => {
     const user = userEvent.setup();
     listWorkflows.mockResolvedValue([]);
@@ -1199,5 +1209,15 @@ describe('WorkflowBuilder - discarding a draft (HR-M2)', () => {
     const armed = screen.getByRole('group', { name: 'Confirm: Discard draft' });
     await user.click(within(armed).getByRole('button', { name: 'Discard draft' }));
     await waitFor(() => expect(discardDraft).toHaveBeenCalledWith('wf-draft'));
+  });
+});
+
+describe('WorkflowBuilder - a failed check is not an empty one', () => {
+  it('says the coverage check failed instead of asking for a round', async () => {
+    validateWorkflow.mockRejectedValue(new Error('offline'));
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    expect(await screen.findByText('Could not check what this process measures.')).toBeTruthy();
+    expect(screen.queryByText('Add a round to see what this process measures.')).toBeNull();
   });
 });

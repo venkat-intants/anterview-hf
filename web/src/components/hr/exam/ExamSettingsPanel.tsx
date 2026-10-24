@@ -10,11 +10,11 @@ import { examEditorMutationKey } from '@/lib/examEditor';
 import { errorMessage } from '@/lib/errorMessage';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { toast } from '@/lib/toast';
-import { cn } from '@/lib/utils';
 import { GlassCard, ToggleSwitch } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { Button } from '@/components/ui/button';
-import { smallInputCls } from '@/components/hr/exam/examEditorUi';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
 
 // ── Exam settings ─────────────────────────────────────────────────────────────
 
@@ -73,15 +73,16 @@ export function ExamSettingsPanel({
               saveMut.mutate({ patch: { title }, done: 'Exam renamed' });
             }}
           >
-            <label className="flex min-w-[220px] flex-1 flex-col gap-1 text-[12px] text-muted-foreground">
-              <span className="uppercase tracking-[0.5px]">Title</span>
-              <input
-                value={titleDraft}
-                maxLength={300}
-                onChange={(e) => setTitleDraft(e.target.value)}
-                className={cn(smallInputCls, 'w-full text-[14px]')}
-              />
-            </label>
+            <FormField label="Title" className="min-w-[220px] flex-1">
+              {(p) => (
+                <Input
+                  {...p}
+                  value={titleDraft}
+                  maxLength={300}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                />
+              )}
+            </FormField>
             <Button
               type="submit"
               variant="outline"

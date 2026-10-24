@@ -23,8 +23,11 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Download, Loader2, Sparkles, Upload } from '@/design/components/icons';
 import { SectionCard } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { errorMessage } from '@/lib/errorMessage';
+import { plural } from '@/lib/formatters';
 import { toast } from '@/lib/toast';
 import { toGenerationFailure } from '@/lib/generationError';
 import { GenerationError } from '@/components/bank/GenerationError';
@@ -43,12 +46,6 @@ import {
 } from '@/api/questionBanks';
 import type { ExamLanguage } from '@/api/exams';
 
-// Native <select> in the same look as the shared Input.
-const selectCls =
-  'h-10 w-full rounded-[10px] border border-input bg-card px-3.5 text-[14px] text-foreground ' +
-  'hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none ' +
-  'focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
-const labelCls = 'mb-1.5 block text-[13px] font-semibold text-foreground';
 const GROUP = 'mt-4 rounded-[16px] border border-border p-4';
 const GROUP_TITLE = 'text-[15px] font-bold text-foreground';
 
@@ -124,7 +121,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
   const keepMut = useMutation({
     mutationFn: (questions: BankQuestionInput[]) => createBankQuestionsBulk(bankId, questions),
     onSuccess: (saved) => {
-      toast.success(`${saved.length} question${saved.length === 1 ? '' : 's'} added as drafts`);
+      toast.success(`${plural(saved.length, 'question')} added as drafts`);
       setPreview(null);
       invalidate();
       onAdded?.(saved.length);
@@ -140,7 +137,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
       setPreview(null);
       setBulk(null);
       if (out.added > 0) {
-        toast.success(`${out.added} question${out.added === 1 ? '' : 's'} added as drafts`);
+        toast.success(`${plural(out.added, 'question')} added as drafts`);
         invalidate();
         onAdded?.(out.added);
       } else {
@@ -210,71 +207,80 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
             <h3 className={GROUP_TITLE}>{bare ? 'Generate MCQs with AI' : 'Draft with AI'}</h3>
           </div>
           <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-            <label className="block">
-              <span className={labelCls}>Topic</span>
-              <Input
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                placeholder="Electrical safety, three-phase wiring…"
-                aria-label="Topic"
-              />
-            </label>
-            <label className="block">
-              <span className={labelCls}>Role (optional)</span>
-              <Input
-                value={jobTitle}
-                onChange={(e) => setJobTitle(e.target.value)}
-                placeholder="Bench Fitter"
-                aria-label="Role"
-              />
-            </label>
+            <FormField label="Topic">
+              {(p) => (
+                <Input
+                  {...p}
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  placeholder="Electrical safety, three-phase wiring…"
+                  aria-label="Topic"
+                />
+              )}
+            </FormField>
+            <FormField label="Role (optional)">
+              {(p) => (
+                <Input
+                  {...p}
+                  value={jobTitle}
+                  onChange={(e) => setJobTitle(e.target.value)}
+                  placeholder="Bench Fitter"
+                  aria-label="Role"
+                />
+              )}
+            </FormField>
           </div>
           <div className="mt-2.5 grid gap-2.5 sm:grid-cols-3">
-            <label className="block">
-              <span className={labelCls}>How many</span>
-              <Input
-                type="number"
-                min={1}
-                max={20}
-                value={count}
-                onChange={(e) => setCount(e.target.value)}
-                aria-label="How many"
-                className="h-10 rounded-[10px]"
-              />
-            </label>
-            <label className="block">
-              <span className={labelCls}>Difficulty</span>
-              <select
-                className={selectCls}
-                value={difficulty}
-                onChange={(e) => setDifficulty(e.target.value as BankDifficulty)}
-                aria-label="Difficulty"
-              >
-                {DIFFICULTIES.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className={labelCls}>Language</span>
-              <select
-                className={selectCls}
-                value={language}
-                onChange={(e) => setLanguage(e.target.value as ExamLanguage)}
-                aria-label="Language"
-              >
-                {LANGUAGES.map((l) => (
-                  <option key={l} value={l}>
-                    {l.toUpperCase()}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <FormField label="How many">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={count}
+                  onChange={(e) => setCount(e.target.value)}
+                  aria-label="How many"
+                />
+              )}
+            </FormField>
+            <FormField label="Difficulty">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  value={difficulty}
+                  onChange={(e) => setDifficulty(e.target.value as BankDifficulty)}
+                  aria-label="Difficulty"
+                >
+                  {DIFFICULTIES.map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </SelectControl>
+              )}
+            </FormField>
+            <FormField label="Language">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as ExamLanguage)}
+                  aria-label="Language"
+                >
+                  {LANGUAGES.map((l) => (
+                    <option key={l} value={l}>
+                      {l.toUpperCase()}
+                    </option>
+                  ))}
+                </SelectControl>
+              )}
+            </FormField>
           </div>
           <Button
             type="button"
+            // Once a preview is up, adding it is the one primary action.
+            variant={preview ? 'outline' : 'default'}
             disabled={busy || topic.trim().length < 2}
             onClick={() => genMut.mutate()}
             className="mt-4"
@@ -332,7 +338,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
                 <Button type="button" disabled={busy} onClick={() => keepMut.mutate(preview)}>
                   {keepMut.isPending ? 'Adding…' : `Add all ${preview.length} as drafts`}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => setPreview(null)}>
+                <Button type="button" variant="ghost" onClick={() => setPreview(null)}>
                   Discard
                 </Button>
               </div>
@@ -356,36 +362,38 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
           </p>
           {bare ? (
             <div className="mt-3 grid max-w-[420px] gap-2.5 sm:grid-cols-2">
-              <label className="block">
-                <span className={labelCls}>Default difficulty</span>
-                <select
-                  className={selectCls}
-                  value={difficulty}
-                  onChange={(e) => setDifficulty(e.target.value as BankDifficulty)}
-                  aria-label="Default difficulty"
-                >
-                  {DIFFICULTIES.map((d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block">
-                <span className={labelCls}>Default language</span>
-                <select
-                  className={selectCls}
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value as ExamLanguage)}
-                  aria-label="Default language"
-                >
-                  {LANGUAGES.map((l) => (
-                    <option key={l} value={l}>
-                      {l.toUpperCase()}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <FormField label="Default difficulty">
+                {(p) => (
+                  <SelectControl
+                    {...p}
+                    value={difficulty}
+                    onChange={(e) => setDifficulty(e.target.value as BankDifficulty)}
+                    aria-label="Default difficulty"
+                  >
+                    {DIFFICULTIES.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </SelectControl>
+                )}
+              </FormField>
+              <FormField label="Default language">
+                {(p) => (
+                  <SelectControl
+                    {...p}
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value as ExamLanguage)}
+                    aria-label="Default language"
+                  >
+                    {LANGUAGES.map((l) => (
+                      <option key={l} value={l}>
+                        {l.toUpperCase()}
+                      </option>
+                    ))}
+                  </SelectControl>
+                )}
+              </FormField>
             </div>
           ) : null}
           <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -427,7 +435,7 @@ export default function BankFillPanel({ bankId, only, onAdded }: BankFillPanelPr
               data-testid="bank-import-errors"
             >
               <p className="text-[13px] font-medium text-foreground">
-                {rowErrors.length} row{rowErrors.length === 1 ? '' : 's'} could not be imported
+                {plural(rowErrors.length, 'row')} could not be imported
               </p>
               {/* The row number is the whole point — "import failed" sends
                 someone back to a 40-row file with nowhere to look. */}

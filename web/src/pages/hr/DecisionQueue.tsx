@@ -47,7 +47,10 @@ import {
 import { StatusTag } from '@/design/components/primitives';
 import { Breadcrumbs, PageHeader, EmptyState, Page, Stepper } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import CandidateDrawer from '@/components/CandidateDrawer';
 import { codeEvidenceLabel, hasCodeEvidence } from '@/lib/codeEvidenceLabel';
@@ -70,11 +73,6 @@ import {
 } from '@/api/workflows';
 import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
 import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
-
-/** The shared error copy (errorMessage), with this page's period-less fallbacks. */
-function errText(e: unknown, fallback: string): string {
-  return errorMessage(e, `${fallback}.`);
-}
 
 /**
  * PH4-O1 — informational only: an SLA badge never changes what a reviewer can
@@ -323,7 +321,7 @@ function DecisionPanel({
       invalidate();
       onDone(row, decision === 'hired' ? `${row.full_name} hired.` : `${row.full_name} rejected.`);
     },
-    onError: (e) => toast.error(errText(e, 'That decision did not save')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not save this decision.')),
   });
 
   const releaseMut = useMutation({
@@ -346,7 +344,7 @@ function DecisionPanel({
       invalidate();
       onDone(row, `${row.full_name} continues.`);
     },
-    onError: (e) => toast.error(errText(e, 'Could not release this hold')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not release this hold.')),
   });
 
   // The verdict on a review round (C4). Passing advances them; not passing
@@ -359,7 +357,7 @@ function DecisionPanel({
       invalidate();
       onDone(row, passed ? `${row.full_name} advances.` : `${row.full_name} is held for you.`);
     },
-    onError: (e) => toast.error(errText(e, 'That review did not save')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not save this review.')),
   });
 
   const pending = decideMut.isPending || releaseMut.isPending || reviewMut.isPending;
@@ -742,28 +740,28 @@ function DecisionPanel({
               />
             ) : null}
 
-            <div>
-              <label
-                htmlFor={`why-${row.enrolment_id}`}
-                className="block text-[13px] font-semibold text-foreground"
-              >
-                Why (recorded against your name)
-              </label>
-              <input
-                id={`why-${row.enrolment_id}`}
-                value={rationale}
-                onChange={(e) => setRationale(e.target.value)}
-                placeholder={final ? 'Required to hire or reject' : 'Optional'}
-                className="mt-1.5 h-10 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              />
-              {final && !canConfirm ? (
-                <p className="mt-1.5 text-[12.5px] text-[var(--ui-warn)]">
-                  {!reasonCode
-                    ? 'Choose a reason above first.'
-                    : `Write at least ${minReason} characters above first.`}
-                </p>
-              ) : null}
-            </div>
+            <FormField
+              id={`why-${row.enrolment_id}`}
+              label="Why (recorded against your name)"
+              hint={
+                final && !canConfirm ? (
+                  <span className="text-[var(--ui-warn)]">
+                    {!reasonCode
+                      ? 'Choose a reason above first.'
+                      : `Write at least ${minReason} characters above first.`}
+                  </span>
+                ) : undefined
+              }
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  value={rationale}
+                  onChange={(e) => setRationale(e.target.value)}
+                  placeholder={final ? 'Required to hire or reject' : 'Optional'}
+                />
+              )}
+            </FormField>
 
             <div
               className="rounded-[12px] bg-[var(--ui-inset-soft)] px-3.5 py-3 text-[13.5px] leading-relaxed text-foreground"
@@ -1053,12 +1051,12 @@ export default function DecisionQueue(): JSX.Element {
           <span className="sr-only">Loading queue…</span>
         </div>
       ) : queue.isError ? (
-        <p
-          role="alert"
-          className="rounded-[12px] border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] px-4 py-3 text-[14px] text-[var(--ui-danger)]"
-        >
-          {errText(queue.error, 'Could not load the decision queue')}
-        </p>
+        <QueryErrorPanel
+          title="Could not load the decision queue."
+          error={queue.error}
+          onRetry={() => void queue.refetch()}
+          retrying={queue.isFetching}
+        />
       ) : rows.length === 0 ? (
         <EmptyState
           size="row"

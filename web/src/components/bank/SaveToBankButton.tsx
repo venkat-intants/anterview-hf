@@ -8,13 +8,14 @@ import { listQuestionBanks } from '@/api/questionBanks';
 import type { BankDifficulty, SaveToBankInput } from '@/api/questionBanks';
 import type { ExamLanguage } from '@/api/exams';
 import { Loader2 } from '@/design/components/icons';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { SelectControl } from '@/components/ui/select-control';
 import { cn } from '@/lib/utils';
 
-const selectCls =
-  // Height, radius, border and chevron come from the global select rules
-  // (data-size="sm" gives the 36px compact control); only the width is set here
-  // so the longest bank name is not clipped.
-  'min-w-[8.5rem] max-w-full';
+// SelectControl size="sm" gives the 36px compact control; only the width is
+// set here so the longest bank name is not clipped.
+const SELECT_WIDTH = 'w-auto min-w-[8.5rem] max-w-full';
 
 export interface SaveToBankButtonProps {
   onSave: (input: SaveToBankInput) => void;
@@ -40,13 +41,14 @@ export function SaveToBankButton({
 
   if (!open) {
     return (
-      <button
+      <Button
         type="button"
+        variant="link"
         onClick={() => setOpen(true)}
-        className={cn('text-[12px] text-[var(--ui-info)] hover:underline', className)}
+        className={cn('h-auto p-0 text-[12px] font-normal', className)}
       >
         Save to bank
-      </button>
+      </Button>
     );
   }
 
@@ -59,12 +61,12 @@ export function SaveToBankButton({
         className,
       )}
     >
-      <select
+      <SelectControl
         value={bankId}
         onChange={(e) => setBankId(e.target.value)}
         aria-label="Bank"
-        data-size="sm"
-        className={selectCls}
+        size="sm"
+        className={SELECT_WIDTH}
       >
         <option value="">{banks.isLoading ? 'Loading banks…' : 'Choose a bank'}</option>
         {(banks.data ?? []).map((b) => (
@@ -72,45 +74,53 @@ export function SaveToBankButton({
             {b.name}
           </option>
         ))}
-      </select>
-      <select
+      </SelectControl>
+      <SelectControl
         value={difficulty}
         onChange={(e) => setDifficulty(e.target.value as BankDifficulty)}
         aria-label="Difficulty"
-        data-size="sm"
-        className={selectCls}
+        size="sm"
+        className={SELECT_WIDTH}
       >
         <option value="easy">Easy</option>
         <option value="medium">Medium</option>
         <option value="hard">Hard</option>
-      </select>
-      <select
+      </SelectControl>
+      <SelectControl
         value={language}
         onChange={(e) => setLanguage(e.target.value as ExamLanguage)}
         aria-label="Language"
-        data-size="sm"
-        className={selectCls}
+        size="sm"
+        className={SELECT_WIDTH}
       >
         <option value="en">EN</option>
         <option value="hi">HI</option>
         <option value="te">TE</option>
-      </select>
-      <button
+      </SelectControl>
+      {/* A row action inside the exam editor, whose one primary is its own:
+          Save is outline here, Cancel ghost. */}
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         disabled={!ready || saving}
         onClick={() => onSave({ bank_id: bankId, difficulty, language })}
-        className="inline-flex items-center gap-1 rounded-[8px] bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground disabled:opacity-40"
       >
-        {saving ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : null}
+        {saving ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
         Save
-      </button>
-      <button
-        type="button"
-        onClick={() => setOpen(false)}
-        className="text-[12px] text-muted-foreground hover:text-foreground"
-      >
+      </Button>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)}>
         Cancel
-      </button>
+      </Button>
+      {banks.isError ? (
+        <QueryErrorPanel
+          className="basis-full"
+          title="Could not load the question banks."
+          error={banks.error}
+          onRetry={() => void banks.refetch()}
+          retrying={banks.isFetching}
+        />
+      ) : null}
     </div>
   );
 }

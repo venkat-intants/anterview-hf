@@ -29,12 +29,14 @@ import { STATUS_TONE, STATUS_WORD } from './bankStatus';
 import { Well } from '@/design/components/rows';
 import { Button } from '@/components/ui/button';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { BankQuestionEditor } from '@/components/bank/BankQuestionEditor';
 import { QuestionBadges } from '@/components/bank/QuestionBadges';
 import type { UnsavedGuard } from '@/components/bank/useUnsavedGuard';
 import { BankCodingQuestionView } from '@/components/hr/bank/BankCodingQuestionView';
 import { useAuth } from '@/context/AuthContext';
 import { errorMessage } from '@/lib/errorMessage';
+import { plural } from '@/lib/formatters';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import {
@@ -49,8 +51,6 @@ import {
   type BankQuestionInput,
 } from '@/api/questionBanks';
 
-const SECONDARY =
-  'min-h-10 rounded-full border border-[var(--ui-line-strong)] px-5 py-1.5 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50';
 
 /** An MCQ read the way a candidate sees it, with the right option named. */
 function McqReadView({ question }: { question: BankQuestion }): JSX.Element {
@@ -224,14 +224,15 @@ export function BankQuestionDetailPane({
   return (
     <div className="flex flex-col gap-4" data-testid="bank-question-detail">
       {onBack ? (
-        <button
+        <Button
           type="button"
+          variant="link"
           onClick={onBack}
-          className="inline-flex min-h-10 items-center gap-1.5 self-start rounded-[10px] text-[13px] font-semibold text-[var(--ui-info)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] lg:hidden"
+          className="gap-1.5 self-start px-0 text-[13px] lg:hidden"
         >
-          <ArrowLeft size={14} aria-hidden="true" />
+          <ArrowLeft aria-hidden="true" />
           Back to questions
-        </button>
+        </Button>
       ) : null}
 
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -314,17 +315,17 @@ export function BankQuestionDetailPane({
                 <Pencil aria-hidden="true" />
                 Edit
               </Button>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 disabled={submitMut.isPending}
                 onClick={() => submitMut.mutate()}
-                className={SECONDARY}
               >
                 {submitMut.isPending ? (
-                  <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                  <Loader2 className="animate-spin" aria-hidden="true" />
                 ) : null}
                 Submit for review
-              </button>
+              </Button>
               <ConfirmDeleteButton
                 label="Delete"
                 pending={deleteMut.isPending}
@@ -335,19 +336,19 @@ export function BankQuestionDetailPane({
           {q.status === 'in_review' && q.submitted_by_user_id === user?.user_id ? (
             // Only the submitter may withdraw. Gating the control means that
             // refusal is never something another reviewer runs into by surprise.
-            <button
+            <Button
               type="button"
+              variant="outline"
               disabled={withdrawMut.isPending}
               onClick={() => withdrawMut.mutate()}
-              className={SECONDARY}
             >
               Withdraw
-            </button>
+            </Button>
           ) : null}
           {q.status === 'approved' || q.status === 'retired' ? (
-            <button type="button" onClick={() => setNewVersionMode(true)} className={SECONDARY}>
+            <Button type="button" variant="outline" onClick={() => setNewVersionMode(true)}>
               New version
-            </button>
+            </Button>
           ) : null}
           {q.status === 'approved' ? (
             // Retiring takes the question out of every bank picker, so it
@@ -363,6 +364,17 @@ export function BankQuestionDetailPane({
             </span>
           ) : null}
         </div>
+      ) : null}
+
+      {/* The question itself still shows from the list row; what a failed
+          load hides is its version history and the exams that use it. */}
+      {detail.isError && !detail.data ? (
+        <QueryErrorPanel
+          title="Could not load this question's history and exams."
+          error={detail.error}
+          onRetry={() => void detail.refetch()}
+          retrying={detail.isFetching}
+        />
       ) : null}
 
       {versions.length > 1 ? (
@@ -400,7 +412,7 @@ export function BankQuestionDetailPane({
       {usedIn.length > 0 ? (
         <div className="border-t border-border pt-3">
           <h4 className="mb-2 text-[12.5px] font-semibold uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-            Used in {usedIn.length} exam{usedIn.length === 1 ? '' : 's'}
+            Used in {plural(usedIn.length, 'exam')}
           </h4>
           <ul className="flex flex-col gap-1">
             {usedIn.map((u) => (

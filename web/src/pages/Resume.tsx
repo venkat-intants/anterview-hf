@@ -5,7 +5,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { useCandidateFormat } from '@/lib/candidateCopy';
+import { useCandidateError, useCandidateFormat } from '@/lib/candidateCopy';
 import {
   FileText,
   Download,
@@ -243,6 +243,7 @@ function ResumeVersionRow({
 
 export default function Resume() {
   const { t } = useTranslation();
+  const errorText = useCandidateError();
   const fmt = useCandidateFormat();
   const queryClient = useQueryClient();
   const [deleteTarget, setDeleteTarget] = useState<ResumeVersionItem | null>(null);
@@ -286,7 +287,7 @@ export default function Resume() {
       toast.success(t('resume.setCurrentSuccess'));
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : t('resume.updateError'));
+      toast.error(errorText(err, t('resume.updateError')));
     },
   });
 
@@ -301,7 +302,7 @@ export default function Resume() {
       setDeleteTarget(null);
     },
     onError: (err: unknown) => {
-      toast.error(err instanceof Error ? err.message : t('resume.deleteError'));
+      toast.error(errorText(err, t('resume.deleteError')));
       setDeleteTarget(null);
     },
   });

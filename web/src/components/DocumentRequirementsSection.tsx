@@ -6,7 +6,7 @@
 // place its owner, hire target and closing date are edited (§B1) — because
 // this too is a setting of the opening rather than of any one candidate.
 
-import { useId, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   addDocumentRequirement,
@@ -23,12 +23,12 @@ import { queryKeys } from '@/lib/queryKeys';
 import { FileText } from '@/design/components/icons';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { errorMessage } from '@/lib/errorMessage';
 
-const labelCls = 'text-[13px] font-semibold text-foreground';
-const selectCls =
-  'mt-1.5 h-11 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 const checkLabelCls = 'flex min-h-10 items-center gap-2.5 text-[14px] text-foreground';
 
 const DOC_TYPES: DocType[] = [
@@ -43,10 +43,6 @@ const DOC_TYPES: DocType[] = [
   'other',
 ];
 
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
-
 function AddRequirementForm({
   requisitionId,
   nextPosition,
@@ -57,7 +53,6 @@ function AddRequirementForm({
   onDone: () => void;
 }) {
   const qc = useQueryClient();
-  const uid = useId();
   const [name, setName] = useState('');
   const [docType, setDocType] = useState<DocType>('identity');
   const [description, setDescription] = useState('');
@@ -81,51 +76,41 @@ function AddRequirementForm({
       });
       onDone();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not add this requirement')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not add this requirement.')),
   });
 
   return (
     <div className="mb-4 flex flex-col gap-4 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
-      <div>
-        <label htmlFor={`${uid}-name`} className={labelCls}>
-          Name
-        </label>
-        <Input
-          id={`${uid}-name`}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. PAN card"
-          className="mt-1.5"
-        />
-      </div>
-      <div>
-        <label htmlFor={`${uid}-type`} className={labelCls}>
-          Kind
-        </label>
-        <select
-          id={`${uid}-type`}
-          value={docType}
-          onChange={(e) => setDocType(e.target.value as DocType)}
-          className={selectCls}
-        >
-          {DOC_TYPES.map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div>
-        <label htmlFor={`${uid}-desc`} className={labelCls}>
-          Description candidates see (optional)
-        </label>
-        <Input
-          id={`${uid}-desc`}
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          className="mt-1.5"
-        />
-      </div>
+      <FormField label="Name">
+        {(p) => (
+          <Input
+            {...p}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. PAN card"
+          />
+        )}
+      </FormField>
+      <FormField label="Kind">
+        {(p) => (
+          <SelectControl
+            {...p}
+            value={docType}
+            onChange={(e) => setDocType(e.target.value as DocType)}
+          >
+            {DOC_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </SelectControl>
+        )}
+      </FormField>
+      <FormField label="Description candidates see (optional)">
+        {(p) => (
+          <Input {...p} value={description} onChange={(e) => setDescription(e.target.value)} />
+        )}
+      </FormField>
       <fieldset>
         <legend className="sr-only">Requirement settings</legend>
         <label className={checkLabelCls}>
@@ -176,7 +161,7 @@ function RequirementRow({
     mutationFn: (fields: { mandatory?: boolean; requires_expiry?: boolean }) =>
       updateDocumentRequirement(requirement.id, fields),
     onSuccess: () => void invalidate(),
-    onError: (e: unknown) => toast.error(errText(e, 'Could not update this requirement')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not update this requirement.')),
   });
 
   const removeMut = useMutation({
@@ -185,7 +170,7 @@ function RequirementRow({
       toast.success('Requirement removed');
       void invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not remove this requirement')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not remove this requirement.')),
   });
 
   return (

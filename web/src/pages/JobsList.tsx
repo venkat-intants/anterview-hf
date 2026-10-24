@@ -19,6 +19,8 @@ import OpenRoles from '@/components/OpenRoles';
 import ConsentModal from '@/components/ConsentModal';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Page, PageHeader, EmptyState } from '@/design/components/page';
 import { Search, Briefcase, X, AlertTriangle, RefreshCw } from '@/design/components/icons';
 import { cn } from '@/lib/utils';
@@ -65,9 +67,6 @@ function JobCardSkeleton() {
     </div>
   );
 }
-
-const CONTROL =
-  'h-10 rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50';
 
 // ── JobsList page ──────────────────────────────────────────────────────────────
 
@@ -243,7 +242,7 @@ export default function JobsList() {
         >
           <AlertTriangle className="h-5 w-5 shrink-0 text-[var(--ui-danger)]" aria-hidden="true" />
           <p className="flex-1 text-[14px] text-foreground">
-            {error instanceof Error ? error.message : t('jobs.loadError')}
+            {errorText(error, t('jobs.loadError'))}
           </p>
           <Button type="button" variant="outline" size="sm" onClick={() => void refetch()}>
             <RefreshCw aria-hidden="true" />
@@ -273,14 +272,16 @@ export default function JobsList() {
           className="flex items-start justify-between gap-4 rounded-[14px] bg-[var(--ui-warn-wash)] px-4 py-3"
         >
           <p className="text-[14px] text-foreground">{t('jobs.declineBanner')}</p>
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            size="icon"
             onClick={() => setShowDeclineBanner(false)}
             aria-label={t('jobs.dismiss')}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </Button>
         </div>
       )}
 
@@ -304,19 +305,24 @@ export default function JobsList() {
           {t('jobs.practiceTitle')}
         </h2>
 
-        {/* Toolbar: search, level pills, interview language, count. The native
-            language <select> stays native — it is the most reliable control on
-            a phone and carries the label tests and screen readers rely on. */}
+        {/* Toolbar: search, level pills, interview language, count. The language
+            control is the shared SelectControl, which is still a native <select>
+            with the shared styling: the most reliable control on a phone, and it
+            keeps the label that tests and screen readers rely on. */}
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex w-full items-center gap-2 rounded-full border border-input bg-card px-4 focus-within:ring-2 focus-within:ring-[var(--accent)] sm:w-[280px]">
-            <Search size={16} className="shrink-0 text-[var(--ui-soft)]" aria-hidden="true" />
-            <input
+          <div className="relative w-full sm:w-[280px]">
+            <Search
+              size={16}
+              className="pointer-events-none absolute start-4 top-1/2 -translate-y-1/2 text-[var(--ui-soft)]"
+              aria-hidden="true"
+            />
+            <Input
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t('jobs.searchPlaceholder')}
               aria-label={t('jobs.searchPlaceholder')}
-              className="h-10 min-w-0 flex-1 bg-transparent text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
+              className="rounded-full ps-10 pe-4"
             />
           </div>
 
@@ -349,18 +355,18 @@ export default function JobsList() {
             >
               {t('jobs.interviewLanguage')}
             </label>
-            <select
+            <SelectControl
               id="interview-language"
               value={selectedLanguage}
               onChange={(e) => setSelectedLanguage(e.target.value as Language)}
-              className={CONTROL}
+              className="w-auto"
             >
               {LANGUAGE_OPTIONS.map((opt) => (
                 <option key={opt.value} value={opt.value}>
                   {opt.label}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </div>
 
           <p className="text-[13px] text-muted-foreground sm:ml-auto" aria-live="polite">

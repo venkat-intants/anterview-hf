@@ -44,6 +44,7 @@ import { isTransientApiError } from '@/api/client';
 import { useAuth } from '@/context/AuthContext';
 import { StatusTag, Avatar } from '@/design/components/primitives';
 import { Button } from '@/components/ui/button';
+import { LoadingSkeleton } from '@/components/candidate/LoadingSkeleton';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { PublicNext } from '@/components/PublicNext';
 import {
@@ -196,10 +197,7 @@ export default function InterviewInvite() {
   if (inviteQ.isLoading || !inviteQ.data) {
     return (
       <PageWrap>
-        <div role="status" className="flex flex-col items-center gap-3 py-20">
-          <Loader2 className="h-8 w-8 animate-spin text-[var(--accent)]" aria-hidden="true" />
-          <p className="text-[14px] text-muted-foreground">{t('interviewInvite.loading')}</p>
-        </div>
+        <LoadingSkeleton label={t('interviewInvite.loading')} />
       </PageWrap>
     );
   }

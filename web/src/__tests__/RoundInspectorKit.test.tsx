@@ -152,6 +152,18 @@ describe('RoundInspector - interview kit', () => {
     fireEvent.change(evaluate, { target: { value: `ok\n${'x'.repeat(301)}` } });
     expect(screen.getByText('Line 2 is over 300 characters.')).toBeInTheDocument();
     expect(save).toBeDisabled();
+
+    // The line is named by where it sits in the textarea, blanks included:
+    // here it is the third line the author sees, not the second one sent.
+    fireEvent.change(evaluate, {
+      target: {
+        value: `ok
+
+${'x'.repeat(301)}`,
+      },
+    });
+    expect(screen.getByText('Line 3 is over 300 characters.')).toBeInTheDocument();
+    expect(save).toBeDisabled();
     expect(api.updateRoundKit).not.toHaveBeenCalled();
   });
 

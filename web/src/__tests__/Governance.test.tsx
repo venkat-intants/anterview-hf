@@ -11,7 +11,7 @@
 // promise the architecture does not make.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
@@ -231,6 +231,36 @@ describe('scheduled publishing', () => {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const input = await screen.findByLabelText(`Go live at (your time, ${tz})`);
     expect(input.getAttribute('min')).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  });
+
+  it('starts the picker at the next minute, which the past-time check accepts', async () => {
+    // 10:30:20 local: 10:30 is already partly past, so the first offered
+    // value is 10:31. Built from local parts so no machine zone matters.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2030, 4, 5, 10, 30, 20));
+    try {
+      renderPanel(requisition({ approval_status: 'approved' }));
+      const input = await screen.findByLabelText(/Go live at/);
+      expect(input).toHaveAttribute('min', '2030-05-05T10:31');
+      fireEvent.change(input, { target: { value: '2030-05-05T10:31' } });
+      expect(screen.queryByText('Choose a date and time in the future.')).toBeNull();
+      expect(screen.getByRole('button', { name: /^Schedule$/ })).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('holds Schedule and says why when a past time is typed', async () => {
+    renderPanel(requisition({ approval_status: 'approved' }));
+    const input = await screen.findByLabelText(/Go live at/);
+    fireEvent.change(input, { target: { value: '2020-01-01T09:00' } });
+    expect(screen.getByText('Choose a date and time in the future.')).toBeInTheDocument();
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: /^Schedule$/ })).toBeDisabled();
+    fireEvent.change(input, { target: { value: '2099-01-01T09:00' } });
+    expect(screen.queryByText('Choose a date and time in the future.')).toBeNull();
+    expect(screen.getByRole('button', { name: /^Schedule$/ })).toBeEnabled();
+    expect(setPublishSchedule).not.toHaveBeenCalled();
   });
 
   it('shows the tolerance on the empty form too', async () => {

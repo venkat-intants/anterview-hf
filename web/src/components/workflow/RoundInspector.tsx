@@ -469,14 +469,16 @@ const KIT_MAX_LINES = 10;
 const KIT_MAX_LINE_CHARS = 300;
 const KIT_MAX_TEXT = 8000;
 
-/** What is wrong with one list's lines, counted as they are sent (trimmed,
- *  blanks dropped), or null. */
+/** What is wrong with one list's lines, or null. The line count is of what
+ *  is sent (trimmed, blanks dropped), but an over-long line is named by its
+ *  number in the textarea as typed, blanks included, so "Line 3" is the
+ *  third line the author sees. */
 function kitLinesProblem(lines: readonly string[]): string | null {
   const sent = lines.map((x) => x.trim()).filter(Boolean);
   if (sent.length > KIT_MAX_LINES) {
     return `Keep it to ${KIT_MAX_LINES} lines. This has ${sent.length}.`;
   }
-  const long = sent.findIndex((x) => x.length > KIT_MAX_LINE_CHARS);
+  const long = lines.findIndex((x) => x.trim().length > KIT_MAX_LINE_CHARS);
   if (long >= 0) {
     return `Line ${long + 1} is over ${KIT_MAX_LINE_CHARS} characters.`;
   }

@@ -946,6 +946,11 @@ describe('CandidateDrawer', () => {
       fireEvent.change(due, { target: { value: '2020-01-01T10:00' } });
       expect(screen.getByText('Choose a due date in the future.')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /^assign$/i })).toBeDisabled();
+      // The earliest value the picker offers is accepted: min is the next
+      // minute, not the current one, which is already partly past.
+      fireEvent.change(due, { target: { value: due.getAttribute('min') } });
+      expect(screen.queryByText('Choose a due date in the future.')).toBeNull();
+      expect(screen.getByRole('button', { name: /^assign$/i })).toBeEnabled();
       fireEvent.change(due, { target: { value: '' } });
       expect(screen.queryByText('Choose a due date in the future.')).toBeNull();
 
@@ -1316,9 +1321,17 @@ describe('CandidateDrawer', () => {
     it('remembers that History was opened', async () => {
       getEnrolmentHistory.mockResolvedValue([
         {
-          id: 1, occurred_at: '2026-08-15T10:00:00.000Z', from_status: 'new', to_status: 'shortlisted',
-          from_round: null, to_round: null, automated: true, actor: null, reason: 'x',
-          reason_code: null, reason_label: null,
+          id: 1,
+          occurred_at: '2026-08-15T10:00:00.000Z',
+          from_status: 'new',
+          to_status: 'shortlisted',
+          from_round: null,
+          to_round: null,
+          automated: true,
+          actor: null,
+          reason: 'x',
+          reason_code: null,
+          reason_label: null,
         },
       ]);
       const first = renderDrawer({ enrolmentId: 'en-1' });
@@ -1326,11 +1339,13 @@ describe('CandidateDrawer', () => {
       first.unmount();
 
       renderDrawer({ enrolmentId: 'en-1' });
-      expect(await screen.findByRole('button', { name: /History/ })).toHaveAttribute('aria-expanded', 'true');
+      expect(await screen.findByRole('button', { name: /History/ })).toHaveAttribute(
+        'aria-expanded',
+        'true',
+      );
     });
   });
 });
-
 
 describe('CandidateDrawer - View resume beside the resume match', () => {
   it('opens the CV behind the score', async () => {

@@ -365,7 +365,11 @@ function AssignInterviewersForm({
           <Input
             {...p}
             type="datetime-local"
-            min={toLocalInputValue(new Date().toISOString())}
+            // The start of the next minute: the current one is already
+            // partly past, so offering it would offer a value duePast refuses.
+            min={toLocalInputValue(
+              new Date(Math.floor(Date.now() / 60_000) * 60_000 + 60_000).toISOString(),
+            )}
             value={dueAt}
             onChange={(e) => setDueAt(e.target.value)}
           />
@@ -450,8 +454,7 @@ function HumanInterviewSection({
       toast.success('Assignment withdrawn');
       invalidate();
     },
-    onError: (e) =>
-      toast.error(errorMessage(e, 'Could not withdraw this assignment.')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not withdraw this assignment.')),
   });
 
   const rounds = scorecards.data?.rounds ?? [];
@@ -523,7 +526,9 @@ function HumanInterviewSection({
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-[12.5px] text-foreground">{sc.interviewer_name}</span>
-                        <StatusTag tone={SCORECARD_TONE[sc.state]}>{statusLabel(sc.state, 'scorecard')}</StatusTag>
+                        <StatusTag tone={SCORECARD_TONE[sc.state]}>
+                          {statusLabel(sc.state, 'scorecard')}
+                        </StatusTag>
                       </div>
                       {sc.submitted_at ? (
                         <p className="mt-0.5 text-[12px] text-muted-foreground">

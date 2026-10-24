@@ -11,6 +11,7 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { uiLocale } from '@/lib/formatters';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   bookMySlot,
@@ -35,12 +36,6 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard, EmptyState } from '@/design/components/page';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { CalendarDays, Download } from '@/design/components/icons';
-
-function localeFor(lang: string): string {
-  if (lang.startsWith('hi')) return 'hi-IN';
-  if (lang.startsWith('te')) return 'te-IN';
-  return 'en-IN';
-}
 
 const STATUS_TONE: Record<CandidateSession['status'], TagTone> = {
   awaiting_slot: 'amber',
@@ -336,7 +331,7 @@ function LoopCard({
 /** Loops shown on their application card (the server sent an `application_id`). */
 export function EmbeddedLoops({ loops }: { loops: CandidateLoop[] }): JSX.Element {
   const { i18n } = useTranslation();
-  const locale = localeFor(i18n.language);
+  const locale = uiLocale(i18n.language);
   return (
     <div className="flex flex-col gap-4">
       {loops.map((loop) => (
@@ -359,7 +354,7 @@ export default function YourInterviews({
 }: YourInterviewsProps = {}): JSX.Element | null {
   const { t, i18n } = useTranslation();
   const errText = useCandidateError();
-  const locale = localeFor(i18n.language);
+  const locale = uiLocale(i18n.language);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['me', 'interview-loops'],

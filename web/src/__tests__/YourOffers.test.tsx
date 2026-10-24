@@ -28,6 +28,7 @@ Object.defineProperty(window, 'location', {
 });
 
 import YourOffers from '../components/candidate/YourOffers';
+import { formatDate } from '../lib/formatters';
 
 function renderSection() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -77,6 +78,17 @@ describe('YourOffers - states', () => {
     renderSection();
     await screen.findByText('Backend Engineer');
     expect(screen.getByText('Acme Corp')).toBeInTheDocument();
+  });
+
+  // Through lib/formatters (UI conventions, F2): the rupee sign and lakh
+  // grouping, and the same short date every other screen prints. The date is
+  // computed with the formatter so the test holds in any time zone.
+  it('prints the pay and the expiry through the shared formatters', async () => {
+    renderSection();
+    expect(await screen.findByText('₹12,00,000')).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(formatDate(OFFER.expires_at, 'en-IN'))),
+    ).toBeInTheDocument();
   });
 
   it('shows a loading state', () => {

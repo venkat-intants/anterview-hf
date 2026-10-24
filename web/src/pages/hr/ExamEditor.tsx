@@ -20,18 +20,19 @@ import { Plus, BarChart3, Loader2, Sparkles } from '@/design/components/icons';
 import { getExam, getStructure, createRound, deleteRound, reorderRounds } from '@/api/exams';
 import { examEditorMutationKey, minutesToSeconds, parseThreshold } from '@/lib/examEditor';
 import { errorMessage } from '@/lib/errorMessage';
+import { plural } from '@/lib/formatters';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { statusLabel } from '@/lib/statusLabel';
 import { toast } from '@/lib/toast';
-import { cn } from '@/lib/utils';
 import { GlassCard } from '@/design/components/primitives';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { EmptyState, Page } from '@/design/components/page';
 import { EditorHeader, DocStatusPill } from '@/components/hr/EditorHeader';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { inputCls, plural } from '@/components/hr/exam/examEditorUi';
 import { RoundPanel } from '@/components/hr/exam/RoundPanel';
 import { ExamSettingsPanel } from '@/components/hr/exam/ExamSettingsPanel';
 
@@ -290,8 +291,7 @@ export default function ExamEditor() {
                       className="space-y-3"
                       aria-label="New round form"
                     >
-                      <input
-                        className={inputCls}
+                      <Input
                         placeholder="Round title (e.g. Technical screening)"
                         value={roundTitle}
                         maxLength={200}
@@ -299,30 +299,32 @@ export default function ExamEditor() {
                         aria-label="Round title"
                       />
                       <div className="grid gap-3 sm:grid-cols-3">
-                        <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
-                          <span className="uppercase tracking-[0.5px]">Pass threshold %</span>
-                          <input
-                            type="number"
-                            min={0}
-                            max={100}
-                            value={roundThreshold}
-                            onChange={(e) => setRoundThreshold(e.target.value)}
-                            className={cn(inputCls, 'text-[13px]')}
-                            aria-label="Pass threshold"
-                          />
-                        </label>
-                        <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
-                          <span className="uppercase tracking-[0.5px]">Time limit (min)</span>
-                          <input
-                            type="number"
-                            min={1}
-                            placeholder="No limit"
-                            value={roundTimeMin}
-                            onChange={(e) => setRoundTimeMin(e.target.value)}
-                            className={cn(inputCls, 'text-[13px]')}
-                            aria-label="Time limit in minutes"
-                          />
-                        </label>
+                        <FormField label="Pass threshold %">
+                          {(p) => (
+                            <Input
+                              {...p}
+                              type="number"
+                              min={0}
+                              max={100}
+                              value={roundThreshold}
+                              onChange={(e) => setRoundThreshold(e.target.value)}
+                              aria-label="Pass threshold"
+                            />
+                          )}
+                        </FormField>
+                        <FormField label="Time limit (min)">
+                          {(p) => (
+                            <Input
+                              {...p}
+                              type="number"
+                              min={1}
+                              placeholder="No limit"
+                              value={roundTimeMin}
+                              onChange={(e) => setRoundTimeMin(e.target.value)}
+                              aria-label="Time limit in minutes"
+                            />
+                          )}
+                        </FormField>
                         <div className="flex items-end pb-1">
                           <label className="flex min-h-10 items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
                             <input

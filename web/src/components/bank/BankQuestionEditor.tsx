@@ -36,8 +36,13 @@ import {
 import { CompetencyTagger } from './CompetencyTagger';
 import { Loader2, Lock, Plus, Trash2 } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
+import { fieldHintClass, fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import { plural } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 
 const CodeEditor = lazy(() => import('@/components/CodeEditor'));
@@ -55,20 +60,15 @@ const LANG_LABEL: Record<string, string> = {
   rust: 'Rust',
 };
 
-// Native <select>/<textarea> carry the same look as the shared Input; the
-// shadcn Select is a popover, which would change how these are driven.
-const inputCls =
-  'w-full rounded-[10px] border border-input bg-card px-3.5 py-2.5 text-[14px] ' +
-  'text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] ' +
-  'focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 ' +
-  'focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
-const selectCls = cn(inputCls, 'h-10 py-0');
-const labelCls = 'mb-1.5 block text-[13px] font-semibold text-foreground';
-const helpCls = 'mt-1.5 text-[12.5px] text-muted-foreground';
+// The heading over a group of controls that is not itself one control (the
+// option rows, the language chips, a code editor), in the FormField label look.
+const groupLabelCls = cn(fieldLabelClass, 'mb-1.5 block');
+const helpCls = cn(fieldHintClass, 'mt-1.5');
 const GROUP = 'flex flex-col gap-4 border-t border-border pt-5';
 const GROUP_TITLE = 'text-[15px] font-bold text-foreground';
-const ICON_BTN =
-  'flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+// A remove button: the ghost icon Button, tinted danger on hover.
+const REMOVE_BTN =
+  'shrink-0 text-muted-foreground hover:bg-[var(--ui-danger-wash)] hover:text-[var(--ui-danger)]';
 const CHIP =
   'inline-flex min-h-10 items-center rounded-full border px-4 text-[13px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
 const CHIP_ON =
@@ -295,8 +295,7 @@ export function BankQuestionEditor({
           </ul>
         ) : (
           <p className="text-[13px] text-muted-foreground">
-            {(question?.test_cases ?? []).length} test case
-            {(question?.test_cases ?? []).length === 1 ? '' : 's'} ·{' '}
+            {plural((question?.test_cases ?? []).length, 'test case')} ·{' '}
             {(question?.allowed_languages ?? []).join(', ')}
           </p>
         )}
@@ -324,54 +323,58 @@ export function BankQuestionEditor({
           </div>
         ) : null}
 
-        <label className="block">
-          <span className={labelCls}>Prompt</span>
-          <textarea
-            value={form.prompt}
-            onChange={(e) => set('prompt', e.target.value)}
-            rows={3}
-            maxLength={MAX_PROMPT_LENGTH}
-            className={cn(inputCls, 'resize-y')}
-            aria-label="Prompt"
-          />
-        </label>
+        <FormField label="Prompt">
+          {(p) => (
+            <Textarea
+              {...p}
+              value={form.prompt}
+              onChange={(e) => set('prompt', e.target.value)}
+              rows={3}
+              maxLength={MAX_PROMPT_LENGTH}
+              aria-label="Prompt"
+            />
+          )}
+        </FormField>
 
         <div className="grid gap-4 sm:grid-cols-3">
-          <label className="block">
-            <span className={labelCls}>Difficulty</span>
-            <select
-              value={form.difficulty}
-              onChange={(e) => set('difficulty', e.target.value as BankDifficulty)}
-              className={selectCls}
-            >
-              <option value="easy">Easy</option>
-              <option value="medium">Medium</option>
-              <option value="hard">Hard</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className={labelCls}>Language</span>
-            <select
-              value={form.language}
-              onChange={(e) => set('language', e.target.value as ExamLanguage)}
-              className={selectCls}
-            >
-              <option value="en">English</option>
-              <option value="hi">हिन्दी</option>
-              <option value="te">తెలుగు</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className={labelCls}>Points</span>
-            <Input
-              type="number"
-              min={1}
-              value={form.points}
-              onChange={(e) => set('points', e.target.value)}
-              aria-label="Points"
-              className="h-10 rounded-[10px]"
-            />
-          </label>
+          <FormField label="Difficulty">
+            {(p) => (
+              <SelectControl
+                {...p}
+                value={form.difficulty}
+                onChange={(e) => set('difficulty', e.target.value as BankDifficulty)}
+              >
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </SelectControl>
+            )}
+          </FormField>
+          <FormField label="Language">
+            {(p) => (
+              <SelectControl
+                {...p}
+                value={form.language}
+                onChange={(e) => set('language', e.target.value as ExamLanguage)}
+              >
+                <option value="en">English</option>
+                <option value="hi">हिन्दी</option>
+                <option value="te">తెలుగు</option>
+              </SelectControl>
+            )}
+          </FormField>
+          <FormField label="Points">
+            {(p) => (
+              <Input
+                {...p}
+                type="number"
+                min={1}
+                value={form.points}
+                onChange={(e) => set('points', e.target.value)}
+                aria-label="Points"
+              />
+            )}
+          </FormField>
         </div>
       </div>
 
@@ -382,14 +385,16 @@ export function BankQuestionEditor({
           onChange={(next) => set('competencies', next)}
         />
 
-        <label className="block">
-          <span className={labelCls}>Tags (comma-separated)</span>
-          <Input
-            value={form.tags}
-            onChange={(e) => set('tags', e.target.value)}
-            placeholder="e.g. sql, arrays"
-          />
-        </label>
+        <FormField label="Tags (comma-separated)">
+          {(p) => (
+            <Input
+              {...p}
+              value={form.tags}
+              onChange={(e) => set('tags', e.target.value)}
+              placeholder="e.g. sql, arrays"
+            />
+          )}
+        </FormField>
         {unverifiedLocked ? (
           <div data-testid="locked-unverified-tag">
             <span
@@ -411,7 +416,7 @@ export function BankQuestionEditor({
         <div className={GROUP}>
           <h3 className={GROUP_TITLE}>Answer options</h3>
           <div>
-            <span className={labelCls}>Options</span>
+            <span className={groupLabelCls}>Options</span>
             <div className="space-y-1">
               {form.options.map((opt, oi) => (
                 <div key={oi} className="flex items-center gap-1">
@@ -438,8 +443,10 @@ export function BankQuestionEditor({
                     className="min-w-0 flex-1"
                   />
                   {form.options.length > 2 ? (
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
+                      size="icon"
                       aria-label={`Remove option ${oi + 1}`}
                       onClick={() =>
                         set(
@@ -447,10 +454,10 @@ export function BankQuestionEditor({
                           form.options.filter((_, j) => j !== oi),
                         )
                       }
-                      className={ICON_BTN}
+                      className={REMOVE_BTN}
                     >
-                      <Trash2 className="h-4 w-4" aria-hidden="true" />
-                    </button>
+                      <Trash2 aria-hidden="true" />
+                    </Button>
                   ) : (
                     <span className="h-10 w-10 shrink-0" aria-hidden="true" />
                   )}
@@ -474,7 +481,7 @@ export function BankQuestionEditor({
         <div className={GROUP}>
           <h3 className={GROUP_TITLE}>Coding setup</h3>
           <div>
-            <span className={labelCls}>Allowed languages</span>
+            <span className={groupLabelCls}>Allowed languages</span>
             <div className="flex flex-wrap gap-2">
               {CODING_LANGUAGES.map((slug) => {
                 const on = form.allowedLanguages.includes(slug);
@@ -494,7 +501,7 @@ export function BankQuestionEditor({
           </div>
 
           <div>
-            <span className={labelCls}>Starter code (optional)</span>
+            <span className={groupLabelCls}>Starter code (optional)</span>
             <Suspense fallback={<Skeleton className="h-24 rounded-[12px]" />}>
               <CodeEditor
                 language={form.allowedLanguages[0] ?? 'python'}
@@ -508,7 +515,7 @@ export function BankQuestionEditor({
           </div>
 
           <div>
-            <span className={labelCls}>Reference solution (optional)</span>
+            <span className={groupLabelCls}>Reference solution (optional)</span>
             <Suspense fallback={<Skeleton className="h-24 rounded-[12px]" />}>
               <CodeEditor
                 language={form.allowedLanguages[0] ?? 'python'}
@@ -535,7 +542,8 @@ export function BankQuestionEditor({
               {form.testCases.map((tc, ti) => (
                 <div key={ti} className="rounded-[16px] border border-border p-3">
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <textarea
+                    <Textarea
+                      rows={2}
                       value={tc.stdin}
                       onChange={(e) =>
                         set(
@@ -547,9 +555,10 @@ export function BankQuestionEditor({
                       }
                       placeholder="stdin"
                       aria-label={`Test ${ti + 1} input`}
-                      className={cn(inputCls, 'min-h-[44px] resize-y font-mono text-[13px]')}
+                      className="min-h-[44px] font-mono md:text-[13px]"
                     />
-                    <textarea
+                    <Textarea
+                      rows={2}
                       value={tc.expected_output}
                       onChange={(e) =>
                         set(
@@ -561,7 +570,7 @@ export function BankQuestionEditor({
                       }
                       placeholder="expected stdout"
                       aria-label={`Test ${ti + 1} expected output`}
-                      className={cn(inputCls, 'min-h-[44px] resize-y font-mono text-[13px]')}
+                      className="min-h-[44px] font-mono md:text-[13px]"
                     />
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-2.5 text-[13px] text-muted-foreground">
@@ -582,8 +591,10 @@ export function BankQuestionEditor({
                       Sample
                     </label>
                     {form.testCases.length > 1 ? (
-                      <button
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="icon"
                         aria-label={`Remove test case ${ti + 1}`}
                         onClick={() =>
                           set(
@@ -591,10 +602,10 @@ export function BankQuestionEditor({
                             form.testCases.filter((_, j) => j !== ti),
                           )
                         }
-                        className={cn(ICON_BTN, 'ml-auto')}
+                        className={cn(REMOVE_BTN, 'ml-auto')}
                       >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                      </button>
+                        <Trash2 aria-hidden="true" />
+                      </Button>
                     ) : null}
                   </div>
                 </div>
@@ -602,15 +613,17 @@ export function BankQuestionEditor({
             </div>
           </div>
 
-          <label className="block max-w-[200px]">
-            <span className={labelCls}>Time limit (ms)</span>
-            <Input
-              type="number"
-              min={100}
-              value={form.timeLimitMs}
-              onChange={(e) => set('timeLimitMs', e.target.value)}
-            />
-          </label>
+          <FormField label="Time limit (ms)" className="max-w-[200px]">
+            {(p) => (
+              <Input
+                {...p}
+                type="number"
+                min={100}
+                value={form.timeLimitMs}
+                onChange={(e) => set('timeLimitMs', e.target.value)}
+              />
+            )}
+          </FormField>
         </div>
       )}
 
@@ -622,7 +635,7 @@ export function BankQuestionEditor({
 
       <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-5">
         {onCancel ? (
-          <Button type="button" variant="outline" onClick={onCancel}>
+          <Button type="button" variant="ghost" onClick={onCancel}>
             Cancel
           </Button>
         ) : null}

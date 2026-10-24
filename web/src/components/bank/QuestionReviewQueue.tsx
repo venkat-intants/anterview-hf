@@ -15,6 +15,7 @@ import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
 import { EmptyState } from '@/design/components/page';
 import { BankCodingQuestionView } from '@/components/hr/bank/BankCodingQuestionView';
 import { QuestionBadges } from '@/components/bank/QuestionBadges';
+import { QueryState } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -220,54 +221,45 @@ export function QuestionReviewQueue({
     void qc.invalidateQueries({ queryKey: ['hr', 'bank-questions'] });
   };
 
-  if (queue.isLoading) {
-    return (
-      <div className="flex flex-col gap-3" aria-busy="true">
-        <span className="sr-only">Loading…</span>
-        <Skeleton className="h-28 rounded-card" />
-        <Skeleton className="h-28 rounded-card" />
-      </div>
-    );
-  }
-  if (queue.isError) {
-    return (
-      <div role="alert" className="flex flex-wrap items-center gap-3">
-        <p className="text-[14px] text-[var(--ui-danger)]">
-          Could not load the question review queue.
-        </p>
-        <Button type="button" variant="outline" onClick={() => void queue.refetch()}>
-          Try again
-        </Button>
-      </div>
-    );
-  }
-  const rows = queue.data ?? [];
-  if (rows.length === 0) {
-    return (
-      <EmptyState
-        icon={ClipboardCheck}
-        title="Nothing is waiting for review."
-        description={emptyHint}
-      />
-    );
-  }
   return (
-    <ProgressiveList
-      items={rows}
-      initial={5}
-      noun="questions"
-      aria-label="Questions waiting for review"
-      className="flex flex-col gap-3"
-      getKey={(row) => row.id}
-      renderItem={(row, i) => (
-        <ReviewRow
-          row={row}
-          approve={approve}
-          requestChanges={requestChanges}
-          invalidate={invalidate}
-          openContent={i === 0}
+    <QueryState
+      query={queue}
+      errorTitle="Could not load the question review queue."
+      loading={
+        <div className="flex flex-col gap-3" aria-busy="true">
+          <span className="sr-only">Loading…</span>
+          <Skeleton className="h-28 rounded-card" />
+          <Skeleton className="h-28 rounded-card" />
+        </div>
+      }
+      isEmpty={(rows) => rows.length === 0}
+      empty={
+        <EmptyState
+          icon={ClipboardCheck}
+          title="Nothing is waiting for review."
+          description={emptyHint}
+        />
+      }
+    >
+      {(rows) => (
+        <ProgressiveList
+          items={rows}
+          initial={5}
+          noun="questions"
+          aria-label="Questions waiting for review"
+          className="flex flex-col gap-3"
+          getKey={(row) => row.id}
+          renderItem={(row, i) => (
+            <ReviewRow
+              row={row}
+              approve={approve}
+              requestChanges={requestChanges}
+              invalidate={invalidate}
+              openContent={i === 0}
+            />
+          )}
         />
       )}
-    />
+    </QueryState>
   );
 }

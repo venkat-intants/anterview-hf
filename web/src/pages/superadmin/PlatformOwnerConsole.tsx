@@ -15,7 +15,7 @@
 //
 // Shell: bare content — AppShell is provided by the router (no double-wrap).
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Building2,
@@ -64,7 +64,15 @@ import {
   AccountDialog,
   DeleteCompanyDialog,
 } from '@/components/superadmin/CreateDialogs';
-import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   GlassCard,
   StatCard,
@@ -100,6 +108,13 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  // Removing the super admin is a user-level delete that leaves the company
+  // with nobody to run it, so it asks in a dialog that names them (audit B4),
+  // as StaffRoster in CompanyAdminConsole does for HR managers.
+  const [removeOpen, setRemoveOpen] = useState(false);
+  // The Remove button is not a Radix trigger, so focus is handed back to it by
+  // hand when the dialog closes without removing anyone.
+  const returnFocusTo = useRef<HTMLElement | null>(null);
 
   // getCompanyAdmin 404s when none exists yet. Only that 404 means "no super
   // admin": any other failure is an error with a retry (AD-F5), because
@@ -168,6 +183,7 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
     mutationFn: () => deleteCompanyAdmin(company.id),
     onSuccess: () => {
       toast.success('Super admin removed');
+      setRemoveOpen(false);
       void qc.invalidateQueries({ queryKey: ['company-admin', company.id] });
       void qc.invalidateQueries({ queryKey: ['companies'] });
       void qc.invalidateQueries({ queryKey: ['platform-stats'] });
@@ -276,13 +292,18 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
                 Active
               </Badge>
             )}
-            <ConfirmDeleteButton
-              title={`Remove super admin ${admin.email}`}
-              confirmText="Remove"
-              icon={UserMinus}
-              pending={removeAdminMut.isPending}
-              onConfirm={() => removeAdminMut.mutate()}
-            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              title={`Remove ${admin.full_name}`}
+              aria-label={`Remove ${admin.full_name}`}
+              aria-haspopup="dialog"
+              disabled={removeAdminMut.isPending}
+              onClick={() => setRemoveOpen(true)}
+            >
+              <UserMinus aria-hidden="true" />
+            </Button>
           </div>
         </div>
       ) : (
@@ -292,7 +313,12 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
             title="This company has no super admin yet"
             description="They will manage the company's HR managers and interviewers."
             action={
-              <Button type="button" onClick={() => setCreateOpen(true)} className="gap-1.5">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setCreateOpen(true)}
+                className="gap-1.5"
+              >
                 <UserPlus className="h-4 w-4" aria-hidden="true" />
                 New super admin
               </Button>
@@ -306,6 +332,54 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
           </p>
         </>
       )}
+
+      <Dialog
+        open={removeOpen && admin !== null}
+        onOpenChange={(next) => {
+          if (!next && !removeAdminMut.isPending) setRemoveOpen(false);
+        }}
+      >
+        <DialogContent
+          className="max-w-[440px]"
+          onOpenAutoFocus={() => {
+            returnFocusTo.current =
+              document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          }}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            if (returnFocusTo.current?.isConnected) returnFocusTo.current.focus();
+          }}
+        >
+          {admin ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Remove {admin.full_name}?</DialogTitle>
+                <DialogDescription>
+                  {admin.email} loses access to {company.name} straight away and is signed out
+                  everywhere. This cannot be undone from the console, and {company.name} has no
+                  super admin until you add a new one.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="gap-2">
+                <DialogClose asChild>
+                  <Button type="button" variant="ghost" disabled={removeAdminMut.isPending}>
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={removeAdminMut.isPending}
+                  aria-busy={removeAdminMut.isPending}
+                  onClick={() => removeAdminMut.mutate()}
+                >
+                  {removeAdminMut.isPending ? 'Removing…' : 'Remove'}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
 
       <AccountDialog
         open={createOpen}
@@ -746,7 +820,12 @@ export default function PlatformOwnerConsole() {
                 title="No companies yet"
                 description="Create your first one to get started."
                 action={
-                  <Button type="button" onClick={openCompanyDialog} className="gap-1.5">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={openCompanyDialog}
+                    className="gap-1.5"
+                  >
                     <Plus className="h-4 w-4" aria-hidden="true" />
                     New company
                   </Button>

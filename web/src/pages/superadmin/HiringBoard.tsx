@@ -13,6 +13,14 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { GlassCard } from '@/design/components/primitives';
 import { EmptyState, Page, PageHeader, Toolbar } from '@/design/components/page';
 import { QueryErrorPanel } from '@/components/QueryState';
@@ -106,66 +114,88 @@ export default function HiringBoard(): JSX.Element {
         </GlassCard>
       ) : (
         <GlassCard className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-left text-[13px]">
-              <thead>
-                <tr className="sticky top-0 border-b border-border bg-[var(--ui-inset-soft)] text-[12px] uppercase tracking-wide text-muted-foreground">
-                  <th className="px-4 py-3 font-medium">Opening</th>
-                  <th className="px-3 py-3 font-medium">Status</th>
-                  <th className="px-3 py-3 font-medium">Workflow</th>
-                  <th className="px-3 py-3 text-right font-medium">Applied</th>
-                  <th className="px-3 py-3 text-right font-medium">In play</th>
-                  <th className="px-3 py-3 text-right font-medium">Hired</th>
-                  <th className="px-3 py-3 text-right font-medium">Awaiting decision</th>
-                  <th className="px-4 py-3 font-medium">Health</th>
-                </tr>
-              </thead>
-              <tbody>
-                {openings.map((o) => (
-                  <tr
-                    key={o.requisition_id}
-                    className="border-b border-border/60 align-top last:border-b-0 hover:bg-[var(--ui-inset-soft)]"
-                    data-testid={`board-row-${o.requisition_id}`}
-                  >
-                    <td className="px-4 py-3">
-                      <Link
-                        to={`/superadmin/requisitions/${o.requisition_id}`}
-                        className="font-medium text-foreground hover:underline"
-                      >
-                        {o.title}
-                      </Link>
-                      {o.location ? (
-                        <div className="text-[12px] text-muted-foreground">{o.location}</div>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-3 text-[var(--ui-soft)]">
-                      {statusLabel(o.status, 'opening')}
-                    </td>
-                    <td className="px-3 py-3 text-[var(--ui-soft)]">{workflowText(o)}</td>
-                    <td className="px-3 py-3 text-right tabular-nums">{o.applied}</td>
-                    <td className="px-3 py-3 text-right tabular-nums">{o.in_play}</td>
-                    <td className="px-3 py-3 text-right tabular-nums">
-                      {o.target_hires ? `${o.hired} of ${o.target_hires}` : o.hired}
-                    </td>
-                    <td className="px-3 py-3 text-right tabular-nums">{o.awaiting_decision}</td>
-                    <td className="max-w-[340px] px-4 py-3">
-                      <span
-                        className={cn(
-                          'inline-block rounded-full border px-2 py-0.5 text-[12px] font-medium',
-                          BAND[o.health.band].chip,
-                        )}
-                      >
-                        {BAND[o.health.band].label}
-                      </span>
-                      <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
-                        {o.health.reason}
-                      </p>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Table className="min-w-[980px] text-left text-[13px]">
+            <TableHeader>
+              <TableRow className="sticky top-0 border-b border-border bg-[var(--ui-inset-soft)] text-[12px] uppercase tracking-wide text-muted-foreground hover:bg-[var(--ui-inset-soft)]">
+                <TableHead scope="col" className="h-auto px-4 py-3 font-medium">
+                  Opening
+                </TableHead>
+                <TableHead scope="col" className="h-auto px-3 py-3 font-medium">
+                  Status
+                </TableHead>
+                <TableHead scope="col" className="h-auto px-3 py-3 font-medium">
+                  Workflow
+                </TableHead>
+                <TableHead scope="col" className="h-auto px-3 py-3 text-right font-medium">
+                  Applied
+                </TableHead>
+                <TableHead scope="col" className="h-auto px-3 py-3 text-right font-medium">
+                  In play
+                </TableHead>
+                <TableHead scope="col" className="h-auto px-3 py-3 text-right font-medium">
+                  Hired
+                </TableHead>
+                <TableHead scope="col" className="h-auto px-3 py-3 text-right font-medium">
+                  Awaiting decision
+                </TableHead>
+                <TableHead scope="col" className="h-auto px-4 py-3 font-medium">
+                  Health
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {openings.map((o) => (
+                <TableRow
+                  key={o.requisition_id}
+                  className="border-b border-border/60 align-top last:border-b-0 hover:bg-[var(--ui-inset-soft)]"
+                  data-testid={`board-row-${o.requisition_id}`}
+                >
+                  <TableCell className="p-0 px-4 py-3">
+                    <Link
+                      to={`/superadmin/requisitions/${o.requisition_id}`}
+                      className="font-medium text-foreground hover:underline"
+                    >
+                      {o.title}
+                    </Link>
+                    {o.location ? (
+                      <div className="text-[12px] text-muted-foreground">{o.location}</div>
+                    ) : null}
+                  </TableCell>
+                  <TableCell className="p-0 px-3 py-3 text-[var(--ui-soft)]">
+                    {statusLabel(o.status, 'opening')}
+                  </TableCell>
+                  <TableCell className="p-0 px-3 py-3 text-[var(--ui-soft)]">
+                    {workflowText(o)}
+                  </TableCell>
+                  <TableCell className="p-0 px-3 py-3 text-right tabular-nums">
+                    {o.applied}
+                  </TableCell>
+                  <TableCell className="p-0 px-3 py-3 text-right tabular-nums">
+                    {o.in_play}
+                  </TableCell>
+                  <TableCell className="p-0 px-3 py-3 text-right tabular-nums">
+                    {o.target_hires ? `${o.hired} of ${o.target_hires}` : o.hired}
+                  </TableCell>
+                  <TableCell className="p-0 px-3 py-3 text-right tabular-nums">
+                    {o.awaiting_decision}
+                  </TableCell>
+                  <TableCell className="p-0 max-w-[340px] px-4 py-3">
+                    <span
+                      className={cn(
+                        'inline-block rounded-full border px-2 py-0.5 text-[12px] font-medium',
+                        BAND[o.health.band].chip,
+                      )}
+                    >
+                      {BAND[o.health.band].label}
+                    </span>
+                    <p className="mt-1 text-[12px] leading-relaxed text-muted-foreground">
+                      {o.health.reason}
+                    </p>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </GlassCard>
       )}
     </Page>

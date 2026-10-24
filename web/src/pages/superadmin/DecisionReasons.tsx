@@ -12,6 +12,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { StatusTag } from '@/design/components/primitives';
 import { Page, PageHeader, SectionCard } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { toast } from '@/lib/toast';
@@ -34,9 +37,6 @@ const APPLIES_TO_LABEL: Record<DecisionOutcome, string> = {
  *  here so a short label is explained instead of failing with a 422 (AD-F20). */
 const LABEL_MIN = 2;
 const LABEL_MAX = 120;
-
-const INPUT =
-  'min-h-10 rounded-[10px] border border-input bg-card px-3.5 py-2 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
 
 export default function DecisionReasons(): JSX.Element {
   const qc = useQueryClient();
@@ -118,44 +118,33 @@ export default function DecisionReasons(): JSX.Element {
             createMut.mutate();
           }}
         >
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="reason-label" className="text-[13px] font-medium text-foreground">
-              Label
-            </label>
-            <input
-              id="reason-label"
-              value={label}
-              maxLength={LABEL_MAX}
-              onChange={(e) => {
-                setLabel(e.target.value);
-                if (labelError) setLabelError(null);
-              }}
-              placeholder="e.g. Not enough experience"
-              aria-invalid={labelError ? true : undefined}
-              aria-describedby={labelError ? 'reason-label-error' : undefined}
-              className={INPUT}
-            />
-            {labelError ? (
-              <p id="reason-label-error" className="text-[12.5px] text-[var(--ui-danger)]">
-                {labelError}
-              </p>
-            ) : null}
-          </div>
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor="reason-applies" className="text-[13px] font-medium text-foreground">
-              Applies to
-            </label>
-            <select
-              id="reason-applies"
-              value={appliesTo}
-              onChange={(e) => setAppliesTo(e.target.value as DecisionOutcome)}
-              className={INPUT}
-            >
-              <option value="both">Hire or reject</option>
-              <option value="hired">Hire only</option>
-              <option value="rejected">Reject only</option>
-            </select>
-          </div>
+          <FormField id="reason-label" label="Label" error={labelError ?? undefined}>
+            {(p) => (
+              <Input
+                {...p}
+                value={label}
+                maxLength={LABEL_MAX}
+                onChange={(e) => {
+                  setLabel(e.target.value);
+                  if (labelError) setLabelError(null);
+                }}
+                placeholder="e.g. Not enough experience"
+              />
+            )}
+          </FormField>
+          <FormField id="reason-applies" label="Applies to">
+            {(p) => (
+              <SelectControl
+                {...p}
+                value={appliesTo}
+                onChange={(e) => setAppliesTo(e.target.value as DecisionOutcome)}
+              >
+                <option value="both">Hire or reject</option>
+                <option value="hired">Hire only</option>
+                <option value="rejected">Reject only</option>
+              </SelectControl>
+            )}
+          </FormField>
           <label className="flex min-h-10 items-center gap-2 text-[13.5px] text-foreground">
             <input
               type="checkbox"
@@ -173,7 +162,11 @@ export default function DecisionReasons(): JSX.Element {
 
       <SectionCard title="Reasons" description="What HR sees in the hire and reject dropdowns.">
         {isLoading ? (
-          <div className="flex flex-col gap-2" role="status" aria-label="Loading the decision reasons">
+          <div
+            className="flex flex-col gap-2"
+            role="status"
+            aria-label="Loading the decision reasons"
+          >
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-10 w-full" />
@@ -213,12 +206,13 @@ export default function DecisionReasons(): JSX.Element {
                         renameMut.mutate({ code: r.code, label: next });
                       }}
                     >
-                      <input
+                      <Input
+                        size="sm"
                         aria-label={`New label for ${r.label}`}
                         value={editing.label}
                         maxLength={LABEL_MAX}
                         onChange={(e) => setEditing({ code: r.code, label: e.target.value })}
-                        className={`${INPUT} min-w-0 basis-full sm:basis-0 sm:flex-1`}
+                        className="min-w-0 basis-full sm:basis-0 sm:flex-1"
                       />
                       <Button
                         type="submit"

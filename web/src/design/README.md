@@ -212,7 +212,7 @@ accent focus ring, disabled and `aria-invalid` states.
   Safari keep the refined closed state and the OS list (intended fallback). `select[multiple]` and
   `select[size]` are excluded. The `@supports` block must stay OUTSIDE `@layer`: Tailwind hoists an
   `@layer` out of an `@supports` and drops the condition (guarded by `SelectControl.test.tsx`).
-- **New code**: `import { SelectControl } from '@/components/ui/select'` (props `size`, `invalid`,
+- **New code**: `import { SelectControl } from '@/components/ui/select-control'` (props `size`, `invalid`,
   `leadingIcon`, full ref/prop pass-through), or `SelectField` from the design primitives for a
   labelled field with hint/error wiring.
 - **Menus and popovers**: `ui/dropdown-menu.tsx` and `ui/popover.tsx` share one surface

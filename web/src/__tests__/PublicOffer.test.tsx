@@ -491,8 +491,10 @@ describe('PublicOffer - documents, once accepted', () => {
     await user.click(screen.getByRole('button', { name: 'Continue' }));
 
     expect(await screen.findByText(/session has ended/i)).toBeInTheDocument();
-    // Back to square one — no leftover session, no leftover checklist.
-    expect(screen.getByRole('button', { name: 'Get a code' })).toBeInTheDocument();
+    // Back to square one — no leftover session, no leftover checklist. The
+    // notice and the reset to the code step render separately, so wait for
+    // the button too: a slow runner can sit between the two.
+    expect(await screen.findByRole('button', { name: 'Get a code' })).toBeInTheDocument();
     expect(screen.queryByText('PAN card')).not.toBeInTheDocument();
   });
 

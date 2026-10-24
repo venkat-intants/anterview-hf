@@ -871,14 +871,16 @@ function SessionRow({
             ? 'Marked completed'
             : 'Marked as no-show';
       // The loop closes by itself when nothing is left pending; say so, since
-      // "Add interview" disappears with it.
+      // "Add interview" disappears with it. A short title; the second
+      // sentence is the description.
       const loopNote =
         res.loop_status === 'cancelled'
-          ? '. The loop is now cancelled.'
+          ? 'The loop is now cancelled.'
           : res.loop_status === 'completed'
-            ? '. The loop is now completed.'
-            : '';
-      toast.success(`${what}${loopNote}`);
+            ? 'The loop is now completed.'
+            : undefined;
+      if (loopNote) toast.success(what, { description: loopNote });
+      else toast.success(what);
       setCancelling(false);
       void invalidateAfterHrMutation(qc);
     },
@@ -933,11 +935,11 @@ function SessionRow({
           {!decided ? (
             <Button
               type="button"
-              variant="link"
+              variant={rescheduling ? 'ghost' : 'link'}
               size="sm"
               onClick={() => setRescheduling((v) => !v)}
               aria-expanded={rescheduling}
-              className={TEXT_LINK}
+              className={rescheduling ? undefined : TEXT_LINK}
             >
               {rescheduling
                 ? 'Close'
@@ -950,7 +952,10 @@ function SessionRow({
             <>
               {/* Both are permanent: once set, the server refuses any other
                   outcome. A misclick would record a no-show for good. */}
+              {/* Confirmed because it is permanent, but not destructive: a
+                  positive outcome is not drawn in danger red. */}
               <ConfirmDeleteButton
+                tone="neutral"
                 label="Mark completed"
                 confirmText="Mark completed"
                 icon={null}
@@ -1104,13 +1109,15 @@ function LoopCard({
 
       {canChange ? (
         <div className="mt-2.5">
+          {/* The toggle reads Cancel while the form is open, and Cancel is
+              ghost (UI conventions, A3). */}
           <Button
             type="button"
-            variant="link"
+            variant={addingSession ? 'ghost' : 'link'}
             size="sm"
             onClick={() => setAddingSession((v) => !v)}
             aria-expanded={addingSession}
-            className={TEXT_LINK}
+            className={addingSession ? undefined : TEXT_LINK}
           >
             {addingSession ? 'Cancel' : 'Add interview'}
           </Button>
@@ -1130,6 +1137,7 @@ function LoopCard({
             // Each send emails the candidate and notifies every interviewer
             // again, so a repeat is confirmed and named as a resend.
             <ConfirmDeleteButton
+              tone="neutral"
               label="Resend schedule"
               confirmText="Resend to candidate"
               confirmGroupLabel="Confirm: email the schedule to the candidate again"
@@ -1241,11 +1249,11 @@ export default function InterviewLoopsSection({
         {!decided ? (
           <Button
             type="button"
-            variant="link"
+            variant={creating ? 'ghost' : 'link'}
             size="sm"
             onClick={() => setCreating((v) => !v)}
             aria-expanded={creating}
-            className={TEXT_LINK}
+            className={creating ? undefined : TEXT_LINK}
           >
             {creating ? 'Cancel' : 'New loop'}
           </Button>

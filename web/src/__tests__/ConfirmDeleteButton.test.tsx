@@ -165,3 +165,48 @@ describe('ConfirmDeleteButton keyboard and focus', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toHaveFocus();
   });
 });
+
+// Re-audit (interviews): "Mark completed" and "Resend schedule" were drawn as
+// red danger buttons because the control had one look. A non-destructive
+// confirm now asks for tone="neutral"; destructive stays the default.
+describe('ConfirmDeleteButton tone', () => {
+  it('is destructive by default: a danger trigger and a red confirm', async () => {
+    const user = userEvent.setup();
+    render(<ConfirmDeleteButton label="Delete window" onConfirm={vi.fn()} />);
+
+    const trigger = screen.getByRole('button', { name: 'Delete window' });
+    expect(trigger.className).toContain('text-[var(--ui-danger)]');
+    await user.click(trigger);
+    expect(screen.getByRole('button', { name: 'Delete window' }).className).toContain(
+      'bg-destructive-solid',
+    );
+  });
+
+  it('draws a neutral outline trigger and a primary confirm for tone="neutral"', async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(<ConfirmDeleteButton tone="neutral" label="Mark completed" onConfirm={onConfirm} />);
+
+    const trigger = screen.getByRole('button', { name: 'Mark completed' });
+    expect(trigger.className).not.toMatch(/danger|destructive/);
+    expect(trigger.className).toContain('border-input');
+    await user.click(trigger);
+
+    const confirm = screen.getByRole('button', { name: 'Mark completed' });
+    expect(confirm.className).not.toMatch(/danger|destructive/);
+    expect(confirm.className).toContain('bg-primary');
+    // The behaviour is the same: Escape backs out to the trigger, a confirm fires.
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('button', { name: 'Mark completed' })).toHaveFocus();
+    await user.click(screen.getByRole('button', { name: 'Mark completed' }));
+    await user.click(screen.getByRole('button', { name: 'Mark completed' }));
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an icon-only neutral trigger free of the danger hover', () => {
+    render(
+      <ConfirmDeleteButton tone="neutral" title="Resend to Asha" confirmText="Resend" onConfirm={vi.fn()} />,
+    );
+    expect(screen.getByRole('button', { name: 'Resend to Asha' }).className).not.toMatch(/danger/);
+  });
+});

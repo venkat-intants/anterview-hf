@@ -16,12 +16,17 @@ import {
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
-import { plural } from '@/lib/formatters';
+import { formatNumber, plural } from '@/lib/formatters';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+
+/** Interview hours to one decimal: "1.3", "4.5", "6". */
+function formatHours(hours: number): string {
+  return formatNumber(Math.round(hours * 10) / 10);
+}
 
 type Preset = WorkloadPeriodPreset;
 
@@ -172,7 +177,9 @@ function WorkloadRowCard({
         </div>
         <div>
           <dt className="text-muted-foreground">Hours</dt>
-          <dd className="text-foreground">{row.hours}</dd>
+          {/* The server sends a raw float (80 minutes is 1.333...): one
+              decimal, through the shared formatter. */}
+          <dd className="text-foreground">{formatHours(row.hours)}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">Loops</dt>

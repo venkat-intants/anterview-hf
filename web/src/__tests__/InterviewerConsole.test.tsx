@@ -287,7 +287,7 @@ describe('InterviewerConsole - my availability', () => {
     await user.click(await screen.findByRole('button', { name: /^Delete the window .+ to .+/ }));
     expect(schedulingApi.removeMyAvailability).not.toHaveBeenCalled();
     const group = screen.getByRole('group', { name: /^Delete the window/ });
-    await user.click(within(group).getByRole('button', { name: 'Delete' }));
+    await user.click(within(group).getByRole('button', { name: 'Delete window' }));
     await waitFor(() => expect(schedulingApi.removeMyAvailability).toHaveBeenCalledWith('win-1'));
   });
 

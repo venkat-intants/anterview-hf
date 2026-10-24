@@ -46,6 +46,8 @@ import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertCircle } from '@/design/components/icons';
 import { formatDateTime } from '@/lib/formatters';
+import { browserTimezone } from '@/lib/timezone';
+import { toLocalInputValue } from '@/lib/localDatetime';
 
 // HR-L3: the shared approval labels, so this panel, the openings list and the
 // HR home say the same words ("Sent back", "Awaiting approval") for one state.
@@ -406,13 +408,14 @@ export default function GovernancePanel({
                       <FormField
                         id="s-at"
                         className="mt-2"
-                        label="Go live at"
+                        label={`Go live at (your time, ${browserTimezone()})`}
                         describedBy={!approved ? 'schedule-gate' : undefined}
                       >
                         {(p) => (
                           <Input
                             {...p}
                             type="datetime-local"
+                            min={toLocalInputValue(new Date().toISOString())}
                             value={publishAt}
                             onChange={(e) => setPublishAt(e.target.value)}
                             disabled={!approved || sched.public_apply_enabled}

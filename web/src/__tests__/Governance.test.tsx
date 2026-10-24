@@ -226,6 +226,13 @@ describe('scheduled publishing', () => {
     expect(screen.getByText(new RegExp(TOLERANCE.slice(0, 40)))).toBeInTheDocument();
   });
 
+  it('names the time zone the go-live time is read in, and starts the picker at now', async () => {
+    renderPanel(requisition({ approval_status: 'approved' }));
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const input = await screen.findByLabelText(`Go live at (your time, ${tz})`);
+    expect(input.getAttribute('min')).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/);
+  });
+
   it('shows the tolerance on the empty form too', async () => {
     renderPanel(requisition({ approval_status: 'approved' }));
     expect(await screen.findByText(new RegExp(TOLERANCE.slice(0, 40)))).toBeInTheDocument();

@@ -151,14 +151,22 @@ function StatusButtons({
   title,
   change,
   closingPassed,
+  unresolved,
 }: {
   status: string;
   title: string;
   change: StatusChange;
   /** HR-M8: the server refuses to reopen while the closing date has passed. */
   closingPassed: boolean;
+  /**
+   * Candidates without a final decision, as the dashboard last counted them.
+   * When there are any, Close goes straight to the close-anyway dialog: that
+   * dialog is the one confirmation, rather than an inline "Close it?" and
+   * then the dialog after the server's 409.
+   */
+  unresolved: number;
 }) {
-  const { mut } = change;
+  const { mut, setPendingClose } = change;
   // HR-L16: closing takes the careers listing down at once, so it asks first.
   const [confirmClose, setConfirmClose] = useState(false);
   const btn = (label: string, next: RequisitionStatus) => (
@@ -201,7 +209,7 @@ function StatusButtons({
         Close opening
       </Button>
       <Button type="button" variant="ghost" size="sm" onClick={() => setConfirmClose(false)}>
-        Keep open
+        Cancel
       </Button>
     </span>
   ) : (
@@ -210,7 +218,7 @@ function StatusButtons({
       type="button"
       variant="ghost"
       disabled={mut.isPending}
-      onClick={() => setConfirmClose(true)}
+      onClick={() => (unresolved > 0 ? setPendingClose(unresolved) : setConfirmClose(true))}
     >
       Close
     </Button>
@@ -298,6 +306,9 @@ function CloseUnresolvedPanel({
         </ul>
         <p className="mt-1.5 text-[13px] leading-relaxed text-foreground">
           Closing does not reject them - nothing here ends a candidacy without you.
+        </p>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-foreground">
+          The careers listing comes down now.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
           {waiting > 0 ? (
@@ -1029,6 +1040,9 @@ export default function RequisitionDashboard({
                 title={req.title}
                 change={statusChange}
                 closingPassed={closingDatePassed(req)}
+                // awaiting_decision is a subset of unresolved, so either one
+                // above zero means closing must account for someone.
+                unresolved={Math.max(req.unresolved ?? 0, req.awaiting_decision)}
               />
               <Button asChild variant="outline">
                 <Link to={`/hr/requisitions/${requisitionId}/workflow`}>Workflow</Link>

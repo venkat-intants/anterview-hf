@@ -17,17 +17,12 @@ import { useQuery } from '@tanstack/react-query';
 import { getMyOfferLink, listMyOffers, type CandidateOffer, type OfferStatus } from '@/api/offers';
 import { sameOriginUrl } from '@/lib/safeUrl';
 import { useCandidateError } from '@/lib/candidateCopy';
+import { formatDate, formatMoney, uiLocale } from '@/lib/formatters';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard } from '@/design/components/page';
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { Briefcase } from '@/design/components/icons';
-
-function localeFor(lang: string): string {
-  if (lang.startsWith('hi')) return 'hi-IN';
-  if (lang.startsWith('te')) return 'te-IN';
-  return 'en-IN';
-}
 
 const STATUS_TONE: Record<OfferStatus, TagTone> = {
   draft: 'neutral',
@@ -41,10 +36,11 @@ const STATUS_TONE: Record<OfferStatus, TagTone> = {
   withdrawn: 'neutral',
 };
 
+// Money and dates through lib/formatters, in the page locale (UI conventions,
+// F2), so an offer reads the same here as everywhere else it is shown.
 function money(o: CandidateOffer, locale: string): string | null {
   if (!o.base_salary || !o.currency) return null;
-  const amount = Number(o.base_salary).toLocaleString(locale);
-  return `${o.currency} ${amount}`;
+  return formatMoney(o.base_salary, o.currency, locale);
 }
 
 /**
@@ -120,14 +116,14 @@ function OfferCard({
       {offer.status === 'sent' && offer.expires_at ? (
         <p className="mt-2 text-[13px] text-muted-foreground">
           {t('myOffers.expires', {
-            date: new Date(offer.expires_at).toLocaleDateString(locale),
+            date: formatDate(offer.expires_at, locale),
           })}
         </p>
       ) : null}
       {offer.responded_at ? (
         <p className="mt-2 text-[13px] text-muted-foreground">
           {t('myOffers.respondedOn', {
-            date: new Date(offer.responded_at).toLocaleDateString(locale),
+            date: formatDate(offer.responded_at, locale),
           })}
         </p>
       ) : null}
@@ -162,7 +158,7 @@ function OfferCard({
 /** Offers shown on their application card (the server sent an `application_id`). */
 export function EmbeddedOffers({ offers }: { offers: CandidateOffer[] }): JSX.Element {
   const { i18n } = useTranslation();
-  const locale = localeFor(i18n.language);
+  const locale = uiLocale(i18n.language);
   return (
     <div className="flex flex-col gap-3">
       {offers.map((o) => (
@@ -180,7 +176,7 @@ interface YourOffersProps {
 export default function YourOffers({ exclude }: YourOffersProps = {}): JSX.Element | null {
   const { t, i18n } = useTranslation();
   const errText = useCandidateError();
-  const locale = localeFor(i18n.language);
+  const locale = uiLocale(i18n.language);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['me', 'offers'],

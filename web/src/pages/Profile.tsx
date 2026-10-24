@@ -519,12 +519,14 @@ export default function Profile() {
             {me.bio ? (
               <p className="whitespace-pre-line text-[14.5px] leading-relaxed text-foreground">{me.bio}</p>
             ) : (
+              // Every empty section's Add action is outline: a new profile shows
+              // several at once, and none of them is the page's one primary.
               <EmptyState
                 icon={Sparkles}
                 title={isCandidate ? t('profile.emptyAboutCandTitle') : t('profile.emptyAboutOtherTitle')}
                 description={isCandidate ? t('profile.emptyAboutCandDesc') : t('profile.emptyAboutOtherDesc')}
                 action={
-                  <Button type="button" onClick={() => openEditor('about')}>
+                  <Button type="button" variant="outline" onClick={() => openEditor('about')}>
                     {isCandidate ? t('profile.addSummary') : t('profile.addDescription')}
                   </Button>
                 }
@@ -543,7 +545,7 @@ export default function Profile() {
                   icon={Briefcase}
                   title={t('profile.emptyCareerTitle')}
                   description={t('profile.emptyCareerDesc')}
-                  action={<Button type="button" onClick={() => openEditor('career')}>{t('profile.addCareer')}</Button>}
+                  action={<Button type="button" variant="outline" onClick={() => openEditor('career')}>{t('profile.addCareer')}</Button>}
                   className="mb-5"
                 />
               )}
@@ -604,7 +606,7 @@ export default function Profile() {
                   icon={Mail}
                   title={t('profile.stepEmail')}
                   description={t('profile.emptyEmailDesc')}
-                  action={<Button type="button" onClick={() => openEditor('company')}>{t('profile.addOfficialEmail')}</Button>}
+                  action={<Button type="button" variant="outline" onClick={() => openEditor('company')}>{t('profile.addOfficialEmail')}</Button>}
                   className="mt-5"
                 />
               )}
@@ -635,7 +637,7 @@ export default function Profile() {
                 icon={Link2}
                 title={t('profile.emptyContactTitle')}
                 description={t('profile.emptyContactDesc')}
-                action={<Button type="button" onClick={() => openEditor('contact')}>{t('profile.addContact')}</Button>}
+                action={<Button type="button" variant="outline" onClick={() => openEditor('contact')}>{t('profile.addContact')}</Button>}
                 className="mt-5"
               />
             )}

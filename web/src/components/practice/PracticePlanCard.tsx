@@ -20,6 +20,8 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 
 import { getPracticePlan, type CompetencyProgress } from '@/api/onboarding';
+import { ApiError } from '@/api/client';
+import { LoadErrorPanel } from '@/components/candidate/LoadErrorPanel';
 import { buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Card } from '@/design/components/card';
@@ -110,7 +112,14 @@ export default function PracticePlanCard({
   thisWeek,
 }: PracticePlanCardProps = {}): JSX.Element | null {
   const { t } = useTranslation();
-  const { data: plan, isLoading } = useQuery({
+  const {
+    data: plan,
+    isLoading,
+    isError,
+    error,
+    isFetching,
+    refetch,
+  } = useQuery({
     queryKey: ['practice-plan'],
     queryFn: getPracticePlan,
     staleTime: 60_000,
@@ -139,8 +148,22 @@ export default function PracticePlanCard({
   }
 
   // No plan at all — an HR/admin account whose plan request 403s. Render
-  // nothing rather than a candidate-shaped card they cannot act on.
-  if (!plan) return null;
+  // nothing rather than a candidate-shaped card they cannot act on. Any other
+  // failure (offline, a 5xx) is a candidate whose plan exists and did not
+  // load: losing the dashboard's centrepiece without a word reads as "you have
+  // no plan", so it says so and offers to try again.
+  if (!plan) {
+    if (isError && !(error instanceof ApiError && error.status === 403)) {
+      return (
+        <LoadErrorPanel
+          title={t('dashboard.planLoadError')}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
+      );
+    }
+    return null;
+  }
 
   // ── Not personalized yet: the nudge ──────────────────────────────────────
   if (!plan.ready) {

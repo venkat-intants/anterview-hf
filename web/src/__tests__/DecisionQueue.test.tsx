@@ -206,9 +206,9 @@ describe('DecisionQueue - the list', () => {
   it('shows each person\'s key scores as small numerals, and says scores never decide', async () => {
     renderQueue();
     await ready('Asha Rao');
-    expect(within(row('Asha Rao')).getByText('Resume 71')).toBeTruthy();
-    expect(within(row('Asha Rao')).getByText('Avg 54%')).toBeTruthy();
-    expect(within(row('Bhavya Nair')).getByText('Avg 79%')).toBeTruthy();
+    expect(within(row('Asha Rao')).getByText('Resume 71/100')).toBeTruthy();
+    expect(within(row('Asha Rao')).getByText('Avg 54/100')).toBeTruthy();
+    expect(within(row('Bhavya Nair')).getByText('Avg 79/100')).toBeTruthy();
     expect(within(row('Asha Rao')).getByText(/waiting 3 days/)).toBeTruthy();
     expect(screen.getByText('Scores rank and explain. They never decide.')).toBeTruthy();
   });
@@ -275,9 +275,9 @@ describe('DecisionQueue - step 1, evidence', () => {
     await ready('Asha Rao');
 
     expect(within(panel()).getByText(/Held on Fundamentals · workflow v2/)).toBeTruthy();
-    expect(within(panel()).getByText(/average across rounds 54%/)).toBeTruthy();
+    expect(within(panel()).getByText(/average across rounds 54\/100/)).toBeTruthy();
     expect(within(panel()).getByLabelText(/Completed rounds for Asha Rao/).textContent).toMatch(
-      /Fundamentals\s*54%\s*· held/,
+      /Fundamentals\s*54\/100\s*· held/,
     );
     await select('Bhavya Nair');
     expect(within(panel()).getByText(/Finished every round/)).toBeTruthy();
@@ -473,6 +473,18 @@ describe('DecisionQueue - step 3, reason and confirm', () => {
     await choose(action);
     return within(panel());
   }
+
+  it('describes Hire as a hire, not with the Reject wording', async () => {
+    renderQueue();
+    await ready('Bhavya Nair');
+    await select('Bhavya Nair');
+    await toDecision();
+    const hire = within(panel()).getByRole('button', { name: /^Hire/ });
+    const reject = within(panel()).getByRole('button', { name: /^Reject/ });
+    expect(hire.textContent).toMatch(/Marks them hired for this opening/);
+    expect(hire.textContent).not.toMatch(/Ends their candidacy/);
+    expect(reject.textContent).toMatch(/Ends their candidacy for this opening/);
+  });
 
   it('does not hire on the first click: choosing only moves to the confirm step', async () => {
     const p = await reachConfirm('Bhavya Nair', /^Hire/);

@@ -61,6 +61,7 @@ const { mockUseAuth } = vi.hoisted(() => ({ mockUseAuth: vi.fn() }));
 vi.mock('../context/AuthContext', () => ({ useAuth: () => mockUseAuth() as unknown }));
 
 import Profile from '../pages/Profile';
+import i18n from '../lib/i18n';
 
 type User = ReturnType<typeof userEvent.setup>;
 
@@ -118,7 +119,8 @@ describe('Profile - rendering', () => {
   it('shows the saved profile as text, not as an always-open form', async () => {
     await renderHydrated();
 
-    expect(screen.getByRole('heading', { name: /your profile/i })).toBeInTheDocument();
+    // The title is the user-menu label, word for word (UI conventions, G2).
+    expect(screen.getByRole('heading', { name: 'Profile' })).toBeInTheDocument();
     expect(screen.getByText('Backend engineer')).toBeInTheDocument();
     expect(screen.queryByLabelText(/full name/i)).not.toBeInTheDocument();
   });
@@ -153,6 +155,36 @@ describe('Profile - rendering', () => {
 
     const dialog = await openEditor(user, /add a summary/i);
     expect(within(dialog).getByLabelText(/tell recruiters/i)).toHaveValue('');
+  });
+
+  it('gives a brand-new profile no filled primary among its Add actions', async () => {
+    // Every section is empty at once on a new profile; a filled button on each
+    // was three or four primaries in one view.
+    getMe.mockResolvedValue({
+      ...CANDIDATE,
+      bio: null,
+      headline: null,
+      employment_status: null,
+      desired_roles: null,
+      phone: null,
+      linkedin_url: null,
+      github_url: null,
+    });
+    await renderHydrated();
+    const adds = [/add a summary/i, /add career/i, /add contact/i].map((name) =>
+      screen.getByRole('button', { name }),
+    );
+    for (const b of adds) expect(b.className.split(/\s+/)).not.toContain('bg-primary');
+  });
+
+  it('titles the page in Hindi with the Hindi menu label', async () => {
+    await i18n.changeLanguage('hi');
+    try {
+      renderProfile();
+      expect(await screen.findByRole('heading', { name: 'प्रोफ़ाइल' })).toBeInTheDocument();
+    } finally {
+      await i18n.changeLanguage('en');
+    }
   });
 
   it('reports profile strength from existing fields and lists what is missing', async () => {

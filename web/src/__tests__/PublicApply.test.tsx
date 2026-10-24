@@ -15,7 +15,7 @@
 //   • the page never claims a decision was made.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -473,7 +473,59 @@ describe('PublicApply - afterwards', () => {
     await user.click(submitButton());
 
     expect(await screen.findByText('You have already applied')).toBeTruthy();
+    expect(
+      screen.getByText('You have already applied for this job. We have your application.'),
+    ).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  // The server's `message` is English. A Telugu page used to show it as
+  // written; the sentence now comes from `already_applied` in the page language.
+  it.each([
+    { already: false, te: 'ధన్యవాదాలు - మీ దరఖాస్తు అందింది.' },
+    { already: true, te: 'మీరు ఈ ఉద్యోగానికి ఇప్పటికే దరఖాస్తు చేశారు.' },
+  ])('confirms in Telugu on a Telugu page (already_applied=$already)', async ({ already, te }) => {
+    const user = userEvent.setup();
+    submitApplication.mockResolvedValue({
+      applicant_id: 'ap-1',
+      enrolment_id: 'en-1',
+      full_name: 'Priya Sharma',
+      already_applied: already,
+      message: 'Thanks - your application is in. We will be in touch by email.',
+    });
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    await fillToReview(user);
+    await user.click(consentCheckbox());
+    await user.click(submitButton());
+    await act(async () => {
+      await i18n.changeLanguage('te');
+    });
+
+    expect(await screen.findByText(new RegExp(te))).toBeTruthy();
+    expect(screen.queryByText(/your application is in/i)).toBeNull();
+  });
+
+  it('points a signed-in candidate at My applications, not the sign-in page', async () => {
+    auth = {
+      isAuthenticated: true,
+      isInitializing: false,
+      user: { email: 'me@account.example', roles: ['candidate'] },
+    };
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Backend Engineer');
+    await user.type(screen.getByLabelText('Your name'), 'Priya Sharma');
+    await nextStep(user);
+    await nextStep(user);
+    await user.upload(screen.getByLabelText('Your resume (PDF)'), pdf());
+    await nextStep(user);
+    await user.click(consentCheckbox());
+    await user.click(submitButton());
+
+    expect(
+      await screen.findByRole('link', { name: 'Track this in My applications' }),
+    ).toHaveAttribute('href', '/applications');
   });
 
   it('shows a failure in words the applicant can act on', async () => {

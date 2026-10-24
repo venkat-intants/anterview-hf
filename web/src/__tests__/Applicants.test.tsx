@@ -273,6 +273,17 @@ describe('Applicants - bulk upload', () => {
     expect(fd.get('target_job_title')).toBeNull();
   });
 
+  it('keeps the remove-file button at the full 40px icon size', async () => {
+    const user = userEvent.setup();
+    const { container } = renderPage();
+    await screen.findByRole('option', { name: /staff nurse · senior/i });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(input, new File(['%PDF-1.4'], 'a.pdf', { type: 'application/pdf' }));
+    const remove = screen.getByRole('button', { name: 'Remove a.pdf' });
+    expect(remove.className).toMatch(/\bh-10\b/);
+    expect(remove.className).not.toMatch(/\bh-8\b/);
+  });
+
   it('sends the chosen source, defaulting to internal', async () => {
     const user = userEvent.setup();
     const { container } = renderPage();
@@ -367,6 +378,25 @@ describe('Applicants - list', () => {
     expect(await screen.findByText('No applicants yet')).toBeInTheDocument();
     expect(screen.getByText(/upload resumes above/i)).toBeInTheDocument();
   });
+
+  it('calls people applicants before shortlisting, and the role column the opening', async () => {
+    renderPage();
+    await screen.findByText('Bhavya Nair');
+    expect(screen.getByRole('columnheader', { name: 'Applicant' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Opening' })).toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Candidate' })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Role' })).toBeNull();
+  });
+
+  it('an empty filter result says no matching applicants', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Bhavya Nair');
+    listApplicants.mockResolvedValue([]);
+    await user.click(screen.getByRole('tab', { name: /shortlisted/i }));
+    expect(await screen.findByText('No matching applicants')).toBeInTheDocument();
+    expect(screen.queryByText('No matching candidates')).toBeNull();
+  });
 });
 
 describe('Applicants - search and filter', () => {
@@ -416,6 +446,17 @@ describe('Applicants - search and filter', () => {
     await user.click(await screen.findByRole('button', { name: /clear search/i }));
 
     expect(screen.getByLabelText(/search applicants/i)).toHaveValue('');
+    expect(screen.queryByRole('button', { name: /clear search/i })).toBeNull();
+  });
+
+  it('keeps the clear-search button at the full 40px icon size', async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Bhavya Nair');
+    await user.type(screen.getByLabelText(/search applicants/i), 'k');
+    const clear = await screen.findByRole('button', { name: /clear search/i });
+    expect(clear.className).toMatch(/\bh-10\b/);
+    expect(clear.className).not.toMatch(/\bh-8\b/);
     await waitFor(
       () => expect(listApplicants).toHaveBeenLastCalledWith({ q: undefined, status: undefined }),
       { timeout: 3000 },

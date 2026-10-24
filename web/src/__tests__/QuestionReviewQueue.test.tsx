@@ -334,3 +334,25 @@ describe('QuestionReviewQueue - what a reviewer sees before deciding', () => {
     expect(screen.getAllByTestId('review-row')).toHaveLength(7);
   });
 });
+
+describe('QuestionReviewQueue - the decision inside each row', () => {
+  it('gives each row a bare decision with question wording, not a titled card per row', async () => {
+    renderQueue({
+      fetchQueue: vi.fn().mockResolvedValue([row(), row({ id: 'q-2', root_id: 'q-2' })]),
+      approve: vi.fn(),
+      requestChanges: vi.fn(),
+    });
+
+    const panels = await screen.findAllByTestId('decision-panel');
+    expect(panels).toHaveLength(2);
+    // No "Your decision" heading repeated once per row.
+    expect(screen.queryByRole('heading', { name: 'Your decision' })).not.toBeInTheDocument();
+    for (const panel of panels) {
+      expect(panel).toHaveTextContent(/Approving adds this question to the bank/);
+      expect(panel).toHaveTextContent(/which the author will see/);
+      // The reviewer here may be HR, so the panel must not talk about HR in the third person.
+      expect(panel).not.toHaveTextContent(/lets HR carry on/);
+      expect(within(panel).getByRole('button', { name: 'Approve' })).toBeInTheDocument();
+    }
+  });
+});

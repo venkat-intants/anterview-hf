@@ -1,13 +1,15 @@
 // QuestionReviewQueue — PH4-D1. The shared body of the HR and super-admin
-// review queues: same rules (approve, or request changes with a note of at
-// least 10 characters, the same reason length as the other review queues; the
-// server's own floor is 5, so this is never looser than it; disable a
-// reviewer's own question with the reason shown), different endpoints — HR reviews through `/hr`, the super admin
-// through `/admin`, so a single-HR company is never blocked on a second HR
-// approver. See pages/hr/QuestionReviews.tsx and
-// pages/superadmin/QuestionReviews.tsx. The decision itself is ReviewParts'
-// DecisionPanel, so Approve is the primary action here as on every other
-// review surface (audit AD-F12).
+// review queues. The rules are the same on both: approve, or request changes
+// with a note of at least 10 characters (the reason length the other review
+// queues ask for; the server's own floor is 5, so this is never looser), and a
+// reviewer's own question is disabled with the reason shown. The endpoints
+// differ: HR reviews through `/hr` and the super admin through `/admin`, so a
+// single-HR company is never blocked on a second HR approver. See
+// pages/hr/QuestionReviews.tsx and pages/superadmin/QuestionReviews.tsx.
+//
+// The decision itself is ReviewParts' DecisionPanel, so Approve is the primary
+// action here as on every other review surface (audit AD-F12). It renders
+// bare, without its own card and heading, because it sits inside each row.
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
@@ -143,6 +145,8 @@ function ReviewRow({ row, approve, requestChanges, invalidate, openContent }: Ro
             rejectPending={changesMut.isPending}
             onApprove={() => approveMut.mutate()}
             onReject={() => changesMut.mutate()}
+            variant="bare"
+            description="Approving adds this question to the bank. Sending it back needs a reason, which the author will see."
           />
         </div>
       )}

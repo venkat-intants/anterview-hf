@@ -129,7 +129,8 @@ function failureFrom(err: unknown, proposal: Proposal): CommitOutcome {
   if (isNetworkError(err)) {
     // No response arrived, so the request may or may not have been applied.
     // Say so rather than invite a blind second click.
-    const where = proposal.kind === 'interview_invite' ? ' Check AI interviews' : ' Check the record';
+    const where =
+      proposal.kind === 'interview_invite' ? ' Check AI interviews' : ' Check the record';
     return {
       state: 'failed',
       message: `Could not confirm whether this went through.${where} before you try again.`,
@@ -334,8 +335,8 @@ export default function ProposalCard({
 
         {expired && (
           <p className="text-sm text-muted-foreground">
-            This draft is more than 30 minutes old, so the record may have changed. Ask again for
-            a fresh one.
+            This draft is more than 30 minutes old, so the record may have changed. Ask again for a
+            fresh one.
           </p>
         )}
 

@@ -149,7 +149,10 @@ describe('ProposalCard - commit gate', () => {
 
   it('offers no retry for a refusal that would fail the same way again', async () => {
     commitProposal.mockRejectedValue(
-      new ApiError('Applicant must be shortlisted or have passed an exam before an interview.', 409),
+      new ApiError(
+        'Applicant must be shortlisted or have passed an exam before an interview.',
+        409,
+      ),
     );
     renderCard();
     await userEvent.setup().click(screen.getByRole('button', { name: 'Send invite' }));
@@ -161,7 +164,10 @@ describe('ProposalCard - commit gate', () => {
 
   it('stops asking for approval once a refusal leaves nothing to click', async () => {
     commitProposal.mockRejectedValue(
-      new ApiError('Applicant must be shortlisted or have passed an exam before an interview.', 409),
+      new ApiError(
+        'Applicant must be shortlisted or have passed an exam before an interview.',
+        409,
+      ),
     );
     renderCard();
     expect(screen.getByText('Needs your approval')).toBeInTheDocument();
@@ -205,7 +211,9 @@ describe('ProposalCard - commit gate', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: 'Send invite' }));
 
     const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(/Could not confirm whether this went through\. Check AI interviews/);
+    expect(alert).toHaveTextContent(
+      /Could not confirm whether this went through\. Check AI interviews/,
+    );
     expect(alert).not.toHaveTextContent(/Failed to fetch/);
   });
 
@@ -218,13 +226,12 @@ describe('ProposalCard - commit gate', () => {
     // The same card, now past the approval window.
     rerender(
       <MemoryRouter>
-        <ProposalCard
-          proposal={PROPOSAL}
-          receivedAt={Date.now() - PROPOSAL_MAX_AGE_MS - 60_000}
-        />
+        <ProposalCard proposal={PROPOSAL} receivedAt={Date.now() - PROPOSAL_MAX_AGE_MS - 60_000} />
       </MemoryRouter>,
     );
-    expect(screen.getByRole('alert')).toHaveTextContent(/Could not confirm whether this went through/);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /Could not confirm whether this went through/,
+    );
     expect(screen.queryByText('Not sent')).not.toBeInTheDocument();
     expect(screen.getByText('Check first')).toBeInTheDocument();
     expect(screen.queryByText('Needs your approval')).not.toBeInTheDocument();
@@ -239,17 +246,14 @@ describe('ProposalCard - commit gate', () => {
 
     rerender(
       <MemoryRouter>
-        <ProposalCard
-          proposal={PROPOSAL}
-          receivedAt={Date.now() - PROPOSAL_MAX_AGE_MS - 60_000}
-        />
+        <ProposalCard proposal={PROPOSAL} receivedAt={Date.now() - PROPOSAL_MAX_AGE_MS - 60_000} />
       </MemoryRouter>,
     );
     expect(screen.getByText('Not sent')).toBeInTheDocument();
     expect(screen.queryByText('Check first')).not.toBeInTheDocument();
   });
 
-  it('shows the guard\'s reason for a refused proposal and offers no retry', async () => {
+  it("shows the guard's reason for a refused proposal and offers no retry", async () => {
     commitProposal.mockRejectedValue(new ProposalRejectedError('unsafe request path'));
     renderCard();
     await userEvent.setup().click(screen.getByRole('button', { name: 'Send invite' }));

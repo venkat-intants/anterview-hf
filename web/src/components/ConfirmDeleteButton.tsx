@@ -16,9 +16,22 @@
 //
 // Keyboard: arming moves focus to the safe button, Escape backs out, and focus
 // returns to the trigger after backing out or once the confirmed action ends.
+//
+// Tone: the look is destructive (danger trigger, red confirm) unless the caller
+// passes `tone="neutral"`. That is for an action that is consequential enough
+// to confirm but is not destructive, such as marking an interview completed or
+// re-sending a schedule: red there makes a positive outcome read as a
+// dangerous one. Neutral draws the shared Button: an outline trigger and a
+// primary confirm.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent } from 'react';
 import { Trash2, type LucideIcon } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+
+/** How the control looks. `destructive` (the default) for anything that
+ *  deletes, cancels, revokes or withdraws; `neutral` for a non-destructive
+ *  action that still deserves a second tap. */
+export type ConfirmTone = 'destructive' | 'neutral';
 
 interface CommonProps {
   onConfirm: () => void;
@@ -49,6 +62,8 @@ interface CommonProps {
   keepText?: string;
   /** What the armed pair of buttons is called, for assistive tech. */
   confirmGroupLabel?: string;
+  /** Defaults to `destructive`. See the file comment. */
+  tone?: ConfirmTone;
 }
 
 interface TextTriggerProps extends CommonProps {
@@ -75,7 +90,8 @@ function defaultKeepText(confirmText: string): string {
 }
 
 export function ConfirmDeleteButton(props: ConfirmDeleteButtonProps) {
-  const { onConfirm, pending, label, icon = Trash2 } = props;
+  const { onConfirm, pending, label, icon = Trash2, tone = 'destructive' } = props;
+  const neutral = tone === 'neutral';
   const confirmText = props.confirmText ?? props.label ?? '';
   const keepText = props.keepText ?? defaultKeepText(confirmText);
   const confirmGroupLabel = props.confirmGroupLabel ?? `Confirm: ${confirmText}`;
@@ -113,6 +129,29 @@ export function ConfirmDeleteButton(props: ConfirmDeleteButtonProps) {
     }
   }, [pending]);
 
+  const confirm = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    onConfirm();
+    if (pending === undefined) disarm();
+    else awaiting.current = true;
+  };
+
+  const confirmLabel = pending ? (
+    <>
+      {/* The ellipsis is the visible busy cue; the name stays the action, so
+          assistive tech never hears an unnamed button. */}
+      <span aria-hidden="true">…</span>
+      <span className="sr-only">{confirmText}</span>
+    </>
+  ) : (
+    confirmText
+  );
+
+  const arm = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    setArmed(true);
+  };
+
   if (armed) {
     return (
       <span
@@ -127,29 +166,27 @@ export function ConfirmDeleteButton(props: ConfirmDeleteButtonProps) {
         }}
       >
         <span className="text-[13px] text-muted-foreground">Sure?</span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onConfirm();
-            if (pending === undefined) disarm();
-            else awaiting.current = true;
-          }}
-          disabled={pending}
-          aria-busy={pending}
-          className="min-h-10 rounded-full bg-destructive-solid px-3.5 text-[13px] font-semibold text-destructive-foreground transition-colors hover:brightness-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-danger)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-        >
-          {pending ? (
-            <>
-              {/* The ellipsis is the visible busy cue; the name stays the
-                  action, so assistive tech never hears an unnamed button. */}
-              <span aria-hidden="true">…</span>
-              <span className="sr-only">{confirmText}</span>
-            </>
-          ) : (
-            confirmText
-          )}
-        </button>
+        {neutral ? (
+          <Button
+            type="button"
+            onClick={confirm}
+            disabled={pending}
+            aria-busy={pending}
+            className="min-h-10 px-3.5 text-[13px]"
+          >
+            {confirmLabel}
+          </Button>
+        ) : (
+          <button
+            type="button"
+            onClick={confirm}
+            disabled={pending}
+            aria-busy={pending}
+            className="min-h-10 rounded-full bg-destructive-solid px-3.5 text-[13px] font-semibold text-destructive-foreground transition-colors hover:brightness-95 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ui-danger)] focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+          >
+            {confirmLabel}
+          </button>
+        )}
         <button
           ref={keepRef}
           type="button"
@@ -163,6 +200,22 @@ export function ConfirmDeleteButton(props: ConfirmDeleteButtonProps) {
           {keepText}
         </button>
       </span>
+    );
+  }
+
+  if (label && neutral) {
+    return (
+      <Button
+        ref={triggerRef}
+        type="button"
+        variant="outline"
+        onClick={arm}
+        title={title}
+        className="min-h-10 gap-1.5 px-3.5 text-[13px]"
+      >
+        {Icon ? <Icon className="h-4 w-4" aria-hidden="true" /> : null}
+        {label}
+      </Button>
     );
   }
 
@@ -185,6 +238,22 @@ export function ConfirmDeleteButton(props: ConfirmDeleteButtonProps) {
   }
 
   const IconOnly = Icon ?? Trash2;
+  if (neutral) {
+    return (
+      <Button
+        ref={triggerRef}
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={arm}
+        title={title}
+        aria-label={title}
+        className="text-muted-foreground"
+      >
+        <IconOnly className="h-4 w-4" aria-hidden="true" />
+      </Button>
+    );
+  }
   return (
     <button
       ref={triggerRef}

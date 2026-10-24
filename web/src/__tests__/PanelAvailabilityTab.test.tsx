@@ -111,9 +111,9 @@ describe('AvailabilityTab (panel) - choosing an interviewer', () => {
     renderTab();
 
     await chooseInterviewer(user);
-    // Each remove button names its own window, not one label for every row (IV-L12).
+    // Each delete button names its own window, not one label for every row (IV-L12).
     expect(
-      await screen.findByRole('button', { name: /^Remove the window .+ to .+/ }),
+      await screen.findByRole('button', { name: /^Delete the window .+ to .+/ }),
     ).toBeInTheDocument();
   });
 });
@@ -139,7 +139,7 @@ describe('AvailabilityTab (panel) - adding and removing', () => {
     expect(toastSuccess).toHaveBeenCalledWith('Availability added');
   });
 
-  it('removes a window on request', async () => {
+  it('deletes a window on request, in the same words as the interviewer console (A8)', async () => {
     schedulingApi.getInterviewerAvailability.mockResolvedValue([
       { id: 'win-1', starts_at: '2026-09-22T04:00:00.000Z', ends_at: '2026-09-22T10:00:00.000Z' },
     ]);
@@ -148,13 +148,14 @@ describe('AvailabilityTab (panel) - adding and removing', () => {
     renderTab();
 
     await chooseInterviewer(user);
-    await user.click(await screen.findByRole('button', { name: /^Remove the window/ }));
+    await user.click(await screen.findByRole('button', { name: /^Delete the window/ }));
     // One click only arms it (IV-L12).
     expect(schedulingApi.removeInterviewerAvailability).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Remove window' }));
+    expect(screen.queryByRole('button', { name: 'Remove window' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Delete window' }));
 
     await waitFor(() => expect(schedulingApi.removeInterviewerAvailability).toHaveBeenCalledWith('win-1'));
-    expect(toastSuccess).toHaveBeenCalledWith('Window removed');
+    expect(toastSuccess).toHaveBeenCalledWith('Window deleted');
   });
 
   it('surfaces a failed add rather than pretending it worked', async () => {
@@ -208,10 +209,11 @@ describe('AvailabilityTab (panel) - the period shown (IV-M14, IV-L10)', () => {
     await user.type(screen.getByLabelText('To'), '2099-01-01T16:00');
     await user.click(screen.getByRole('button', { name: 'Add window for Rekha Iyer' }));
 
+    // A short title; the explanation is the description (feedback-copy rule).
     await waitFor(() =>
-      expect(toastSuccess).toHaveBeenCalledWith(
-        expect.stringMatching(/starts after the period shown/),
-      ),
+      expect(toastSuccess).toHaveBeenCalledWith('Availability added', {
+        description: expect.stringMatching(/starts after the period shown/) as unknown,
+      }),
     );
   });
 

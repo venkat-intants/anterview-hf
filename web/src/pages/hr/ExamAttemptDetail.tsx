@@ -181,6 +181,11 @@ export default function ExamAttemptDetail() {
               <StatusTag tone="electric">
                 <Clock size={11} aria-hidden="true" /> In progress
               </StatusTag>
+            ) : passed === null ? (
+              // A score with no pass/fail yet (grading not finished) is not a
+              // failure: the stat card says "not graded yet" and the results
+              // table "Not graded" for the same attempt.
+              <StatusTag tone="neutral">Not graded</StatusTag>
             ) : passed ? (
               <StatusTag tone="forest" dot>
                 <CheckCircle2 size={11} aria-hidden="true" /> Passed

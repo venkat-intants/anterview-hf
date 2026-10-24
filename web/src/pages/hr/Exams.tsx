@@ -36,6 +36,16 @@ function statusTone(s: string): ToneKey {
   return 'amber';
 }
 
+/** The pass mark a card can honestly state. Passing is decided per round, and
+ *  the exam-level `pass_threshold` only seeded round 1 when the exam was made,
+ *  so it is used only for a legacy exam with no rounds. */
+function passMarkLabel(e: ExamSummary): string {
+  const marks = e.round_pass_thresholds ?? [];
+  if (marks.length === 0) return `Pass mark ${e.pass_threshold}%`;
+  if (marks.length === 1) return `Pass mark ${marks[0]}%`;
+  return 'Pass mark set per round';
+}
+
 // ── Exam card (design layout) ─────────────────────────────────────────────────
 function ExamCard({ e }: { e: ExamSummary }) {
   const navigate = useNavigate();
@@ -61,7 +71,7 @@ function ExamCard({ e }: { e: ExamSummary }) {
       <h3 className="text-[16px] font-semibold line-clamp-2">{e.title}</h3>
 
       {/* Meta */}
-      <div className="mt-1 text-[12.5px] text-[var(--ui-faint)]">pass ≥ {e.pass_threshold}%</div>
+      <div className="mt-1 text-[12.5px] text-[var(--ui-faint)]">{passMarkLabel(e)}</div>
 
       {/* Attempts / closed / not-published */}
       {e.status === 'closed' ? (

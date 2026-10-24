@@ -79,7 +79,7 @@ export function AiDraftPreview({
           </li>
         ))}
       </ul>
-      <Button type="button" disabled={adding} aria-busy={adding} onClick={onAdd}>
+      <Button type="button" variant="outline" disabled={adding} aria-busy={adding} onClick={onAdd}>
         {adding ? (
           <Loader2 className="animate-spin" aria-hidden="true" />
         ) : (

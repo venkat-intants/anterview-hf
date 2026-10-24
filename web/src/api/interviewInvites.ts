@@ -29,7 +29,11 @@ export interface EligibleApplicant {
   status: string;
   ats_overall: number | null;
   passed_exam: boolean;
+  /** A link the candidate can still use: an unexpired invite, or a started
+   *  interview that is not over. */
   has_active_invite: boolean;
+  /** The started part of that alone: it cannot be replaced, only ended. */
+  has_started_invite?: boolean;
 }
 
 export interface InterviewInvite {

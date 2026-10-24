@@ -101,6 +101,7 @@ function statusDisplay(inv: InterviewInvite): StatusDisplay {
 const FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'invited', label: 'Invited' },
+  { key: 'missed_slot', label: 'Missed slot' },
   { key: 'consumed', label: 'In progress' },
   { key: 'completed', label: 'Completed' },
   { key: 'expired', label: 'Expired' },
@@ -108,6 +109,14 @@ const FILTERS = [
 ] as const;
 
 type FilterKey = (typeof FILTERS)[number]['key'];
+
+/** The filter a row belongs to: the status its pill shows. A missed slot is
+ *  still 'invited' on the server, but its pill says "Missed slot" and it is
+ *  the row HR has to act on, so it has a filter of its own and is not listed
+ *  under Invited. */
+function filterKeyOf(inv: Pick<InterviewInvite, 'status' | 'missed_slot'>): string {
+  return inv.missed_slot ? 'missed_slot' : inv.status;
+}
 
 /** A row of filter toggles. These narrow one list, they do not switch between
  *  panels, so they are pressed buttons in a labelled group, not tabs. */
@@ -646,16 +655,23 @@ export default function HRInterviews() {
         // An identical request a moment ago already made this link and sent
         // the email; the server sent nothing new and cannot show the link again.
         setMintedLink(null);
-        toast.info(
-          `${res.applicant_name} was sent this interview link a few minutes ago. No new email was sent. To send a new link, choose Replace interview link.`,
-        );
+        toast.info(`${res.applicant_name} already has this link`, {
+          description:
+            'It was sent a few minutes ago, so no new email was sent. To send a new link, choose Replace interview link.',
+        });
       } else {
         setMintedLink(res.magic_link);
         toast.success('Interview link created');
       }
       void invalidateAfterHrMutation(qc);
     },
-    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not create the interview link.')),
+    onError: (e: unknown) => {
+      toast.error(errorMessage(e, 'Could not create the interview link.'));
+      // A 409 means the eligible list was out of date (a link sent from
+      // elsewhere, a started interview): refresh it so the form offers the
+      // right action.
+      void qc.invalidateQueries({ queryKey: ['hr', 'interviews', 'eligible'] });
+    },
   });
 
   const revokeMut = useMutation({
@@ -718,7 +734,8 @@ export default function HRInterviews() {
   const chosen = elig.find((a) => keyOf(a) === choice);
 
   const filteredInvites = useMemo(
-    () => (filter === 'all' ? allInvites : allInvites.filter((inv) => inv.status === filter)),
+    () =>
+      filter === 'all' ? allInvites : allInvites.filter((inv) => filterKeyOf(inv) === filter),
     [allInvites, filter],
   );
 
@@ -750,18 +767,18 @@ export default function HRInterviews() {
     <Page width="default">
       <PageHeader
         title="AI interviews"
-        description="Invite shortlisted or exam-passed applicants to a voice interview with the AI avatar. We email them a private link; they need no account."
+        description="Invite shortlisted or exam-passed candidates to a voice interview with the AI avatar. We email them a private link; they need no account."
       />
 
       {/* Invite form */}
       <SectionCard
         title="Invite a candidate"
         icon={Send}
-        description="Only shortlisted or exam-passed applicants are eligible."
+        description="Only shortlisted or exam-passed candidates are eligible."
       >
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-4">
-            <FormField id={`${formId}-applicant`} label="Applicant" className="sm:col-span-2">
+            <FormField id={`${formId}-applicant`} label="Candidate" className="sm:col-span-2">
               {(p) => (
                 <SelectControl
                   {...p}
@@ -769,11 +786,15 @@ export default function HRInterviews() {
                   onChange={(e) => setChoice(e.target.value)}
                   disabled={eligibleQuery.isError && !eligibleQuery.data}
                 >
-                  <option value="">Select an eligible applicant…</option>
+                  <option value="">Select an eligible candidate…</option>
                   {elig.map((a) => (
                     <option key={keyOf(a)} value={keyOf(a)}>
                       {a.full_name} - {a.passed_exam ? 'exam passed' : 'shortlisted'}
-                      {a.has_active_invite ? ' (already invited)' : ''}
+                      {a.has_started_invite
+                        ? ' (interview in progress)'
+                        : a.has_active_invite
+                          ? ' (already invited)'
+                          : ''}
                       {a.opening_title ? ` · for ${a.opening_title}` : ''}
                     </option>
                   ))}
@@ -811,7 +832,7 @@ export default function HRInterviews() {
 
           {eligibleQuery.isError && !eligibleQuery.data ? (
             <QueryErrorPanel
-              title="Could not load eligible applicants."
+              title="Could not load eligible candidates."
               error={eligibleQuery.error}
               onRetry={() => void eligibleQuery.refetch()}
               retrying={eligibleQuery.isFetching}
@@ -840,7 +861,15 @@ export default function HRInterviews() {
             )}
           </FormField>
 
-          {chosen?.has_active_invite ? (
+          {chosen?.has_started_invite ? (
+            // The server refuses to replace a started interview (409), so no
+            // replacement is offered; the way forward is to end it first.
+            <p className="text-[13px] text-[var(--ui-warn)]" role="status">
+              {chosen.full_name} has already started this interview, so the link cannot be
+              replaced. If they dropped out and will not return, end the started interview in the
+              list below first, then send a new link.
+            </p>
+          ) : chosen?.has_active_invite ? (
             <div className="space-y-2">
               <p className="text-[13px] text-[var(--ui-warn)]" role="status">
                 {chosen.full_name} already has an active interview link for this opening. A new link
@@ -944,7 +973,7 @@ export default function HRInterviews() {
               size="page"
               icon={Video}
               title="No interviews yet"
-              description="Invite an eligible applicant above."
+              description="Invite an eligible candidate above."
             />
           }
         >
@@ -962,7 +991,7 @@ export default function HRInterviews() {
                       )}
                     >
                       <div>Candidate</div>
-                      <div>Role</div>
+                      <div>Opening</div>
                       <div>Scheduled</div>
                       <div>Status</div>
                       <div className="text-right">Action</div>

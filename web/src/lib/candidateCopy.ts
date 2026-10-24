@@ -61,6 +61,21 @@ export function useCandidateError(): (err: unknown, fallback: string) => string 
 }
 
 /**
+ * The confirmation sentence for a submitted application, in the page language.
+ *
+ * The API also sends a `message`, but in English, so a Hindi or Telugu
+ * applicant's confirmation screen used to end in English. The sentence follows
+ * from `already_applied` alone, so it is chosen from that flag and an English
+ * page reads the same as the server's own wording.
+ */
+export function applicationResultText(
+  t: TFunction,
+  result: { already_applied: boolean },
+): string {
+  return result.already_applied ? t('apply.alreadyAppliedDesc') : t('apply.receivedDesc');
+}
+
+/**
  * A job level as candidates read it. The API's codes are `entry`, `mid` and
  * `senior`; printing them through "{{level}} level" gave "mid level". Anything
  * else is shown as the company wrote it.

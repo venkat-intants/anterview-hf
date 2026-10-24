@@ -263,7 +263,7 @@ export default function JobsList() {
           arriving here is far more likely to be looking for a job than for a
           rehearsal, and because the section below is mock interviews, which
           the copy has to keep separate. Renders nothing when nobody is hiring. */}
-      <OpenRoles />
+      <OpenRoles searchQuery={searchQuery} />
 
       {/* Decline banner */}
       {showDeclineBanner && (

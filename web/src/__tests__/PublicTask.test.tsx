@@ -47,6 +47,7 @@ vi.mock('../context/AuthContext', () => ({
 }));
 
 import PublicTask from '../pages/PublicTask';
+import i18n from '../lib/i18n';
 
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -150,6 +151,18 @@ describe('PublicTask - the link itself', () => {
     viewTask.mockRejectedValue(new ApiError("This task link isn't available.", 404));
     renderPage();
     expect(await screen.findByText("This task link isn't available.")).toBeInTheDocument();
+  });
+
+  it('gives a Hindi page the Hindi sentence for a bad link, not the server\'s English', async () => {
+    viewTask.mockRejectedValue(new ApiError("This task link isn't available.", 404));
+    await i18n.changeLanguage('hi');
+    try {
+      renderPage();
+      expect(await screen.findByText(/कृपया भर्ती टीम से नया लिंक मांगें/)).toBeInTheDocument();
+      expect(screen.queryByText("This task link isn't available.")).not.toBeInTheDocument();
+    } finally {
+      await i18n.changeLanguage('en');
+    }
   });
 
   it('offers a retry, not "invalid", for a transient failure', async () => {

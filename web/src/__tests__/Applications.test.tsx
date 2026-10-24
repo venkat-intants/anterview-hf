@@ -24,6 +24,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { MyApplication, MyApplicationDetail } from '../api/applications';
 import type { MyRediscoveryCompany } from '../api/rediscovery';
 import { ApiError } from '../api/client';
+import { formatDate } from '../lib/formatters';
 
 const listMyApplications = vi.fn();
 const getMyApplication = vi.fn();
@@ -559,6 +560,19 @@ describe('Applications - rediscovery', () => {
 
     await waitFor(() => expect(setMyRediscovery).toHaveBeenCalledWith('co-1', true));
     expect(await screen.findByRole('button', { name: 'Turn off' })).toBeInTheDocument();
+  });
+
+  it('prints the opt-in expiry as the shared short date', async () => {
+    // lib/formatters (UI conventions, F2), computed here so the test holds in
+    // any time zone.
+    listMyRediscovery.mockResolvedValue({
+      companies: [rediscoveryCompany({ state: 'on', expires_at: '2027-09-26T00:00:00Z' })],
+      consent_months: 12,
+    });
+    renderPage();
+    expect(
+      await screen.findByText(`On until ${formatDate('2027-09-26T00:00:00Z', 'en-IN')}`),
+    ).toBeInTheDocument();
   });
 
   it('requires a second press to turn off - a single click only shows the confirm', async () => {

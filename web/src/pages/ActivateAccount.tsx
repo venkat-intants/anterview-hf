@@ -26,7 +26,7 @@ import {
   type ActivationTarget,
 } from '@/api/publicApply';
 import { toast } from '@/lib/toast';
-import { useCandidateError } from '@/lib/candidateCopy';
+import { pageLanguage, useCandidateError } from '@/lib/candidateCopy';
 import AuthLayout, { FormError, PasswordField, PasswordStrength, StatusPanel } from '@/components/layout/AuthLayout';
 import { TEXT_LINK_CLASS } from '@/components/layout/authStyles';
 import {
@@ -43,7 +43,7 @@ import { Button } from '@/components/ui/button';
 type Phase = 'checking' | 'ready' | 'expired' | 'done';
 
 export default function ActivateAccount() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const errorText = useCandidateError();
   const navigate = useNavigate();
   // Read once, then removed from the address bar and history entry, and held
@@ -167,9 +167,15 @@ export default function ActivateAccount() {
         >
           {linked === 'existing' ? (
             <>
-              {/* The server's own sentence wins: only it knows whether the
-                  existing password or the one just chosen now applies. */}
-              <p>{serverMessage || t('public.activate.existingFallback')}</p>
+              {/* On an English page the server's own sentence wins: only it
+                  knows whether the existing password or the one just chosen
+                  now applies. That sentence is English, so a Hindi or Telugu
+                  page shows the localised one, which covers both cases. */}
+              <p>
+                {pageLanguage(i18n.language) === 'en' && serverMessage
+                  ? serverMessage
+                  : t('public.activate.existingFallback')}
+              </p>
               <p>{t('public.activate.inApplications')}</p>
             </>
           ) : (

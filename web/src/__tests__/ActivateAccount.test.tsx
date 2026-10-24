@@ -14,7 +14,7 @@
 //     the public side can re-issue an applicant's activation link.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -37,6 +37,7 @@ vi.mock('../lib/toast', () => ({
 }));
 
 import ActivateAccount from '../pages/ActivateAccount';
+import i18n from '../lib/i18n';
 
 const TARGET = {
   full_name: 'Nadia Newbie',
@@ -240,6 +241,34 @@ describe('ActivateAccount', () => {
     expect(await screen.findByText('Added to your account')).toBeInTheDocument();
     expect(screen.getByText(/the password you just chose/i)).toBeInTheDocument();
     expect(screen.queryByText(/existing password/i)).not.toBeInTheDocument();
+  });
+
+  it('says it in Telugu on a Telugu page, covering both existing-account outcomes', async () => {
+    // The server's sentence is English. On a Telugu page the localised one is
+    // shown instead, and it names both cases, because only the server knows
+    // which one applies.
+    activateAccount.mockResolvedValue({
+      email: TARGET.email,
+      linked: 'existing',
+      message:
+        'This email already had an account, so we have added the application to it. Sign in with your existing password.',
+    });
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText('Track your application');
+    await fillPasswords(user);
+    await user.click(screen.getByRole('button', { name: 'Create my account' }));
+    try {
+      await act(async () => {
+        await i18n.changeLanguage('te');
+      });
+      expect(
+        await screen.findByText(/మీరు ఇప్పుడే ఎంచుకున్న పాస్‌వర్డ్‌తో సైన్ ఇన్ చేయండి/),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/This email already had an account/)).not.toBeInTheDocument();
+    } finally {
+      await i18n.changeLanguage('en');
+    }
   });
 
   it('surfaces a server refusal without losing the form', async () => {

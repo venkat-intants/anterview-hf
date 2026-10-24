@@ -10,7 +10,7 @@ import userEvent from '@testing-library/user-event';
 
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { SelectControl } from '@/components/ui/select';
+import { SelectControl } from '@/components/ui/select-control';
 import { FormField } from '@/components/ui/form-field';
 import { CONTROL_HEIGHT } from '@/components/ui/control-styles';
 import { buttonVariants } from '@/components/ui/button';

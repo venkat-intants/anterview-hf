@@ -607,7 +607,9 @@ describe('HRAnalyticsPage - date range (HR-L14)', () => {
     const user = userEvent.setup();
     await user.type(screen.getByLabelText('To'), '2026-03-01');
     await waitFor(() =>
-      expect(getAnalyticsFunnel).toHaveBeenCalledWith(expect.objectContaining({ to: '2026-03-01' })),
+      expect(getAnalyticsFunnel).toHaveBeenCalledWith(
+        expect.objectContaining({ to: '2026-03-01' }),
+      ),
     );
     await user.type(screen.getByLabelText('From'), '2026-04-01');
 
@@ -644,18 +646,20 @@ describe('HRAnalyticsPage - "How is this calculated?"', () => {
     expect(within(dialog).getByText(/registry abc123def4/)).toBeInTheDocument();
   });
 
-  it('focuses inside the dialog on open and closes on Escape (code review - accessibility)', async () => {
+  it('focuses inside the dialog on open, closes on Escape and returns focus (code review - accessibility)', async () => {
     renderPage();
     await screen.findByText('12.5%');
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'How is Applications calculated?' }));
+    const trigger = screen.getByRole('button', { name: 'How is Applications calculated?' });
+    await user.click(trigger);
 
     const dialog = await screen.findByRole('dialog');
-    await waitFor(() => expect(within(dialog).getByLabelText('Close')).toHaveFocus());
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
 
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 });
 
@@ -741,10 +745,11 @@ describe('HRAnalyticsPage - drill-down', () => {
     await user.click(hiresCount);
 
     const dialog = await screen.findByRole('dialog');
-    await waitFor(() => expect(within(dialog).getByLabelText('Close')).toHaveFocus());
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
 
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(hiresCount).toHaveFocus());
   });
 });
 

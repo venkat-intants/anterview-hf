@@ -41,7 +41,18 @@ import { ACTIVE_POLL_MS } from '@/lib/polling';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
-import { Button } from '@/components/ui/button';
+import { Button, buttonVariants } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { errorMessage } from '@/lib/errorMessage';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -167,8 +178,8 @@ function isExpired(doc: CorpusDocument, today: string): boolean {
   return doc.expires_on !== null && doc.expires_on < today;
 }
 
-const ROW_ACTION_CLASS =
-  'inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40';
+/** The compact row actions: outline buttons a little smaller than `sm`. */
+const ROW_ACTION_CLASS = 'h-8 gap-1 px-3 text-[12px] [&_svg]:size-3';
 
 export default function CorpusDocuments(): JSX.Element {
   const { user } = useAuth();
@@ -391,7 +402,8 @@ export default function CorpusDocuments(): JSX.Element {
       }
       window.location.assign(url);
     },
-    onError: (e: unknown) => toast.error(corpusErrorMessage(e, 'Could not download this document.')),
+    onError: (e: unknown) =>
+      toast.error(corpusErrorMessage(e, 'Could not download this document.')),
   });
 
   // ---- Semantic-search availability banner. `GET /agent/status`'s
@@ -477,19 +489,15 @@ export default function CorpusDocuments(): JSX.Element {
             <label htmlFor="corpus-search-query" className="sr-only">
               Search your documents
             </label>
-            <input
+            <Input
               id="corpus-search-query"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               maxLength={SEARCH_MAX}
               placeholder="Search your documents, e.g. notice period"
-              className="min-h-[40px] min-w-0 flex-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="w-auto min-w-0 flex-1"
             />
-            <Button
-              type="submit"
-              variant="outline"
-              disabled={searchMut.isPending || !query.trim()}
-            >
+            <Button type="submit" variant="outline" disabled={searchMut.isPending || !query.trim()}>
               {searchMut.isPending ? 'Searching…' : 'Search'}
             </Button>
           </form>
@@ -536,7 +544,7 @@ export default function CorpusDocuments(): JSX.Element {
             </div>
           ) : list.isError && list.error instanceof ApiError && list.error.status === 403 ? (
             <p className="py-6 text-center text-[13px] text-foreground">
-              {list.error.message || "You don't have access to this company's documents."}
+              {errorMessage(list.error, "You don't have access to this company's documents.")}
             </p>
           ) : list.isError ? (
             <QueryErrorPanel
@@ -551,40 +559,34 @@ export default function CorpusDocuments(): JSX.Element {
               description="Upload a policy or handbook below and the staff assistant can search it."
             />
           ) : (
-            <div className="max-h-[70vh] overflow-auto">
-              <table className="w-full min-w-[940px] border-collapse text-left text-[12.5px]">
-                <thead>
-                  <tr className="border-b border-border text-[12px] uppercase tracking-wide text-muted-foreground">
-                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
-                      Title
-                    </th>
-                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
-                      Audience
-                    </th>
-                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
-                      Type
-                    </th>
-                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
-                      Version
-                    </th>
-                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
-                      Status
-                    </th>
-                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
-                      Updated
-                    </th>
-                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
-                      Expires
-                    </th>
-                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
-                      Uploaded by
-                    </th>
-                    <th scope="col" className="sticky top-0 z-[1] bg-card py-2.5 pr-3 font-medium">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
+            // Table's own wrapper is the scroller (capped at 70vh), so the
+            // header sticks to it.
+            <div className="[&>div]:max-h-[70vh]">
+              <Table className="min-w-[940px] border-collapse text-left text-[12.5px]">
+                <TableHeader>
+                  <TableRow className="border-b border-border text-[12px] uppercase tracking-wide text-muted-foreground hover:bg-transparent">
+                    {[
+                      'Title',
+                      'Audience',
+                      'Type',
+                      'Version',
+                      'Status',
+                      'Updated',
+                      'Expires',
+                      'Uploaded by',
+                      'Actions',
+                    ].map((h) => (
+                      <TableHead
+                        key={h}
+                        scope="col"
+                        className="sticky top-0 z-[1] h-auto bg-card px-0 py-2.5 pr-3 font-medium"
+                      >
+                        {h}
+                      </TableHead>
+                    ))}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {docs.map((d) => {
                     // No current version (an upload that died before its
                     // repoint) has no status to show: '-' rather than an
@@ -594,7 +596,7 @@ export default function CorpusDocuments(): JSX.Element {
                     const replacingThis = replacing?.id === d.id;
                     return (
                       <Fragment key={d.id}>
-                        <tr
+                        <TableRow
                           // The id + tabIndex are the landing target for a
                           // document citation (`useDeepLinkedRow`); the ring
                           // makes "this is the row you were sent to" visible
@@ -607,26 +609,26 @@ export default function CorpusDocuments(): JSX.Element {
                               'bg-[var(--ui-inset-soft)] ring-1 ring-inset ring-[var(--accent)]',
                           )}
                         >
-                          <td className="py-2.5 pr-3">
+                          <TableCell className="p-0 py-2.5 pr-3">
                             <p className="font-medium text-foreground">{d.title}</p>
                             {d.original_name ? (
                               <p className="mt-0.5 text-[12px] text-muted-foreground">
                                 {d.original_name}
                               </p>
                             ) : null}
-                          </td>
-                          <td className="py-2.5 pr-3">
+                          </TableCell>
+                          <TableCell className="p-0 py-2.5 pr-3">
                             <StatusTag tone={AUDIENCE_TONE[d.audience]}>
                               {AUDIENCE_LABEL[d.audience]}
                             </StatusTag>
-                          </td>
-                          <td className="py-2.5 pr-3 text-foreground">
+                          </TableCell>
+                          <TableCell className="p-0 py-2.5 pr-3 text-foreground">
                             {fileTypeLabel(d.content_type)}
-                          </td>
-                          <td className="py-2.5 pr-3 text-foreground">
+                          </TableCell>
+                          <TableCell className="p-0 py-2.5 pr-3 text-foreground">
                             {d.version ? `v${d.version}` : '-'}
-                          </td>
-                          <td className="py-2.5 pr-3">
+                          </TableCell>
+                          <TableCell className="p-0 py-2.5 pr-3">
                             {expired ? (
                               // Past its expiry, search already skips it and
                               // tonight's purge deletes it, so "Ready" would
@@ -662,12 +664,13 @@ export default function CorpusDocuments(): JSX.Element {
                                 <p className="mt-1.5 max-w-[220px] text-[12px] text-[var(--ui-danger)]">
                                   {corpusFailureSentence(d.failure_code)}
                                 </p>
-                                <button
+                                <Button
                                   type="button"
+                                  variant="outline"
                                   onClick={() => reindexMut.mutate(d.id)}
                                   disabled={reindexMut.isPending}
                                   aria-label={`Try indexing ${d.title} again`}
-                                  className="mt-1.5 inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground disabled:opacity-40"
+                                  className={cn('mt-1.5', ROW_ACTION_CLASS)}
                                 >
                                   <RefreshCw
                                     className={cn(
@@ -679,7 +682,7 @@ export default function CorpusDocuments(): JSX.Element {
                                     aria-hidden="true"
                                   />
                                   Try again
-                                </button>
+                                </Button>
                               </>
                             ) : null}
                             {d.injection_markers ? (
@@ -691,30 +694,32 @@ export default function CorpusDocuments(): JSX.Element {
                                 {INJECTION_WARNING_TEXT}
                               </p>
                             ) : null}
-                          </td>
-                          <td className="py-2.5 pr-3 text-muted-foreground">
+                          </TableCell>
+                          <TableCell className="p-0 py-2.5 pr-3 text-muted-foreground">
                             {formatDate(d.updated_at)}
-                          </td>
-                          <td className="py-2.5 pr-3 text-muted-foreground">
+                          </TableCell>
+                          <TableCell className="p-0 py-2.5 pr-3 text-muted-foreground">
                             {d.expires_on ? formatCalendarDate(d.expires_on) : 'Never'}
-                          </td>
-                          <td className="py-2.5 pr-3 text-muted-foreground">
+                          </TableCell>
+                          <TableCell className="p-0 py-2.5 pr-3 text-muted-foreground">
                             {d.uploaded_by_name ?? '-'}
-                          </td>
-                          <td className="py-2.5 pr-3">
+                          </TableCell>
+                          <TableCell className="p-0 py-2.5 pr-3">
                             <div className="flex flex-wrap items-center gap-1.5">
-                              <button
+                              <Button
                                 type="button"
+                                variant="outline"
                                 onClick={() => downloadMut.mutate(d.id)}
                                 disabled={downloadMut.isPending}
                                 className={ROW_ACTION_CLASS}
                               >
                                 <Download className="h-3 w-3" aria-hidden="true" />
                                 Download
-                              </button>
+                              </Button>
 
                               <label
                                 className={cn(
+                                  buttonVariants({ variant: 'outline' }),
                                   ROW_ACTION_CLASS,
                                   'focus-within:ring-2 focus-within:ring-[var(--accent)]',
                                   replaceMut.isPending
@@ -742,14 +747,15 @@ export default function CorpusDocuments(): JSX.Element {
                                 />
                               </label>
 
-                              <button
+                              <Button
                                 type="button"
+                                variant="outline"
                                 onClick={() => startEdit(d)}
                                 className={ROW_ACTION_CLASS}
                               >
                                 <Pencil className="h-3 w-3" aria-hidden="true" />
                                 Edit
-                              </button>
+                              </Button>
 
                               <span className="ml-2">
                                 <ConfirmDeleteButton
@@ -762,11 +768,11 @@ export default function CorpusDocuments(): JSX.Element {
                                 />
                               </span>
                             </div>
-                          </td>
-                        </tr>
+                          </TableCell>
+                        </TableRow>
                         {replacingThis && replacing ? (
-                          <tr className="border-b border-border bg-[var(--ui-inset-soft)]">
-                            <td colSpan={9} className="p-3">
+                          <TableRow className="border-b border-border bg-[var(--ui-inset-soft)]">
+                            <TableCell colSpan={9} className="p-3">
                               <form
                                 className="flex flex-col gap-2"
                                 aria-label={`Upload a new version of ${d.title}`}
@@ -820,12 +826,12 @@ export default function CorpusDocuments(): JSX.Element {
                                   ) : null}
                                 </div>
                               </form>
-                            </td>
-                          </tr>
+                            </TableCell>
+                          </TableRow>
                         ) : null}
                         {editingId === d.id ? (
-                          <tr className="border-b border-border bg-[var(--ui-inset-soft)]">
-                            <td colSpan={9} className="p-3">
+                          <TableRow className="border-b border-border bg-[var(--ui-inset-soft)]">
+                            <TableCell colSpan={9} className="p-3">
                               <form
                                 className="flex flex-wrap items-end gap-3"
                                 onSubmit={(e) => {
@@ -866,36 +872,29 @@ export default function CorpusDocuments(): JSX.Element {
                                     <p className="text-[12.5px] text-foreground">All staff</p>
                                   )}
                                 </fieldset>
-                                <div className="flex flex-col gap-1.5">
-                                  <label
-                                    htmlFor={`edit-expiry-${d.id}`}
-                                    className="text-[13px] font-medium text-[var(--ui-soft)]"
-                                  >
-                                    Expiry date
-                                  </label>
-                                  <input
-                                    id={`edit-expiry-${d.id}`}
-                                    type="date"
-                                    value={editExpiresOn}
-                                    // An unchanged past date stays valid (the
-                                    // server lets it through too); a new one
-                                    // cannot be before today.
-                                    min={
-                                      editExpiresOn && editExpiresOn === d.expires_on
-                                        ? undefined
-                                        : today
-                                    }
-                                    onChange={(e) => setEditExpiresOn(e.target.value)}
-                                    aria-describedby={`edit-expiry-help-${d.id}`}
-                                    className="rounded-[8px] border border-border bg-secondary px-2.5 py-1.5 text-[12.5px] text-foreground"
-                                  />
-                                  <span
-                                    id={`edit-expiry-help-${d.id}`}
-                                    className="text-[12px] text-[var(--ui-faint)]"
-                                  >
-                                    {EXPIRY_HELP_TEXT}
-                                  </span>
-                                </div>
+                                <FormField
+                                  id={`edit-expiry-${d.id}`}
+                                  label="Expiry date"
+                                  hint={EXPIRY_HELP_TEXT}
+                                >
+                                  {(p) => (
+                                    <Input
+                                      {...p}
+                                      size="sm"
+                                      type="date"
+                                      value={editExpiresOn}
+                                      // An unchanged past date stays valid (the
+                                      // server lets it through too); a new one
+                                      // cannot be before today.
+                                      min={
+                                        editExpiresOn && editExpiresOn === d.expires_on
+                                          ? undefined
+                                          : today
+                                      }
+                                      onChange={(e) => setEditExpiresOn(e.target.value)}
+                                    />
+                                  )}
+                                </FormField>
                                 <Button type="submit" size="sm" disabled={editMut.isPending}>
                                   {editMut.isPending ? 'Saving…' : 'Save'}
                                 </Button>
@@ -908,14 +907,14 @@ export default function CorpusDocuments(): JSX.Element {
                                   Cancel
                                 </Button>
                               </form>
-                            </td>
-                          </tr>
+                            </TableCell>
+                          </TableRow>
                         ) : null}
                       </Fragment>
                     );
                   })}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </SectionCard>
@@ -924,22 +923,17 @@ export default function CorpusDocuments(): JSX.Element {
       <Reveal delay={0.05}>
         <SectionCard title="Upload a document" icon={UploadIcon}>
           <form className="grid gap-3 sm:grid-cols-2" onSubmit={handleUploadSubmit}>
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="corpus-upload-title"
-                className="text-[13px] font-medium text-[var(--ui-soft)]"
-              >
-                Title
-              </label>
-              <input
-                id="corpus-upload-title"
-                value={uploadTitle}
-                onChange={(e) => setUploadTitle(e.target.value)}
-                maxLength={TITLE_MAX}
-                placeholder="e.g. Employee handbook"
-                className="min-h-[40px] rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              />
-            </div>
+            <FormField id="corpus-upload-title" label="Title">
+              {(p) => (
+                <Input
+                  {...p}
+                  value={uploadTitle}
+                  onChange={(e) => setUploadTitle(e.target.value)}
+                  maxLength={TITLE_MAX}
+                  placeholder="e.g. Employee handbook"
+                />
+              )}
+            </FormField>
 
             <div className="flex flex-col gap-1.5">
               <label
@@ -1008,26 +1002,21 @@ export default function CorpusDocuments(): JSX.Element {
               )}
             </fieldset>
 
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="corpus-upload-expiry"
-                className="text-[13px] font-medium text-[var(--ui-soft)]"
-              >
-                Expiry date (optional)
-              </label>
-              <input
-                id="corpus-upload-expiry"
-                type="date"
-                value={uploadExpiresOn}
-                min={today}
-                onChange={(e) => setUploadExpiresOn(e.target.value)}
-                aria-describedby="corpus-upload-expiry-help"
-                className="min-h-[40px] rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              />
-              <span id="corpus-upload-expiry-help" className="text-[12px] text-[var(--ui-faint)]">
-                {EXPIRY_HELP_TEXT}
-              </span>
-            </div>
+            <FormField
+              id="corpus-upload-expiry"
+              label="Expiry date (optional)"
+              hint={EXPIRY_HELP_TEXT}
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  type="date"
+                  value={uploadExpiresOn}
+                  min={today}
+                  onChange={(e) => setUploadExpiresOn(e.target.value)}
+                />
+              )}
+            </FormField>
 
             <label className="sm:col-span-2 flex items-start gap-2 text-[12.5px] text-foreground">
               <input

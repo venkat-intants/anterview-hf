@@ -17,8 +17,9 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { CheckCircle2, ChevronRight, Info, Loader2, XCircle } from '@/design/components/icons';
+import { CheckCircle2, ChevronRight, Info, XCircle } from '@/design/components/icons';
 import { GlassCard } from '@/design/components/primitives';
 import {
   EmptyState,
@@ -171,10 +172,7 @@ export function ReviewDetailLoading(): JSX.Element {
     <div className="flex flex-col gap-4" role="status">
       <Skeleton className="h-8 w-64" />
       <Skeleton className="h-40 w-full rounded-card" />
-      <p className="flex items-center gap-2 text-[13px] text-muted-foreground">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-        Loading…
-      </p>
+      <span className="sr-only">Loading…</span>
     </div>
   );
 }
@@ -409,7 +407,7 @@ export function DecisionPanel({
             <label htmlFor={noteId} className="text-[13px] font-medium text-foreground">
               {mode === 'approve' ? 'Note (optional)' : 'What needs to change (required)'}
             </label>
-            <input
+            <Input
               id={noteId}
               value={note}
               onChange={(e) => onNote(e.target.value)}
@@ -417,7 +415,6 @@ export function DecisionPanel({
               aria-required={mode === 'reject'}
               aria-invalid={mode === 'reject' && !rejectReady ? true : undefined}
               aria-describedby={mode === 'reject' && !rejectReady ? `${noteId}-hint` : undefined}
-              className="min-h-10 rounded-[10px] border border-input bg-card px-3.5 py-2 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
             {mode === 'reject' && !rejectReady ? (
               <p id={`${noteId}-hint`} className="text-[12.5px] text-[var(--ui-warn)]">

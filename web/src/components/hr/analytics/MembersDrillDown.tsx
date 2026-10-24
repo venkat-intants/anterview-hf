@@ -1,5 +1,8 @@
-// MembersDrillDown — the auditable people behind a count or rate.
+// MembersDrillDown — the auditable people behind a count or rate. A Radix
+// Sheet: focus trap, Escape, the overlay click, the Close button and focus
+// return to the number that opened it.
 
+import { useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { isTransientApiError } from '@/api/client';
@@ -12,9 +15,10 @@ import {
   type MetricDefinitionsResponse,
   type MetricPart,
 } from '@/api/metrics';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { Skeleton } from '@/components/ui/skeleton';
 import { formatDate } from '@/lib/formatters';
-import { X } from '@/design/components/icons';
-import { useDialogFocus } from '@/hooks/useDialogFocus';
 import { appPath } from '@/lib/safeUrl';
 
 export default function MembersDrillDown({
@@ -43,49 +47,49 @@ export default function MembersDrillDown({
 }): JSX.Element {
   // Opened by name alone (no version in hand) — the CURRENT definition.
   const def = findDefinition(definitions, metricName);
+  const returnFocusTo = useRef<HTMLElement | null>(null);
   const members = useQuery({
     queryKey: ['hr', 'analytics', 'members', metricName, part, query],
     queryFn: () => getAnalyticsMembers({ metric: metricName, part, ...query }),
     retry: (count, error) => isTransientApiError(error) && count < 2,
   });
-  const panelRef = useDialogFocus<HTMLElement>(onClose);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <button
-        type="button"
-        aria-label="Close candidate list"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/50"
-      />
-      <aside
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="members-drilldown-title"
-        tabIndex={-1}
-        className="relative flex h-full w-full max-w-[480px] flex-col overflow-y-auto border-l border-border bg-card p-6 shadow-elevated outline-none"
+    <Sheet open onOpenChange={(open) => !open && onClose()}>
+      <SheetContent
+        // Opened by a plain button, not a Radix trigger, so Radix has nothing to
+        // return focus to: hand it back to whatever opened this.
+        onOpenAutoFocus={() => {
+          returnFocusTo.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        }}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          returnFocusTo.current?.focus();
+        }}
+        side="right"
+        aria-describedby={undefined}
+        className="flex w-full flex-col gap-0 overflow-y-auto sm:max-w-[480px]"
       >
-        <div className="flex items-start justify-between gap-3">
-          <h2 id="members-drilldown-title" className="text-[17px] font-bold text-foreground">
-            {def ? metricLabel(def.name, def) : metricName}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </div>
+        <SheetTitle className="pr-10 text-[17px] font-bold leading-snug">
+          {def ? metricLabel(def.name, def) : metricName}
+        </SheetTitle>
 
         {members.isLoading ? (
-          <p className="mt-4 text-[13px] text-muted-foreground">Loading…</p>
+          <div className="mt-4 flex flex-col gap-2" aria-busy="true">
+            <span className="sr-only">Loading…</span>
+            <Skeleton className="h-16 rounded-[12px]" />
+            <Skeleton className="h-16 rounded-[12px]" />
+            <Skeleton className="h-16 rounded-[12px]" />
+          </div>
         ) : members.isError ? (
-          <p role="alert" className="mt-4 text-[13px] text-[var(--ui-danger)]">
-            Could not load these records just now.
-          </p>
+          <QueryErrorPanel
+            className="mt-4"
+            title="Could not load these records."
+            error={members.error}
+            onRetry={() => void members.refetch()}
+            retrying={members.isFetching}
+          />
         ) : members.data && members.data.rows.length === 0 ? (
           <p className="mt-4 text-[13px] text-muted-foreground">
             Nobody is behind this number for the current filters.
@@ -142,7 +146,7 @@ export default function MembersDrillDown({
             </ul>
           </>
         ) : null}
-      </aside>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

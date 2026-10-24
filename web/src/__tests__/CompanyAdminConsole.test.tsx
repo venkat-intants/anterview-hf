@@ -355,13 +355,30 @@ describe('CompanyAdminConsole - removing an HR manager', () => {
     await user.click(screen.getByRole('button', { name: /remove chetan iyer/i }));
     expect(api.deleteMyHrManager).not.toHaveBeenCalled();
 
+    // The confirm is a dialog that names the person (audit B4).
     await user.click(
-      within(screen.getByRole('group', { name: 'Permanently remove Chetan Iyer' })).getByRole(
+      within(await screen.findByRole('dialog', { name: 'Remove Chetan Iyer?' })).getByRole(
         'button',
         { name: 'Remove' },
       ),
     );
     await waitFor(() => expect(api.deleteMyHrManager).toHaveBeenCalledWith('u-hr-2'));
+  });
+
+  it('names the person, and Cancel backs out without removing anyone', async () => {
+    const user = userEvent.setup();
+    renderConsole();
+
+    await screen.findByText('Bhavya Nair');
+    const trigger = screen.getByRole('button', { name: /remove chetan iyer/i });
+    await user.click(trigger);
+    const dialog = await screen.findByRole('dialog', { name: 'Remove Chetan Iyer?' });
+    expect(dialog).toHaveTextContent(/loses access to/);
+
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(api.deleteMyHrManager).not.toHaveBeenCalled();
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 });
 
@@ -427,7 +444,7 @@ describe('CompanyAdminConsole - interviewers (D4-1)', () => {
     expect(api.deleteMyInterviewer).not.toHaveBeenCalled();
 
     await user.click(
-      within(screen.getByRole('group', { name: 'Permanently remove Farah Khan' })).getByRole(
+      within(await screen.findByRole('dialog', { name: 'Remove Farah Khan?' })).getByRole(
         'button',
         { name: 'Remove' },
       ),

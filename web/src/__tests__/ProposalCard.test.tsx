@@ -209,6 +209,46 @@ describe('ProposalCard - commit gate', () => {
     expect(alert).not.toHaveTextContent(/Failed to fetch/);
   });
 
+  it('never says "Not sent" for a dropped connection on a draft that has since expired', async () => {
+    commitProposal.mockRejectedValue(new TypeError('Failed to fetch'));
+    const { rerender } = renderCard();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Send invite' }));
+    await screen.findByRole('alert');
+
+    // The same card, now past the approval window.
+    rerender(
+      <MemoryRouter>
+        <ProposalCard
+          proposal={PROPOSAL}
+          receivedAt={Date.now() - PROPOSAL_MAX_AGE_MS - 60_000}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent(/Could not confirm whether this went through/);
+    expect(screen.queryByText('Not sent')).not.toBeInTheDocument();
+    expect(screen.getByText('Check first')).toBeInTheDocument();
+    expect(screen.queryByText('Needs your approval')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+  });
+
+  it('still says "Not sent" for a server error on a draft that has since expired', async () => {
+    commitProposal.mockRejectedValue(new ApiError('', 503, undefined, false));
+    const { rerender } = renderCard();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Send invite' }));
+    await screen.findByRole('alert');
+
+    rerender(
+      <MemoryRouter>
+        <ProposalCard
+          proposal={PROPOSAL}
+          receivedAt={Date.now() - PROPOSAL_MAX_AGE_MS - 60_000}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByText('Not sent')).toBeInTheDocument();
+    expect(screen.queryByText('Check first')).not.toBeInTheDocument();
+  });
+
   it('shows the guard\'s reason for a refused proposal and offers no retry', async () => {
     commitProposal.mockRejectedValue(new ProposalRejectedError('unsafe request path'));
     renderCard();

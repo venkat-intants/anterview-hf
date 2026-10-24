@@ -24,7 +24,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { commitProposal, type CitationState, type Proposal } from '@/api/agent';
-import { isTransientApiError } from '@/api/client';
+import { ApiError, isTransientApiError } from '@/api/client';
 import { ProposalRejectedError } from '@/api/proposalGuard';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { AlertTriangle, Copy } from '@/design/components/icons';
@@ -44,6 +44,11 @@ export type CommitOutcome =
       message: string;
       /** False for a refusal that would fail the same way again. */
       retryable: boolean;
+      /**
+       * True when no response arrived, so the request may have been applied.
+       * Such a failure must never be labelled "Not sent".
+       */
+      unconfirmed?: boolean;
     };
 
 /**
@@ -129,12 +134,16 @@ function failureFrom(err: unknown, proposal: Proposal): CommitOutcome {
       state: 'failed',
       message: `Could not confirm whether this went through.${where} before you try again.`,
       retryable: true,
+      unconfirmed: true,
     };
   }
   return {
     state: 'failed',
     message: errorMessage(err, `Could not complete: ${proposal.title}.`),
     retryable: isTransientApiError(err),
+    // A timeout or other failure with no HTTP response is as uncertain as a
+    // dropped connection: the server may have finished the work.
+    unconfirmed: !(err instanceof ApiError),
   };
 }
 
@@ -230,8 +239,12 @@ export default function ProposalCard({
   const failed = outcome?.state === 'failed' ? outcome : null;
   // A failure with no way forward (a refusal, a session that ended, or a
   // retryable one on a draft that has since expired) leaves no button, so the
-  // card must stop asking for an approval it can no longer take.
-  const notSent = failed !== null && (!failed.retryable || expired);
+  // card must stop asking for an approval it can no longer take. When no
+  // response ever arrived the request may have been applied, so the tag says
+  // to check rather than claiming it was not sent.
+  const noWayForward = failed !== null && (!failed.retryable || expired);
+  const notSent = noWayForward && failed?.unconfirmed !== true;
+  const checkFirst = noWayForward && failed?.unconfirmed === true;
   const link = isDone ? freshLink : null;
 
   return (
@@ -252,6 +265,8 @@ export default function ProposalCard({
               </StatusTag>
               {notSent ? (
                 <StatusTag tone="ember">Not sent</StatusTag>
+              ) : checkFirst ? (
+                <StatusTag tone="ember">Check first</StatusTag>
               ) : (
                 !isDone && <StatusTag tone="neutral">Needs your approval</StatusTag>
               )}
@@ -371,7 +386,7 @@ export default function ProposalCard({
           ) : (
             state !== 'committing' &&
             !expired &&
-            !notSent && (
+            !noWayForward && (
               <span className="text-[12.5px] text-muted-foreground">
                 Nothing is sent until you click.
               </span>

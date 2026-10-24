@@ -26,6 +26,7 @@
  */
 import { Copy, ExternalLink, Globe } from '@/design/components/icons';
 import { SectionCard } from '@/design/components/page';
+import { Button } from '@/components/ui/button';
 import { toast } from '@/lib/toast';
 
 export default function CareersLinkCard({
@@ -56,8 +57,10 @@ export default function CareersLinkCard({
         <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-[var(--ui-soft)]">
           {link}
         </span>
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="icon"
           onClick={() => {
             // Optional chaining is not defensive clutter: navigator.clipboard is
             // absent on a non-HTTPS origin and in older browsers. The link stays
@@ -65,11 +68,11 @@ export default function CareersLinkCard({
             void navigator.clipboard?.writeText(link);
             toast.success('Link copied');
           }}
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-inset-strong)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+          className="shrink-0 text-muted-foreground hover:bg-[var(--ui-inset-strong)] hover:text-foreground"
           aria-label="Copy the careers page link"
         >
           <Copy className="h-4 w-4" aria-hidden="true" />
-        </button>
+        </Button>
         <a
           href={link}
           target="_blank"

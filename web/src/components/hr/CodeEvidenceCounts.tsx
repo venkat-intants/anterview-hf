@@ -14,6 +14,9 @@ export default function CodeEvidenceCounts({ enrolmentId }: { enrolmentId: strin
     queryFn: () => getCodeEvidenceSummary(enrolmentId),
   });
   const c = summary.data;
+  // Silent while loading and on failure, by design: this is an optional
+  // pointer to the attempt's own tab (which reports its own errors), and most
+  // drawers have no code evidence, so a placeholder or error here would be noise.
   if (!c || !hasCodeEvidence(c)) return null;
   return (
     <section aria-label="Code evidence" className="rounded-[12px] border border-border p-3">

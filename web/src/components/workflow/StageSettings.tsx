@@ -13,7 +13,12 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Loader2 } from '@/design/components/icons';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
 import { getStages, listStageOwners, setStage, type StageSetting } from '@/api/stageSla';
 import { errorMessage } from '@/lib/errorMessage';
@@ -65,75 +70,83 @@ export default function StageSettings({ workflowId, roundId, label }: Props): JS
     onError: (e) => toast.error(errorMessage(e, 'Could not save this stage.')),
   });
 
-  if (stages.isLoading || owners.isLoading) {
-    return (
-      <span className="flex items-center gap-1.5 text-[12px] text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-        Loading stage settings…
-      </span>
-    );
-  }
   if (stages.isError || owners.isError) {
     return (
-      <p className="text-[12px] text-[var(--ui-danger)]">Could not load the stage owner or SLA.</p>
+      <QueryErrorPanel
+        title="Could not load the stage owner or SLA."
+        error={stages.error ?? owners.error}
+        onRetry={() => {
+          if (stages.isError) void stages.refetch();
+          if (owners.isError) void owners.refetch();
+        }}
+        retrying={stages.isFetching || owners.isFetching}
+      />
+    );
+  }
+  if (stages.data === undefined || owners.data === undefined) {
+    return (
+      <div className="flex flex-col gap-2.5" aria-busy="true">
+        <span className="sr-only">Loading stage settings…</span>
+        <div className="grid grid-cols-2 gap-2.5">
+          <Skeleton className="h-9" />
+          <Skeleton className="h-9" />
+        </div>
+        <Skeleton className="h-9 w-20 rounded-full" />
+      </div>
     );
   }
 
   return (
     <div className="flex flex-col gap-2.5">
       <div className="grid grid-cols-2 gap-2.5">
-        <div>
-          <label
-            htmlFor={`stage-owner-${key}`}
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
-            Owner
-          </label>
-          <select
-            id={`stage-owner-${key}`}
-            value={ownerId}
-            onChange={(e) => setOwnerId(e.target.value)}
-            className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            <option value="">Unassigned</option>
-            {(owners.data ?? []).map((o) => (
-              <option key={o.user_id} value={o.user_id}>
-                {o.full_name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label
-            htmlFor={`stage-sla-${key}`}
-            className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
-          >
-            SLA (hours)
-          </label>
-          <input
-            id={`stage-sla-${key}`}
-            type="number"
-            min={1}
-            max={8760}
-            placeholder="none"
-            value={slaHours}
-            onChange={(e) => setSlaHours(e.target.value)}
-            className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          />
-        </div>
+        <FormField id={`stage-owner-${key}`} label="Owner">
+          {(p) => (
+            <SelectControl
+              {...p}
+              size="sm"
+              value={ownerId}
+              onChange={(e) => setOwnerId(e.target.value)}
+            >
+              <option value="">Unassigned</option>
+              {owners.data.map((o) => (
+                <option key={o.user_id} value={o.user_id}>
+                  {o.full_name}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
+        <FormField id={`stage-sla-${key}`} label="SLA (hours)">
+          {(p) => (
+            <Input
+              {...p}
+              size="sm"
+              type="number"
+              min={1}
+              max={8760}
+              placeholder="none"
+              value={slaHours}
+              onChange={(e) => setSlaHours(e.target.value)}
+            />
+          )}
+        </FormField>
       </div>
       <p className="text-[12px] leading-relaxed text-muted-foreground">
         Who is answerable for this stage, and how long before it is overdue. This never moves a
         candidate - it only tells your team where to look.
       </p>
-      <button
+      {/* Outline: a secondary save inside the inspector, beside the round's own
+          primary action (one primary per view). */}
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
         onClick={() => saveMut.mutate()}
         disabled={saveMut.isPending}
-        className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+        className="self-start"
       >
         {saveMut.isPending ? 'Saving…' : 'Save'}
-      </button>
+      </Button>
     </div>
   );
 }

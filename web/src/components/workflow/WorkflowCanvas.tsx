@@ -24,6 +24,7 @@ import {
   Plus,
 } from '@/design/components/icons';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { Button } from '@/components/ui/button';
 import { StatusTag } from '@/design/components/primitives';
 import { cn } from '@/lib/utils';
 import type { Round, RoundKind } from '@/api/workflows';
@@ -307,7 +308,10 @@ export default function WorkflowCanvas({
         ) : (
           <span>
             <span className="font-medium text-foreground">You shortlist</span>
-            <span className="text-muted-foreground"> - nothing below starts until a person does</span>
+            <span className="text-muted-foreground">
+              {' '}
+              - nothing below starts until a person does
+            </span>
           </span>
         )}
       </div>
@@ -419,13 +423,9 @@ export default function WorkflowCanvas({
             <div className="rounded-[16px] border border-dashed border-[var(--ui-line-strong)] p-3">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-[12.5px] font-medium text-[var(--ui-soft)]">Add a round</span>
-                <button
-                  type="button"
-                  onClick={() => setAdding(false)}
-                  className="text-[12px] text-muted-foreground hover:text-foreground"
-                >
+                <Button type="button" variant="ghost" size="sm" onClick={() => setAdding(false)}>
                   Cancel
-                </button>
+                </Button>
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
                 {ROUND_KIND_ORDER.map((kind) => {

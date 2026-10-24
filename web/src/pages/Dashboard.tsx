@@ -36,6 +36,7 @@ import { cn } from '@/lib/utils';
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { LoadErrorPanel } from '@/components/candidate/LoadErrorPanel';
 import { Page, PageBody, PageHeader, EmptyState } from '@/design/components/page';
 import { Card } from '@/design/components/card';
 import { Row, RowList } from '@/design/components/rows';
@@ -192,7 +193,13 @@ export default function Dashboard() {
   // ── Query: sessions ─────────────────────────────────────────────────────────
   // One page serves both the 3-row feed and every aggregate on the page. Two
   // queries (3 rows + 100 rows) would be two round-trips for a strict subset.
-  const { data: sessionsData, isLoading: sessionsLoading } = useQuery({
+  const {
+    data: sessionsData,
+    isLoading: sessionsLoading,
+    isError: sessionsFailed,
+    refetch: refetchSessions,
+    isFetching: sessionsFetching,
+  } = useQuery({
     queryKey: ['sessions', { page: 1, perPage: STATS_COUNT }],
     queryFn: () => listSessions({ page: 1, perPage: STATS_COUNT }),
     staleTime: 2 * 60 * 1000,
@@ -639,6 +646,13 @@ export default function Dashboard() {
               <Skeleton className="h-14 w-full rounded-[12px]" />
               <Skeleton className="h-14 w-full rounded-[12px]" />
             </div>
+          ) : sessionsFailed && !sessionsData ? (
+            // A failed load is not "no interviews yet" (UI conventions, D1).
+            <LoadErrorPanel
+              title={t('history.loadError')}
+              onRetry={() => void refetchSessions()}
+              retrying={sessionsFetching}
+            />
           ) : recentSessions.length === 0 ? (
             // No button here: the page already has its one practice call to action.
             <EmptyState bordered={false} icon={ListChecks} title={t('practice.recentEmpty')} />

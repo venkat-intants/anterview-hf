@@ -37,6 +37,7 @@ import CopilotLauncher from '@/components/agent/CopilotLauncher';
 import { toast } from '@/lib/toast';
 import { useLiveRefresh } from '@/lib/liveRefresh';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -681,16 +682,20 @@ function TopBar() {
             const term = q.trim();
             void navigate(term ? `/jobs?q=${encodeURIComponent(term)}` : '/jobs');
           }}
-          className="hidden h-10 w-[340px] items-center gap-2.5 rounded-full border border-border bg-card px-4 text-[var(--ui-faint)] transition-[border-color,box-shadow] focus-within:border-[var(--accent)] focus-within:shadow-[0_0_0_3px_rgba(var(--accent-rgb),0.16)] md:flex"
+          className="relative hidden w-[340px] md:block"
         >
-          <Search size={15} aria-hidden="true" />
-          <input
+          <Search
+            size={15}
+            aria-hidden="true"
+            className="pointer-events-none absolute start-4 top-1/2 -translate-y-1/2 text-[var(--ui-faint)]"
+          />
+          <Input
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder={t('shell.searchPlaceholder')}
             aria-label={t('shell.searchLabel')}
-            className="w-full bg-transparent text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none"
+            className="rounded-full ps-10"
           />
         </form>
       )}

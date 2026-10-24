@@ -35,7 +35,7 @@ import type { CandidateOffer } from '@/api/offers';
 import { toast } from '@/lib/toast';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useCandidateFormat } from '@/lib/candidateCopy';
+import { useCandidateError, useCandidateFormat } from '@/lib/candidateCopy';
 import type { TFunction } from 'i18next';
 import { buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -221,7 +221,11 @@ function ApplicationCard({
           {open && (
             <div className="mt-2 border-t border-border pt-3">
               {isLoading && (
-                <p className="text-[13.5px] text-muted-foreground">{t('applications.loading')}</p>
+                <div role="status" aria-busy="true" className="flex flex-col gap-2">
+                  <span className="sr-only">{t('applications.loading')}</span>
+                  <Skeleton aria-hidden="true" className="h-4 w-3/4" />
+                  <Skeleton aria-hidden="true" className="h-4 w-1/2" />
+                </div>
               )}
               {detailError && !detail && (
                 // A failed load used to leave the panel blank (audit CA-L2).
@@ -336,6 +340,7 @@ function SectionTitle({ children, count }: { children: string; count: number }) 
 
 export default function Applications() {
   const { t } = useTranslation();
+  const errorText = useCandidateError();
   const {
     applications: apps,
     loops,
@@ -351,9 +356,9 @@ export default function Applications() {
   // One toast per distinct error, never one per render.
   useEffect(() => {
     if (isError) {
-      toast.error(error instanceof Error ? error.message : t('applications.loadFailedToast'));
+      toast.error(errorText(error, t('applications.loadFailedToast')));
     }
-  }, [isError, error, t]);
+  }, [isError, error, t, errorText]);
 
   // Each application's own queue items, and from them whose move it is.
   const mineById = useMemo(

@@ -34,31 +34,26 @@ import { downloadUrl } from '@/lib/safeUrl';
 import { toast } from '@/lib/toast';
 import { Plus, Trash2, Upload } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
+import { fieldHintClass, fieldLabelClass } from '@/components/ui/control-styles';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { errorMessage } from '@/lib/errorMessage';
+import { cn } from '@/lib/utils';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 
 const MAX_ITEMS = 20;
 const ITEM_KEY_RE = /^[a-z0-9_]{1,80}$/;
 const MAX_MATERIAL_BYTES = 10 * 1024 * 1024;
 
-function errText(e: unknown, fallback: string): string {
-  return errorMessage(e, fallback.endsWith('.') ? fallback : `${fallback}.`);
-}
-
 function blankItem(n: number): TaskItem {
   return { key: `item_${n}`, prompt: '', response_type: 'text', required: true, max_chars: null };
 }
 
-// Native <select>/<textarea> in the same look as the shared Input.
-const inputCls =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground ' +
-  'placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] ' +
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
-const selectCls = `${inputCls} h-11 py-0`;
-const labelCls = 'mb-1.5 block text-[13px] font-semibold text-foreground';
-const helpCls = 'mt-1.5 text-[12.5px] text-muted-foreground';
+// A label wrapping its control, so the association needs no id.
+const labelCls = cn(fieldLabelClass, 'mb-1.5 block');
+const helpCls = cn(fieldHintClass, 'mt-1.5');
 // Hairline-divided group with a 15px bold title — the same rhythm as the
 // candidate drawer's sections, since this renders in the round's side panel.
 const GROUP = 'border-t border-border pt-5';
@@ -101,29 +96,27 @@ function ItemRow({
         </label>
         <label className="block">
           <span className={labelCls}>Answer type</span>
-          <select
+          <SelectControl
             value={item.response_type}
             disabled={!editable}
             onChange={(e) =>
               onChange({ ...item, response_type: e.target.value as TaskResponseType })
             }
-            className={selectCls}
           >
             <option value="text">Written answer</option>
             <option value="link">Link</option>
             <option value="file">File upload (PDF, JPEG or PNG)</option>
-          </select>
+          </SelectControl>
         </label>
       </div>
       <label className="block">
         <span className={labelCls}>Prompt</span>
-        <textarea
+        <Textarea
           value={item.prompt}
           disabled={!editable}
           onChange={(e) => onChange({ ...item, prompt: e.target.value })}
           maxLength={4000}
           rows={2}
-          className={`${inputCls} resize-y`}
         />
       </label>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
@@ -193,7 +186,7 @@ function MaterialsEditor({ roundId, editable }: { roundId: string; editable: boo
       setError(null);
       invalidate();
     },
-    onError: (e: unknown) => setError(errText(e, 'Could not add that material')),
+    onError: (e: unknown) => setError(errorMessage(e, 'Could not add that material.')),
   });
 
   const removeMut = useMutation({
@@ -202,7 +195,7 @@ function MaterialsEditor({ roundId, editable }: { roundId: string; editable: boo
       toast.success('Material removed');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not remove that material')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not remove that material.')),
   });
 
   const downloadMut = useMutation({
@@ -215,7 +208,7 @@ function MaterialsEditor({ roundId, editable }: { roundId: string; editable: boo
       }
       window.open(url, '_blank', 'noopener,noreferrer');
     },
-    onError: (e: unknown) => toast.error(errText(e, 'Could not open this material')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not open this material.')),
   });
 
   function pick(file: File | null): void {
@@ -394,7 +387,7 @@ export default function TaskEditor({
       toast.success('Task saved');
       void qc.invalidateQueries({ queryKey: ['hr', 'round-task', roundId] });
     },
-    onError: (e) => toast.error(errText(e, 'Could not save this task')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not save this task.')),
   });
 
   const keys = form.items.map((i) => i.key);
@@ -438,7 +431,7 @@ export default function TaskEditor({
     return (
       <div role="alert" className="flex flex-wrap items-center gap-3">
         <p className="text-[13.5px] text-[var(--ui-danger)]">
-          {errText(config.error, 'Could not load this task.')}
+          {errorMessage(config.error, 'Could not load this task.')}
         </p>
         <Button type="button" variant="outline" onClick={() => void config.refetch()}>
           Try again
@@ -455,7 +448,7 @@ export default function TaskEditor({
           <label className={labelCls} htmlFor="task-brief">
             Brief
           </label>
-          <textarea
+          <Textarea
             id="task-brief"
             value={form.brief}
             disabled={!editable}
@@ -463,7 +456,6 @@ export default function TaskEditor({
             maxLength={20000}
             rows={5}
             placeholder="What the candidate is asked to do, and why."
-            className={`${inputCls} resize-y`}
           />
         </div>
 
@@ -474,24 +466,22 @@ export default function TaskEditor({
           <div className="flex flex-col gap-3 pb-3.5 pt-2">
             <label className="block">
               <span className={labelCls}>Hindi</span>
-              <textarea
+              <Textarea
                 value={form.briefHi}
                 disabled={!editable}
                 onChange={(e) => setForm({ ...form, briefHi: e.target.value })}
                 maxLength={20000}
                 rows={3}
-                className={`${inputCls} resize-y`}
               />
             </label>
             <label className="block">
               <span className={labelCls}>Telugu</span>
-              <textarea
+              <Textarea
                 value={form.briefTe}
                 disabled={!editable}
                 onChange={(e) => setForm({ ...form, briefTe: e.target.value })}
                 maxLength={20000}
                 rows={3}
-                className={`${inputCls} resize-y`}
               />
             </label>
           </div>

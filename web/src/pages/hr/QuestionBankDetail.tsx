@@ -26,6 +26,7 @@ import { JourneyRail } from '@/design/components/journey-rail';
 import { NextStep } from '@/design/components/next-step';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { useUnsavedGuard } from '@/components/bank/useUnsavedGuard';
 import { BankAddPanel } from '@/components/hr/bank/BankAddPanel';
 import { BankSetupPanel } from '@/components/hr/bank/BankSetupPanel';
@@ -141,16 +142,12 @@ function BankFlowPage({ bankId }: { bankId: string }): JSX.Element {
   if (!isNew && banksQuery.isError) {
     return (
       <Page width="default">
-        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
-          Could not load this question bank.{' '}
-          <button
-            type="button"
-            className="font-semibold underline"
-            onClick={() => void banksQuery.refetch()}
-          >
-            Try again
-          </button>
-        </p>
+        <QueryErrorPanel
+          title="Could not load this question bank."
+          error={banksQuery.error}
+          onRetry={() => void banksQuery.refetch()}
+          retrying={banksQuery.isFetching}
+        />
       </Page>
     );
   }
@@ -186,16 +183,12 @@ function BankFlowPage({ bankId }: { bankId: string }): JSX.Element {
   };
 
   const listState = listQuery.isError ? (
-    <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
-      Could not load this bank&apos;s questions.{' '}
-      <button
-        type="button"
-        className="font-semibold underline"
-        onClick={() => void listQuery.refetch()}
-      >
-        Try again
-      </button>
-    </p>
+    <QueryErrorPanel
+      title="Could not load this bank's questions."
+      error={listQuery.error}
+      onRetry={() => void listQuery.refetch()}
+      retrying={listQuery.isFetching}
+    />
   ) : (
     <div className="flex flex-col gap-3" role="status" aria-label="Loading questions">
       <Skeleton className="h-16 w-full rounded-card" />

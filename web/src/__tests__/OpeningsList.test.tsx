@@ -428,7 +428,10 @@ describe('the list on screen', () => {
 
     m.listRequisitions.mockRejectedValue(new Error('boom'));
     renderList();
-    expect((await screen.findByRole('alert')).textContent).toBe('boom');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load openings.');
+    expect(alert).toHaveTextContent('boom');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
   });
 });
 

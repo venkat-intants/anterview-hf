@@ -2,15 +2,12 @@
 // "Guards"): one Button, the shared form controls, ui/table, Radix dialogs and
 // Skeleton.
 //
-// These rules are being migrated file by file, so they cannot fail on every
-// file that breaks them today. Instead each rule has an ALLOWLIST,
-// allowlists/<rule id>.txt, naming the files that broke it when the guard was
-// written (one src-relative path per line, sorted). The test fails when a file
-// NOT on its rule's list breaks the rule, so no new file can add a breach and
-// no clean file can regress. It does not fail when a listed file becomes
-// clean: migrating a file needs no edit to the list, and the lists are emptied
-// in one cleanup step once the migrations land. Do not add a path to a list to
-// get a change through; use the shared component.
+// These rules were migrated file by file, so each rule has an ALLOWLIST,
+// allowlists/<rule id>.txt, of files still allowed to break it (one
+// src-relative path per line, sorted; `#` lines are comments). The test fails
+// when a file NOT on its rule's list breaks the rule. The migrations have
+// landed and every list is now empty, so any breach anywhere fails. Do not add
+// a path to a list to get a change through; use the shared component.
 //
 // The rules themselves, and the files exempt from each (the primitive's own
 // implementation and the documented exceptions), are in structuralRules.ts.

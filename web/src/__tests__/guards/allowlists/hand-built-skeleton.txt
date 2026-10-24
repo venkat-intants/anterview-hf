@@ -1,3 +1,3 @@
-components/agent/CopilotPanel.tsx
-features/interview/LiveKitInterview.tsx
-pages/Careers.tsx
+# Empty: no file breaks this rule. Never add a path to get a change through; use
+# the shared component. A permanent exception goes in the rule's exempt list in
+# structuralRules.ts, with its reason (docs/UI-CONVENTIONS.md, Ratchets).

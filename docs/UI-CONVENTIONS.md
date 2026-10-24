@@ -159,7 +159,8 @@ panel: they trap focus, close on Escape and return focus. A hand-built
 `role="dialog"` is allowed only for the documented exceptions below (G4).
 
 Removing or deleting a user or a tenant opens a `Dialog` that names the object
-(B4), as `StaffRoster` in `CompanyAdminConsole` and `DeleteCompanyDialog` do; an
+(B4), as `StaffRoster` in `CompanyAdminConsole`, the super admin removal in
+`PlatformOwnerConsole` and `DeleteCompanyDialog` do; an
 inline `ConfirmDeleteButton` (above) covers every other destructive action.
 
 ## Documented exceptions
@@ -187,8 +188,9 @@ and i18n keys are never mistaken for visible text.
 
 ### Ratchets
 
-The structural rules are migrated file by file, so each has an allowlist instead
-of failing everywhere at once:
+The structural rules were migrated file by file, so each has an allowlist of
+files still allowed to break it. Every list is now empty: the rules hold across
+`web/src`, apart from the exempt files named in `structuralRules.ts`:
 
 | Rule (`allowlists/<id>.txt`) | Breach | Use |
 |---|---|---|
@@ -200,13 +202,11 @@ of failing everywhere at once:
 
 How the allowlists work:
 
-- Each list names the files that broke its rule when the guard was written: one
-  path per line, relative to `web/src`, forward slashes, sorted, no duplicates.
-- The test fails when a file **not** on the list breaks the rule. It does not
-  fail when a listed file becomes clean, so migrating a file needs no edit to
-  the list.
+- Each list holds only a `#` header comment today. A path, if one were listed,
+  is one per line, relative to `web/src`, forward slashes, sorted, no
+  duplicates (the test checks this).
+- The test fails when a file **not** on the list breaks the rule, so with the
+  lists empty any breach anywhere fails `npm test`.
 - Never add a path to get a change through: use the shared component. A new
   permanent exception belongs in the rule's `exempt` list in
   `structuralRules.ts` and in the table above, with its reason.
-- Once the area migrations land, one cleanup change deletes the clean paths
-  from each list (the test also checks the lists stay sorted and unique).

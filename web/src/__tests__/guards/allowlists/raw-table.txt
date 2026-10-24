@@ -1,12 +1,3 @@
-components/agent/AnswerText.tsx
-components/hr/analytics/GroupComparisonTable.tsx
-components/hr/analytics/OutcomeSignalsSection.tsx
-components/panel/CalibrationTab.tsx
-pages/History.tsx
-pages/admin/AdminInterviews.tsx
-pages/hr/Applicants.tsx
-pages/hr/CorpusDocuments.tsx
-pages/hr/ExamResults.tsx
-pages/hr/Offers.tsx
-pages/hr/TalentPools.tsx
-pages/superadmin/HiringBoard.tsx
+# Empty: no file breaks this rule. Never add a path to get a change through; use
+# the shared component. A permanent exception goes in the rule's exempt list in
+# structuralRules.ts, with its reason (docs/UI-CONVENTIONS.md, Ratchets).

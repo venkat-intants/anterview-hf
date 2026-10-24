@@ -8,7 +8,7 @@
 // not change a kit for anyone already in the pipeline.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -123,6 +123,36 @@ describe('RoundInspector - interview kit', () => {
     const [roundId, body] = api.updateRoundKit.mock.calls[0] as [string, { instructions: string }];
     expect(roundId).toBe('round-1');
     expect(body.instructions).toBe('60 minutes.');
+  });
+
+  it('copies the server limits: 8000 characters of instructions and notes', async () => {
+    renderInspector(false);
+    const instructions = await screen.findByLabelText(/instructions for interviewers/i);
+    expect(instructions).toHaveAttribute('maxLength', '8000');
+    expect(screen.getByLabelText(/notes for interviewers/i)).toHaveAttribute('maxLength', '8000');
+  });
+
+  it('says a list is over 10 lines or 300 characters beside it, and holds Save', async () => {
+    renderInspector(false);
+    const evaluate = await screen.findByLabelText(/what to evaluate/i);
+    const save = screen.getByRole('button', { name: /save interview kit/i });
+    expect(screen.getAllByText(/up to 10 lines of 300 characters/).length).toBeGreaterThan(0);
+
+    const eleven = Array.from({ length: 11 }, (_, i) => `Point ${i + 1}`).join('\n');
+    fireEvent.change(evaluate, { target: { value: eleven } });
+    expect(screen.getByText('Keep it to 10 lines. This has 11.')).toBeInTheDocument();
+    expect(save).toBeDisabled();
+
+    // Blank lines are dropped before sending, so they do not count.
+    const tenWithBlanks = Array.from({ length: 10 }, (_, i) => `Point ${i + 1}`).join('\n\n');
+    fireEvent.change(evaluate, { target: { value: tenWithBlanks } });
+    expect(screen.queryByText(/Keep it to 10 lines/)).toBeNull();
+    expect(save).toBeEnabled();
+
+    fireEvent.change(evaluate, { target: { value: `ok\n${'x'.repeat(301)}` } });
+    expect(screen.getByText('Line 2 is over 300 characters.')).toBeInTheDocument();
+    expect(save).toBeDisabled();
+    expect(api.updateRoundKit).not.toHaveBeenCalled();
   });
 
   it('never offers the kit on a round a person does not interview', () => {

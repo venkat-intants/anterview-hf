@@ -13,7 +13,7 @@
 // through the enrolment endpoint, which records who moved them and why.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -594,6 +594,17 @@ describe('CandidateDrawer', () => {
       expect(screen.getByText('3. Technical Interview')).toBeInTheDocument();
     });
 
+    it('titles the section Round results and shows the score out of 100', async () => {
+      // E3: "assessment" is the AI panel's word; this section lists every
+      // round (exam, coding round, interview). F1: one score, one format.
+      listRoundResults.mockResolvedValue([round]);
+      renderDrawer();
+      expect(await screen.findByText('84/100')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Round results' })).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Assessment' })).toBeNull();
+      expect(screen.queryByText('84%')).toBeNull();
+    });
+
     it('separates the frozen axes from the criteria that decided progression', async () => {
       // Reading the axes as the reason for a decision would be wrong — they are
       // the cross-role comparison (D-02), not the evaluation.
@@ -620,7 +631,7 @@ describe('CandidateDrawer', () => {
       // being made here is about the settled state.
       renderDrawer();
       await screen.findByText('Nadia Newbie');
-      await waitFor(() => expect(screen.queryByText('Assessment')).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.queryByText('Round results')).not.toBeInTheDocument());
     });
 
     it('distinguishes "could not load" from "not assessed"', async () => {
@@ -696,9 +707,12 @@ describe('CandidateDrawer', () => {
 
       expect(await screen.findByText('Panel interview')).toBeInTheDocument();
       expect(screen.getByText('Farah Khan')).toBeInTheDocument();
-      expect(screen.getByText('submitted')).toBeInTheDocument();
+      // The state in words, never the raw server value.
+      expect(screen.getByText('Submitted')).toBeInTheDocument();
       expect(screen.getByText('Girish Rao')).toBeInTheDocument();
-      expect(screen.getByText('assigned')).toBeInTheDocument();
+      expect(screen.getByText('Assigned')).toBeInTheDocument();
+      expect(screen.queryByText('submitted')).toBeNull();
+      expect(screen.queryByText('assigned')).toBeNull();
       expect(screen.getByText('Strong on system design.')).toBeInTheDocument();
       expect(screen.getByText(/Handled the tradeoffs well/)).toBeInTheDocument();
       expect(screen.getByText('Not submitted yet.')).toBeInTheDocument();
@@ -925,6 +939,16 @@ describe('CandidateDrawer', () => {
 
       await user.selectOptions(roundSelect, 'r-panel');
       await user.click(await screen.findByLabelText(/Farah Khan/));
+
+      // The due date names the zone it is read in and refuses a past time.
+      const due = screen.getByLabelText(/^Due date \(optional, your time, .+\)$/);
+      expect(due).toHaveAttribute('min');
+      fireEvent.change(due, { target: { value: '2020-01-01T10:00' } });
+      expect(screen.getByText('Choose a due date in the future.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^assign$/i })).toBeDisabled();
+      fireEvent.change(due, { target: { value: '' } });
+      expect(screen.queryByText('Choose a due date in the future.')).toBeNull();
+
       await user.click(screen.getByRole('button', { name: /^assign$/i }));
 
       await waitFor(() =>

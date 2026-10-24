@@ -34,7 +34,9 @@ import {
   withdrawScorecard,
   type EnrolmentScorecard,
 } from '@/api/scorecards';
-import { formatDate, formatDateTime } from '@/lib/formatters';
+import { formatDate, formatDateTime, formatScore } from '@/lib/formatters';
+import { browserTimezone } from '@/lib/timezone';
+import { toLocalInputValue } from '@/lib/localDatetime';
 import { errorMessage } from '@/lib/errorMessage';
 import { describeMove } from '@/lib/stageHistory';
 import { toast } from '@/lib/toast';
@@ -142,7 +144,7 @@ function RoundScores({
   if (isLoading) {
     return (
       <div id="round-results" tabIndex={-1} className={SECTION}>
-        <h3 className={SECTION_TITLE}>Assessment</h3>
+        <h3 className={SECTION_TITLE}>Round results</h3>
         <Skeleton className="mt-2 h-16 rounded-[12px]" />
       </div>
     );
@@ -152,7 +154,7 @@ function RoundScores({
   if (isError) {
     return (
       <div id="round-results" tabIndex={-1} className={SECTION}>
-        <h3 className={SECTION_TITLE}>Assessment</h3>
+        <h3 className={SECTION_TITLE}>Round results</h3>
         <QueryErrorPanel
           className="mt-2 py-4"
           title="Could not load the scores."
@@ -167,7 +169,7 @@ function RoundScores({
 
   return (
     <div id="round-results" tabIndex={-1} className={SECTION}>
-      <h3 className={SECTION_TITLE}>Assessment</h3>
+      <h3 className={SECTION_TITLE}>Round results</h3>
       <ul className="mt-2 flex flex-col gap-3">
         {data.map((r: RoundResult) => (
           <li key={r.round_id} className="rounded-[16px] border border-border p-3.5">
@@ -176,7 +178,7 @@ function RoundScores({
                 {r.position + 1}. {r.round_title}
               </span>
               <span className={cn('text-[15px] font-semibold', scoreTone(r.percent))}>
-                {r.percent === null ? '-' : `${Math.round(r.percent)}%`}
+                {formatScore('round', r.percent)}
               </span>
             </div>
 
@@ -266,6 +268,10 @@ function AssignInterviewersForm({
   const [roundId, setRoundId] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [dueAt, setDueAt] = useState('');
+  // The picker's `min` only steers the calendar; a typed past time still has
+  // to be caught before it is sent, so the same check gates Assign.
+  const duePast = dueAt !== '' && new Date(dueAt).getTime() <= Date.now();
+  const tz = browserTimezone();
 
   const interviewers = useQuery({
     queryKey: ['hr', 'interviewers'],
@@ -350,11 +356,16 @@ function AssignInterviewersForm({
         )}
       </fieldset>
 
-      <FormField id="assign-due" label="Due date (optional)">
+      <FormField
+        id="assign-due"
+        label={`Due date (optional, your time, ${tz})`}
+        error={duePast ? 'Choose a due date in the future.' : undefined}
+      >
         {(p) => (
           <Input
             {...p}
             type="datetime-local"
+            min={toLocalInputValue(new Date().toISOString())}
             value={dueAt}
             onChange={(e) => setDueAt(e.target.value)}
           />
@@ -364,7 +375,7 @@ function AssignInterviewersForm({
       <Button
         type="button"
         size="sm"
-        disabled={!roundId || selected.length === 0 || assignMut.isPending}
+        disabled={!roundId || selected.length === 0 || duePast || assignMut.isPending}
         onClick={() => assignMut.mutate()}
         className="self-start"
       >
@@ -512,7 +523,7 @@ function HumanInterviewSection({
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="text-[12.5px] text-foreground">{sc.interviewer_name}</span>
-                        <StatusTag tone={SCORECARD_TONE[sc.state]}>{sc.state}</StatusTag>
+                        <StatusTag tone={SCORECARD_TONE[sc.state]}>{statusLabel(sc.state, 'scorecard')}</StatusTag>
                       </div>
                       {sc.submitted_at ? (
                         <p className="mt-0.5 text-[12px] text-muted-foreground">

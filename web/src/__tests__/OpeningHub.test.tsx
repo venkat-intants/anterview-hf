@@ -461,7 +461,7 @@ describe('a gated control is disabled with its reason beside it', () => {
   it('the schedule is disabled for the same reason, with the reason attached', async () => {
     useData(dash({ total_enrolments: 0, approval_status: 'pending_approval' }));
     await openGoLive();
-    const at = await screen.findByLabelText('Go live at');
+    const at = await screen.findByLabelText(/^Go live at/);
     expect((at as HTMLInputElement).disabled).toBe(true);
     const reason = document.getElementById(at.getAttribute('aria-describedby') as string);
     expect(reason?.textContent).toMatch(/needs budget approval/i);
@@ -586,7 +586,7 @@ describe('inventory: every control that existed before is reachable, by role and
     expect(screen.getByLabelText(/Note for your company admin/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeTruthy();
     // the schedule belongs to stage 4 now
-    expect(screen.queryByLabelText('Go live at')).toBeNull();
+    expect(screen.queryByLabelText(/^Go live at/)).toBeNull();
   });
 
   it('stage 4: the apply switch, the link and the schedule', async () => {
@@ -598,7 +598,7 @@ describe('inventory: every control that existed before is reachable, by role and
     expect(await screen.findByRole('switch', { name: 'Accept public applications' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Copy the application link' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Open the application page' })).toBeTruthy();
-    expect(await screen.findByLabelText('Go live at')).toBeTruthy();
+    expect(await screen.findByLabelText(/^Go live at/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Schedule' })).toBeTruthy();
   });
 

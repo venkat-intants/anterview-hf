@@ -243,7 +243,38 @@ describe('history', () => {
     renderPanel();
     await openHistory();
     await userEvent.click(await screen.findByRole('button', { name: /Restore/ }));
+    // One click only asks: the wording would go live to candidates at once.
+    expect(publishJdVersion).not.toHaveBeenCalled();
+    expect(screen.getByText('Make v1 the live job description?')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Restore v1' }));
     await waitFor(() => expect(publishJdVersion).toHaveBeenCalledWith('req-1', 'v-1'));
+  });
+
+  it('backs out of a restore with Cancel or Escape, and publishes nothing', async () => {
+    getJdHistory.mockResolvedValue(
+      history([
+        version({ id: 'v-2', version: 2 }),
+        version({
+          id: 'v-1',
+          version: 1,
+          status: 'archived',
+          superseded_at: '2026-09-10T10:00:00Z',
+        }),
+      ]),
+    );
+    renderPanel();
+    await openHistory();
+    await userEvent.click(await screen.findByRole('button', { name: /Restore/ }));
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(cancel).toHaveFocus();
+    await userEvent.click(cancel);
+    expect(screen.queryByText('Make v1 the live job description?')).toBeNull();
+    const trigger = screen.getByRole('button', { name: 'Restore' });
+    expect(trigger).toHaveFocus();
+    await userEvent.click(trigger);
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByText('Make v1 the live job description?')).toBeNull();
+    expect(publishJdVersion).not.toHaveBeenCalled();
   });
 
   it('explains an empty history rather than showing nothing', async () => {

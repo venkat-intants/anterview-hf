@@ -70,7 +70,7 @@ describe('setup dots are only as sure as the list payload', () => {
   it('a sent-back opening is open, and says why in words', () => {
     const dots = setupDots(opening({ approval_status: 'rejected' }));
     expect(dots[2].state).toBe('open');
-    expect(dots[2].text).toMatch(/changes requested/);
+    expect(dots[2].text).toBe('Budget and approval: sent back');
   });
 
   it('approved but switched off: approval is done, go live is not', () => {

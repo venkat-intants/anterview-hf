@@ -46,6 +46,8 @@ import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertCircle } from '@/design/components/icons';
 import { formatDateTime } from '@/lib/formatters';
+import { browserTimezone } from '@/lib/timezone';
+import { toLocalInputValue } from '@/lib/localDatetime';
 
 // HR-L3: the shared approval labels, so this panel, the openings list and the
 // HR home say the same words ("Sent back", "Awaiting approval") for one state.
@@ -87,6 +89,15 @@ function toInstant(local: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
+/** The earliest value the picker offers: the start of the next minute. The
+ *  current minute is already partly past, so offering it would offer a time
+ *  the past-time check then refuses. */
+function nextMinuteLocal(): string {
+  return toLocalInputValue(
+    new Date(Math.floor(Date.now() / 60_000) * 60_000 + 60_000).toISOString(),
+  );
+}
+
 /**
  * `section` lets the opening hub place the two halves in different stages:
  * `approval` is budget and approval (stage 3), `schedule` is the publish
@@ -114,6 +125,12 @@ export default function GovernancePanel({
   const [notes, setNotes] = useState(requisition.budget_notes ?? '');
   const [submitNote, setSubmitNote] = useState('');
   const [publishAt, setPublishAt] = useState('');
+  // The picker's `min` only steers the calendar; a typed past time is caught
+  // here too, so Schedule is held and the reason shown before anything is sent.
+  const publishInstant = toInstant(publishAt);
+  const publishPast =
+    publishAt !== '' &&
+    (publishInstant === null || new Date(publishInstant).getTime() <= Date.now());
 
   // Only the schedule half reads the schedule, so the approval stage does not
   // spend a request on it.
@@ -406,13 +423,15 @@ export default function GovernancePanel({
                       <FormField
                         id="s-at"
                         className="mt-2"
-                        label="Go live at"
+                        label={`Go live at (your time, ${browserTimezone()})`}
                         describedBy={!approved ? 'schedule-gate' : undefined}
+                        error={publishPast ? 'Choose a date and time in the future.' : undefined}
                       >
                         {(p) => (
                           <Input
                             {...p}
                             type="datetime-local"
+                            min={nextMinuteLocal()}
                             value={publishAt}
                             onChange={(e) => setPublishAt(e.target.value)}
                             disabled={!approved || sched.public_apply_enabled}
@@ -436,6 +455,7 @@ export default function GovernancePanel({
                             setSchedule.isPending ||
                             !approved ||
                             !publishAt ||
+                            publishPast ||
                             sched.public_apply_enabled
                           }
                           aria-describedby={!approved ? 'schedule-gate' : undefined}

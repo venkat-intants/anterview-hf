@@ -255,6 +255,36 @@ async def test_the_structure_read_carries_each_rounds_attempt_count(db: AsyncSes
     assert counts == {str(f.r1): 1, str(f.r2): 0}
 
 
+@pytest.mark.asyncio
+async def test_the_exam_list_carries_the_live_rounds_pass_marks(db: AsyncSession) -> None:
+    """Re-audit (exams): the exam card stated the exam-level pass mark, which
+    only seeds round 1. The list now carries each live round's mark."""
+    from app.routers.hr_exams import list_exams
+
+    f = await _build(db)
+    # Round 1 is 60, round 2 is 75; a third round shares 75 and a deleted one
+    # at 90 is not in effect.
+    await db.execute(
+        text("INSERT INTO exam_rounds (id, exam_id, company_id, round_number, title, status,"
+             " position, pass_threshold, deleted_at) VALUES"
+             " (gen_random_uuid(), :x, :c, 3, 'R3', 'draft', 3, 75, NULL),"
+             " (gen_random_uuid(), :x, :c, 4, 'R4', 'draft', 4, 90, now())"),
+        {"x": f.exam, "c": f.company},
+    )
+    # Another company's exam is never read into this one's list.
+    other = uuid.uuid4()
+    await db.execute(
+        text("INSERT INTO exams (id, company_id, title, status) VALUES (:x, :oc, 'O', 'draft')"),
+        {"x": other, "oc": f.other_company},
+    )
+
+    out = await list_exams(f.ctx, db, None)
+
+    by_id = {e.id: e for e in out}
+    assert set(by_id) == {str(f.exam)}
+    assert by_id[str(f.exam)].round_pass_thresholds == [60, 75]
+
+
 # ===========================================================================
 # E11: a time limit can be cleared
 # ===========================================================================
@@ -468,6 +498,29 @@ async def test_bank_usage_counts_distinct_live_exams_not_copied_rows(db: AsyncSe
     # Was 5 (copied rows, deleted exam and section included).
     assert one["used_in_exams"] == 1
     assert listed[str(bank)]["used_in_exams"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_questions_used_in_list_leaves_out_deleted_exams_and_sections(
+    db: AsyncSession,
+) -> None:
+    """Re-audit: the question detail's "used in" list joined exams with no
+    deleted_at filter and ignored deleted sections, so it named exams the bank
+    card (same live test as above) no longer counted."""
+    f = await _build(db)
+    _bank, qs = await _approved_bank(db, f, 1)
+    await _copy(db, f, qs[0], f.exam, f.s1)
+    gone_exam, gone_sec = await _exam_with_section(db, f)
+    await _copy(db, f, qs[0], gone_exam, gone_sec)
+    await db.execute(text("UPDATE exams SET deleted_at = now() WHERE id = :x"), {"x": gone_exam})
+    other_exam, dead_sec = await _exam_with_section(db, f)
+    await _copy(db, f, qs[0], other_exam, dead_sec)
+    await db.execute(text("UPDATE exam_sections SET deleted_at = now() WHERE id = :s"),
+                     {"s": dead_sec})
+
+    detail = await bank_svc.get_question(db, company_id=f.company, qid=qs[0])
+
+    assert [u["exam_id"] for u in detail["used_in_exams"]] == [str(f.exam)]
 
 
 @pytest.mark.asyncio

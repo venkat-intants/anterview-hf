@@ -120,6 +120,9 @@ export interface Exam {
 export interface ExamSummary extends Exam {
   question_count: number;
   attempt_count: number;
+  /** The distinct pass marks of the exam's live rounds, ascending. Passing is
+   *  decided per round; `pass_threshold` only seeded round 1. */
+  round_pass_thresholds?: number[];
 }
 
 export interface ExamDetail extends Exam {

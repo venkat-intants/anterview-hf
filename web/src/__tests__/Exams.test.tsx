@@ -114,7 +114,24 @@ describe('Exams - list', () => {
 
     await screen.findByText('React Deep Dive');
     expect(screen.getByText('20 Qs')).toBeInTheDocument();
-    expect(screen.getByText(/pass ≥ 70%/)).toBeInTheDocument();
+    // A legacy exam with no rounds falls back to the exam-level mark.
+    expect(screen.getByText('Pass mark 70%')).toBeInTheDocument();
+  });
+
+  it("states the rounds' pass mark, not the exam-level one that only seeded round 1", async () => {
+    // Re-audit (exams): HR raised round 1 to 80 after creating the exam at 60;
+    // the card still said 60. With rounds at different marks it says so.
+    listExams.mockResolvedValue([
+      { ...PUBLISHED, round_pass_thresholds: [80] },
+      { ...DRAFT, round_pass_thresholds: [50, 75] },
+    ]);
+    renderExams();
+
+    await screen.findByText('React Deep Dive');
+    expect(screen.getByText('Pass mark 80%')).toBeInTheDocument();
+    expect(screen.queryByText('Pass mark 60%')).not.toBeInTheDocument();
+    expect(screen.getByText('Pass mark set per round')).toBeInTheDocument();
+    expect(screen.queryByText('Pass mark 70%')).not.toBeInTheDocument();
   });
 
   it('invites a first exam when the list is empty', async () => {

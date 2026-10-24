@@ -23,13 +23,16 @@ import {
   type FindingOutcome,
   type MatchedRegion,
 } from '@/api/codeEvidence';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { FormField } from '@/components/ui/form-field';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
-import { Loader2, X } from '@/design/components/icons';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+import { Loader2 } from '@/design/components/icons';
 
 function pct(n: number): string {
   return `${Math.round(n * 100)}%`;
@@ -145,6 +148,12 @@ export default function CodeSimilarityCompare({
   const [outcome, setOutcome] = useState<FindingOutcome>('no_concern');
   const [rationale, setRationale] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // The caller mounts this only while open and opens it from its own button,
+  // not a DialogTrigger, so Radix has no trigger to hand focus back to. Keep
+  // whatever had focus when it opened and return focus there on close.
+  const [returnFocusTo] = useState<HTMLElement | null>(() =>
+    document.activeElement instanceof HTMLElement ? document.activeElement : null,
+  );
 
   const compare = useQuery({
     queryKey: ['hr', 'code-similarity', signal.id],
@@ -175,7 +184,7 @@ export default function CodeSimilarityCompare({
       onClose();
     },
     onError: (e) => {
-      const msg = errText(e, 'Could not record this finding');
+      const msg = errorMessage(e, 'Could not record this finding.');
       setError(msg);
       toast.error(msg);
     },
@@ -218,28 +227,26 @@ export default function CodeSimilarityCompare({
   const otherContainment = thisIsLow ? signal.containment_high : signal.containment_low;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="code-compare-heading"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onClose();
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
       }}
     >
-      <div className="flex max-h-[90vh] w-full max-w-[980px] flex-col overflow-hidden rounded-[18px] border border-border bg-card shadow-xl">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 id="code-compare-heading" className="text-[15px] font-semibold text-foreground">
+      <DialogContent
+        aria-describedby={undefined}
+        onCloseAutoFocus={(e) => {
+          if (returnFocusTo?.isConnected) {
+            e.preventDefault();
+            returnFocusTo.focus();
+          }
+        }}
+        className="flex max-h-[90vh] max-w-[980px] flex-col gap-0 overflow-hidden p-0"
+      >
+        <div className="flex min-h-[4.5rem] items-center border-b border-border py-4 pe-14 ps-5">
+          <DialogTitle className="text-[15px] font-semibold leading-normal text-foreground">
             Compare submissions
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-[8px] text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </DialogTitle>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -258,14 +265,18 @@ export default function CodeSimilarityCompare({
           </p>
 
           {compare.isLoading ? (
-            <p className="flex items-center gap-2 py-8 text-[13px] text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              Loading…
-            </p>
+            <div className="grid gap-3 sm:grid-cols-2" aria-busy="true">
+              <span className="sr-only">Loading…</span>
+              <Skeleton className="h-48" />
+              <Skeleton className="h-48" />
+            </div>
           ) : compare.isError ? (
-            <p className="py-8 text-[13px] text-[var(--ui-danger)]">
-              {errText(compare.error, 'Could not load this comparison.')}
-            </p>
+            <QueryErrorPanel
+              title="Could not load this comparison."
+              error={compare.error}
+              onRetry={() => void compare.refetch()}
+              retrying={compare.isFetching}
+            />
           ) : compare.data && thisExcerpt && otherExcerpt ? (
             <>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -318,46 +329,37 @@ export default function CodeSimilarityCompare({
                 </label>
               ))}
             </fieldset>
-            <label className="block">
-              <span className="text-[12px] text-[var(--ui-soft)]">
-                Rationale (required, {FINDING_RATIONALE_MIN}-{FINDING_RATIONALE_MAX} characters)
-              </span>
-              <textarea
-                value={rationale}
-                onChange={(e) => setRationale(e.target.value)}
-                maxLength={FINDING_RATIONALE_MAX}
-                rows={3}
-                aria-required="true"
-                placeholder="What you reviewed and why you reached this outcome"
-                className="mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              />
-              <span className="mt-0.5 block text-[12px] text-[var(--ui-faint)]">
-                {rationale.trim().length}/{FINDING_RATIONALE_MIN} minimum characters
-              </span>
-            </label>
+            <FormField
+              label={`Rationale (required, ${FINDING_RATIONALE_MIN}-${FINDING_RATIONALE_MAX} characters)`}
+              hint={`${rationale.trim().length}/${FINDING_RATIONALE_MIN} minimum characters`}
+            >
+              {(p) => (
+                <Textarea
+                  {...p}
+                  value={rationale}
+                  onChange={(e) => setRationale(e.target.value)}
+                  maxLength={FINDING_RATIONALE_MAX}
+                  rows={3}
+                  aria-required="true"
+                  placeholder="What you reviewed and why you reached this outcome"
+                />
+              )}
+            </FormField>
             {error ? <p className="text-[12px] text-[var(--ui-danger)]">{error}</p> : null}
             <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="min-h-[40px] rounded-[10px] border border-border px-3.5 py-2 text-[12.5px] text-foreground"
-              >
+              <Button type="button" variant="ghost" onClick={onClose}>
                 Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={recordMut.isPending}
-                className="inline-flex min-h-[40px] items-center gap-1.5 rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-50"
-              >
+              </Button>
+              <Button type="submit" disabled={recordMut.isPending}>
                 {recordMut.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                 ) : null}
                 Record finding
-              </button>
+              </Button>
             </div>
           </form>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

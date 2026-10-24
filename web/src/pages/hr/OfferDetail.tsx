@@ -22,7 +22,7 @@ import { offerEntryWord } from '@/lib/offerHistory';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 import { effectiveOfferStatus, offerPrimary, offerSecondary, offerTrack } from '@/lib/offerTrack';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -45,7 +45,6 @@ import {
   type PayPeriod,
 } from '@/api/offers';
 import { toast } from '@/lib/toast';
-import { cn } from '@/lib/utils';
 import { errorMessage } from '@/lib/errorMessage';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { statusLabel } from '@/lib/statusLabel';
@@ -55,22 +54,18 @@ import { Card } from '@/design/components/card';
 import { StatusTag } from '@/design/components/primitives';
 import { Section, Well } from '@/design/components/rows';
 import { EditorHeader, type SaveState } from '@/components/hr/EditorHeader';
+import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { QueryErrorPanel } from '@/components/QueryState';
 import OfferDocumentsPanel from '@/components/OfferDocumentsPanel';
 import { Download, Loader2, XCircle } from '@/design/components/icons';
 import { formatDate, formatDateTime, formatMoney } from '@/lib/formatters';
-
-const inputCls =
-  'mt-1 min-h-[40px] w-full rounded-[12px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60';
-const PRIMARY_BTN =
-  'inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:opacity-40';
-const SECONDARY_BTN =
-  'inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-full border border-[var(--ui-line-strong)] px-5 py-2 text-[13px] font-medium text-foreground transition-colors hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40';
-const labelCls = 'text-[13px] font-medium text-[var(--ui-soft)]';
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ['full_time', 'part_time', 'contract', 'internship'];
 const PAY_PERIODS: PayPeriod[] = ['annual', 'monthly', 'hourly'];
@@ -225,6 +220,7 @@ function OfferFields({
   onSaveState: (state: SaveState | undefined) => void;
 }) {
   const qc = useQueryClient();
+  const fid = useId();
   const editable = offer.status === 'draft' || offer.status === 'rejected';
   const saved = fieldsFrom(offer);
   const [fields, setFields] = useState<FieldsState>(saved);
@@ -284,181 +280,195 @@ function OfferFields({
       <div className="flex flex-col gap-6">
         <Section title="Role & start">
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className={labelCls}>Job title</span>
-              <input
-                disabled={!editable}
-                maxLength={TEXT_MAX.job_title}
-                value={fields.job_title}
-                onChange={(e) => set('job_title', e.target.value)}
-                className={inputCls}
-              />
-            </label>
-            <label className="block">
-              <span className={labelCls}>Employment type</span>
-              <select
-                disabled={!editable}
-                value={fields.employment_type}
-                onChange={(e) => set('employment_type', e.target.value)}
-                className={inputCls}
-              >
-                {EMPLOYMENT_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t.replace('_', ' ')}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className={labelCls}>Start date</span>
-              <input
-                type="date"
-                disabled={!editable}
-                value={fields.start_date}
-                onChange={(e) => set('start_date', e.target.value)}
-                className={inputCls}
-              />
-            </label>
-            <label className="block">
-              <span className={labelCls}>Location</span>
-              <input
-                disabled={!editable}
-                maxLength={TEXT_MAX.location}
-                value={fields.location}
-                onChange={(e) => set('location', e.target.value)}
-                className={inputCls}
-              />
-            </label>
+            <FormField id={`${fid}-job-title`} label="Job title">
+              {(p) => (
+                <Input
+                  {...p}
+                  disabled={!editable}
+                  maxLength={TEXT_MAX.job_title}
+                  value={fields.job_title}
+                  onChange={(e) => set('job_title', e.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id={`${fid}-employment-type`} label="Employment type">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  disabled={!editable}
+                  value={fields.employment_type}
+                  onChange={(e) => set('employment_type', e.target.value)}
+                >
+                  {EMPLOYMENT_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {t.replace('_', ' ')}
+                    </option>
+                  ))}
+                </SelectControl>
+              )}
+            </FormField>
+            <FormField id={`${fid}-start-date`} label="Start date">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="date"
+                  disabled={!editable}
+                  value={fields.start_date}
+                  onChange={(e) => set('start_date', e.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id={`${fid}-location`} label="Location">
+              {(p) => (
+                <Input
+                  {...p}
+                  disabled={!editable}
+                  maxLength={TEXT_MAX.location}
+                  value={fields.location}
+                  onChange={(e) => set('location', e.target.value)}
+                />
+              )}
+            </FormField>
           </div>
         </Section>
 
         <Section title="Pay">
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className={labelCls}>Base salary</span>
-              <input
-                type="number"
-                min={0.01}
-                step={0.01}
-                disabled={!editable}
-                value={fields.base_salary}
-                onChange={(e) => set('base_salary', e.target.value)}
-                className={inputCls}
-              />
-            </label>
-            <label className="block">
-              <span className={labelCls}>Currency</span>
-              <input
-                disabled={!editable}
-                maxLength={3}
-                value={fields.currency}
-                onChange={(e) => set('currency', e.target.value.toUpperCase())}
-                className={inputCls}
-              />
-            </label>
-            <label className="block">
-              <span className={labelCls}>Pay period</span>
-              <select
-                disabled={!editable}
-                value={fields.pay_period}
-                onChange={(e) => set('pay_period', e.target.value)}
-                className={inputCls}
-              >
-                {PAY_PERIODS.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block">
-              <span className={labelCls}>Bonus</span>
-              <input
-                disabled={!editable}
-                maxLength={TEXT_MAX.bonus}
-                value={fields.bonus}
-                onChange={(e) => set('bonus', e.target.value)}
-                className={inputCls}
-              />
-            </label>
-            <label className="block">
-              <span className={labelCls}>Equity</span>
-              <input
-                disabled={!editable}
-                maxLength={TEXT_MAX.equity}
-                value={fields.equity}
-                onChange={(e) => set('equity', e.target.value)}
-                className={inputCls}
-              />
-            </label>
+            <FormField id={`${fid}-base-salary`} label="Base salary">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={0.01}
+                  step={0.01}
+                  disabled={!editable}
+                  value={fields.base_salary}
+                  onChange={(e) => set('base_salary', e.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id={`${fid}-currency`} label="Currency">
+              {(p) => (
+                <Input
+                  {...p}
+                  disabled={!editable}
+                  maxLength={3}
+                  value={fields.currency}
+                  onChange={(e) => set('currency', e.target.value.toUpperCase())}
+                />
+              )}
+            </FormField>
+            <FormField id={`${fid}-pay-period`} label="Pay period">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  disabled={!editable}
+                  value={fields.pay_period}
+                  onChange={(e) => set('pay_period', e.target.value)}
+                >
+                  {PAY_PERIODS.map((o) => (
+                    <option key={o} value={o}>
+                      {o}
+                    </option>
+                  ))}
+                </SelectControl>
+              )}
+            </FormField>
+            <FormField id={`${fid}-bonus`} label="Bonus">
+              {(p) => (
+                <Input
+                  {...p}
+                  disabled={!editable}
+                  maxLength={TEXT_MAX.bonus}
+                  value={fields.bonus}
+                  onChange={(e) => set('bonus', e.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id={`${fid}-equity`} label="Equity">
+              {(p) => (
+                <Input
+                  {...p}
+                  disabled={!editable}
+                  maxLength={TEXT_MAX.equity}
+                  value={fields.equity}
+                  onChange={(e) => set('equity', e.target.value)}
+                />
+              )}
+            </FormField>
           </div>
         </Section>
 
         <Section title="Conditions">
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span className={labelCls}>Offer valid for (days)</span>
-              <input
-                type="number"
-                min={1}
-                max={60}
-                step={1}
-                required
-                disabled={!editable}
-                value={fields.valid_days}
-                onChange={(e) => set('valid_days', e.target.value)}
-                className={inputCls}
-              />
-            </label>
-            <label className="block">
-              <span className={labelCls}>Probation (months)</span>
-              <input
-                type="number"
-                min={0}
-                max={24}
-                step={1}
-                disabled={!editable}
-                value={fields.probation_months}
-                onChange={(e) => set('probation_months', e.target.value)}
-                className={inputCls}
-              />
-            </label>
-            <label className="block">
-              <span className={labelCls}>Notice period (days)</span>
-              <input
-                type="number"
-                min={0}
-                max={365}
-                step={1}
-                disabled={!editable}
-                value={fields.notice_period_days}
-                onChange={(e) => set('notice_period_days', e.target.value)}
-                className={inputCls}
-              />
-            </label>
+            <FormField id={`${fid}-valid-days`} label="Offer valid for (days)">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={1}
+                  max={60}
+                  step={1}
+                  required
+                  disabled={!editable}
+                  value={fields.valid_days}
+                  onChange={(e) => set('valid_days', e.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id={`${fid}-probation`} label="Probation (months)">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={0}
+                  max={24}
+                  step={1}
+                  disabled={!editable}
+                  value={fields.probation_months}
+                  onChange={(e) => set('probation_months', e.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id={`${fid}-notice`} label="Notice period (days)">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={0}
+                  max={365}
+                  step={1}
+                  disabled={!editable}
+                  value={fields.notice_period_days}
+                  onChange={(e) => set('notice_period_days', e.target.value)}
+                />
+              )}
+            </FormField>
           </div>
-          <label className="mt-3 block">
-            <span className={labelCls}>Benefits</span>
-            <textarea
-              disabled={!editable}
-              maxLength={TEXT_MAX.benefits}
-              value={fields.benefits}
-              onChange={(e) => set('benefits', e.target.value)}
-              rows={2}
-              className={inputCls}
-            />
-          </label>
-          <label className="mt-3 block">
-            <span className={labelCls}>Terms</span>
-            <textarea
-              disabled={!editable}
-              maxLength={TEXT_MAX.terms}
-              value={fields.terms}
-              onChange={(e) => set('terms', e.target.value)}
-              rows={4}
-              className={inputCls}
-            />
-          </label>
+          <FormField id={`${fid}-benefits`} label="Benefits" className="mt-3">
+            {(p) => (
+              <Textarea
+                {...p}
+                disabled={!editable}
+                maxLength={TEXT_MAX.benefits}
+                value={fields.benefits}
+                onChange={(e) => set('benefits', e.target.value)}
+                rows={2}
+              />
+            )}
+          </FormField>
+          <FormField id={`${fid}-terms`} label="Terms" className="mt-3">
+            {(p) => (
+              <Textarea
+                {...p}
+                disabled={!editable}
+                maxLength={TEXT_MAX.terms}
+                value={fields.terms}
+                onChange={(e) => set('terms', e.target.value)}
+                rows={4}
+              />
+            )}
+          </FormField>
         </Section>
       </div>
 
@@ -472,15 +482,16 @@ function OfferFields({
               {problem}
             </p>
           ) : null}
-          <button
+          {/* Outline: the page's one primary action is on the approval track. */}
+          <Button
             type="button"
+            variant="outline"
             disabled={!dirty || saveMut.isPending || problem !== null}
             aria-describedby={problem && dirty ? `offer-fields-problem-${offer.id}` : undefined}
             onClick={() => saveMut.mutate()}
-            className={SECONDARY_BTN}
           >
             {saveMut.isPending ? 'Saving…' : 'Save changes'}
-          </button>
+          </Button>
         </div>
       ) : null}
     </Card>
@@ -546,17 +557,17 @@ function ConfirmStep({
 
   if (!armed) {
     return (
-      <button
+      <Button
         ref={triggerRef}
         type="button"
+        variant={primary ? 'default' : 'outline'}
         data-testid={primary ? 'offer-primary' : undefined}
         disabled={disabled || pending}
         aria-describedby={describedBy}
         onClick={() => setArmed(true)}
-        className={primary ? PRIMARY_BTN : SECONDARY_BTN}
       >
         {pending ? pendingText : label}
-      </button>
+      </Button>
     );
   }
   return (
@@ -573,7 +584,7 @@ function ConfirmStep({
     >
       <p className="text-[12.5px] text-[var(--ui-soft)]">{explain}</p>
       <div className="flex flex-wrap gap-2">
-        <button
+        <Button
           type="button"
           disabled={pending}
           aria-busy={pending}
@@ -581,22 +592,21 @@ function ConfirmStep({
             awaiting.current = true;
             onConfirm();
           }}
-          className={PRIMARY_BTN}
         >
           {pending ? pendingText : confirmText}
-        </button>
-        <button
+        </Button>
+        <Button
           ref={keepRef}
           type="button"
+          variant="ghost"
           disabled={pending}
           onClick={() => {
             awaiting.current = false;
             disarm();
           }}
-          className={SECONDARY_BTN}
         >
           Cancel
-        </button>
+        </Button>
       </div>
     </div>
   );
@@ -732,6 +742,9 @@ function useCompleteBlockReason(offer: OfferDetailShape, wanted: boolean): strin
     queryFn: () => getOfferDocuments(offer.id),
     enabled: wanted,
   });
+  // No error branch on purpose: this only explains a disabled button. If it
+  // fails the button stays enabled, the server still refuses an incomplete
+  // offer, and the Documents tab shows the load failure.
   if (!wanted || !docs.data || docs.data.complete_ready) return undefined;
   const missing = docs.data.outstanding;
   return missing.length > 0
@@ -772,16 +785,16 @@ function OfferApprovalTrack({
       case 'submit':
         return (
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <button
+            <Button
               type="button"
               data-testid="offer-primary"
               disabled={busy || Boolean(blockReason)}
               aria-describedby={blockReason ? reasonId : undefined}
               onClick={() => life.submitMut.mutate()}
-              className={`${PRIMARY_BTN} w-full sm:w-auto`}
+              className="w-full sm:w-auto"
             >
               {life.submitMut.isPending ? 'Submitting…' : 'Submit for approval'}
-            </button>
+            </Button>
             {blockReason ? (
               <span id={reasonId} className="text-[12.5px] text-muted-foreground">
                 {blockReason}
@@ -839,24 +852,14 @@ function OfferApprovalTrack({
   const secondary = anything ? (
     <>
       {sec.recall ? (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => recallMut.mutate()}
-          className={SECONDARY_BTN}
-        >
+        <Button type="button" variant="outline" disabled={busy} onClick={() => recallMut.mutate()}>
           {recallMut.isPending ? 'Recalling…' : 'Recall'}
-        </button>
+        </Button>
       ) : null}
       {sec.reopen ? (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => reopenMut.mutate()}
-          className={SECONDARY_BTN}
-        >
+        <Button type="button" variant="outline" disabled={busy} onClick={() => reopenMut.mutate()}>
           {reopenMut.isPending ? 'Reopening…' : 'Reopen for editing'}
-        </button>
+        </Button>
       ) : null}
       {sec.resend ? (
         <ConfirmStep
@@ -876,14 +879,14 @@ function OfferApprovalTrack({
           disabled={busy && !withdrawMut.isPending}
           className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0 sm:flex-row sm:flex-wrap sm:items-center"
         >
-          <input
+          <Input
             type="text"
             value={withdrawReason}
             maxLength={NOTE_MAX}
             onChange={(e) => setWithdrawReason(e.target.value)}
             placeholder="Withdraw reason (optional)"
             aria-label="Withdraw reason"
-            className="min-h-[40px] w-full rounded-[12px] sm:w-[260px] border border-border bg-secondary px-3 py-1.5 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
+            className="sm:w-[260px]"
           />
           <ConfirmDeleteButton
             label="Withdraw offer"
@@ -956,17 +959,16 @@ function DocumentsTab({ offer, life }: { offer: OfferDetailShape; life: OfferLif
         )}
 
         {offer.preboarding_completed_at ? (
-          <button
+          <Button
             type="button"
+            variant="outline"
             disabled={exportMut.isPending}
             onClick={() => exportMut.mutate()}
-            className={cn(SECONDARY_BTN, 'mt-3')}
+            className="mt-3"
           >
-            {exportMut.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            ) : null}
+            {exportMut.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
             Prepare HRMS export
-          </button>
+          </Button>
         ) : null}
 
         {exportResult ? (
@@ -981,14 +983,16 @@ function DocumentsTab({ offer, life }: { offer: OfferDetailShape; life: OfferLif
             <pre className="mt-2 max-h-[240px] overflow-auto rounded-[8px] bg-[var(--ui-inset)] p-2.5 text-[12px] text-[var(--ui-soft)]">
               {JSON.stringify(exportResult.payload, null, 2)}
             </pre>
-            <button
+            <Button
               type="button"
+              variant="link"
+              size="sm"
               onClick={() => downloadJson(`offer-${offer.id}-hrms-export.json`, exportResult)}
-              className="mt-2 inline-flex items-center gap-1.5 text-[12px] text-[var(--ui-info)] hover:underline"
+              className="mt-2 h-auto gap-1.5 px-0 text-[12px] font-normal"
             >
-              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              <Download aria-hidden="true" />
               Download JSON
-            </button>
+            </Button>
           </Well>
         ) : null}
       </Section>

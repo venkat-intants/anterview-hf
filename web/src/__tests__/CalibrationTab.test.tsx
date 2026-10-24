@@ -154,7 +154,7 @@ describe('CalibrationTab - states', () => {
   it('shows a loading state', () => {
     schedulingApi.getCalibration.mockImplementation(() => new Promise(() => undefined));
     renderTab();
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByLabelText('Loading calibration')).toHaveAttribute('aria-busy', 'true');
   });
 
   it('shows an error state', async () => {
@@ -469,7 +469,9 @@ describe('CalibrationTab - judgements drill-down', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Show judgements' }));
     const dialog = await screen.findByRole('dialog');
-    await waitFor(() => expect(within(dialog).getByLabelText('Close')).toHaveFocus());
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Close' })).toHaveFocus(),
+    );
 
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -711,5 +713,22 @@ describe('CalibrationTab - a failed openings list (IV-L10)', () => {
     schedulingApi.getCalibration.mockResolvedValue(calibration());
     renderTab();
     expect(await screen.findByText(/Could not load openings\./)).toBeInTheDocument();
+  });
+
+  it('says the rounds could not load, and retries them', async () => {
+    schedulingApi.getCalibration.mockResolvedValue(calibration());
+    workflowsApi.listWorkflows.mockRejectedValueOnce(new Error('boom'));
+    const user = userEvent.setup();
+    renderTab();
+
+    await screen.findByRole('option', { name: 'Backend Engineer' });
+    await user.selectOptions(screen.getByLabelText('Opening'), 'req-1');
+    expect(await screen.findByText(/Could not load the rounds\./)).toBeInTheDocument();
+
+    workflowsApi.listWorkflows.mockResolvedValue([]);
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() =>
+      expect(screen.queryByText(/Could not load the rounds\./)).not.toBeInTheDocument(),
+    );
   });
 });

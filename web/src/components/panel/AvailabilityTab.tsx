@@ -15,11 +15,14 @@ import { formatDayTime, browserTimezone } from '@/lib/timezone';
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
-import { Loader2 } from '@/design/components/icons';
 import { GlassCard } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
 
 /** How far ahead the list reaches. The server caps a read at 92 days. */
 const RANGES = [
@@ -29,9 +32,6 @@ const RANGES = [
 ] as const;
 
 type RangeWeeks = (typeof RANGES)[number]['weeks'];
-
-const fieldCls =
-  'mt-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
 
 export default function AvailabilityTab(): JSX.Element {
   const qc = useQueryClient();
@@ -97,26 +97,23 @@ export default function AvailabilityTab(): JSX.Element {
 
   return (
     <div>
-      <label
-        htmlFor="panel-avail-who"
-        className="block text-[12px] font-medium text-[var(--ui-soft)]"
-      >
-        Interviewer
-      </label>
-      <select
-        id="panel-avail-who"
-        value={userId}
-        onChange={(e) => setUserId(e.target.value)}
-        disabled={interviewers.isError && !interviewers.data}
-        className="mt-1 w-full max-w-[320px] rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-      >
-        <option value="">Choose an interviewer…</option>
-        {(interviewers.data ?? []).map((iv) => (
-          <option key={iv.user_id} value={iv.user_id}>
-            {iv.full_name}
-          </option>
-        ))}
-      </select>
+      <FormField id="panel-avail-who" label="Interviewer" className="max-w-[320px]">
+        {(p) => (
+          <SelectControl
+            {...p}
+            value={userId}
+            onChange={(e) => setUserId(e.target.value)}
+            disabled={interviewers.isError && !interviewers.data}
+          >
+            <option value="">Choose an interviewer…</option>
+            {(interviewers.data ?? []).map((iv) => (
+              <option key={iv.user_id} value={iv.user_id}>
+                {iv.full_name}
+              </option>
+            ))}
+          </SelectControl>
+        )}
+      </FormField>
 
       {interviewers.isError && !interviewers.data ? (
         // A failed list is not an empty one (IV-L10).
@@ -143,38 +140,32 @@ export default function AvailabilityTab(): JSX.Element {
               if (ready) addMut.mutate();
             }}
           >
-            <div>
-              <label
-                htmlFor="panel-avail-start"
-                className="block text-[12px] font-medium text-[var(--ui-soft)]"
-              >
-                From
-              </label>
-              <input
-                id="panel-avail-start"
-                type="datetime-local"
-                min={nowLocal}
-                value={startLocal}
-                onChange={(e) => setStartLocal(e.target.value)}
-                className={fieldCls}
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="panel-avail-end"
-                className="block text-[12px] font-medium text-[var(--ui-soft)]"
-              >
-                To
-              </label>
-              <input
-                id="panel-avail-end"
-                type="datetime-local"
-                min={startLocal || nowLocal}
-                value={endLocal}
-                onChange={(e) => setEndLocal(e.target.value)}
-                className={fieldCls}
-              />
-            </div>
+            <FormField id="panel-avail-start" label="From">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="datetime-local"
+                  size="sm"
+                  className="w-auto"
+                  min={nowLocal}
+                  value={startLocal}
+                  onChange={(e) => setStartLocal(e.target.value)}
+                />
+              )}
+            </FormField>
+            <FormField id="panel-avail-end" label="To">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="datetime-local"
+                  size="sm"
+                  className="w-auto"
+                  min={startLocal || nowLocal}
+                  value={endLocal}
+                  onChange={(e) => setEndLocal(e.target.value)}
+                />
+              )}
+            </FormField>
             <Button type="submit" size="sm" disabled={!ready || addMut.isPending}>
               {addMut.isPending ? 'Adding…' : `Add window for ${chosen?.full_name ?? 'them'}`}
             </Button>
@@ -187,24 +178,26 @@ export default function AvailabilityTab(): JSX.Element {
             >
               Showing
             </label>
-            <select
+            <SelectControl
               id="panel-avail-range"
+              size="sm"
+              className="w-auto"
               value={weeks}
               onChange={(e) => setWeeks(Number(e.target.value) as RangeWeeks)}
-              className="rounded-[10px] border border-border bg-secondary px-2 py-1 text-[12.5px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {RANGES.map((r) => (
                 <option key={r.weeks} value={r.weeks}>
                   {r.label}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </div>
 
           {windows.isLoading ? (
-            <div className="mt-3 flex items-center gap-2 text-[13px] text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              Loading…
+            <div className="mt-3 flex flex-col gap-1.5" aria-busy="true" aria-label="Loading availability">
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-9 w-full" />
             </div>
           ) : windows.isError ? (
             <QueryErrorPanel

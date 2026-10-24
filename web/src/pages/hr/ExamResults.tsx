@@ -16,6 +16,15 @@ import { listSimilaritySignals } from '@/api/codeEvidence';
 import { PageHeader, Breadcrumbs, Page, EmptyState } from '@/design/components/page';
 import { QueryErrorPanel, QueryState } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { cn } from '@/lib/utils';
 import { csvRow } from '@/lib/csv';
 import { GlassCard, StatCard, StatusTag, Avatar } from '@/design/components/primitives';
@@ -29,7 +38,7 @@ import {
   ListChecks,
 } from '@/design/components/icons';
 import { ACTIVE_POLL_MS } from '../../lib/polling';
-import { formatDateTime } from '@/lib/formatters';
+import { formatDateTime, plural } from '@/lib/formatters';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -175,7 +184,7 @@ export default function ExamResults() {
         title={`${exam?.title ?? 'Exam'} · Results`}
         description={
           <span className="break-words text-[13px]">
-            {list.length} attempt{list.length !== 1 ? 's' : ''} · {passedCount} passed
+            {plural(list.length, 'attempt')} · {passedCount} passed
             {sharedMark !== undefined
               ? ` · pass mark ${sharedMark}%`
               : list.length > 0
@@ -254,21 +263,30 @@ export default function ExamResults() {
         loading={
           <ResultsTable showSimilarity={showSimilarity} showRound={false} busy>
             {[0, 1, 2].map((i) => (
-              <tr key={i} aria-hidden="true">
-                <td colSpan={showSimilarity ? 6 : 5} className="border-b border-border p-0">
+              <TableRow key={i} aria-hidden="true" className="hover:bg-transparent">
+                <TableCell colSpan={columnCount(showSimilarity, false)} className={cn(TD, 'p-0')}>
                   <Skeleton className="h-[56px] rounded-none" />
-                </td>
-              </tr>
+                </TableCell>
+              </TableRow>
             ))}
           </ResultsTable>
         }
         isEmpty={(rows) => rows.length === 0}
         empty={
-          <EmptyState
-            icon={ListChecks}
-            title="No attempts yet"
-            description="Assign the exam and share the links. Attempts appear here as candidates submit."
-          />
+          // D4: an empty table keeps its frame and shows the empty state in a
+          // row, so the columns still say what will appear here.
+          <ResultsTable showSimilarity={showSimilarity} showRound={false}>
+            <TableRow className="hover:bg-transparent">
+              <TableCell colSpan={columnCount(showSimilarity, false)} className="p-0">
+                <EmptyState
+                  icon={ListChecks}
+                  title="No attempts yet"
+                  description="Assign the exam and share the links. Attempts appear here as candidates submit."
+                  bordered={false}
+                />
+              </TableCell>
+            </TableRow>
+          </ResultsTable>
         }
       >
         {(rows) => (
@@ -290,7 +308,14 @@ export default function ExamResults() {
   );
 }
 
-const TH = 'sticky top-0 z-[1] whitespace-nowrap border-b border-border bg-card px-6 py-3.5';
+const TH =
+  'sticky top-0 z-[1] h-auto whitespace-nowrap border-b border-border bg-card px-6 py-3.5 ' +
+  'font-semibold text-muted-foreground';
+
+/** Candidate, Score, Submitted, Status and Action, plus the optional columns. */
+function columnCount(showSimilarity: boolean, showRound: boolean): number {
+  return 5 + (showSimilarity ? 1 : 0) + (showRound ? 1 : 0);
+}
 
 // ── Results table frame ───────────────────────────────────────────────────────
 function ResultsTable({
@@ -309,40 +334,46 @@ function ResultsTable({
       {/* The scroll container is what makes the header sticky: it scrolls
           the rows under a header that stays put, and scrolls sideways on a
           narrow screen instead of squeezing the columns. */}
-      <div className="max-h-[70vh] overflow-auto" aria-busy={busy ? 'true' : undefined}>
-        <table className="w-full min-w-[760px] border-collapse text-left">
-          <caption className="sr-only">Graded attempts for this exam</caption>
-          <thead>
-            <tr className="text-[12px] font-semibold uppercase tracking-[0.5px] text-muted-foreground">
-              <th scope="col" className={TH}>
+      {/* Table's own wrapper is made overflow-visible so this div stays the
+          one scroll container: a second one between them would capture the
+          sticky header and stop it sticking. */}
+      <div
+        className="max-h-[70vh] overflow-auto [&>div]:overflow-visible"
+        aria-busy={busy ? 'true' : undefined}
+      >
+        <Table className="min-w-[760px] border-collapse text-left">
+          <TableCaption className="sr-only">Graded attempts for this exam</TableCaption>
+          <TableHeader className="[&_tr]:border-0">
+            <TableRow className="text-[12px] font-semibold uppercase tracking-[0.5px] text-muted-foreground hover:bg-transparent">
+              <TableHead scope="col" className={TH}>
                 Candidate
-              </th>
+              </TableHead>
               {showRound && (
-                <th scope="col" className={TH}>
+                <TableHead scope="col" className={TH}>
                   Round
-                </th>
+                </TableHead>
               )}
-              <th scope="col" className={cn(TH, 'text-right')}>
+              <TableHead scope="col" className={cn(TH, 'text-right')}>
                 Score
-              </th>
-              <th scope="col" className={TH}>
+              </TableHead>
+              <TableHead scope="col" className={TH}>
                 Submitted
-              </th>
-              <th scope="col" className={TH}>
+              </TableHead>
+              <TableHead scope="col" className={TH}>
                 Status
-              </th>
+              </TableHead>
               {showSimilarity && (
-                <th scope="col" className={cn(TH, 'text-right')}>
+                <TableHead scope="col" className={cn(TH, 'text-right')}>
                   Similarity signals
-                </th>
+                </TableHead>
               )}
-              <th scope="col" className={cn(TH, 'text-right')}>
+              <TableHead scope="col" className={cn(TH, 'text-right')}>
                 Action
-              </th>
-            </tr>
-          </thead>
-          <tbody>{children}</tbody>
-        </table>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>{children}</TableBody>
+        </Table>
       </div>
     </GlassCard>
   );
@@ -366,40 +397,40 @@ function AttemptRow({
   const inProgress = isInProgress(a);
 
   return (
-    <tr className="group transition-colors hover:bg-[var(--ui-inset-soft)]">
+    <TableRow className="group border-0 hover:bg-[var(--ui-inset-soft)]">
       {/* Candidate */}
-      <td className={TD}>
+      <TableCell className={TD}>
         <Avatar initials={initialsOf(a.applicant_name)} size={34} className="mr-3 align-middle" />
         <span className="align-middle text-[13.5px] font-medium">{a.applicant_name}</span>
-      </td>
+      </TableCell>
 
       {/* Round, with the pass mark this attempt was judged against. */}
       {showRound && (
-        <td className={cn(TD, 'text-[13px]')}>
+        <TableCell className={cn(TD, 'text-[13px]')}>
           <span className="block">{roundLabel(a)}</span>
           {a.round_pass_threshold != null ? (
             <span className="block text-[12px] text-muted-foreground">
               pass mark {a.round_pass_threshold}%
             </span>
           ) : null}
-        </td>
+        </TableCell>
       )}
 
       {/* Score — right-aligned and tabular so a column of percentages lines up. */}
-      <td
+      <TableCell
         className={cn(TD, 'text-right text-[15px] font-semibold tabular-nums')}
         style={{ color: scoreColor(a.score_percent) }}
       >
         {a.score_percent !== null ? `${a.score_percent}%` : '-'}
-      </td>
+      </TableCell>
 
       {/* Submitted */}
-      <td className={cn(TD, 'font-mono text-[13px] text-muted-foreground')}>
+      <TableCell className={cn(TD, 'font-mono text-[13px] text-muted-foreground')}>
         {formatDateTime(a.submitted_at)}
-      </td>
+      </TableCell>
 
       {/* Status — a tinted pill that always carries its word. */}
-      <td className={TD}>
+      <TableCell className={TD}>
         {inProgress ? (
           <StatusTag tone="electric">
             <Clock size={11} aria-hidden="true" /> In progress
@@ -415,11 +446,11 @@ function AttemptRow({
         ) : (
           <StatusTag tone="neutral">Not graded</StatusTag>
         )}
-      </td>
+      </TableCell>
 
       {/* Similarity signals — counts only, never the content (PH4-D3). */}
       {showSimilarity && (
-        <td
+        <TableCell
           className={cn(TD, 'text-right font-mono text-[13px] tabular-nums text-muted-foreground')}
         >
           {similarityCount > 0 ? (
@@ -427,11 +458,11 @@ function AttemptRow({
           ) : (
             '-'
           )}
-        </td>
+        </TableCell>
       )}
 
       {/* Action */}
-      <td className={cn(TD, 'text-right')}>
+      <TableCell className={cn(TD, 'text-right')}>
         {/* One control: a link styled as a button. A button nested in a
             link is invalid and announced twice (audit E27). */}
         <Button asChild variant="ghost" size="sm">
@@ -442,7 +473,7 @@ function AttemptRow({
             <Eye aria-hidden="true" /> View
           </Link>
         </Button>
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }

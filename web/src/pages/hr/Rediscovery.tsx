@@ -49,6 +49,9 @@ import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
 import { PageHeader, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import {
   Dialog,
   DialogContent,
@@ -56,14 +59,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-  Search,
-  Users,
-} from '@/design/components/icons';
+import { AlertTriangle, ChevronDown, ChevronRight, Search, Users } from '@/design/components/icons';
 import RediscoveryWhyPanel from '@/components/hr/RediscoveryWhyPanel';
 import { FRESHNESS_TONE, freshnessChipLabel } from '@/components/hr/rediscoveryDisplay';
 
@@ -151,10 +147,10 @@ export default function Rediscovery(): JSX.Element {
       />
 
       {universeQuery.isLoading ? (
-        <p className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          Checking how many candidates can be searched…
-        </p>
+        <div role="status" aria-busy="true">
+          <span className="sr-only">Checking how many candidates can be searched…</span>
+          <Skeleton className="h-4 w-80 max-w-full" />
+        </div>
       ) : universeQuery.isError ? (
         <QueryErrorPanel
           title="Could not check how many candidates are searchable."
@@ -166,8 +162,8 @@ export default function Rediscovery(): JSX.Element {
         // "The rest" also covers withdrawn, expired and erasure-requested
         // consent, so the counter says so (audit F24).
         <p role="status" className="text-[12.5px] text-muted-foreground">
-          Searching {eligible.toLocaleString('en-IN')} of {total.toLocaleString('en-IN')}{' '}
-          applicants - the rest have not opted in, or their consent has lapsed.
+          Searching {eligible.toLocaleString('en-IN')} of {total.toLocaleString('en-IN')} applicants
+          - the rest have not opted in, or their consent has lapsed.
         </p>
       ) : null}
 
@@ -185,51 +181,47 @@ export default function Rediscovery(): JSX.Element {
           <Reveal delay={0.05}>
             <GlassCard className="p-5">
               <form className="flex flex-wrap items-end gap-3" onSubmit={handleSubmit}>
-                <div className="flex min-w-[220px] flex-1 flex-col gap-1.5">
-                  <label
-                    htmlFor="rediscovery-query"
-                    className="text-[12px] font-medium text-[var(--ui-soft)]"
-                  >
-                    Search
-                  </label>
-                  <input
-                    id="rediscovery-query"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="e.g. hydraulic press maintenance"
-                    maxLength={500}
-                    className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                  />
-                </div>
-                <div className="flex min-w-[200px] flex-col gap-1.5">
-                  <label
-                    htmlFor="rediscovery-opening"
-                    className="text-[12px] font-medium text-[var(--ui-soft)]"
-                  >
-                    For this opening (optional)
-                  </label>
-                  <select
-                    id="rediscovery-opening"
-                    value={requisitionId}
-                    onChange={(e) => setRequisitionId(e.target.value)}
-                    disabled={openingsQuery.isLoading}
-                    aria-describedby={
-                      openingsQuery.isError || openingsQuery.isSuccess
-                        ? 'rediscovery-opening-help'
-                        : undefined
-                    }
-                    className="rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
-                  >
-                    <option value="">
-                      {openingsQuery.isLoading ? 'Loading openings…' : 'No opening'}
-                    </option>
-                    {openings.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.title}
+                <FormField id="rediscovery-query" label="Search" className="min-w-[220px] flex-1">
+                  {(p) => (
+                    <Input
+                      {...p}
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                      placeholder="e.g. hydraulic press maintenance"
+                      maxLength={500}
+                    />
+                  )}
+                </FormField>
+                {/* The help line sits under the whole form row, so it is wired
+                    by id rather than as this field's hint. */}
+                <FormField
+                  id="rediscovery-opening"
+                  label="For this opening (optional)"
+                  className="min-w-[200px]"
+                  describedBy={
+                    openingsQuery.isError || openingsQuery.isSuccess
+                      ? 'rediscovery-opening-help'
+                      : undefined
+                  }
+                >
+                  {(p) => (
+                    <SelectControl
+                      {...p}
+                      value={requisitionId}
+                      onChange={(e) => setRequisitionId(e.target.value)}
+                      disabled={openingsQuery.isLoading}
+                    >
+                      <option value="">
+                        {openingsQuery.isLoading ? 'Loading openings…' : 'No opening'}
                       </option>
-                    ))}
-                  </select>
-                </div>
+                      {openings.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.title}
+                        </option>
+                      ))}
+                    </SelectControl>
+                  )}
+                </FormField>
                 <Button type="submit" disabled={!query.trim() || searchMut.isPending}>
                   <Search aria-hidden="true" />
                   {searchMut.isPending ? 'Searching…' : 'Search'}
@@ -360,11 +352,7 @@ export default function Rediscovery(): JSX.Element {
       )}
 
       {dialogRows ? (
-        <AddToPoolDialog
-          rows={dialogRows}
-          onDone={unselect}
-          onClose={() => setDialogRows(null)}
-        />
+        <AddToPoolDialog rows={dialogRows} onDone={unselect} onClose={() => setDialogRows(null)} />
       ) : null}
     </Page>
   );
@@ -617,10 +605,10 @@ function AddToPoolDialog({
             </fieldset>
             {mode === 'existing' ? (
               poolsQuery.isLoading ? (
-                <p className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                  Loading your pools…
-                </p>
+                <div role="status" aria-busy="true">
+                  <span className="sr-only">Loading your pools…</span>
+                  <Skeleton className="h-10 w-full" />
+                </div>
               ) : poolsQuery.isError ? (
                 <div className="flex flex-wrap items-center gap-2" role="alert">
                   <p className="text-[12.5px] text-[var(--ui-danger)]">
@@ -636,11 +624,10 @@ function AddToPoolDialog({
                   </Button>
                 </div>
               ) : (
-                <select
+                <SelectControl
                   value={poolId}
                   onChange={(e) => setPoolId(e.target.value)}
                   aria-label="Pool"
-                  className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
                 >
                   <option value="">Choose a pool…</option>
                   {pools.map((p: PoolOut) => (
@@ -648,7 +635,7 @@ function AddToPoolDialog({
                       {p.name}
                     </option>
                   ))}
-                </select>
+                </SelectControl>
               )
             ) : (
               <>
@@ -657,13 +644,12 @@ function AddToPoolDialog({
                     You have no pools yet. Name a new one.
                   </p>
                 ) : null}
-                <input
+                <Input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="Pool name"
                   aria-label="New pool name"
                   maxLength={POOL_NAME_MAX}
-                  className="w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground"
                 />
               </>
             )}

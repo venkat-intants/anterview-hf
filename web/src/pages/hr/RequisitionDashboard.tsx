@@ -42,7 +42,9 @@ import { useIsDesktop } from '@/hooks/useIsDesktop';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
 import { Stat, StatGroup } from '@/design/components/stat-group';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
 import { cn } from '@/lib/utils';
@@ -75,11 +77,6 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'pipeline', label: 'Pipeline' },
 ];
 
-/** The shared error copy (errorMessage), with this page's period-less fallbacks. */
-function errText(e: unknown, fallback: string): string {
-  return errorMessage(e, `${fallback}.`);
-}
-
 function days(n: number | null | undefined): string {
   if (n === null || n === undefined) return '-';
   const r = Math.round(n * 10) / 10;
@@ -101,22 +98,23 @@ function ago(iso: string): string {
 /**
  * Status change for one opening, split in two so the header can lay them out
  * separately: the buttons sit with the page actions, and the close-anyway
- * question renders as its own panel under the header (it is a full-width
- * decision, not a button).
+ * question renders as its own dialog (it is a decision, not a button).
  *
  * Closing is the only transition that can strand anybody, so it is the only
  * one that asks. The server refuses a close while candidates are mid-process
  * (409) and returns the count; that refusal is not an error to report but a
- * question to put to the manager, so it renders as a panel offering the
+ * question to put to the manager, so it renders as a dialog offering the
  * decision queue first and closing anyway second.
  *
  * Under D-05 neither answer rejects anyone: candidates in a closed opening
- * stay exactly where they are and remain in the decision queue. The panel says
+ * stay exactly where they are and remain in the decision queue. The dialog says
  * so, because "close anyway" otherwise reads as "discard these people".
  */
 function useStatusChange(requisitionId: string) {
   const qc = useQueryClient();
   const [pendingClose, setPendingClose] = useState<number | null>(null);
+  // The header's Close button, so the close-anyway dialog can hand focus back.
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const mut = useMutation({
     mutationFn: (v: { next: RequisitionStatus; title: string; ack?: boolean }) =>
@@ -137,10 +135,10 @@ function useStatusChange(requisitionId: string) {
         setPendingClose(e.unresolved);
         return;
       }
-      toast.error(errText(e, 'Could not change the status'));
+      toast.error(errorMessage(e, 'Could not change the status.'));
     },
   });
-  return { mut, pendingClose, setPendingClose };
+  return { mut, pendingClose, setPendingClose, closeButtonRef };
 }
 
 type StatusChange = ReturnType<typeof useStatusChange>;
@@ -208,6 +206,7 @@ function StatusButtons({
     </span>
   ) : (
     <Button
+      ref={change.closeButtonRef}
       type="button"
       variant="ghost"
       disabled={mut.isPending}
@@ -247,66 +246,83 @@ function CloseUnresolvedPanel({
   /** How many of them the decision queue lists (waiting on a person). */
   awaiting: number;
 }) {
-  const { mut, pendingClose, setPendingClose } = change;
-  if (pendingClose === null) return null;
+  const { mut, pendingClose, setPendingClose, closeButtonRef } = change;
   // HR-M6: "unresolved" counts everyone without a final decision, including
   // new and mid-round candidates the decision queue does not list. Say which
   // is which, so "Review N" does not open a queue showing fewer, or nobody.
-  const waiting = Math.min(awaiting, pendingClose);
-  const inProgress = pendingClose - waiting;
+  // pendingClose goes null the moment the dialog closes, but the content is
+  // still on screen while it animates out. Keep the last count it opened with,
+  // so the fade does not flash "0 candidates" with the lists gone.
+  const [count, setCount] = useState(pendingClose ?? 0);
+  if (pendingClose !== null && pendingClose !== count) setCount(pendingClose);
+  const waiting = Math.min(awaiting, count);
+  const inProgress = count - waiting;
   return (
-    <div
-      role="alertdialog"
-      aria-labelledby="close-unresolved-title"
-      className="w-full rounded-[16px] border border-[var(--ui-warn)]/40 bg-[var(--ui-warn-wash)] p-4"
+    <Dialog
+      open={pendingClose !== null}
+      onOpenChange={(open) => {
+        if (!open) setPendingClose(null);
+      }}
     >
-      <h3
-        id="close-unresolved-title"
-        className="flex items-center gap-1.5 text-[15px] font-bold text-foreground"
+      <DialogContent
+        aria-describedby={undefined}
+        // The Close button that asked has been swapped out of the header by the
+        // time this opens, so Radix has nothing to return focus to: put it back
+        // on the header's Close while that still exists (a closed opening has none).
+        onCloseAutoFocus={(e) => {
+          const back = closeButtonRef.current;
+          if (back?.isConnected) {
+            e.preventDefault();
+            back.focus();
+          }
+        }}
+        className="max-w-[520px] gap-0"
       >
-        <AlertTriangle className="h-4 w-4 text-[var(--ui-warn)]" aria-hidden="true" />
-        {pendingClose} candidate{pendingClose === 1 ? '' : 's'} still undecided
-      </h3>
-      <ul className="mt-1.5 list-disc pl-5 text-[13px] leading-relaxed text-foreground">
-        {waiting > 0 ? (
-          <li>
-            {waiting} waiting on your decision. They stay in the decision queue exactly as they
-            are.
-          </li>
-        ) : null}
-        {inProgress > 0 ? (
-          <li>
-            {inProgress} still in progress (new, or part-way through a round). They continue their
-            rounds.
-          </li>
-        ) : null}
-      </ul>
-      <p className="mt-1.5 text-[13px] leading-relaxed text-foreground">
-        Closing does not reject them - nothing here ends a candidacy without you.
-      </p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {waiting > 0 ? (
-          <Button asChild>
-            <Link to={`/hr/requisitions/${requisitionId}/decisions`}>
-              <Users aria-hidden="true" />
-              Review {waiting}
-            </Link>
+        <DialogTitle className="flex items-center gap-1.5 pe-8 text-[15px] font-bold leading-normal text-foreground">
+          <AlertTriangle className="h-4 w-4 text-[var(--ui-warn)]" aria-hidden="true" />
+          {count} candidate{count === 1 ? '' : 's'} still undecided
+        </DialogTitle>
+        <ul className="mt-3 list-disc pl-5 text-[13px] leading-relaxed text-foreground">
+          {waiting > 0 ? (
+            <li>
+              {waiting} waiting on your decision. They stay in the decision queue exactly as they
+              are.
+            </li>
+          ) : null}
+          {inProgress > 0 ? (
+            <li>
+              {inProgress} still in progress (new, or part-way through a round). They continue
+              their rounds.
+            </li>
+          ) : null}
+        </ul>
+        <p className="mt-1.5 text-[13px] leading-relaxed text-foreground">
+          Closing does not reject them - nothing here ends a candidacy without you.
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {waiting > 0 ? (
+            <Button asChild>
+              <Link to={`/hr/requisitions/${requisitionId}/decisions`}>
+                <Users aria-hidden="true" />
+                Review {waiting}
+              </Link>
+            </Button>
+          ) : null}
+          <Button
+            type="button"
+            variant="outline"
+            disabled={mut.isPending}
+            onClick={() => mut.mutate({ next: 'closed', ack: true, title })}
+          >
+            {mut.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+            Close anyway
           </Button>
-        ) : null}
-        <Button
-          type="button"
-          variant="outline"
-          disabled={mut.isPending}
-          onClick={() => mut.mutate({ next: 'closed', ack: true, title })}
-        >
-          {mut.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
-          Close anyway
-        </Button>
-        <Button type="button" variant="outline" onClick={() => setPendingClose(null)}>
-          Cancel
-        </Button>
-      </div>
-    </div>
+          <Button type="button" variant="ghost" onClick={() => setPendingClose(null)}>
+            Cancel
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -900,7 +916,7 @@ export default function RequisitionDashboard({
 
   if (dash.isLoading) {
     return (
-      <Page>
+      <Page width="default">
         <div className="flex flex-col gap-4" role="status">
           <Skeleton className="h-10 w-72 rounded-[12px]" />
           <Skeleton className="h-24 rounded-card" />
@@ -912,12 +928,21 @@ export default function RequisitionDashboard({
   }
   if (dash.isError || !dash.data) {
     return (
-      <Page>
-        <Card>
-          <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
-            {errText(dash.error, 'Could not load this opening')}
-          </p>
-        </Card>
+      <Page width="default">
+        <QueryErrorPanel
+          title="Could not load this opening."
+          error={dash.error}
+          onRetry={() => void dash.refetch()}
+          retrying={dash.isFetching}
+        />
+        {readOnly ? null : (
+          <Link
+            to="/hr/requisitions"
+            className="self-start text-[13px] font-semibold text-[var(--ui-info)] hover:underline"
+          >
+            Back to openings
+          </Link>
+        )}
       </Page>
     );
   }
@@ -939,7 +964,7 @@ export default function RequisitionDashboard({
   const next = tab === 'setup' && !readOnly ? primaryAction(setup.stages) : null;
 
   return (
-    <Page>
+    <Page width="default">
       <PageHeader
         compact
         breadcrumbs={

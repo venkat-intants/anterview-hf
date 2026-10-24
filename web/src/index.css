@@ -328,8 +328,8 @@
 }
 
 /* ── Dropdown controls ────────────────────────────────────────────────────────
- * ONE closed-state design for every dropdown trigger: native <select>, the Radix
- * SelectTrigger (ui/select.tsx) and date/time inputs all read as the same control.
+ * ONE closed-state design for every dropdown trigger: native <select> and
+ * date/time inputs all read as the same control.
  *   height 40px (36px with data-size='sm') · radius 10px · 1px border (--input, the
  *   3:1 boundary; hover strengthens it) · card fill · 14px text · 16px chevron with
  *   a 12px inset · accent focus ring · disabled + aria-invalid states.

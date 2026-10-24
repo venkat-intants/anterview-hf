@@ -12,7 +12,7 @@
 //
 // Shell: bare content — AppShell is provided by the router (no double-wrap).
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   Users,
@@ -46,7 +46,16 @@ import { QueryState } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { AccountDialog } from '@/components/superadmin/CreateDialogs';
 import { Avatar } from '@/design/components/primitives';
 import { EmptyState, Page, PageHeader } from '@/design/components/page';
@@ -128,6 +137,12 @@ function StaffRoster({
   const roster = useQuery({ queryKey: [queryKey], queryFn: listFn });
   const [filter, setFilter] = useState('');
   const needle = filter.trim().toLowerCase();
+  // The person whose removal is being confirmed. Removing someone is a
+  // user-level delete, so it asks in a dialog that names them (audit B4).
+  const [removing, setRemoving] = useState<HrManager | null>(null);
+  // The row's Remove button is not a Radix trigger, so focus is handed back to
+  // it by hand when the dialog closes without removing anyone.
+  const returnFocusTo = useRef<HTMLElement | null>(null);
 
   const createMut = useMutation({
     mutationFn: (v: { email: string; fullName: string }) =>
@@ -152,6 +167,7 @@ function StaffRoster({
     mutationFn: (userId: string) => deleteFn(userId),
     onSuccess: () => {
       toast.success(`${singular} removed`);
+      setRemoving(null);
       void qc.invalidateQueries({ queryKey: [queryKey] });
     },
     onError: (err: unknown) =>
@@ -237,13 +253,13 @@ function StaffRoster({
                     className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ui-faint)]"
                     aria-hidden="true"
                   />
-                  <input
+                  <Input
                     type="search"
                     value={filter}
                     onChange={(e) => setFilter(e.target.value)}
                     aria-label={`Search ${listLabel.toLowerCase()}`}
                     placeholder="Search by name or email"
-                    className="min-h-10 w-full rounded-[10px] border border-input bg-card pl-9 pr-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    className="pl-9"
                   />
                 </div>
                 <span className="text-[13px] tabular-nums text-muted-foreground">
@@ -297,14 +313,18 @@ function StaffRoster({
                             Active
                           </Badge>
                         )}
-                        <ConfirmDeleteButton
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
                           title={`Remove ${row.full_name}`}
-                          confirmText="Remove"
-                          confirmGroupLabel={`Permanently remove ${row.full_name}`}
-                          icon={UserMinus}
-                          pending={deleteMut.isPending && deleteMut.variables === row.user_id}
-                          onConfirm={() => deleteMut.mutate(row.user_id)}
-                        />
+                          aria-label={`Remove ${row.full_name}`}
+                          aria-haspopup="dialog"
+                          disabled={deleteMut.isPending && deleteMut.variables === row.user_id}
+                          onClick={() => setRemoving(row)}
+                        >
+                          <UserMinus aria-hidden="true" />
+                        </Button>
                       </>
                     }
                   />
@@ -321,6 +341,52 @@ function StaffRoster({
         expires, so use Resend link if it did not reach them in time.
       </p>
       <p className="mt-2 text-[12.5px] text-muted-foreground">{removalNote}</p>
+
+      <Dialog
+        open={removing !== null}
+        onOpenChange={(next) => {
+          if (!next && !deleteMut.isPending) setRemoving(null);
+        }}
+      >
+        <DialogContent
+          className="max-w-[440px]"
+          onOpenAutoFocus={() => {
+            returnFocusTo.current =
+              document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          }}
+          onCloseAutoFocus={(e) => {
+            e.preventDefault();
+            if (returnFocusTo.current?.isConnected) returnFocusTo.current.focus();
+          }}
+        >
+          {removing ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Remove {removing.full_name}?</DialogTitle>
+                <DialogDescription>
+                  {removing.email} loses access to {companyName} straight away. {removalNote}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter className="gap-2">
+                <DialogClose asChild>
+                  <Button type="button" variant="ghost" disabled={deleteMut.isPending}>
+                    Cancel
+                  </Button>
+                </DialogClose>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={deleteMut.isPending}
+                  aria-busy={deleteMut.isPending}
+                  onClick={() => deleteMut.mutate(removing.user_id)}
+                >
+                  {deleteMut.isPending ? 'Removing…' : 'Remove'}
+                </Button>
+              </DialogFooter>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

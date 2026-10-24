@@ -1,5 +1,6 @@
 // MetricGlossary — every definition, reachable regardless of role.
 
+import { Skeleton } from '@/components/ui/skeleton';
 import { SectionCard } from '@/design/components/page';
 import { metricLabel, type MetricDefinitionsResponse } from '@/api/metrics';
 import type { QueryLike } from './types';
@@ -20,7 +21,12 @@ export default function MetricGlossary({
   return (
     <SectionCard title="Metric glossary" data-testid="metric-glossary">
       {definitionsQuery.isLoading ? (
-        <p className="text-[13px] text-muted-foreground">Loading…</p>
+        <div className="flex flex-col gap-2" aria-busy="true">
+          <span className="sr-only">Loading…</span>
+          <Skeleton className="h-16 rounded-[12px]" />
+          <Skeleton className="h-16 rounded-[12px]" />
+          <Skeleton className="h-16 rounded-[12px]" />
+        </div>
       ) : definitionsQuery.isError ? (
         <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
           Could not load metric definitions just now.

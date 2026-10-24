@@ -34,10 +34,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Info, ShieldCheck, VideoOff } from '@/design/components/icons';
 import { Collapsible } from '@/design/components/collapsible';
 import { useScopedPersistKey } from '@/hooks/useScopedPersistKey';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
+import { errorMessage } from '@/lib/errorMessage';
 
 /** Friendly, neutral labels — never a judgement word ("suspicious",
  *  "violation"). Anything the server sends that isn't in this map still
@@ -133,7 +130,7 @@ export default function AttemptProctoringSummary({
       <GlassCard className="mt-5 p-5" data-testid="attempt-proctoring-summary">
         <div role="alert" className="flex flex-wrap items-center gap-3">
           <p className="text-[13px] text-muted-foreground">
-            {errText(error, 'Could not load proctoring data for this attempt.')}
+            {errorMessage(error,'Could not load proctoring data for this attempt.')}
           </p>
           <Button type="button" variant="outline" onClick={() => void refetch()}>
             Try again

@@ -4,9 +4,10 @@
 // MetricInfoDialog shows for a governed metric, for the calibration spec.
 
 import { useState } from 'react';
-import { Copy, X } from '@/design/components/icons';
+import { Copy } from '@/design/components/icons';
 import type { CalibrationResponse } from '@/api/scheduling';
-import { useDialogFocus } from '@/hooks/useDialogFocus';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 const RULE_LABELS: Record<keyof CalibrationResponse['rules'], string> = {
   min_candidates: 'Minimum distinct candidates before a figure is shown',
@@ -49,7 +50,6 @@ export default function CalibrationInfoDialog({
   onClose: () => void;
 }): JSX.Element {
   const [copied, setCopied] = useState(false);
-  const panelRef = useDialogFocus<HTMLDivElement>(onClose);
 
   async function copyHash() {
     try {
@@ -61,35 +61,16 @@ export default function CalibrationInfoDialog({
     }
   }
 
+  // Mounted only while open (the tab renders it conditionally), so the Radix
+  // dialog is always open and closing it hands control back to the parent.
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        aria-label="Close"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/50"
-      />
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="calibration-info-title"
-        tabIndex={-1}
-        className="relative max-h-[85vh] w-full max-w-[480px] overflow-y-auto rounded-[16px] border border-border bg-card p-6 outline-none"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <h2 id="calibration-info-title" className="text-[16px] font-semibold text-foreground">
+    <Dialog open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <DialogContent aria-describedby={undefined} className="block max-h-[85vh] max-w-[480px]">
+        <DialogHeader className="pr-10 text-left">
+          <DialogTitle className="text-[16px] font-semibold leading-snug text-foreground">
             How is this calculated?
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 rounded-[8px] p-1 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </div>
+          </DialogTitle>
+        </DialogHeader>
 
         <p className="mt-1 text-[12px] text-muted-foreground">
           {calibration.spec.name}@{calibration.spec.version}
@@ -131,13 +112,15 @@ export default function CalibrationInfoDialog({
               {calibration.registry_hash}
             </code>
           </span>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => void copyHash()}
-            className="inline-flex items-center gap-1 rounded-[8px] border border-border px-2 py-1 text-[12px] text-foreground hover:border-[var(--ui-line-strong)] focus:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="shrink-0 px-3 text-[12px]"
           >
-            <Copy size={11} aria-hidden="true" /> {copied ? 'Copied' : 'Copy'}
-          </button>
+            <Copy aria-hidden="true" /> {copied ? 'Copied' : 'Copy'}
+          </Button>
         </div>
 
         <p className="mt-4 text-[12px] leading-relaxed text-muted-foreground">
@@ -145,7 +128,7 @@ export default function CalibrationInfoDialog({
           good reasons. Use them to start a calibration conversation. Nothing here changes a
           scorecard or a decision.
         </p>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

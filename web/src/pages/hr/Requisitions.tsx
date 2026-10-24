@@ -34,9 +34,11 @@ import {
 import { StatusTag, SegTabs } from '@/design/components/primitives';
 import { Page, PageHeader, EmptyState, Toolbar } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { LIVE_POLL_MS } from '@/lib/polling';
-import { errorMessage } from '@/lib/errorMessage';
 import { APPROVAL_LABEL } from '@/lib/openingSetup';
 import {
   isAcceptingApplications,
@@ -98,11 +100,6 @@ const APPROVAL_TONE: Record<ApprovalStatus, 'neutral' | 'amber' | 'forest' | 'em
 // One grid for the header and every row, so the columns line up.
 const GRID =
   'md:grid md:grid-cols-[minmax(0,2fr)_104px_minmax(0,1.15fr)_minmax(0,1.4fr)_minmax(0,1.1fr)_minmax(0,1.8fr)] md:items-center md:gap-x-4';
-
-/** The shared error copy (errorMessage), with this page's period-less fallbacks. */
-function errText(e: unknown, fallback: string): string {
-  return errorMessage(e, `${fallback}.`);
-}
 
 /* ── The five setup dots ─────────────────────────────────────────────────── */
 
@@ -381,6 +378,8 @@ export default function Requisitions(): JSX.Element {
   // Only to decide whether the review banner is worth showing. Cheap, cached,
   // and the alternative — a permanent link to a page that says "nothing to
   // review" — is the kind of dead nav that trains people to ignore banners.
+  // Silent on failure by design: a failed read only hides the banner, and the
+  // review page itself reports its own errors.
   const review = useQuery({
     queryKey: ['hr', 'requisitions', 'review'],
     queryFn: getBackfillReview,
@@ -396,11 +395,8 @@ export default function Requisitions(): JSX.Element {
     [all, query, sort],
   );
 
-  const field =
-    'h-10 rounded-[10px] border border-input bg-card px-3 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
-
   return (
-    <Page>
+    <Page width="default">
       <PageHeader
         title="Openings"
         description="Each opening carries its own hiring workflow and its own funnel."
@@ -439,29 +435,29 @@ export default function Requisitions(): JSX.Element {
               className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
               aria-hidden="true"
             />
-            <input
+            <Input
               type="search"
               aria-label="Search openings"
               placeholder="Search title, department, location"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className={cn(field, 'w-full pl-9')}
+              className="pl-9"
             />
           </div>
           <SegTabs tabs={TABS} active={tab} onChange={setTab} />
           <label className="flex items-center gap-2 text-[13px] text-muted-foreground">
             Sort
-            <select
+            <SelectControl
               value={sort}
               onChange={(e) => setSort(e.target.value as OpeningSort)}
-              className={field}
+              className="w-auto"
             >
               {SORTS.map((s) => (
                 <option key={s.key} value={s.key}>
                   {s.label}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           </label>
           {list.data ? (
             <span
@@ -493,12 +489,12 @@ export default function Requisitions(): JSX.Element {
           <span className="sr-only">Loading openings…</span>
         </div>
       ) : list.isError ? (
-        <div
-          role="alert"
-          className="rounded-card border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] p-4 text-[14px] text-[var(--ui-danger)]"
-        >
-          {errText(list.error, 'Could not load openings')}
-        </div>
+        <QueryErrorPanel
+          title="Could not load openings."
+          error={list.error}
+          onRetry={() => void list.refetch()}
+          retrying={list.isFetching}
+        />
       ) : (all ?? []).length === 0 ? (
         <EmptyState
           size="page"

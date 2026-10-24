@@ -39,6 +39,7 @@ import { StatusTag, Avatar, SegTabs, type TagTone } from '@/design/components/pr
 import { PageHeader, EmptyState, Toolbar, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
 import { QueryErrorPanel } from '@/components/QueryState';
 import HRAnalytics from './HRAnalytics';
 import { LIVE_POLL_MS } from '../../lib/polling';
@@ -437,9 +438,8 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                       At least {minReason} characters, recorded against your name
                     </span>
                   </label>
-                  <textarea
+                  <Textarea
                     id={rationaleId}
-                    className="min-h-[44px] w-full resize-y rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] transition-colors focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
                     value={rationale}
                     onChange={(e) => setRationale(e.target.value)}
                     aria-describedby={hint ? hintId : undefined}

@@ -301,6 +301,17 @@ describe('CodeSimilarityCompare - record a finding', () => {
     expect(lowUnmatched.className).not.toMatch(/ui-warn/);
   });
 
+  it('closes on Escape and hands focus back to the button that opened it', async () => {
+    const user = await openCompare();
+    const opener = screen.getAllByRole('button', {
+      name: /compare & record a finding/i,
+      hidden: true,
+    })[0];
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+
   it('refuses a rationale under the server\'s 20-character floor before calling the server', async () => {
     const user = await openCompare();
     await waitFor(() => expect(api.getSimilarityCompare).toHaveBeenCalled());

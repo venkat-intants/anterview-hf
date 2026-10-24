@@ -346,7 +346,18 @@ interface DecisionPanelProps {
   onReject: () => void;
   /** Pin the panel to the bottom of the screen so the decision is never scrolled away. */
   sticky?: boolean;
+  /** What approving and sending back do, in the words of the item under review. */
+  description?: string;
+  /**
+   * `card` (the default) is a titled section of its own, for a page about one
+   * item. `bare` drops the card and its heading, for a panel that sits inside
+   * a row of a list, where a heading per row would repeat down the page.
+   */
+  variant?: 'card' | 'bare';
 }
+
+const DEFAULT_DECISION_DESCRIPTION =
+  'Approving lets HR carry on. Sending it back needs a reason, which HR will see.';
 
 export function DecisionPanel({
   mode,
@@ -361,6 +372,8 @@ export function DecisionPanel({
   onApprove,
   onReject,
   sticky = false,
+  description = DEFAULT_DECISION_DESCRIPTION,
+  variant = 'card',
 }: DecisionPanelProps): JSX.Element {
   const rejectReady = note.trim().length >= rejectNoteMin;
   const pending = mode === 'approve' ? approvePending : rejectPending;
@@ -369,10 +382,84 @@ export function DecisionPanel({
     onNote('');
   };
 
+  const body =
+    mode === null ? (
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="button" onClick={() => onMode('approve')}>
+          <CheckCircle2 aria-hidden="true" />
+          Approve
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="sm:ml-auto"
+          onClick={() => onMode('reject')}
+        >
+          <XCircle aria-hidden="true" />
+          {rejectLabel}
+        </Button>
+      </div>
+    ) : (
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor={noteId} className="text-[13px] font-medium text-foreground">
+            {mode === 'approve' ? 'Note (optional)' : 'What needs to change (required)'}
+          </label>
+          <Input
+            id={noteId}
+            value={note}
+            onChange={(e) => onNote(e.target.value)}
+            placeholder={mode === 'reject' ? `At least ${rejectNoteMin} characters` : undefined}
+            aria-required={mode === 'reject'}
+            aria-invalid={mode === 'reject' && !rejectReady ? true : undefined}
+            aria-describedby={mode === 'reject' && !rejectReady ? `${noteId}-hint` : undefined}
+          />
+          {mode === 'reject' && !rejectReady ? (
+            <p id={`${noteId}-hint`} className="text-[12.5px] text-[var(--ui-warn)]">
+              Write at least {rejectNoteMin} characters.
+            </p>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={cancel}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant={mode === 'approve' ? 'default' : 'destructive'}
+            onClick={mode === 'approve' ? onApprove : onReject}
+            disabled={pending || (mode === 'reject' && !rejectReady)}
+          >
+            {mode === 'approve'
+              ? approvePending
+                ? 'Approving…'
+                : 'Confirm approval'
+              : rejectPending
+                ? 'Sending…'
+                : 'Send back'}
+          </Button>
+        </div>
+      </div>
+    );
+
+  if (variant === 'bare') {
+    return (
+      <div
+        role="group"
+        aria-label="Your decision"
+        data-testid="decision-panel"
+        className="flex flex-col gap-2"
+      >
+        <p className="text-[12.5px] text-muted-foreground">{description}</p>
+        {body}
+      </div>
+    );
+  }
+
   return (
     <SectionCard
       title="Your decision"
-      description="Approving lets HR carry on. Sending it back needs a reason, which HR will see."
+      description={description}
       data-testid="decision-panel"
       // Pinned only where there is room for it: on a phone, or a short window,
       // a ~180px panel would cover a quarter to a half of the evidence being
@@ -385,64 +472,7 @@ export function DecisionPanel({
           'sm:[@media(min-height:720px)]:sticky sm:[@media(min-height:720px)]:bottom-20 z-10 shadow-elevated',
       )}
     >
-      {mode === null ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button type="button" onClick={() => onMode('approve')}>
-            <CheckCircle2 aria-hidden="true" />
-            Approve
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="sm:ml-auto"
-            onClick={() => onMode('reject')}
-          >
-            <XCircle aria-hidden="true" />
-            {rejectLabel}
-          </Button>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1.5">
-            <label htmlFor={noteId} className="text-[13px] font-medium text-foreground">
-              {mode === 'approve' ? 'Note (optional)' : 'What needs to change (required)'}
-            </label>
-            <Input
-              id={noteId}
-              value={note}
-              onChange={(e) => onNote(e.target.value)}
-              placeholder={mode === 'reject' ? `At least ${rejectNoteMin} characters` : undefined}
-              aria-required={mode === 'reject'}
-              aria-invalid={mode === 'reject' && !rejectReady ? true : undefined}
-              aria-describedby={mode === 'reject' && !rejectReady ? `${noteId}-hint` : undefined}
-            />
-            {mode === 'reject' && !rejectReady ? (
-              <p id={`${noteId}-hint`} className="text-[12.5px] text-[var(--ui-warn)]">
-                Write at least {rejectNoteMin} characters.
-              </p>
-            ) : null}
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button type="button" variant="ghost" onClick={cancel}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant={mode === 'approve' ? 'default' : 'destructive'}
-              onClick={mode === 'approve' ? onApprove : onReject}
-              disabled={pending || (mode === 'reject' && !rejectReady)}
-            >
-              {mode === 'approve'
-                ? approvePending
-                  ? 'Approving…'
-                  : 'Confirm approval'
-                : rejectPending
-                  ? 'Sending…'
-                  : 'Send back'}
-            </Button>
-          </div>
-        </div>
-      )}
+      {body}
     </SectionCard>
   );
 }

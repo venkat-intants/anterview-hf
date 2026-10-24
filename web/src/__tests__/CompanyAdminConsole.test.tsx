@@ -534,6 +534,24 @@ describe('CompanyAdminConsole - waiting on you', () => {
     expect(within(group).queryByRole('link')).not.toBeInTheDocument();
   });
 
+  it('offers Try again when every queue failed, and refetches all four', async () => {
+    for (const q of Object.values(queues)) q.mockRejectedValue(new Error('503'));
+    const user = userEvent.setup();
+    renderConsole();
+
+    const group = await screen.findByTestId('waiting-on-you');
+    await within(group).findByRole('alert');
+    queues.listPendingApprovals.mockResolvedValue([{}, {}, {}]);
+    queues.listPendingWorkflowReviews.mockResolvedValue([{}]);
+    queues.listOfferApprovals.mockResolvedValue([]);
+    queues.listAdminQuestionReviews.mockResolvedValue([{}, {}]);
+    await user.click(within(group).getByRole('button', { name: 'Try again' }));
+
+    expect(await within(group).findByRole('link', { name: /^Openings/ })).toHaveTextContent('3');
+    expect(within(group).getByRole('link', { name: /^Questions/ })).toHaveTextContent('2');
+    expect(within(group).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
   it('comes before the rosters', async () => {
     renderConsole();
     const group = await screen.findByTestId('waiting-on-you');

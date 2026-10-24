@@ -268,7 +268,13 @@ export default function Rediscovery(): JSX.Element {
           {selectedRows.length > 0 ? (
             <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2">
               <span className="text-[12.5px] text-foreground">{selectedRows.length} selected</span>
-              <Button type="button" size="sm" onClick={() => setDialogRows(selectedRows)}>
+              {/* Outline: the form's Search is this view's one primary action. */}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setDialogRows(selectedRows)}
+              >
                 Add {selectedRows.length} to pool
               </Button>
               <Button

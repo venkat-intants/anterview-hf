@@ -195,6 +195,9 @@ export default function OfferSection({
   // One offer in play per application: the server refuses a second, so it is
   // not offered (audit OF-L8). A sent offer past its deadline is not in play.
   const inPlay = rows.some((o) => LIVE.includes(effectiveOfferStatus(o)));
+  // An accepted offer is final: it can never be declined, withdrawn or expire,
+  // so the note must not promise a new one after any of those.
+  const accepted = rows.some((o) => effectiveOfferStatus(o) === 'accepted');
   const canCreate = hired && offers.isSuccess && !inPlay;
 
   return (
@@ -248,7 +251,12 @@ export default function OfferSection({
             </p>
           ) : (
             <>
-              {hired && inPlay ? (
+              {hired && accepted ? (
+                <p className="mt-2 text-[12.5px] text-muted-foreground">
+                  This application already has an accepted offer, so no other offer can be written
+                  for it.
+                </p>
+              ) : hired && inPlay ? (
                 <p className="mt-2 text-[12.5px] text-muted-foreground">
                   This application already has an offer in progress. A new one can be written once
                   it is declined, withdrawn or expired.

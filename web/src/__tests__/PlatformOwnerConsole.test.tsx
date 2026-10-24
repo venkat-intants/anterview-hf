@@ -423,7 +423,9 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
     await user.click(await screen.findByRole('button', { name: /delete company/i }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText(/every account in this company is removed/i)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/every account in this company is removed/i),
+    ).toBeInTheDocument();
     expect(within(dialog).getByText(/signed out straight away/i)).toBeInTheDocument();
     const confirm = within(dialog).getByRole('button', { name: 'Delete company' });
     expect(confirm).toBeDisabled();
@@ -442,6 +444,72 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
     expect(confirm).toBeEnabled();
     await user.click(confirm);
     await waitFor(() => expect(api.deleteCompany).toHaveBeenCalledWith('c-acme'));
+  });
+
+  it('removes the super admin only from a dialog that names them (B4)', async () => {
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('button', { name: /select acme/i }));
+    const removeBtn = await screen.findByRole('button', { name: 'Remove Asha Rao' });
+    expect(removeBtn).toHaveAttribute('aria-haspopup', 'dialog');
+    await user.click(removeBtn);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('heading', { name: 'Remove Asha Rao?' })).toBeInTheDocument();
+    // Session revocation on the server is best-effort, so the copy must not
+    // promise an instant sign-out everywhere.
+    expect(within(dialog).getByText(/sa@acme\.edu is removed from/i)).toHaveTextContent(
+      /could not end stays open until it expires/i,
+    );
+    expect(dialog).not.toHaveTextContent(/signed out everywhere|straight away/i);
+    expect(within(dialog).getByText(/has no super admin until/i)).toBeInTheDocument();
+    expect(api.deleteCompanyAdmin).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(api.deleteCompanyAdmin).toHaveBeenCalledWith('c-acme'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+
+  it('Cancel in the removal dialog removes nobody and returns focus to the button', async () => {
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('button', { name: /select acme/i }));
+    const removeBtn = await screen.findByRole('button', { name: 'Remove Asha Rao' });
+    await user.click(removeBtn);
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }),
+    );
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(api.deleteCompanyAdmin).not.toHaveBeenCalled();
+    expect(removeBtn).toHaveFocus();
+  });
+
+  it('keeps one primary action: the empty states use outline buttons', async () => {
+    api.getCompanyAdmin.mockRejectedValue(
+      new ApiError('This company has no super admin yet.', 404),
+    );
+    const user = userEvent.setup();
+    renderConsole();
+
+    await user.click(await screen.findByRole('button', { name: /select nova polytechnic/i }));
+    const add = await screen.findByRole('button', { name: /^new super admin$/i });
+    expect(add.className).not.toMatch(/(?:^|\s)bg-primary(?=\s|$)/);
+    expect(screen.getByRole('button', { name: /^new company$/i }).className).toMatch(
+      /(?:^|\s)bg-primary(?=\s|$)/,
+    );
+  });
+
+  it('the no-companies empty state does not repeat the header primary', async () => {
+    api.listCompanies.mockResolvedValue([]);
+    renderConsole();
+
+    await screen.findByText('No companies yet');
+    const buttons = screen.getAllByRole('button', { name: /^new company$/i });
+    expect(buttons).toHaveLength(2);
+    expect(buttons.filter((b) => /(?:^|\s)bg-primary(?=\s|$)/.test(b.className))).toHaveLength(1);
   });
 });
 

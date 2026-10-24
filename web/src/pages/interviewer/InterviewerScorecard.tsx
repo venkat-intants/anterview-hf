@@ -35,6 +35,7 @@ import {
   savePrivateNotes,
   submitScorecard,
   type ScorecardDetail,
+  type ScorecardState,
   type ScoreInput,
 } from '@/api/interviewer';
 import SubmissionPanel from '@/components/interviewer/SubmissionPanel';
@@ -51,6 +52,19 @@ function errOrWithdrawn(e: unknown, fallback: string): string {
   if (e instanceof ApiError && e.status === 404) return WITHDRAWN_MESSAGE;
   return errorMessage(e, fallback);
 }
+
+/** The header tag for each lifecycle state: the same labels and tones as the
+ *  assignments list (InterviewerConsole's STATE_META), so one scorecard never
+ *  reads "Assigned" there and "In progress" here (AD-F30). */
+const STATE_META: Record<
+  ScorecardState,
+  { label: string; tone: 'amber' | 'electric' | 'ember' | 'forest' }
+> = {
+  assigned: { label: 'Assigned', tone: 'electric' },
+  in_progress: { label: 'In progress', tone: 'amber' },
+  late: { label: 'Late', tone: 'ember' },
+  submitted: { label: 'Submitted', tone: 'forest' },
+};
 
 const MIN_CORRECTION_REASON = 10;
 const MAX_CORRECTION_REASON = 1000;
@@ -666,18 +680,9 @@ function ScorecardView({ scorecardId }: { scorecardId: string }): JSX.Element {
           </>
         }
         actions={
-          // Same tones as the assignments list (AD-F30): late is ember there.
-          <StatusTag
-            tone={
-              detail.status === 'submitted' ? 'forest' : detail.state === 'late' ? 'ember' : 'amber'
-            }
-            dot
-          >
-            {detail.status === 'submitted'
-              ? 'Submitted'
-              : detail.state === 'late'
-                ? 'Late'
-                : 'In progress'}
+          // Keyed on the server's lifecycle state, as the assignments list is (AD-F30).
+          <StatusTag tone={STATE_META[detail.state].tone} dot>
+            {STATE_META[detail.state].label}
           </StatusTag>
         }
       />

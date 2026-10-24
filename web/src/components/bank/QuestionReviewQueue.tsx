@@ -1,14 +1,19 @@
 // QuestionReviewQueue — PH4-D1. The shared body of the HR and super-admin
-// review queues: same rules (approve, or request changes with a note of at
-// least 5 characters; disable a reviewer's own question with the reason
-// shown), different endpoints — HR reviews through `/hr`, the super admin
-// through `/admin`, so a single-HR company is never blocked on a second HR
-// approver. See pages/hr/QuestionReviews.tsx and
-// pages/superadmin/QuestionReviews.tsx.
+// review queues. The rules are the same on both: approve, or request changes
+// with a note of at least 10 characters (the reason length the other review
+// queues ask for; the server's own floor is 5, so this is never looser), and a
+// reviewer's own question is disabled with the reason shown. The endpoints
+// differ: HR reviews through `/hr` and the super admin through `/admin`, so a
+// single-HR company is never blocked on a second HR approver. See
+// pages/hr/QuestionReviews.tsx and pages/superadmin/QuestionReviews.tsx.
+//
+// The decision itself is ReviewParts' DecisionPanel, so Approve is the primary
+// action here as on every other review surface (audit AD-F12). It renders
+// bare, without its own card and heading, because it sits inside each row.
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { Check, CheckCircle2, ClipboardCheck, Loader2, XCircle } from '@/design/components/icons';
+import { Check, CheckCircle2 } from '@/design/components/icons';
 import { StatusTag } from '@/design/components/primitives';
 import { Card } from '@/design/components/card';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
@@ -16,15 +21,15 @@ import { EmptyState } from '@/design/components/page';
 import { BankCodingQuestionView } from '@/components/hr/bank/BankCodingQuestionView';
 import { QuestionBadges } from '@/components/bank/QuestionBadges';
 import { QueryState } from '@/components/QueryState';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { DecisionPanel, type DecisionMode } from '@/components/superadmin/ReviewParts';
 import { Skeleton } from '@/components/ui/skeleton';
 import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { questionBrief } from '@/lib/bankFlow';
 import type { BankQuestion, ReviewQueueRow } from '@/api/questionBanks';
 
-const CHANGES_NOTE_MIN = 5;
+/** The reason length every review queue asks for (ReviewParts' callers use 10). */
+const CHANGES_NOTE_MIN = 10;
 /** Mirrors the server's own cap so a save never round-trips into a 422. */
 const NOTE_MAX_LENGTH = 1000;
 
@@ -77,7 +82,7 @@ function ReviewContent({ row, open }: { row: ReviewQueueRow; open: boolean }): J
 }
 
 function ReviewRow({ row, approve, requestChanges, invalidate, openContent }: RowProps) {
-  const [mode, setMode] = useState<'approve' | 'changes' | null>(null);
+  const [mode, setMode] = useState<DecisionMode>(null);
   const [note, setNote] = useState('');
 
   const approveMut = useMutation({
@@ -102,8 +107,6 @@ function ReviewRow({ row, approve, requestChanges, invalidate, openContent }: Ro
     onError: (e: unknown) => toast.error(errorMessage(e, 'Could not send this back.')),
   });
 
-  const changesReady = note.trim().length >= CHANGES_NOTE_MIN;
-
   return (
     <Card as="li" density="compact" data-testid="review-row" className="list-none">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -127,68 +130,24 @@ function ReviewRow({ row, approve, requestChanges, invalidate, openContent }: Ro
         <p className="mt-3 rounded-[12px] bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[13px] text-muted-foreground">
           {row.reason ?? 'You wrote or submitted this question - another reviewer must decide it.'}
         </p>
-      ) : mode === null ? (
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => setMode('approve')}
-            className="border-[var(--ui-ok)]/40 text-[var(--ui-ok)] hover:text-[var(--ui-ok)]"
-          >
-            <CheckCircle2 aria-hidden="true" />
-            Approve
-          </Button>
-          <Button type="button" variant="outline" onClick={() => setMode('changes')}>
-            <XCircle aria-hidden="true" />
-            Request changes
-          </Button>
-        </div>
       ) : (
-        <div className="mt-3 flex flex-col gap-2">
-          <label
-            htmlFor={`review-note-${row.id}`}
-            className="text-[13px] font-semibold text-foreground"
-          >
-            {mode === 'approve' ? 'Note (optional)' : 'What needs to change (required)'}
-          </label>
-          <Input
-            id={`review-note-${row.id}`}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder={mode === 'changes' ? `At least ${CHANGES_NOTE_MIN} characters` : undefined}
-            maxLength={NOTE_MAX_LENGTH}
-            aria-invalid={mode === 'changes' && !changesReady ? true : undefined}
+        <div className="mt-3">
+          <DecisionPanel
+            mode={mode}
+            onMode={setMode}
+            note={note}
+            // The panel's input has no cap of its own; the server's is 1000.
+            onNote={(v) => setNote(v.slice(0, NOTE_MAX_LENGTH))}
+            noteId={`review-note-${row.id}`}
+            rejectNoteMin={CHANGES_NOTE_MIN}
+            rejectLabel="Request changes"
+            approvePending={approveMut.isPending}
+            rejectPending={changesMut.isPending}
+            onApprove={() => approveMut.mutate()}
+            onReject={() => changesMut.mutate()}
+            variant="bare"
+            description="Approving adds this question to the bank. Sending it back needs a reason, which the author will see."
           />
-          {mode === 'changes' && !changesReady ? (
-            <p className="text-[12.5px] text-[var(--ui-warn)]">
-              Write at least {CHANGES_NOTE_MIN} characters.
-            </p>
-          ) : null}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              disabled={
-                (mode === 'approve' ? approveMut.isPending : changesMut.isPending) ||
-                (mode === 'changes' && !changesReady)
-              }
-              onClick={() => (mode === 'approve' ? approveMut.mutate() : changesMut.mutate())}
-            >
-              {(mode === 'approve' ? approveMut.isPending : changesMut.isPending) ? (
-                <Loader2 className="animate-spin" aria-hidden="true" />
-              ) : null}
-              {mode === 'approve' ? 'Confirm approval' : 'Send back'}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => {
-                setMode(null);
-                setNote('');
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
         </div>
       )}
     </Card>
@@ -235,8 +194,8 @@ export function QuestionReviewQueue({
       isEmpty={(rows) => rows.length === 0}
       empty={
         <EmptyState
-          icon={ClipboardCheck}
-          title="Nothing is waiting for review."
+          icon={CheckCircle2}
+          title="Nothing is waiting on you."
           description={emptyHint}
         />
       }

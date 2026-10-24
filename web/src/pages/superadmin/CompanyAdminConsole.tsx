@@ -42,7 +42,7 @@ import {
 } from '@/api/hr';
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
-import { QueryState } from '@/components/QueryState';
+import { QueryErrorPanel, QueryState } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -404,9 +404,16 @@ function useQueueCount(
 ): {
   count: number | null;
   failed: boolean;
+  fetching: boolean;
+  refetch: () => void;
 } {
   const q = useQuery({ queryKey, queryFn, retry: false });
-  return { count: q.isSuccess ? q.data.length : null, failed: q.isError };
+  return {
+    count: q.isSuccess ? q.data.length : null,
+    failed: q.isError,
+    fetching: q.isFetching,
+    refetch: () => void q.refetch(),
+  };
 }
 
 function WaitingOnYou(): JSX.Element {
@@ -414,7 +421,8 @@ function WaitingOnYou(): JSX.Element {
   const workflows = useQueueCount(['admin', 'workflow-reviews'], listPendingWorkflowReviews);
   const offers = useQueueCount(['admin', 'offer-approvals'], listOfferApprovals);
   const questions = useQueueCount(['admin', 'bank-review-queue'], listAdminQuestionReviews);
-  const allFailed = [openings, workflows, offers, questions].every((q) => q.failed);
+  const all = [openings, workflows, offers, questions];
+  const allFailed = all.every((q) => q.failed);
 
   return (
     <Section
@@ -423,9 +431,11 @@ function WaitingOnYou(): JSX.Element {
       data-testid="waiting-on-you"
     >
       {allFailed ? (
-        <p role="alert" className="text-[13.5px] text-muted-foreground">
-          Could not load the approval queues just now. Refresh to try again.
-        </p>
+        <QueryErrorPanel
+          title="Could not load the approval queues."
+          onRetry={() => all.forEach((q) => q.refetch())}
+          retrying={all.some((q) => q.fetching)}
+        />
       ) : (
         <StatGroup aria-label="Waiting on you" missingLabel="Count unavailable">
           <Stat

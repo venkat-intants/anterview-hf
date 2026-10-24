@@ -154,13 +154,14 @@ function rowDomId(documentId: string): string {
   return `corpus-doc-${documentId}`;
 }
 
-/** Today as the viewer's own calendar day, 'YYYY-MM-DD' — the shape a date
- *  input's `min` and the API's `expires_on` both use. */
+/** Today as the UTC calendar day, 'YYYY-MM-DD' — the shape a date input's
+ *  `min` and the API's `expires_on` both use. UTC, not the viewer's own day,
+ *  because the server decides expiry on that clock (corpus.py: search keeps
+ *  `expires_on >= CURRENT_DATE`, `_refuse_past_expiry` compares the UTC day).
+ *  A local day would label a still-searchable document Expired for an IST
+ *  viewer between midnight and 05:30. */
 function todayIso(): string {
-  const d = new Date();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${mm}-${dd}`;
+  return new Date().toISOString().slice(0, 10);
 }
 
 /** An `expires_on` calendar date for display. Built as a LOCAL date: handing
@@ -805,6 +806,7 @@ export default function CorpusDocuments(): JSX.Element {
                                   <Button
                                     type="submit"
                                     size="sm"
+                                    variant="outline"
                                     disabled={!replaceAttested || replaceMut.isPending}
                                     aria-busy={replaceMut.isPending}
                                   >
@@ -895,7 +897,12 @@ export default function CorpusDocuments(): JSX.Element {
                                     />
                                   )}
                                 </FormField>
-                                <Button type="submit" size="sm" disabled={editMut.isPending}>
+                                <Button
+                                  type="submit"
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={editMut.isPending}
+                                >
                                   {editMut.isPending ? 'Saving…' : 'Save'}
                                 </Button>
                                 <Button

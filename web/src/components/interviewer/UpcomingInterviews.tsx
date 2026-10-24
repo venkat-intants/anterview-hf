@@ -5,9 +5,10 @@
 
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Calendar, Loader2, MapPin } from '@/design/components/icons';
+import { Calendar, MapPin } from '@/design/components/icons';
 import { GlassCard, StatusTag, type TagTone } from '@/design/components/primitives';
 import { QueryErrorPanel } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
 import { getMySessions, type SessionStatus } from '@/api/scheduling';
 import { formatDayTime, browserTimezone } from '@/lib/timezone';
 import { statusLabel } from '@/lib/statusLabel';
@@ -38,9 +39,13 @@ export default function UpcomingInterviews(): JSX.Element {
       </p>
 
       {isLoading ? (
-        <div className="mt-3 flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading…
+        <div
+          className="mt-3 flex flex-col gap-2.5"
+          aria-busy="true"
+          aria-label="Loading upcoming interviews"
+        >
+          <Skeleton className="h-16 w-full" />
+          <Skeleton className="h-16 w-full" />
         </div>
       ) : isError ? (
         <QueryErrorPanel

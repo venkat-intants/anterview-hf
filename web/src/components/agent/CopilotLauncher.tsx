@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 import { getAgentStatus } from '@/api/agent';
+import { Button } from '@/components/ui/button';
 import { Sparkles } from '@/design/components/icons';
 import CopilotPanel from './CopilotPanel';
 
@@ -50,18 +51,18 @@ export default function CopilotLauncher({ onCommitted }: CopilotLauncherProps): 
           element on the layer above the page: 48px, the primary fill, tucked
           into the corner (icon-only below `sm` so it does not cover page
           actions on a phone; the label returns from `sm` up). Focus comes
-          back here when the panel closes (useDialogFocus in CopilotPanel). */}
-      <button
+          back here when the panel closes (the Radix Sheet in CopilotPanel). */}
+      <Button
         type="button"
         onClick={() => setOpen(true)}
         aria-label="Open assistant"
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-40 inline-flex h-12 min-w-12 items-center justify-center gap-2 rounded-full bg-primary px-3.5 text-sm font-semibold text-primary-foreground shadow-elevated transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:bottom-6 sm:right-6 sm:px-5"
+        className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] right-4 z-40 h-12 min-w-12 px-3.5 shadow-elevated sm:bottom-6 sm:right-6 sm:px-5 [&_svg]:size-[18px]"
       >
         <Sparkles size={18} aria-hidden="true" />
         <span className="hidden sm:inline">Ask assistant</span>
-      </button>
+      </Button>
       <CopilotPanel open={open} onClose={() => setOpen(false)} onCommitted={onCommitted} />
     </>
   );

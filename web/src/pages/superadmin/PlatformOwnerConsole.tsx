@@ -58,6 +58,7 @@ import { QueryErrorPanel } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   CompanyDialog,
   AccountDialog,
@@ -596,14 +597,11 @@ export default function PlatformOwnerConsole() {
   const [view, setView] = useState<ViewKey>('companies');
   const [companyFilter, setCompanyFilter] = useState('');
 
-  const {
-    data: companies,
-    isLoading,
-    isError: companiesError,
-  } = useQuery({
+  const companiesQuery = useQuery({
     queryKey: ['companies'],
     queryFn: listCompanies,
   });
+  const { data: companies, isLoading, isError: companiesError } = companiesQuery;
 
   // Real platform-wide counts for the stat tiles (no dummy data).
   const { data: stats, isError: statsError } = useQuery({
@@ -734,10 +732,11 @@ export default function PlatformOwnerConsole() {
             </div>
           ) : companiesError ? (
             <SectionCard title="Companies">
-              <EmptyState
-                icon={AlertTriangle}
-                title="Could not load the companies"
-                description="Check your connection and reload the page."
+              <QueryErrorPanel
+                title="Could not load the companies."
+                error={companiesQuery.error}
+                onRetry={() => void companiesQuery.refetch()}
+                retrying={companiesQuery.isFetching}
               />
             </SectionCard>
           ) : !companies || companies.length === 0 ? (
@@ -772,13 +771,13 @@ export default function PlatformOwnerConsole() {
                     className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--ui-faint)]"
                     aria-hidden="true"
                   />
-                  <input
+                  <Input
                     type="search"
                     value={companyFilter}
                     onChange={(e) => setCompanyFilter(e.target.value)}
                     aria-label="Search companies"
                     placeholder="Search by name, slug or admin email"
-                    className="min-h-10 w-full rounded-[10px] border border-input bg-card pl-9 pr-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    className="pl-9"
                   />
                 </div>
               </Toolbar>

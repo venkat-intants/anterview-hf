@@ -9,17 +9,17 @@ import { listAssignments, assignExam, revokeAssignment, type AssignResult } from
 import { getPipeline, type PipelineRow } from '@/api/pipeline';
 import { applicationKey } from '@/lib/applicationKey';
 import { errorMessage } from '@/lib/errorMessage';
-import { formatDateTime } from '@/lib/formatters';
+import { formatDateTime, plural } from '@/lib/formatters';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { statusLabel } from '@/lib/statusLabel';
 import { toast } from '@/lib/toast';
-import { cn } from '@/lib/utils';
 import { StatusTag } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { inputCls, smallInputCls, plural } from '@/components/hr/exam/examEditorUi';
 
 // ── Round assign panel ────────────────────────────────────────────────────────
 
@@ -159,13 +159,13 @@ export function RoundAssignPanel({
           aria-hidden="true"
           className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
         />
-        <input
+        <Input
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search applicants"
           aria-label="Search applicants"
-          className={cn(smallInputCls, 'w-full pl-9')}
+          className="pl-9"
         />
       </div>
 
@@ -247,18 +247,17 @@ export function RoundAssignPanel({
       ) : null}
 
       {/* Schedule (optional) */}
-      <label className="block text-sm">
-        <span className="mb-1 block text-[12px] font-medium uppercase tracking-[0.5px] text-[var(--ui-faint)]">
-          Schedule (optional, your local time)
-        </span>
-        <input
-          type="datetime-local"
-          className={cn(inputCls, 'text-[13px]')}
-          value={scheduledAt}
-          onChange={(e) => setScheduledAt(e.target.value)}
-          aria-label="Scheduled time for this round assignment"
-        />
-      </label>
+      <FormField label="Schedule (optional, your local time)">
+        {(p) => (
+          <Input
+            {...p}
+            type="datetime-local"
+            value={scheduledAt}
+            onChange={(e) => setScheduledAt(e.target.value)}
+            aria-label="Scheduled time for this round assignment"
+          />
+        )}
+      </FormField>
 
       {rotating.length > 0 ? (
         <p
@@ -306,10 +305,11 @@ export function RoundAssignPanel({
               <span className="w-28 shrink-0 truncate font-medium text-foreground">
                 {m.applicant_name}
               </span>
-              <input
+              <Input
                 readOnly
+                size="sm"
                 value={m.magic_link}
-                className="min-w-0 flex-1 rounded-[9px] border border-border bg-secondary px-2 py-1 text-muted-foreground focus:outline-none"
+                className="min-w-0 flex-1 text-muted-foreground"
                 aria-label={`Magic link for ${m.applicant_name}`}
               />
               <Button

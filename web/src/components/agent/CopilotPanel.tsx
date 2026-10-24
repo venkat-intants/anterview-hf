@@ -12,15 +12,16 @@
 //
 // The conversation (turns AND what happened to each proposal) lives here,
 // which stays mounted while the panel is closed, so closing and reopening
-// keeps both. The dialog itself mounts only while open, which is what makes
-// its focus trap, Escape handling and focus return to the launcher exact.
+// keeps both. The panel is a Radix Sheet, which mounts its content only while
+// open and gives it the focus trap, Escape (from anywhere, not only while focus
+// is inside), the overlay click, scroll lock and focus return to the launcher.
 //
 // Deliberately NOT streaming. The agent loops over tool calls, so most of the
 // wait is tool execution, not token generation; a streaming cursor would sit
 // still through the interesting part and then dump the answer at once. A
 // progress line naming the tools is more honest about what it is doing.
 
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   AGENT_MESSAGE_MAX_CHARS,
@@ -31,9 +32,11 @@ import {
   type HistoryTurn,
   type Proposal,
 } from '@/api/agent';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { GlassCard } from '@/design/components/primitives';
-import { Eye, Lock, Plus, Send, Sparkles, X } from '@/design/components/icons';
-import { useDialogFocus } from '@/hooks/useDialogFocus';
+import { Eye, Lock, Plus, Send, Sparkles } from '@/design/components/icons';
 import { errorMessage } from '@/lib/errorMessage';
 import AnswerText from './AnswerText';
 import CitationChips from './CitationChips';
@@ -136,10 +139,11 @@ function historyText(turn: Turn, outcomes: Record<string, CommitOutcome>): strin
     .filter((p) => outcomes[p.id]?.state === 'done')
     .map((p) => p.title);
   if (approved.length === 0) return turn.text.slice(0, AGENT_MESSAGE_MAX_CHARS);
-  const note = `\n[Already approved by the user in this conversation: ${approved.join('; ')}]`.slice(
-    0,
-    AGENT_MESSAGE_MAX_CHARS,
-  );
+  const note =
+    `\n[Already approved by the user in this conversation: ${approved.join('; ')}]`.slice(
+      0,
+      AGENT_MESSAGE_MAX_CHARS,
+    );
   return turn.text.slice(0, AGENT_MESSAGE_MAX_CHARS - note.length) + note;
 }
 
@@ -170,6 +174,9 @@ export default function CopilotPanel({
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // Focused when the panel closes: the launcher, in practice.
+  const returnFocusTo = useRef<HTMLElement | null>(null);
   // The latest conversation, for reading after an await: a proposal approved
   // while the next answer was on its way must still count as approved.
   const latest = useRef({ turns, outcomes });
@@ -205,7 +212,14 @@ export default function CopilotPanel({
     // to a proposal button or a source chip while waiting keeps their place.
     if (!open || busy) return;
     const active = document.activeElement;
-    if (!active || active === document.body || formRef.current?.contains(active)) {
+    // The Sheet's focus trap moves focus that fell to <body> onto the panel
+    // itself, so the panel counts as "lost" too.
+    if (
+      !active ||
+      active === document.body ||
+      active === panelRef.current ||
+      formRef.current?.contains(active)
+    ) {
       inputRef.current?.focus();
     }
   }, [busy, open]);
@@ -289,278 +303,241 @@ export default function CopilotPanel({
     inputRef.current?.focus();
   }
 
-  if (!open) return null;
-
   const unavailable = status !== undefined && !status.enabled;
   const suggestions = SUGGESTIONS[status?.console ?? 'hr_manager'] ?? [];
   const scope = (status ? SCOPE[status.console] : undefined) ?? SCOPE_FALLBACK;
   const showCounter = input.length >= COUNTER_FROM;
 
   return (
-    <CopilotDialog onClose={onClose} initialFocus={inputRef}>
-      <header className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <span
-            aria-hidden="true"
-            className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-info-wash)] text-[var(--ui-info)]"
-          >
-            <Sparkles size={17} />
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-[17px] font-bold leading-tight text-foreground">Assistant</h2>
-            {/* Capability line, always visible. The user should never be
-                unsure whether this thing can act on its own. */}
-            <p className="text-[12.5px] text-muted-foreground">
-              Reads your data · drafts actions · you approve
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-none items-center gap-1">
-          {/* A way out of a conversation that has gone wrong, short of
-              reloading the page (audit CP-F9). */}
-          <button
-            type="button"
-            onClick={newChat}
-            disabled={turns.length === 0 && !busy}
-            className="inline-flex h-10 items-center gap-1.5 rounded-full px-3 text-[13px] font-semibold text-muted-foreground transition hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Plus size={16} aria-hidden="true" />
-            New chat
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-            aria-label="Close assistant"
-          >
-            <X size={18} aria-hidden="true" />
-          </button>
-        </div>
-      </header>
-
-      {/* What this console's assistant can and cannot do, stated up front. */}
-      <div className="space-y-1.5 border-b border-border bg-[var(--ui-inset-soft)] px-5 py-3 text-[12.5px] leading-relaxed">
-        <p className="flex items-start gap-2 text-foreground">
-          <Eye size={14} className="mt-0.5 flex-none text-[var(--ui-info)]" aria-hidden="true" />
-          <span>
-            <span className="font-semibold">Can see: </span>
-            {scope}
-          </span>
-        </p>
-        <p className="flex items-start gap-2 text-muted-foreground">
-          <Lock size={14} className="mt-0.5 flex-none" aria-hidden="true" />
-          <span>
-            <span className="font-semibold text-foreground">Cannot: </span>
-            change anything. Every action is a proposal you review and approve.
-          </span>
-        </p>
-      </div>
-
-      <p role="status" aria-live="polite" className="sr-only">
-        {announcement}
-      </p>
-
-      <div ref={scrollRef} className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
-        {unavailable && (
-          <GlassCard className="p-4 text-sm text-muted-foreground">
-            {status?.note ?? 'The assistant is unavailable in this deployment.'}
-          </GlassCard>
-        )}
-
-        {turns.length === 0 && !unavailable && (
-          <div className="space-y-3">
-            <p className="text-[15px] font-semibold text-foreground">How can I help?</p>
-            <p className="text-sm leading-relaxed text-muted-foreground">
-              I can read the records your role allows and draft actions for you to approve. I
-              can&apos;t change anything myself.
-            </p>
-            <p className="pt-1 text-[12.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-              Try asking
-            </p>
-            <div className="flex flex-col gap-2">
-              {suggestions.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => void send(s)}
-                  className="min-h-10 rounded-[12px] border border-input bg-card px-3.5 py-2 text-left text-sm text-foreground transition hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {turns.map((turn, i) =>
-          turn.role === 'user' ? (
-            <div key={i} role="group" aria-label="You" className="flex flex-col items-end gap-1">
-              <span className="text-[12px] font-semibold text-muted-foreground">You</span>
-              <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-highlight px-3.5 py-2.5 text-sm text-highlight-foreground">
-                {turn.text}
-              </div>
-              {turn.failed && (
-                <span className="text-[12px] text-muted-foreground">
-                  Not sent to the assistant. It will not be included as context.
-                </span>
-              )}
-            </div>
-          ) : (
-            <div key={i} role="group" aria-label="Assistant" className="space-y-3">
-              <div className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground">
-                <Sparkles size={13} className="text-[var(--ui-info)]" aria-hidden="true" />
-                Assistant
-              </div>
-
-              {turn.citationState !== undefined && (
-                <EvidenceBanner citationState={turn.citationState} />
-              )}
-
-              {turn.failed ? (
-                <p className="text-sm font-medium text-[var(--ui-danger)]">{turn.text}</p>
-              ) : (
-                <AnswerText text={turn.text} citations={turn.citations ?? []} />
-              )}
-
-              {turn.stopReason && STOP_NOTE[turn.stopReason] && (
-                <p className="text-[12.5px] italic text-muted-foreground">
-                  {STOP_NOTE[turn.stopReason]}
-                </p>
-              )}
-
-              {(turn.citations ?? []).length > 0 && (
-                <div className="space-y-1.5">
-                  <p className="text-[12px] font-semibold text-muted-foreground">Sources</p>
-                  <CitationChips citations={turn.citations ?? []} variant="strip" />
-                </div>
-              )}
-
-              {(turn.repeatsDropped ?? []).length > 0 && (
-                <p className="text-[12.5px] text-muted-foreground">
-                  Already approved earlier in this chat, so not drafted again:{' '}
-                  {(turn.repeatsDropped ?? []).join(', ')}.
-                </p>
-              )}
-
-              {turn.proposals?.map((p) => (
-                <ProposalCard
-                  key={p.id}
-                  proposal={p}
-                  onCommitted={onCommitted}
-                  citationState={turn.citationState}
-                  outcome={outcomes[p.id]}
-                  onOutcome={recordOutcome}
-                  receivedAt={turn.receivedAt}
-                />
-              ))}
-            </div>
-          ),
-        )}
-
-        {busy && (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+    <Sheet open={open} onOpenChange={(next) => !next && onClose()}>
+      <SheetContent
+        side="right"
+        ref={panelRef}
+        // The composer takes focus on open, never a ProposalCard's button, so
+        // a stray Enter cannot commit anything.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          returnFocusTo.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+          inputRef.current?.focus();
+        }}
+        // Radix returns focus to a SheetTrigger; the launcher is not one (it
+        // lives in CopilotLauncher), so focus goes back to whatever opened us.
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          returnFocusTo.current?.focus();
+        }}
+        className="flex h-full w-full flex-col gap-0 p-0 sm:max-w-[480px]"
+      >
+        <header className="flex items-start justify-between gap-3 border-b border-border py-4 pl-5 pr-14">
+          <div className="flex min-w-0 items-center gap-3">
             <span
               aria-hidden="true"
-              className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent)]"
-            />
-            Looking through your data…
-          </p>
-        )}
-      </div>
+              className="flex h-9 w-9 flex-none items-center justify-center rounded-[10px] bg-[var(--ui-info-wash)] text-[var(--ui-info)]"
+            >
+              <Sparkles size={17} />
+            </span>
+            <div className="min-w-0">
+              <SheetTitle className="text-[17px] font-bold leading-tight">Assistant</SheetTitle>
+              {/* Capability line, always visible. The user should never be
+                unsure whether this thing can act on its own. */}
+              <SheetDescription className="text-[12.5px]">
+                Reads your data · drafts actions · you approve
+              </SheetDescription>
+            </div>
+          </div>
+          <div className="flex flex-none items-center gap-1">
+            {/* A way out of a conversation that has gone wrong, short of
+              reloading the page (audit CP-F9). The Sheet's own Close button
+              sits to its right. */}
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={newChat}
+              disabled={turns.length === 0 && !busy}
+              className="gap-1.5 px-3 text-[13px] text-muted-foreground hover:text-foreground"
+            >
+              <Plus size={16} aria-hidden="true" />
+              New chat
+            </Button>
+          </div>
+        </header>
 
-      <form
-        ref={formRef}
-        className="border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void send(input);
-        }}
-      >
-        <div className="flex gap-2">
-          {/* readOnly, not disabled, while waiting: a disabled control drops
-              keyboard focus to <body>, where Escape and Tab stop working. */}
-          <input
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            readOnly={busy}
-            aria-disabled={busy || unavailable}
-            disabled={unavailable}
-            maxLength={AGENT_MESSAGE_MAX_CHARS}
-            placeholder={unavailable ? 'Assistant unavailable' : 'Ask about your pipeline…'}
-            className="min-h-11 min-w-0 flex-1 rounded-[10px] border border-input bg-card px-3.5 py-2 text-sm text-foreground placeholder:text-[var(--ui-faint)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] read-only:bg-[var(--ui-inset-soft)] disabled:cursor-not-allowed disabled:bg-[var(--ui-inset-soft)] disabled:opacity-60"
-            aria-label="Message"
-            aria-describedby={showCounter ? 'copilot-message-count' : undefined}
-          />
-          <button
-            type="submit"
-            disabled={busy || !input.trim() || unavailable}
-            aria-busy={busy}
-            className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 text-sm font-semibold text-primary-foreground transition hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <Send size={15} aria-hidden="true" />
-            Ask
-          </button>
+        {/* What this console's assistant can and cannot do, stated up front. */}
+        <div className="space-y-1.5 border-b border-border bg-[var(--ui-inset-soft)] px-5 py-3 text-[12.5px] leading-relaxed">
+          <p className="flex items-start gap-2 text-foreground">
+            <Eye size={14} className="mt-0.5 flex-none text-[var(--ui-info)]" aria-hidden="true" />
+            <span>
+              <span className="font-semibold">Can see: </span>
+              {scope}
+            </span>
+          </p>
+          <p className="flex items-start gap-2 text-muted-foreground">
+            <Lock size={14} className="mt-0.5 flex-none" aria-hidden="true" />
+            <span>
+              <span className="font-semibold text-foreground">Cannot: </span>
+              change anything. Every action is a proposal you review and approve.
+            </span>
+          </p>
         </div>
-        {showCounter && (
-          <p id="copilot-message-count" className="mt-1.5 text-right text-[12px] text-muted-foreground">
-            {input.length.toLocaleString('en-IN')}/{AGENT_MESSAGE_MAX_CHARS.toLocaleString('en-IN')}{' '}
-            characters
-          </p>
-        )}
-      </form>
-    </CopilotDialog>
-  );
-}
 
-/**
- * The modal frame. Mounted only while open, so `useDialogFocus` gives it a
- * real trap: Tab stays inside, Escape closes from anywhere (not only while
- * focus happens to be inside), and focus goes back to the launcher on close
- * (audit CP-F6, CP-F7). The page behind does not scroll while it is open
- * (CP-L8). The scrim is mouse-only on purpose: keyboard users have Escape and
- * the Close button, and a full-height invisible button was the first Tab stop.
- */
-function CopilotDialog({
-  onClose,
-  initialFocus,
-  children,
-}: {
-  onClose: () => void;
-  initialFocus: RefObject<HTMLInputElement>;
-  children: ReactNode;
-}): JSX.Element {
-  const panelRef = useDialogFocus<HTMLElement>(onClose);
+        <p role="status" aria-live="polite" className="sr-only">
+          {announcement}
+        </p>
 
-  useEffect(() => {
-    // After the hook's own first-focusable focus: the composer, never a
-    // ProposalCard's button, so a stray Enter cannot commit anything.
-    initialFocus.current?.focus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+        <div ref={scrollRef} className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
+          {unavailable && (
+            <GlassCard className="p-4 text-sm text-muted-foreground">
+              {status?.note ?? 'The assistant is unavailable in this deployment.'}
+            </GlassCard>
+          )}
 
-  useEffect(() => {
-    const { body } = document;
-    const previous = body.style.overflow;
-    body.style.overflow = 'hidden';
-    return () => {
-      body.style.overflow = previous;
-    };
-  }, []);
+          {turns.length === 0 && !unavailable && (
+            <div className="space-y-3">
+              <p className="text-[15px] font-semibold text-foreground">How can I help?</p>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                I can read the records your role allows and draft actions for you to approve. I
+                can&apos;t change anything myself.
+              </p>
+              <p className="pt-1 text-[12.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                Try asking
+              </p>
+              <div className="flex flex-col gap-2">
+                {suggestions.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => void send(s)}
+                    className="min-h-10 rounded-[12px] border border-input bg-card px-3.5 py-2 text-left text-sm text-foreground transition hover:border-[var(--ui-line-strong)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <div aria-hidden="true" className="flex-1 bg-foreground/40" onClick={onClose} />
-      <aside
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-label="Assistant"
-        tabIndex={-1}
-        className="flex h-full w-full max-w-[480px] flex-col border-l border-border bg-card shadow-elevated focus:outline-none"
-      >
-        {children}
-      </aside>
-    </div>
+          {turns.map((turn, i) =>
+            turn.role === 'user' ? (
+              <div key={i} role="group" aria-label="You" className="flex flex-col items-end gap-1">
+                <span className="text-[12px] font-semibold text-muted-foreground">You</span>
+                <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-highlight px-3.5 py-2.5 text-sm text-highlight-foreground">
+                  {turn.text}
+                </div>
+                {turn.failed && (
+                  <span className="text-[12px] text-muted-foreground">
+                    Not sent to the assistant. It will not be included as context.
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div key={i} role="group" aria-label="Assistant" className="space-y-3">
+                <div className="flex items-center gap-2 text-[12px] font-semibold text-muted-foreground">
+                  <Sparkles size={13} className="text-[var(--ui-info)]" aria-hidden="true" />
+                  Assistant
+                </div>
+
+                {turn.citationState !== undefined && (
+                  <EvidenceBanner citationState={turn.citationState} />
+                )}
+
+                {turn.failed ? (
+                  <p className="text-sm font-medium text-[var(--ui-danger)]">{turn.text}</p>
+                ) : (
+                  <AnswerText text={turn.text} citations={turn.citations ?? []} />
+                )}
+
+                {turn.stopReason && STOP_NOTE[turn.stopReason] && (
+                  <p className="text-[12.5px] italic text-muted-foreground">
+                    {STOP_NOTE[turn.stopReason]}
+                  </p>
+                )}
+
+                {(turn.citations ?? []).length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[12px] font-semibold text-muted-foreground">Sources</p>
+                    <CitationChips citations={turn.citations ?? []} variant="strip" />
+                  </div>
+                )}
+
+                {(turn.repeatsDropped ?? []).length > 0 && (
+                  <p className="text-[12.5px] text-muted-foreground">
+                    Already approved earlier in this chat, so not drafted again:{' '}
+                    {(turn.repeatsDropped ?? []).join(', ')}.
+                  </p>
+                )}
+
+                {turn.proposals?.map((p) => (
+                  <ProposalCard
+                    key={p.id}
+                    proposal={p}
+                    onCommitted={onCommitted}
+                    citationState={turn.citationState}
+                    outcome={outcomes[p.id]}
+                    onOutcome={recordOutcome}
+                    receivedAt={turn.receivedAt}
+                  />
+                ))}
+              </div>
+            ),
+          )}
+
+          {busy && (
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <span
+                aria-hidden="true"
+                className="h-2 w-2 rounded-full bg-[var(--accent)] motion-safe:animate-pulse"
+              />
+              Looking through your data…
+            </p>
+          )}
+        </div>
+
+        <form
+          ref={formRef}
+          className="border-t border-border bg-card p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void send(input);
+          }}
+        >
+          <div className="flex gap-2">
+            {/* readOnly, not disabled, while waiting: a disabled control drops
+              keyboard focus to <body>, where Escape and Tab stop working. */}
+            <Input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              readOnly={busy}
+              aria-disabled={busy || unavailable}
+              disabled={unavailable}
+              maxLength={AGENT_MESSAGE_MAX_CHARS}
+              placeholder={unavailable ? 'Assistant unavailable' : 'Ask about your pipeline…'}
+              className="min-w-0 flex-1 read-only:bg-[var(--ui-inset-soft)]"
+              aria-label="Message"
+              aria-describedby={showCounter ? 'copilot-message-count' : undefined}
+            />
+            <Button
+              type="submit"
+              disabled={busy || !input.trim() || unavailable}
+              aria-busy={busy}
+              className="gap-1.5"
+            >
+              <Send size={15} aria-hidden="true" />
+              Ask
+            </Button>
+          </div>
+          {showCounter && (
+            <p
+              id="copilot-message-count"
+              className="mt-1.5 text-right text-[12px] text-muted-foreground"
+            >
+              {input.length.toLocaleString('en-IN')}/
+              {AGENT_MESSAGE_MAX_CHARS.toLocaleString('en-IN')} characters
+            </p>
+          )}
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }

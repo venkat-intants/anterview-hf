@@ -21,9 +21,10 @@ import { useQuery } from '@tanstack/react-query';
 import { ApiError } from '@/api/client';
 import { locateAttempt } from '@/api/exams';
 import { GlassCard } from '@/design/components/primitives';
-import { ArrowLeft, Loader2 } from '@/design/components/icons';
+import { ArrowLeft } from '@/design/components/icons';
 import { Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 
 const NOT_FOUND_TEXT =
   'That exam attempt is not in this company’s exams. It may have been deleted, or it ' +
@@ -61,14 +62,11 @@ export default function ExamAttemptRedirect(): JSX.Element {
 
       <GlassCard className="p-6">
         {lookup.isPending && attemptId ? (
-          <p
-            role="status"
-            aria-live="polite"
-            className="flex items-center gap-2 text-[13px] text-muted-foreground"
-          >
-            <Loader2 size={15} className="animate-spin" aria-hidden="true" />
-            Finding that exam attempt…
-          </p>
+          <div role="status" aria-live="polite" className="flex flex-col gap-2.5">
+            <span className="sr-only">Finding that exam attempt…</span>
+            <Skeleton className="h-6 w-56" />
+            <Skeleton className="h-4 w-full max-w-[420px]" />
+          </div>
         ) : (
           <>
             <h1 className="text-[18px] font-semibold text-foreground">

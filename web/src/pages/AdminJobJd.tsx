@@ -8,7 +8,7 @@
 //   made-up roles as Published on a live admin page.)
 //
 // Behavior: 100% live — getJobs (data_gateway) + accessToken gating;
-//   job picker Select; FileUploadZone + uploadJd (PDF/10MB/progress/char-count toast);
+//   job picker SelectControl; FileUploadZone + uploadJd (PDF/10MB/progress/char-count toast);
 //   jobs loading/error+Retry/empty; uploadKey reset on job change.
 
 import { useCallback, useState } from 'react';
@@ -22,13 +22,8 @@ import { cn } from '@/lib/utils';
 import FileUploadZone from '@/components/FileUploadZone';
 import { Skeleton } from '@/components/ui/skeleton';
 import { QueryErrorPanel } from '@/components/QueryState';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { SelectControl } from '@/components/ui/select-control';
+import { fieldLabelClass } from '@/components/ui/control-styles';
 import { GlassCard } from '@/design/components/primitives';
 import { Reveal } from '@/design/components/Reveal';
 import { EmptyState, Page, PageHeader } from '@/design/components/page';
@@ -68,6 +63,7 @@ export default function AdminJobJd() {
   // ── Handlers ────────────────────────────────────────────────────────────────
 
   const handleJobChange = useCallback((value: string) => {
+    if (!value) return;
     setSelectedJobId(value);
     setUploadKey((k) => k + 1);
   }, []);
@@ -129,23 +125,15 @@ export default function AdminJobJd() {
           <div className="space-y-2">
             {/* "Practice role", not "job posting" (AD-F25): these are catalogue
                 roles for practice interviews, not a company's openings. */}
-            <label htmlFor="job-select" className="text-[12.5px] font-medium text-[var(--ui-soft)]">
+            <label htmlFor="job-select" className={cn('block', fieldLabelClass)}>
               Practice role
             </label>
 
             {/* Loading state */}
             {jobsLoading && (
-              <div
-                className="flex items-center gap-2 text-[13px] text-muted-foreground"
-                aria-live="polite"
-              >
-                <div
-                  className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--accent)] border-t-transparent"
-                  role="status"
-                  aria-label="Loading practice roles"
-                />
-                <span>Loading practice roles…</span>
-                <Skeleton className="h-10 w-full rounded-[12px] mt-1 bg-[var(--ui-inset)]" />
+              <div role="status" aria-busy="true">
+                <span className="sr-only">Loading practice roles…</span>
+                <Skeleton className="h-10 w-full" />
               </div>
             )}
 
@@ -170,26 +158,22 @@ export default function AdminJobJd() {
 
             {/* Select — shown when data ready */}
             {!jobsLoading && !jobsError && jobs.length > 0 && (
-              <Select value={selectedJobId} onValueChange={handleJobChange}>
-                <SelectTrigger
-                  id="job-select"
-                  aria-label="Select a practice role"
-                  className={cn(
-                    'w-full rounded-[12px] border border-border bg-secondary',
-                    'text-[14px] text-foreground placeholder:text-[var(--ui-faint)]',
-                    'focus:border-[var(--accent)] focus:ring-0',
-                  )}
-                >
-                  <SelectValue placeholder="Select a practice role" />
-                </SelectTrigger>
-                <SelectContent>
-                  {jobs.map((job) => (
-                    <SelectItem key={job.id} value={job.id}>
-                      {job.title}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SelectControl
+                id="job-select"
+                aria-label="Select a practice role"
+                value={selectedJobId}
+                onChange={(e) => handleJobChange(e.target.value)}
+              >
+                {/* The prompt, until a role is picked; it cannot be picked back. */}
+                <option value="" disabled>
+                  Select a practice role
+                </option>
+                {jobs.map((job) => (
+                  <option key={job.id} value={job.id}>
+                    {job.title}
+                  </option>
+                ))}
+              </SelectControl>
             )}
           </div>
 

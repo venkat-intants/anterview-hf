@@ -3,6 +3,7 @@
 // HRAnalyticsPage) — `GET /hr/checkins/due` rows carry `applicant_id`, so
 // there is nothing check-in-specific to build here beyond the list itself.
 
+import { Skeleton } from '@/components/ui/skeleton';
 import { formatDate } from '@/lib/formatters';
 import type { CheckinDueRow } from '@/api/checkins';
 
@@ -25,7 +26,11 @@ export default function CheckinDueCard({
       </p>
       <div className="mt-3">
         {isLoading ? (
-          <p className="text-[13px] text-muted-foreground">Loading…</p>
+          <div className="flex flex-col gap-2" aria-busy="true">
+            <span className="sr-only">Loading…</span>
+            <Skeleton className="h-12 rounded-[12px]" />
+            <Skeleton className="h-12 rounded-[12px]" />
+          </div>
         ) : isError ? (
           <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
             Could not load check-ins due just now.

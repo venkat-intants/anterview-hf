@@ -11,8 +11,8 @@ import { Link } from 'react-router-dom';
 import { ApiError, isTransientApiError } from '@/api/client';
 import { getCalibrationJudgements } from '@/api/scheduling';
 import { formatDate } from '@/lib/formatters';
-import { X } from '@/design/components/icons';
-import { useDialogFocus } from '@/hooks/useDialogFocus';
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Skeleton } from '@/components/ui/skeleton';
 import { appPath } from '@/lib/safeUrl';
 import { errorMessage } from '@/lib/errorMessage';
 
@@ -42,7 +42,6 @@ export default function CalibrationJudgementsDialog({
   criterionKey?: string | null;
   onClose: () => void;
 }): JSX.Element {
-  const panelRef = useDialogFocus<HTMLElement>(onClose);
   const judgements = useQuery({
     queryKey: [
       'hr',
@@ -80,41 +79,27 @@ export default function CalibrationJudgementsDialog({
       ? judgements.error.message
       : null;
 
+  // Mounted only while open (the tab renders it conditionally), so the sheet is
+  // always open and closing it hands control back to the parent.
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
-      <button
-        type="button"
-        aria-label="Close judgements"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/50"
-      />
-      <aside
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="calibration-judgements-title"
-        tabIndex={-1}
-        className="relative flex h-full w-full max-w-[480px] flex-col overflow-y-auto border-l border-border bg-card p-6 outline-none"
+    <Sheet open onOpenChange={(open) => (open ? undefined : onClose())}>
+      <SheetContent
+        side="right"
+        aria-describedby={undefined}
+        className="flex w-full flex-col overflow-y-auto sm:max-w-[480px]"
       >
-        <div className="flex items-start justify-between gap-3">
-          <h2
-            id="calibration-judgements-title"
-            className="text-[17px] font-semibold text-foreground"
-          >
+        <SheetHeader className="pr-10 text-left">
+          <SheetTitle className="text-[17px] font-semibold text-foreground">
             {interviewerName}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="shrink-0 rounded-[8px] p-1.5 text-muted-foreground hover:text-foreground focus:outline-none focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </div>
+          </SheetTitle>
+        </SheetHeader>
 
         {judgements.isLoading ? (
-          <p className="mt-4 text-[13px] text-muted-foreground">Loading…</p>
+          <div className="mt-4 flex flex-col gap-2" aria-busy="true" aria-label="Loading judgements">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
         ) : suppressedMessage ? (
           <p className="mt-4 text-[13px] text-muted-foreground">{suppressedMessage}</p>
         ) : notFoundMessage ? (
@@ -171,7 +156,7 @@ export default function CalibrationJudgementsDialog({
             </ul>
           </>
         ) : null}
-      </aside>
-    </div>
+      </SheetContent>
+    </Sheet>
   );
 }

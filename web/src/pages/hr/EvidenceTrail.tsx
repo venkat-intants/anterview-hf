@@ -27,6 +27,7 @@ import {
 import { StatusTag, type TagTone } from '@/design/components/primitives';
 import { Breadcrumbs, PageHeader, Page } from '@/design/components/page';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { formatDateTime } from '@/lib/formatters';
 
 const KIND_LABELS: Record<EvidenceNode['kind'], string> = {
@@ -257,13 +258,24 @@ export default function EvidenceTrail(): JSX.Element {
           <span className="sr-only">Loading…</span>
         </div>
       ) : notFound ? (
-        <p className="text-[14px] text-muted-foreground">
-          This application could not be found, or you do not have access to it.
-        </p>
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-[14px] text-muted-foreground">
+            This application could not be found, or you do not have access to it.
+          </p>
+          <Link
+            to="/hr/requisitions"
+            className="text-[13px] font-semibold text-[var(--ui-info)] hover:underline"
+          >
+            Back to openings
+          </Link>
+        </div>
       ) : graph.isError ? (
-        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
-          Could not load this application.
-        </p>
+        <QueryErrorPanel
+          title="Could not load this application."
+          error={graph.error}
+          onRetry={() => void graph.refetch()}
+          retrying={graph.isFetching}
+        />
       ) : graph.data ? (
         <div className="flex flex-col gap-5">
           <div className="rounded-card border border-border bg-card p-5 shadow-card">
@@ -314,9 +326,12 @@ export default function EvidenceTrail(): JSX.Element {
                   <span className="sr-only">Loading…</span>
                 </div>
               ) : trace.isError ? (
-                <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
-                  Could not load this decision.
-                </p>
+                <QueryErrorPanel
+                  title="Could not load this decision."
+                  error={trace.error}
+                  onRetry={() => void trace.refetch()}
+                  retrying={trace.isFetching}
+                />
               ) : trace.data ? (
                 <>
                   <div className="rounded-card border border-border bg-card p-5 shadow-card">

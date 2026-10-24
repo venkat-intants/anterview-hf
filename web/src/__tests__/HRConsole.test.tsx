@@ -245,7 +245,10 @@ describe('HRConsole - activity feed', () => {
     // funnel or the quick actions.
     expect(await screen.findByRole('heading', { name: /welcome/i })).toBeInTheDocument();
     await openActivity();
-    expect(await screen.findByText(/no recent activity yet/i)).toBeInTheDocument();
+    // A failed feed says so, with a way to try again; it is not "no activity".
+    expect(await screen.findByText('Could not load recent activity.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
+    expect(screen.queryByText(/no recent activity yet/i)).not.toBeInTheDocument();
   });
 });
 

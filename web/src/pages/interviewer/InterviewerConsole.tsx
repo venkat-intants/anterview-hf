@@ -9,7 +9,7 @@
 
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2, Users } from '@/design/components/icons';
+import { Users } from '@/design/components/icons';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { Reveal, Stagger, StaggerItem } from '@/design/components/Reveal';
 import { EmptyState, PageHeader, Page } from '@/design/components/page';
@@ -22,6 +22,7 @@ import {
 import UpcomingInterviews from '@/components/interviewer/UpcomingInterviews';
 import MyAvailability from '@/components/interviewer/MyAvailability';
 import { QueryErrorPanel } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTime } from '@/lib/formatters';
 
 const STATE_META: Record<
@@ -106,9 +107,10 @@ export default function InterviewerConsole(): JSX.Element {
           sections below it. */}
       <h2 className="-mb-3 text-[16px] font-semibold text-foreground">Scorecards to write</h2>
       {isLoading ? (
-        <div className="flex items-center gap-2 py-16 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading your interviews…
+        <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading your interviews">
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-20 w-full" />
+          <Skeleton className="h-20 w-full" />
         </div>
       ) : isError ? (
         <QueryErrorPanel

@@ -23,7 +23,12 @@ import {
   type CheckinOut,
   type CheckinPerformance,
 } from '@/api/checkins';
-import { ApiError } from '@/api/client';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
+import { errorMessage } from '@/lib/errorMessage';
 import { formatDate } from '@/lib/formatters';
 
 const EMPLOYMENT_OPTIONS: { value: CheckinEmployment; label: string }[] = [
@@ -54,9 +59,6 @@ const PERFORMANCE_LABEL: Record<CheckinPerformance, string> = {
   meets: 'Meets expectations',
   exceeds: 'Exceeds expectations',
 };
-
-const FIELD_CLS =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:cursor-not-allowed disabled:opacity-50';
 
 function summaryLine(c: CheckinOut): string {
   if (c.employment === 'left') {
@@ -121,8 +123,7 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
       setFormError(null);
       invalidate();
     },
-    onError: (e: unknown) =>
-      setFormError(e instanceof ApiError ? e.message : 'Could not save this check-in.'),
+    onError: (e: unknown) => setFormError(errorMessage(e, 'Could not save this check-in.')),
   });
 
   const correctMut = useMutation({
@@ -133,8 +134,7 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
       setFormError(null);
       invalidate();
     },
-    onError: (e: unknown) =>
-      setFormError(e instanceof ApiError ? e.message : 'Could not save this correction.'),
+    onError: (e: unknown) => setFormError(errorMessage(e, 'Could not save this correction.')),
   });
 
   if (checkins.isLoading) {
@@ -145,7 +145,11 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
         className="mt-6 border-t border-border pt-5 outline-none"
       >
         <h3 className="text-[15px] font-bold text-foreground">90-day check-in</h3>
-        <p className="mt-2 text-[12.5px] text-muted-foreground">Loading…</p>
+        <div className="mt-2 flex flex-col gap-2" aria-busy="true">
+          <span className="sr-only">Loading…</span>
+          <Skeleton className="h-3.5 w-3/4" />
+          <Skeleton className="h-14" />
+        </div>
       </div>
     );
   }
@@ -157,9 +161,13 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
         className="mt-6 border-t border-border pt-5 outline-none"
       >
         <h3 className="text-[15px] font-bold text-foreground">90-day check-in</h3>
-        <p className="mt-2 text-[12.5px] text-muted-foreground">
-          Could not load the check-in for this hire.
-        </p>
+        <QueryErrorPanel
+          className="mt-2"
+          title="Could not load the check-in for this hire."
+          error={checkins.error}
+          onRetry={() => void checkins.refetch()}
+          retrying={checkins.isFetching}
+        />
       </div>
     );
   }
@@ -229,13 +237,15 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
           <div className="flex items-center justify-between gap-3">
             <span className="text-[13px] text-foreground">{summaryLine(live)}</span>
             {win.open ? (
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
                 onClick={() => startCorrection(live)}
-                className="shrink-0 text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
               >
                 Correct
-              </button>
+              </Button>
             ) : null}
           </div>
           <p className="mt-1 text-[12px] text-muted-foreground">{recordedByLine(live)}</p>
@@ -253,94 +263,84 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
             </p>
           ) : null}
 
-          <div>
-            <label
-              htmlFor={`checkin-employment-${enrolmentId}`}
-              className="mb-1 block text-[12px] font-medium text-[var(--ui-soft)]"
-            >
-              Employment
-            </label>
-            <select
-              id={`checkin-employment-${enrolmentId}`}
-              value={form.employment}
-              onChange={(e) =>
-                setForm((f) => ({
-                  ...f,
-                  employment: e.target.value as CheckinEmployment,
-                  leftReason: '',
-                  performance: '',
-                }))
-              }
-              className={FIELD_CLS}
-            >
-              <option value="">Choose…</option>
-              {EMPLOYMENT_OPTIONS.map((o) => (
-                <option
-                  key={o.value}
-                  value={o.value}
-                  disabled={o.value === 'employed' && !employedAvailable}
-                >
-                  {o.label}
-                </option>
-              ))}
-            </select>
-            {!employedAvailable ? (
-              <p className="mt-1 text-[12px] text-muted-foreground">
-                {win.employed_from ? `Available from ${formatDate(win.employed_from)}` : 'Available from: not set'}
-              </p>
-            ) : null}
-          </div>
-
-          {form.employment === 'left' ? (
-            <div>
-              <label
-                htmlFor={`checkin-reason-${enrolmentId}`}
-                className="mb-1 block text-[12px] font-medium text-[var(--ui-soft)]"
-              >
-                Reason
-              </label>
-              <select
-                id={`checkin-reason-${enrolmentId}`}
-                value={form.leftReason}
+          <FormField
+            id={`checkin-employment-${enrolmentId}`}
+            label="Employment"
+            hint={
+              employedAvailable
+                ? undefined
+                : win.employed_from
+                  ? `Available from ${formatDate(win.employed_from)}`
+                  : 'Available from: not set'
+            }
+          >
+            {(p) => (
+              <SelectControl
+                {...p}
+                value={form.employment}
                 onChange={(e) =>
-                  setForm((f) => ({ ...f, leftReason: e.target.value as CheckinLeftReason }))
+                  setForm((f) => ({
+                    ...f,
+                    employment: e.target.value as CheckinEmployment,
+                    leftReason: '',
+                    performance: '',
+                  }))
                 }
-                className={FIELD_CLS}
               >
                 <option value="">Choose…</option>
-                {LEFT_REASON_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
+                {EMPLOYMENT_OPTIONS.map((o) => (
+                  <option
+                    key={o.value}
+                    value={o.value}
+                    disabled={o.value === 'employed' && !employedAvailable}
+                  >
                     {o.label}
                   </option>
                 ))}
-              </select>
-            </div>
+              </SelectControl>
+            )}
+          </FormField>
+
+          {form.employment === 'left' ? (
+            <FormField id={`checkin-reason-${enrolmentId}`} label="Reason">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  value={form.leftReason}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, leftReason: e.target.value as CheckinLeftReason }))
+                  }
+                >
+                  <option value="">Choose…</option>
+                  {LEFT_REASON_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </SelectControl>
+              )}
+            </FormField>
           ) : null}
 
           {form.employment === 'employed' ? (
-            <div>
-              <label
-                htmlFor={`checkin-performance-${enrolmentId}`}
-                className="mb-1 block text-[12px] font-medium text-[var(--ui-soft)]"
-              >
-                Performance
-              </label>
-              <select
-                id={`checkin-performance-${enrolmentId}`}
-                value={form.performance}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, performance: e.target.value as CheckinPerformance }))
-                }
-                className={FIELD_CLS}
-              >
-                <option value="">Choose…</option>
-                {PERFORMANCE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <FormField id={`checkin-performance-${enrolmentId}`} label="Performance">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  value={form.performance}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, performance: e.target.value as CheckinPerformance }))
+                  }
+                >
+                  <option value="">Choose…</option>
+                  {PERFORMANCE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </SelectControl>
+              )}
+            </FormField>
           ) : null}
 
           {formError ? (
@@ -350,22 +350,13 @@ export default function CheckinSection({ enrolmentId }: { enrolmentId: string })
           ) : null}
 
           <div className="flex items-center gap-2">
-            <button
-              type="submit"
-              disabled={!canSubmit || pending}
-              className="rounded-full bg-primary px-5 min-h-10 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
-            >
+            <Button type="submit" disabled={!canSubmit || pending}>
               {pending ? 'Saving…' : correcting ? 'Save correction' : 'Save check-in'}
-            </button>
+            </Button>
             {correcting ? (
-              <button
-                type="button"
-                onClick={cancelCorrection}
-                disabled={pending}
-                className="text-[12.5px] text-muted-foreground hover:text-foreground"
-              >
+              <Button type="button" variant="ghost" onClick={cancelCorrection} disabled={pending}>
                 Cancel
-              </button>
+              </Button>
             ) : null}
           </div>
 

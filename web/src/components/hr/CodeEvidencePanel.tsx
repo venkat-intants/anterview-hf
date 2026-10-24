@@ -47,13 +47,10 @@ import {
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import CodeSimilarityCompare from './CodeSimilarityCompare';
+import { errorMessage } from '@/lib/errorMessage';
 import { formatDateTime } from '@/lib/formatters';
 
 const CodeEditor = lazy(() => import('@/components/CodeEditor'));
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 function shortId(id: string): string {
   return id.slice(0, 8);
@@ -423,7 +420,7 @@ function SourceViewer({
           </div>
         ) : source.isError ? (
           <p role="alert" className="mt-2 text-[13px] text-[var(--ui-danger)]">
-            {errText(source.error, 'Could not load this submission.')}
+            {errorMessage(source.error, 'Could not load this submission.')}
           </p>
         ) : source.data?.redacted ? (
           <p className="mt-2 text-[13px] text-muted-foreground">
@@ -576,7 +573,7 @@ export default function CodeEvidencePanel({
         queryKey: ['hr', 'exam', examId, 'attempt', attemptId, 'code-evidence'],
       });
     },
-    onError: (e) => toast.error(errText(e, 'Could not run analysis for this attempt')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not run analysis for this attempt.')),
   });
 
   const questionIds = useMemo(() => {
@@ -603,7 +600,7 @@ export default function CodeEvidencePanel({
       <GlassCard className="p-6 text-center">
         <div role="alert">
           <p className="text-[14px] text-[var(--ui-danger)]">
-            {errText(evidence.error, 'Could not load code evidence for this attempt.')}
+            {errorMessage(evidence.error,'Could not load code evidence for this attempt.')}
           </p>
         </div>
         <Button

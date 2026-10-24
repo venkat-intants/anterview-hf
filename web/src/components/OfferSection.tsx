@@ -26,7 +26,9 @@ import { toast } from '@/lib/toast';
 import { StatusTag } from '@/design/components/primitives';
 import { FileText } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatMoney } from '@/lib/formatters';
 
@@ -34,9 +36,6 @@ import { formatMoney } from '@/lib/formatters';
 // section, so the offer reads as one more of them.
 const SECTION = 'mt-6 border-t border-border pt-5';
 const SECTION_TITLE = 'text-[15px] font-bold text-foreground';
-const labelCls = 'text-[13px] font-semibold text-foreground';
-const selectCls =
-  'mt-1.5 h-11 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 /** States in which an application already has its one offer in play: the
  *  server allows a single live offer per application and refuses a second with
@@ -88,30 +87,30 @@ function CreateOfferForm({ enrolmentId }: { enrolmentId: string }) {
   return (
     <div className="mt-3 flex flex-col gap-4 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
       <div>
-        <label htmlFor={`${uid}-template`} className={labelCls}>
-          Template (optional)
-        </label>
-        <select
-          id={`${uid}-template`}
-          value={templateId}
-          onChange={(e) => {
-            // The form always sends a currency, and what it sends wins over the
-            // template's — so take the template's the moment it is chosen, or a
-            // USD template would quietly become an INR offer.
-            const id = e.target.value;
-            setTemplateId(id);
-            const tpl = (templates.data ?? []).find((x) => x.id === id);
-            if (tpl?.currency) setCurrency(tpl.currency);
-          }}
-          className={selectCls}
-        >
-          <option value="">No template, start from scratch</option>
-          {(templates.data ?? []).map((tpl) => (
-            <option key={tpl.id} value={tpl.id}>
-              {tpl.name}
-            </option>
-          ))}
-        </select>
+        <FormField id={`${uid}-template`} label="Template (optional)">
+          {(p) => (
+            <SelectControl
+              {...p}
+              value={templateId}
+              onChange={(e) => {
+                // The form always sends a currency, and what it sends wins over the
+                // template's — so take the template's the moment it is chosen, or a
+                // USD template would quietly become an INR offer.
+                const id = e.target.value;
+                setTemplateId(id);
+                const tpl = (templates.data ?? []).find((x) => x.id === id);
+                if (tpl?.currency) setCurrency(tpl.currency);
+              }}
+            >
+              <option value="">No template, start from scratch</option>
+              {(templates.data ?? []).map((tpl) => (
+                <option key={tpl.id} value={tpl.id}>
+                  {tpl.name}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
         {templates.isError ? (
           <p role="alert" className="mt-1.5 text-[12.5px] text-[var(--ui-danger)]">
             {errorMessage(templates.error, 'Could not load the offer templates.')} You can still
@@ -120,33 +119,29 @@ function CreateOfferForm({ enrolmentId }: { enrolmentId: string }) {
         ) : null}
       </div>
       <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
-        <div>
-          <label htmlFor={`${uid}-salary`} className={labelCls}>
-            Base salary
-          </label>
-          <Input
-            id={`${uid}-salary`}
-            type="number"
-            min={0.01}
-            step={0.01}
-            value={baseSalary}
-            onChange={(e) => setBaseSalary(e.target.value)}
-            placeholder="e.g. 1200000"
-            className="mt-1.5"
-          />
-        </div>
-        <div>
-          <label htmlFor={`${uid}-currency`} className={labelCls}>
-            Currency
-          </label>
-          <Input
-            id={`${uid}-currency`}
-            value={currency}
-            onChange={(e) => setCurrency(e.target.value.toUpperCase())}
-            maxLength={3}
-            className="mt-1.5"
-          />
-        </div>
+        <FormField id={`${uid}-salary`} label="Base salary">
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={0.01}
+              step={0.01}
+              value={baseSalary}
+              onChange={(e) => setBaseSalary(e.target.value)}
+              placeholder="e.g. 1200000"
+            />
+          )}
+        </FormField>
+        <FormField id={`${uid}-currency`} label="Currency">
+          {(p) => (
+            <Input
+              {...p}
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value.toUpperCase())}
+              maxLength={3}
+            />
+          )}
+        </FormField>
       </div>
       {baseSalary.trim() !== '' && !salaryOk ? (
         <p className="text-[12.5px] text-[var(--ui-warn)]">
@@ -217,7 +212,11 @@ export default function OfferSection({
           </button>
         </h3>
         {canCreate ? (
-          <Button type="button" variant="outline" onClick={() => setCreating((v) => !v)}>
+          <Button
+            type="button"
+            variant={creating ? 'ghost' : 'outline'}
+            onClick={() => setCreating((v) => !v)}
+          >
             {creating ? 'Cancel' : 'New offer'}
           </Button>
         ) : null}

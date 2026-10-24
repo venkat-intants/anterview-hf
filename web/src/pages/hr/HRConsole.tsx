@@ -31,6 +31,7 @@ import { Row, RowList, Section } from '@/design/components/rows';
 import { Stat, StatGroup } from '@/design/components/stat-group';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
+import { QueryErrorPanel, QueryState, type QueryLike } from '@/components/QueryState';
 import { Plus } from '@/design/components/icons';
 import { formatScore } from '@/lib/formatters';
 
@@ -73,7 +74,9 @@ export default function HRConsole() {
   });
 
   // Live hiring funnel — drives the stat group. The dashboard is the page a
-  // manager leaves open, so it polls like the other live views.
+  // manager leaves open, so it polls like the other live views. No error
+  // branch by design: a missing figure reads "Not loaded yet" in its own cell
+  // (StatGroup's missingLabel), never a zero, and the next poll retries.
   const { data: analytics } = useQuery({
     queryKey: ['hr', 'analytics'],
     queryFn: getHrAnalytics,
@@ -87,7 +90,7 @@ export default function HRConsole() {
   // cache, and the bell could open showing only eight. The prefix keeps the
   // bell's mark-read invalidation reaching this list, and the interval matches
   // the bell's so the feed still updates on its own.
-  const { data: notifs } = useQuery({
+  const notifsQuery = useQuery({
     queryKey: ['notifications', 'recent', 8],
     queryFn: () => listNotifications(8),
     staleTime: 30_000,
@@ -287,9 +290,13 @@ export default function HRConsole() {
           {openings.isLoading ? (
             <Skeleton className="h-14 w-full rounded-card" />
           ) : openings.isError ? (
-            <p role="alert" className="text-[13px] text-muted-foreground">
-              Could not load your openings just now.
-            </p>
+            <QueryErrorPanel
+              className="py-6"
+              title="Could not load your openings."
+              error={openings.error}
+              onRetry={() => void openings.refetch()}
+              retrying={openings.isFetching}
+            />
           ) : inSetup.length === 0 ? (
             <EmptyState size="row" title="No opening is waiting on setup." />
           ) : (
@@ -351,7 +358,7 @@ export default function HRConsole() {
           </StatGroup>
         </section>
 
-        <RecentActivity items={notifs?.items ?? []} persistKey={activityKey} />
+        <RecentActivity query={notifsQuery} persistKey={activityKey} />
       </PageBody>
     </Page>
   );
@@ -407,13 +414,13 @@ const PANEL_OWNED_KINDS = new Set(['system']);
 
 /** Recent activity: a record, so it sits closed under its newest line. */
 function RecentActivity({
-  items: all,
+  query,
   persistKey,
 }: {
-  items: NotificationItem[];
+  query: QueryLike<{ items: NotificationItem[] }>;
   persistKey: string;
 }) {
-  const items = all.filter((n) => !PANEL_OWNED_KINDS.has(n.kind));
+  const items = (query.data?.items ?? []).filter((n) => !PANEL_OWNED_KINDS.has(n.kind));
   const newest = items[0];
   return (
     <Collapsible
@@ -426,7 +433,21 @@ function RecentActivity({
       persistKey={persistKey}
       data-testid="recent-activity"
     >
-      <ActivityFeed items={items} />
+      {/* A failed feed is not an empty one (D1); the rest of the page stands. */}
+      <QueryState
+        query={query}
+        errorTitle="Could not load recent activity."
+        errorClassName="py-6"
+        loading={
+          <div className="flex flex-col gap-2" aria-busy="true">
+            <span className="sr-only">Loading…</span>
+            <Skeleton className="h-10 rounded-[12px]" />
+            <Skeleton className="h-10 rounded-[12px]" />
+          </div>
+        }
+      >
+        {() => <ActivityFeed items={items} />}
+      </QueryState>
     </Collapsible>
   );
 }

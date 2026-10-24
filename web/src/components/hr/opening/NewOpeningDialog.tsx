@@ -21,6 +21,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from '@/design/components/icons';
 import { Stepper } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import {
   Dialog,
   DialogContent,
@@ -63,9 +66,14 @@ const STEPS: { key: StepKey; label: string; hint: string }[] = [
   { key: 'review', label: 'Review & create', hint: 'Check and create' },
 ];
 
-const FIELD =
-  'h-10 w-full rounded-[10px] border border-input bg-card px-3.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 aria-[invalid=true]:border-[var(--ui-danger)]';
-const LABEL = 'mb-1.5 block text-[13px] font-semibold text-foreground';
+/** A field label with a quiet "(optional)" after it. */
+function OptionalLabel({ children }: { children: string }): JSX.Element {
+  return (
+    <>
+      {children} <span className="font-normal text-muted-foreground">(optional)</span>
+    </>
+  );
+}
 
 /** True when the created opening carries exactly the budget that was sent. */
 function budgetEchoed(created: Requisition, sent: Partial<RequisitionInput>): boolean {
@@ -76,10 +84,6 @@ function budgetEchoed(created: Requisition, sent: Partial<RequisitionInput>): bo
     created.budget_basis === sent.budget_basis &&
     created.budget_period === sent.budget_period
   );
-}
-
-function errText(e: unknown, fallback: string): string {
-  return errorMessage(e, fallback.endsWith('.') ? fallback : `${fallback}.`);
 }
 
 interface Props {
@@ -116,6 +120,8 @@ function DialogBody({
     defaultValues: EMPTY_OPENING,
     mode: 'onTouched',
   });
+  // Silent on failure by design: the owner picker still offers "Me", which is
+  // the default, so the opening can be created either way.
   const team = useQuery({ queryKey: ['hr', 'team'], queryFn: listTeam, staleTime: 60_000 });
 
   const mut = useMutation({
@@ -131,7 +137,7 @@ function DialogBody({
         try {
           await updateRequisition(created.id, patch);
         } catch (e) {
-          budgetError = errText(e, 'The budget was not saved.');
+          budgetError = errorMessage(e, 'The budget was not saved.');
         }
       }
       return { created, budgetError };
@@ -151,7 +157,7 @@ function DialogBody({
     // A 409 means an open requisition already uses that title, and the server
     // says which. Back to the title, with the reason beside it.
     onError: (e) => {
-      const msg = errText(e, 'Could not create the opening');
+      const msg = errorMessage(e, 'Could not create the opening.');
       toast.error(msg);
       // The status is the contract (create answers 409 for a duplicate open
       // title); the wording is only a fallback for a proxy that eats the status.
@@ -200,16 +206,6 @@ function DialogBody({
   }
 
   const err = (name: keyof NewOpeningValues): string | undefined => errors[name]?.message;
-  const described = (
-    name: keyof NewOpeningValues,
-  ): { 'aria-invalid'?: true; 'aria-describedby'?: string } =>
-    errors[name] ? { 'aria-invalid': true, 'aria-describedby': `no-${name}-err` } : {};
-  const renderErr = (name: keyof NewOpeningValues): JSX.Element | null =>
-    err(name) ? (
-      <p id={`no-${name}-err`} role="alert" className="mt-1 text-[12.5px] text-[var(--ui-danger)]">
-        {err(name)}
-      </p>
-    ) : null;
 
   const v = getValues();
 
@@ -232,99 +228,67 @@ function DialogBody({
         <div className="border-t border-border px-6 py-5" data-testid={`new-opening-step-${step}`}>
           {step === 'basics' ? (
             <div className="grid gap-4 sm:grid-cols-2">
-              <div className="sm:col-span-2">
-                <label htmlFor="new-title" className={LABEL}>
-                  Job title
-                </label>
-                <input
-                  id="new-title"
-                  placeholder="e.g. Backend Engineer"
-                  className={FIELD}
-                  {...described('title')}
-                  {...register('title')}
-                />
-                {renderErr('title')}
-              </div>
-              <div>
-                <label htmlFor="new-level" className={LABEL}>
-                  Level
-                </label>
-                <select id="new-level" className={FIELD} {...register('level')}>
-                  {LEVELS.map((l) => (
-                    <option key={l} value={l}>
-                      {l}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="new-owner" className={LABEL}>
-                  Owner
-                </label>
-                <select id="new-owner" className={FIELD} {...register('owner')}>
-                  <option value="">Me</option>
-                  {(team.data ?? []).map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.full_name || m.email}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="new-department" className={LABEL}>
-                  Department <span className="font-normal text-muted-foreground">(optional)</span>
-                </label>
-                <input
-                  id="new-department"
-                  className={FIELD}
-                  {...described('department')}
-                  {...register('department')}
-                />
-                {renderErr('department')}
-              </div>
-              <div>
-                <label htmlFor="new-location" className={LABEL}>
-                  Location <span className="font-normal text-muted-foreground">(optional)</span>
-                </label>
-                <input
-                  id="new-location"
-                  className={FIELD}
-                  {...described('location')}
-                  {...register('location')}
-                />
-                {renderErr('location')}
-              </div>
-              <div>
-                <label htmlFor="new-target" className={LABEL}>
-                  Hires wanted
-                </label>
-                <input
-                  id="new-target"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  max={10000}
-                  placeholder="-"
-                  className={FIELD}
-                  {...described('target')}
-                  {...register('target')}
-                />
-                {renderErr('target')}
-              </div>
-              <div>
-                <label htmlFor="new-closes" className={LABEL}>
-                  Closes on
-                </label>
-                <input
-                  id="new-closes"
-                  type="date"
-                  min={todayIso()}
-                  className={FIELD}
-                  {...described('closes')}
-                  {...register('closes')}
-                />
-                {renderErr('closes')}
-              </div>
+              <FormField
+                id="new-title"
+                label="Job title"
+                error={err('title')}
+                className="sm:col-span-2"
+              >
+                {(p) => <Input {...p} placeholder="e.g. Backend Engineer" {...register('title')} />}
+              </FormField>
+              <FormField id="new-level" label="Level">
+                {(p) => (
+                  <SelectControl {...p} {...register('level')}>
+                    {LEVELS.map((l) => (
+                      <option key={l} value={l}>
+                        {l}
+                      </option>
+                    ))}
+                  </SelectControl>
+                )}
+              </FormField>
+              <FormField id="new-owner" label="Owner">
+                {(p) => (
+                  <SelectControl {...p} {...register('owner')}>
+                    <option value="">Me</option>
+                    {(team.data ?? []).map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.full_name || m.email}
+                      </option>
+                    ))}
+                  </SelectControl>
+                )}
+              </FormField>
+              <FormField
+                id="new-department"
+                label={<OptionalLabel>Department</OptionalLabel>}
+                error={err('department')}
+              >
+                {(p) => <Input {...p} {...register('department')} />}
+              </FormField>
+              <FormField
+                id="new-location"
+                label={<OptionalLabel>Location</OptionalLabel>}
+                error={err('location')}
+              >
+                {(p) => <Input {...p} {...register('location')} />}
+              </FormField>
+              <FormField id="new-target" label="Hires wanted" error={err('target')}>
+                {(p) => (
+                  <Input
+                    {...p}
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={10000}
+                    placeholder="-"
+                    {...register('target')}
+                  />
+                )}
+              </FormField>
+              <FormField id="new-closes" label="Closes on" error={err('closes')}>
+                {(p) => <Input {...p} type="date" min={todayIso()} {...register('closes')} />}
+              </FormField>
             </div>
           ) : null}
 
@@ -336,74 +300,57 @@ function DialogBody({
                 Setup. It is never shown to candidates.
               </p>
               <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_160px]">
-                <div>
-                  <label htmlFor="new-budget-amount" className={LABEL}>
-                    Budget amount
-                  </label>
-                  <input
-                    id="new-budget-amount"
-                    type="number"
-                    inputMode="numeric"
-                    min={0}
-                    placeholder="e.g. 1800000"
-                    className={FIELD}
-                    {...described('budgetAmount')}
-                    {...register('budgetAmount')}
-                  />
-                  {renderErr('budgetAmount')}
-                </div>
-                <div>
-                  <label htmlFor="new-budget-currency" className={LABEL}>
-                    Currency
-                  </label>
-                  <input
-                    id="new-budget-currency"
-                    maxLength={3}
-                    placeholder="INR"
-                    className={`${FIELD} uppercase`}
-                    {...described('budgetCurrency')}
-                    {...register('budgetCurrency')}
-                  />
-                  {renderErr('budgetCurrency')}
-                </div>
-                <div>
-                  <label htmlFor="new-budget-basis" className={LABEL}>
-                    Counted
-                  </label>
-                  <select
-                    id="new-budget-basis"
-                    className={FIELD}
-                    {...described('budgetBasis')}
-                    {...register('budgetBasis')}
-                  >
-                    <option value="">Choose…</option>
-                    {BASES.map((b) => (
-                      <option key={b} value={b}>
-                        {BASIS_WORD[b]}
-                      </option>
-                    ))}
-                  </select>
-                  {renderErr('budgetBasis')}
-                </div>
-                <div>
-                  <label htmlFor="new-budget-period" className={LABEL}>
-                    Period
-                  </label>
-                  <select
-                    id="new-budget-period"
-                    className={FIELD}
-                    {...described('budgetPeriod')}
-                    {...register('budgetPeriod')}
-                  >
-                    <option value="">Choose…</option>
-                    {PERIODS.map((p) => (
-                      <option key={p} value={p}>
-                        {PERIOD_WORD[p]}
-                      </option>
-                    ))}
-                  </select>
-                  {renderErr('budgetPeriod')}
-                </div>
+                <FormField
+                  id="new-budget-amount"
+                  label="Budget amount"
+                  error={err('budgetAmount')}
+                >
+                  {(p) => (
+                    <Input
+                      {...p}
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      placeholder="e.g. 1800000"
+                      {...register('budgetAmount')}
+                    />
+                  )}
+                </FormField>
+                <FormField id="new-budget-currency" label="Currency" error={err('budgetCurrency')}>
+                  {(p) => (
+                    <Input
+                      {...p}
+                      maxLength={3}
+                      placeholder="INR"
+                      className="uppercase"
+                      {...register('budgetCurrency')}
+                    />
+                  )}
+                </FormField>
+                <FormField id="new-budget-basis" label="Counted" error={err('budgetBasis')}>
+                  {(p) => (
+                    <SelectControl {...p} {...register('budgetBasis')}>
+                      <option value="">Choose…</option>
+                      {BASES.map((b) => (
+                        <option key={b} value={b}>
+                          {BASIS_WORD[b]}
+                        </option>
+                      ))}
+                    </SelectControl>
+                  )}
+                </FormField>
+                <FormField id="new-budget-period" label="Period" error={err('budgetPeriod')}>
+                  {(p) => (
+                    <SelectControl {...p} {...register('budgetPeriod')}>
+                      <option value="">Choose…</option>
+                      {PERIODS.map((period) => (
+                        <option key={period} value={period}>
+                          {PERIOD_WORD[period]}
+                        </option>
+                      ))}
+                    </SelectControl>
+                  )}
+                </FormField>
               </div>
             </div>
           ) : null}
@@ -449,7 +396,7 @@ function DialogBody({
 
         <div className="flex items-center justify-between gap-3 border-t border-border px-6 py-4">
           {step === 'basics' ? (
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
           ) : (

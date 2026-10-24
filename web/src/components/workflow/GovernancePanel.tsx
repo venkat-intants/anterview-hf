@@ -38,13 +38,14 @@ import { errorMessage } from '@/lib/errorMessage';
 import { statusLabel } from '@/lib/statusLabel';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { GlassCard } from '@/design/components/primitives';
+import { QueryState } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
 import { AlertCircle } from '@/design/components/icons';
 import { formatDateTime } from '@/lib/formatters';
-
-const INPUT =
-  'w-full rounded-[10px] border border-border bg-[var(--ui-inset-soft)] px-3 py-2 text-[13.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
-const LABEL = 'mb-1.5 block text-[12.5px] font-medium text-[var(--ui-soft)]';
 
 // HR-L3: the shared approval labels, so this panel, the openings list and the
 // HR home say the same words ("Sent back", "Awaiting approval") for one state.
@@ -209,84 +210,85 @@ export default function GovernancePanel({
 
             {/* ── Budget ─────────────────────────────────────────────────── */}
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <div>
-                <label htmlFor="b-amount" className={LABEL}>
-                  Budget amount
-                </label>
-                <div className="flex items-center gap-2">
-                  <input
-                    aria-label="Budget currency"
-                    value={currency}
-                    onChange={(e) => setCurrency(e.target.value)}
-                    maxLength={3}
-                    placeholder="INR"
-                    className={`${INPUT} w-20`}
-                  />
-                  <input
-                    id="b-amount"
-                    type="number"
-                    min={0}
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                    placeholder="5000000"
-                    className={INPUT}
-                  />
-                </div>
-                <p className="mt-1 text-[12px] text-[var(--ui-soft)]">
-                  Money, not headcount. Target hires stays where it is.
-                </p>
-              </div>
+              <FormField
+                id="b-amount"
+                label="Budget amount"
+                hint="Money, not headcount. Target hires stays where it is."
+              >
+                {(p) => (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      aria-label="Budget currency"
+                      value={currency}
+                      onChange={(e) => setCurrency(e.target.value)}
+                      maxLength={3}
+                      placeholder="INR"
+                      className="w-20 shrink-0"
+                    />
+                    <Input
+                      {...p}
+                      type="number"
+                      min={0}
+                      value={amount}
+                      onChange={(e) => setAmount(e.target.value)}
+                      placeholder="5000000"
+                    />
+                  </div>
+                )}
+              </FormField>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-[3fr_2fr]">
-                <div>
-                  <label htmlFor="b-basis" className={LABEL}>
-                    Basis
-                  </label>
-                  <select
-                    id="b-basis"
-                    value={basis}
-                    onChange={(e) => setBasis(e.target.value as BudgetBasis)}
-                    className={INPUT}
-                  >
-                    {(Object.keys(BASIS_LABEL) as BudgetBasis[]).map((b) => (
-                      <option key={b} value={b}>
-                        {BASIS_LABEL[b]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="b-period" className={LABEL}>
-                    Period
-                  </label>
-                  <select
-                    id="b-period"
-                    value={period}
-                    onChange={(e) => setPeriod(e.target.value as BudgetPeriod)}
-                    className={INPUT}
-                  >
-                    {(Object.keys(PERIOD_LABEL) as BudgetPeriod[]).map((p) => (
-                      <option key={p} value={p}>
-                        {PERIOD_LABEL[p]}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <FormField id="b-basis" label="Basis">
+                  {(p) => (
+                    <SelectControl
+                      {...p}
+                      value={basis}
+                      onChange={(e) => setBasis(e.target.value as BudgetBasis)}
+                    >
+                      {(Object.keys(BASIS_LABEL) as BudgetBasis[]).map((b) => (
+                        <option key={b} value={b}>
+                          {BASIS_LABEL[b]}
+                        </option>
+                      ))}
+                    </SelectControl>
+                  )}
+                </FormField>
+                <FormField id="b-period" label="Period">
+                  {(p) => (
+                    <SelectControl
+                      {...p}
+                      value={period}
+                      onChange={(e) => setPeriod(e.target.value as BudgetPeriod)}
+                    >
+                      {(Object.keys(PERIOD_LABEL) as BudgetPeriod[]).map((pd) => (
+                        <option key={pd} value={pd}>
+                          {PERIOD_LABEL[pd]}
+                        </option>
+                      ))}
+                    </SelectControl>
+                  )}
+                </FormField>
               </div>
             </div>
 
-            <div className="mt-3">
-              <label htmlFor="b-notes" className={LABEL}>
-                Budget notes <span className="text-[var(--ui-faint)]">(optional)</span>
-              </label>
-              <input
-                id="b-notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Approved in the Q3 plan"
-                maxLength={2000}
-                className={INPUT}
-              />
-            </div>
+            <FormField
+              id="b-notes"
+              className="mt-3"
+              label={
+                <>
+                  Budget notes <span className="text-[var(--ui-faint)]">(optional)</span>
+                </>
+              }
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Approved in the Q3 plan"
+                  maxLength={2000}
+                />
+              )}
+            </FormField>
 
             <div className="mt-4">
               <Button
@@ -303,18 +305,25 @@ export default function GovernancePanel({
             <div className="mt-6 border-t border-border pt-5">
               {canSubmit ? (
                 <>
-                  <label htmlFor="a-note" className={LABEL}>
-                    Note for your company admin{' '}
-                    <span className="text-[var(--ui-faint)]">(optional)</span>
-                  </label>
-                  <input
+                  <FormField
                     id="a-note"
-                    value={submitNote}
-                    onChange={(e) => setSubmitNote(e.target.value)}
-                    placeholder="Backfill for the role Priya left"
-                    maxLength={1000}
-                    className={INPUT}
-                  />
+                    label={
+                      <>
+                        Note for your company admin{' '}
+                        <span className="text-[var(--ui-faint)]">(optional)</span>
+                      </>
+                    }
+                  >
+                    {(p) => (
+                      <Input
+                        {...p}
+                        value={submitNote}
+                        onChange={(e) => setSubmitNote(e.target.value)}
+                        placeholder="Backfill for the role Priya left"
+                        maxLength={1000}
+                      />
+                    )}
+                  </FormField>
                   <div className="mt-3">
                     <Button
                       type="button"
@@ -361,82 +370,103 @@ export default function GovernancePanel({
                 Publish automatically
               </h2>
             )}
-            {schedule.data?.publish_at ? (
-              <>
-                <p className="mt-1.5 text-[12.5px] text-foreground">
-                  Scheduled for {formatDateTime(schedule.data.publish_at)}
-                </p>
-                <p className="mt-0.5 text-[12px] text-[var(--ui-soft)]">
-                  {schedule.data.tolerance}
-                </p>
-                <div className="mt-3">
-                  <ConfirmDeleteButton
-                    label="Cancel scheduled publication"
-                    confirmText="Cancel publication"
-                    icon={null}
-                    onConfirm={() => cancel.mutate()}
-                    pending={cancel.isPending}
-                  />
+            <QueryState
+              query={schedule}
+              errorTitle="Could not load the publish schedule."
+              errorClassName="mt-3"
+              loading={
+                <div className="mt-3 flex flex-col gap-2" aria-busy="true">
+                  <span className="sr-only">Loading…</span>
+                  <Skeleton className="h-4 w-24" />
+                  <Skeleton className="h-10" />
+                  <Skeleton className="h-10 w-28 rounded-full" />
                 </div>
-              </>
-            ) : (
-              <>
-                <label htmlFor="s-at" className={`${LABEL} mt-2`}>
-                  Go live at
-                </label>
-                <input
-                  id="s-at"
-                  type="datetime-local"
-                  value={publishAt}
-                  onChange={(e) => setPublishAt(e.target.value)}
-                  disabled={!approved || schedule.data?.public_apply_enabled}
-                  aria-describedby={!approved ? 'schedule-gate' : undefined}
-                  className={INPUT}
-                />
-                {schedule.data?.tolerance ? (
-                  <p className="mt-1 text-[12px] text-[var(--ui-soft)]">
-                    {schedule.data.tolerance}
-                  </p>
-                ) : null}
-                <div className="mt-3">
-                  {/* Primary only once it can act: before approval, Submit for
+              }
+            >
+              {(sched) => (
+                <>
+                  {sched.publish_at ? (
+                    <>
+                      <p className="mt-1.5 text-[12.5px] text-foreground">
+                        Scheduled for {formatDateTime(sched.publish_at)}
+                      </p>
+                      <p className="mt-0.5 text-[12px] text-[var(--ui-soft)]">{sched.tolerance}</p>
+                      <div className="mt-3">
+                        <ConfirmDeleteButton
+                          label="Cancel scheduled publication"
+                          confirmText="Cancel publication"
+                          icon={null}
+                          onConfirm={() => cancel.mutate()}
+                          pending={cancel.isPending}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <FormField
+                        id="s-at"
+                        className="mt-2"
+                        label="Go live at"
+                        describedBy={!approved ? 'schedule-gate' : undefined}
+                      >
+                        {(p) => (
+                          <Input
+                            {...p}
+                            type="datetime-local"
+                            value={publishAt}
+                            onChange={(e) => setPublishAt(e.target.value)}
+                            disabled={!approved || sched.public_apply_enabled}
+                          />
+                        )}
+                      </FormField>
+                      {/* Not a FormField hint: the control is described only by
+                          the gate, so the reason a screen reader hears is the
+                          one that stops it. */}
+                      {sched.tolerance ? (
+                        <p className="mt-1 text-[12px] text-[var(--ui-soft)]">{sched.tolerance}</p>
+                      ) : null}
+                      <div className="mt-3">
+                        {/* Primary only once it can act: before approval, Submit for
                       approval is the one primary action on this card. */}
-                  <Button
-                    type="button"
-                    variant={approved ? 'default' : 'outline'}
-                    onClick={() => setSchedule.mutate()}
-                    disabled={
-                      setSchedule.isPending ||
-                      !approved ||
-                      !publishAt ||
-                      Boolean(schedule.data?.public_apply_enabled)
-                    }
-                    aria-describedby={!approved ? 'schedule-gate' : undefined}
-                  >
-                    {setSchedule.isPending ? 'Scheduling…' : 'Schedule'}
-                  </Button>
-                </div>
-                {!approved ? (
-                  <p
-                    id="schedule-gate"
-                    className="mt-2 flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]"
-                  >
-                    <AlertCircle size={12} aria-hidden="true" className="mt-0.5 shrink-0" />
-                    Scheduling needs budget approval (stage 3) first.
-                  </p>
-                ) : null}
-                {schedule.data?.public_apply_enabled ? (
-                  <p className="mt-2 text-[12px] text-[var(--ui-soft)]">
-                    This opening is already accepting applications.
-                  </p>
-                ) : null}
-              </>
-            )}
-            {schedule.data?.published_at ? (
-              <p className="mt-2 text-[12px] text-[var(--ui-soft)]">
-                Last published automatically on {formatDateTime(schedule.data.published_at)}.
-              </p>
-            ) : null}
+                        <Button
+                          type="button"
+                          variant={approved ? 'default' : 'outline'}
+                          onClick={() => setSchedule.mutate()}
+                          disabled={
+                            setSchedule.isPending ||
+                            !approved ||
+                            !publishAt ||
+                            sched.public_apply_enabled
+                          }
+                          aria-describedby={!approved ? 'schedule-gate' : undefined}
+                        >
+                          {setSchedule.isPending ? 'Scheduling…' : 'Schedule'}
+                        </Button>
+                      </div>
+                      {!approved ? (
+                        <p
+                          id="schedule-gate"
+                          className="mt-2 flex items-start gap-1.5 text-[12px] text-[var(--ui-warn)]"
+                        >
+                          <AlertCircle size={12} aria-hidden="true" className="mt-0.5 shrink-0" />
+                          Scheduling needs budget approval (stage 3) first.
+                        </p>
+                      ) : null}
+                      {sched.public_apply_enabled ? (
+                        <p className="mt-2 text-[12px] text-[var(--ui-soft)]">
+                          This opening is already accepting applications.
+                        </p>
+                      ) : null}
+                    </>
+                  )}
+                  {sched.published_at ? (
+                    <p className="mt-2 text-[12px] text-[var(--ui-soft)]">
+                      Last published automatically on {formatDateTime(sched.published_at)}.
+                    </p>
+                  ) : null}
+                </>
+              )}
+            </QueryState>
           </div>
         ) : null}
       </GlassCard>

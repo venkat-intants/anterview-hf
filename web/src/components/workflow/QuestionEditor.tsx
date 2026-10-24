@@ -31,18 +31,16 @@ import {
 import { toast } from '@/lib/toast';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { EmptyState } from '@/design/components/page';
-import { AlertCircle, Archive, Lock, Plus } from '@/design/components/icons';
+import { Archive, Lock, Plus } from '@/design/components/icons';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { errorMessage } from '@/lib/errorMessage';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
-
-// Native <select>/<textarea> in the same look as the shared Input.
-const FIELD =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-50';
-const SELECT = `${FIELD} h-11 py-0`;
-const LABEL = 'mb-1.5 block text-[13px] font-semibold text-foreground';
+import { Textarea } from '@/components/ui/textarea';
 
 const KIND_ORDER: QuestionKind[] = [
   'short_text',
@@ -67,8 +65,7 @@ function QuestionRow({
   const save = useMutation({
     mutationFn: (body: Parameters<typeof updateQuestion>[1]) => updateQuestion(question.id, body),
     onSuccess: (list) => client.setQueryData(['questions', requisitionId], list),
-    onError: (err: unknown) =>
-      toast.error(errorMessage(err, 'Could not save that change.')),
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not save that change.')),
   });
 
   const retire = useMutation({
@@ -176,8 +173,7 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
       setRequired(false);
       setOpen(false);
     },
-    onError: (err: unknown) =>
-      toast.error(errorMessage(err, 'Could not add that question.')),
+    onError: (err: unknown) => toast.error(errorMessage(err, 'Could not add that question.')),
   });
 
   if (!open) {
@@ -196,64 +192,56 @@ function NewQuestion({ requisitionId }: { requisitionId: string }) {
   return (
     <GlassCard className="p-4">
       <div className="flex flex-col gap-4">
-        <div>
-          <label htmlFor="new-question-prompt" className={LABEL}>
-            What do you want to ask?
-          </label>
-          <Input
-            id="new-question-prompt"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Why are you interested in this role?"
-          />
-        </div>
+        <FormField id="new-question-prompt" label="What do you want to ask?">
+          {(p) => (
+            <Input
+              {...p}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Why are you interested in this role?"
+            />
+          )}
+        </FormField>
 
-        <div>
-          <label htmlFor="new-question-kind" className={LABEL}>
-            Answer type
-          </label>
-          <select
-            id="new-question-kind"
-            value={kind}
-            onChange={(e) => setKind(e.target.value as QuestionKind)}
-            className={SELECT}
-          >
-            {KIND_ORDER.map((k) => (
-              <option key={k} value={k}>
-                {QUESTION_KIND_LABELS[k]}
-              </option>
-            ))}
-          </select>
-          {/* The type cannot be changed later, answered or not — changing it
-              would reinterpret every answer given. Said here, where it is
-              still a free choice. */}
-          <p className="mt-1.5 text-[12.5px] text-muted-foreground">
-            This cannot be changed later, so pick the one that fits.
-          </p>
-        </div>
+        {/* The type cannot be changed later, answered or not - changing it
+            would reinterpret every answer given. Said here, where it is
+            still a free choice. */}
+        <FormField
+          id="new-question-kind"
+          label="Answer type"
+          hint="This cannot be changed later, so pick the one that fits."
+        >
+          {(p) => (
+            <SelectControl
+              {...p}
+              value={kind}
+              onChange={(e) => setKind(e.target.value as QuestionKind)}
+            >
+              {KIND_ORDER.map((k) => (
+                <option key={k} value={k}>
+                  {QUESTION_KIND_LABELS[k]}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
 
         {needsOptions ? (
-          <div>
-            <label htmlFor="new-question-options" className={LABEL}>
-              Options, one per line
-            </label>
-            <textarea
-              id="new-question-options"
-              rows={3}
-              value={optionText}
-              onChange={(e) => setOptionText(e.target.value)}
-              placeholder={'Immediate\n30 days\n60 days'}
-              className={FIELD}
-            />
-            {!optionsOk ? (
-              <p
-                role="alert"
-                className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-[var(--ui-danger)]"
-              >
-                <AlertCircle size={13} aria-hidden="true" />A choice needs at least two options.
-              </p>
-            ) : null}
-          </div>
+          <FormField
+            id="new-question-options"
+            label="Options, one per line"
+            error={optionsOk ? undefined : 'A choice needs at least two options.'}
+          >
+            {(p) => (
+              <Textarea
+                {...p}
+                rows={3}
+                value={optionText}
+                onChange={(e) => setOptionText(e.target.value)}
+                placeholder={'Immediate\n30 days\n60 days'}
+              />
+            )}
+          </FormField>
         ) : null}
 
         <label className="flex min-h-10 cursor-pointer items-center gap-2 text-[14px] text-[var(--ui-soft)]">
@@ -299,8 +287,8 @@ export default function QuestionEditor({ requisitionId }: { requisitionId: strin
           Application questions
         </h2>
         <p className="mt-1 max-w-[62ch] text-[13px] leading-relaxed text-muted-foreground">
-          Asked on the application form, after the resume. Leave this empty and the form simply does not
-          have a questions step.
+          Asked on the application form, after the resume. Leave this empty and the form simply does
+          not have a questions step.
         </p>
       </div>
 
@@ -312,14 +300,12 @@ export default function QuestionEditor({ requisitionId }: { requisitionId: strin
       ) : null}
 
       {questions.isError ? (
-        <div role="alert" className="flex flex-wrap items-center gap-3">
-          <p className="text-[13.5px] text-muted-foreground">
-            Could not load the questions. Refresh to try again.
-          </p>
-          <Button type="button" variant="outline" onClick={() => void questions.refetch()}>
-            Try again
-          </Button>
-        </div>
+        <QueryErrorPanel
+          title="Could not load the questions."
+          error={questions.error}
+          onRetry={() => void questions.refetch()}
+          retrying={questions.isFetching}
+        />
       ) : null}
 
       {!questions.isLoading && !questions.isError && items.length === 0 ? (

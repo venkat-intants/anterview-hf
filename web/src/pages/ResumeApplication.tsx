@@ -56,6 +56,7 @@ import { PageHeader, SectionCard } from '@/design/components/page';
 import { AlertCircle, CheckCircle2, Loader2, Upload } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { LoadingSkeleton } from '@/components/candidate/LoadingSkeleton';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { PublicNext } from '@/components/PublicNext';
 import {
@@ -278,10 +279,7 @@ export default function ResumeApplication(): JSX.Element {
   if (draft.isLoading) {
     return (
       <Shell>
-        <p role="status" className="flex items-center gap-2 text-[14px] text-muted-foreground">
-          <Loader2 size={15} aria-hidden="true" className="animate-spin" />
-          {t('resumeApply.loading')}
-        </p>
+        <LoadingSkeleton label={t('resumeApply.loading')} />
       </Shell>
     );
   }

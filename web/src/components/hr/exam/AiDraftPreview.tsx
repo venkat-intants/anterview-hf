@@ -6,7 +6,7 @@ import { Plus, Check, Loader2, X } from '@/design/components/icons';
 import type { GeneratedQuestion } from '@/api/exams';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { plural } from '@/components/hr/exam/examEditorUi';
+import { plural } from '@/lib/formatters';
 
 interface AiDraftPreviewProps {
   drafts: GeneratedQuestion[];

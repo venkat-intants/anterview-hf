@@ -19,12 +19,11 @@ import { examEditorMutationKey, minutesToSeconds } from '@/lib/examEditor';
 import { errorMessage } from '@/lib/errorMessage';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { toast } from '@/lib/toast';
-import { cn } from '@/lib/utils';
 import { StatusTag } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { smallInputCls } from '@/components/hr/exam/examEditorUi';
 import { McqSection } from '@/components/hr/exam/McqSection';
 
 // Lazy-load CodingAuthoringSection to avoid importing the code-editor eagerly
@@ -98,21 +97,21 @@ export function SectionPanel({ examId, section, locked, onDelete, deleting }: Se
               });
             }}
           >
-            <input
+            <Input
               autoFocus
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
               maxLength={200}
-              className={cn(smallInputCls, 'min-w-[160px] flex-1')}
+              className="min-w-[160px] flex-1"
               aria-label="Section title"
             />
-            <input
+            <Input
               type="number"
               min={1}
               placeholder="No limit"
               value={minutesDraft}
               onChange={(e) => setMinutesDraft(e.target.value)}
-              className={cn(smallInputCls, 'w-28')}
+              className="w-28"
               aria-label="Section time limit in minutes (blank for no limit)"
             />
             <Button type="submit" disabled={renameMut.isPending} aria-busy={renameMut.isPending}>

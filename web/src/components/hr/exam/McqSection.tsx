@@ -21,7 +21,7 @@ import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { plural } from '@/components/hr/exam/examEditorUi';
+import { plural } from '@/lib/formatters';
 import { McqComposer } from '@/components/hr/exam/McqComposer';
 
 // ── MCQ section question list ─────────────────────────────────────────────────

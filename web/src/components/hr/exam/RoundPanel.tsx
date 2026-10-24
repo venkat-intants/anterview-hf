@@ -20,12 +20,13 @@ import { errorMessage } from '@/lib/errorMessage';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { statusLabel } from '@/lib/statusLabel';
 import { toast } from '@/lib/toast';
-import { cn } from '@/lib/utils';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { LockBanner } from '@/components/bank/LockBanner';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { Button } from '@/components/ui/button';
-import { smallInputCls, roundStatusTone } from '@/components/hr/exam/examEditorUi';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { roundStatusTone } from '@/components/hr/exam/examEditorUi';
 import { SectionPanel } from '@/components/hr/exam/SectionPanel';
 import { AddSectionForm } from '@/components/hr/exam/AddSectionForm';
 import { RoundAssignPanel } from '@/components/hr/exam/RoundAssignPanel';
@@ -241,12 +242,12 @@ export function RoundPanel({
               if (titleDraft.trim()) renameMut.mutate(titleDraft.trim());
             }}
           >
-            <input
+            <Input
               autoFocus
               value={titleDraft}
               onChange={(e) => setTitleDraft(e.target.value)}
               maxLength={200}
-              className={cn(smallInputCls, 'flex-1 text-[14px]')}
+              className="flex-1"
               aria-label="Round title"
             />
             <Button type="submit" disabled={renameMut.isPending} aria-busy={renameMut.isPending}>
@@ -348,41 +349,45 @@ export function RoundPanel({
               (audit E4): disabled while locked, so nothing can be typed that
               the server would refuse. */}
           <div className="flex flex-wrap items-end gap-4">
-            <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
-              <span className="uppercase tracking-[0.5px]">Pass threshold %</span>
-              <input
-                type="number"
-                min={0}
-                max={100}
-                value={thresholdDraft}
-                disabled={locked || thresholdMut.isPending}
-                onChange={(e) => setThresholdDraft(e.target.value)}
-                onBlur={() => {
-                  const v = parseThreshold(thresholdDraft, round.pass_threshold);
-                  setThresholdDraft(String(v));
-                  if (v !== round.pass_threshold) thresholdMut.mutate(v);
-                }}
-                className={cn(smallInputCls, 'w-24')}
-                aria-label="Pass threshold"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-[12px] text-muted-foreground">
-              <span className="uppercase tracking-[0.5px]">Time limit (min)</span>
-              <input
-                type="number"
-                min={1}
-                placeholder="No limit"
-                value={minutesDraft}
-                disabled={locked || timeLimitMut.isPending}
-                onChange={(e) => setMinutesDraft(e.target.value)}
-                onBlur={() => {
-                  const next = minutesToSeconds(minutesDraft);
-                  if (next !== round.time_limit_seconds) timeLimitMut.mutate(next);
-                }}
-                className={cn(smallInputCls, 'w-28')}
-                aria-label="Round time limit in minutes (blank for no limit)"
-              />
-            </label>
+            <FormField label="Pass threshold %">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={thresholdDraft}
+                  disabled={locked || thresholdMut.isPending}
+                  onChange={(e) => setThresholdDraft(e.target.value)}
+                  onBlur={() => {
+                    const v = parseThreshold(thresholdDraft, round.pass_threshold);
+                    setThresholdDraft(String(v));
+                    if (v !== round.pass_threshold) thresholdMut.mutate(v);
+                  }}
+                  className="w-24"
+                  aria-label="Pass threshold"
+                />
+              )}
+            </FormField>
+            <FormField label="Time limit (min)">
+              {(p) => (
+                <Input
+                  {...p}
+                  type="number"
+                  min={1}
+                  placeholder="No limit"
+                  value={minutesDraft}
+                  disabled={locked || timeLimitMut.isPending}
+                  onChange={(e) => setMinutesDraft(e.target.value)}
+                  onBlur={() => {
+                    const next = minutesToSeconds(minutesDraft);
+                    if (next !== round.time_limit_seconds) timeLimitMut.mutate(next);
+                  }}
+                  className="w-28"
+                  aria-label="Round time limit in minutes (blank for no limit)"
+                />
+              )}
+            </FormField>
             <label className="flex min-h-10 items-center gap-2 text-[12.5px] text-[var(--ui-soft)]">
               <input
                 type="checkbox"

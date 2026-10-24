@@ -462,6 +462,29 @@ function CriteriaPicker({
  * carries.
  */
 
+// The server's interview-kit limits (interview_kits.py MAX_ITEMS,
+// MAX_ITEM_CHARS, MAX_LONG_TEXT). Copied here so HR hears the limit beside the
+// field, before Save, instead of a generic sentence from a refused request.
+const KIT_MAX_LINES = 10;
+const KIT_MAX_LINE_CHARS = 300;
+const KIT_MAX_TEXT = 8000;
+
+/** What is wrong with one list's lines, or null. The line count is of what
+ *  is sent (trimmed, blanks dropped), but an over-long line is named by its
+ *  number in the textarea as typed, blanks included, so "Line 3" is the
+ *  third line the author sees. */
+function kitLinesProblem(lines: readonly string[]): string | null {
+  const sent = lines.map((x) => x.trim()).filter(Boolean);
+  if (sent.length > KIT_MAX_LINES) {
+    return `Keep it to ${KIT_MAX_LINES} lines. This has ${sent.length}.`;
+  }
+  const long = lines.findIndex((x) => x.trim().length > KIT_MAX_LINE_CHARS);
+  if (long >= 0) {
+    return `Line ${long + 1} is over ${KIT_MAX_LINE_CHARS} characters.`;
+  }
+  return null;
+}
+
 function LinesEditor({
   label,
   value,
@@ -473,8 +496,13 @@ function LinesEditor({
   editable: boolean;
   onChange: (next: string[]) => void;
 }) {
+  const problem = kitLinesProblem(value);
   return (
-    <FormField label={label}>
+    <FormField
+      label={label}
+      hint={`One per line, up to ${KIT_MAX_LINES} lines of ${KIT_MAX_LINE_CHARS} characters.`}
+      error={problem ?? undefined}
+    >
       {(p) => (
         <Textarea
           {...p}
@@ -570,6 +598,13 @@ function KitEditor({
     );
   }
 
+  // Save waits until every list is within the server's limits; each field
+  // already says what is wrong with it.
+  const kitInvalid = criteria.some((c) => {
+    const r = rows[c.id] ?? EMPTY_KIT_ROW;
+    return [r.what_to_evaluate, r.look_for, r.probes].some((l) => kitLinesProblem(l) !== null);
+  });
+
   const frozenFor = (id: string): string[] =>
     kit.data?.criteria.find((k) => k.competency_id === id)?.frozen_probes ?? [];
 
@@ -582,6 +617,7 @@ function KitEditor({
             value={instructions}
             disabled={!editable}
             onChange={(e) => setInstructions(e.target.value)}
+            maxLength={KIT_MAX_TEXT}
             rows={2}
           />
         )}
@@ -593,6 +629,7 @@ function KitEditor({
             value={notes}
             disabled={!editable}
             onChange={(e) => setNotes(e.target.value)}
+            maxLength={KIT_MAX_TEXT}
             rows={2}
           />
         )}
@@ -648,7 +685,7 @@ function KitEditor({
         <Button
           type="button"
           onClick={() => saveMut.mutate()}
-          disabled={saveMut.isPending}
+          disabled={saveMut.isPending || kitInvalid}
           className="self-start"
         >
           {saveMut.isPending ? 'Saving…' : 'Save interview kit'}

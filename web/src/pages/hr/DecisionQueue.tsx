@@ -56,7 +56,7 @@ import CandidateDrawer from '@/components/CandidateDrawer';
 import { codeEvidenceLabel, hasCodeEvidence } from '@/lib/codeEvidenceLabel';
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
-import { formatDateTime } from '@/lib/formatters';
+import { formatDateTime, formatScore } from '@/lib/formatters';
 import { statusLabel } from '@/lib/statusLabel';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { cn } from '@/lib/utils';
@@ -218,11 +218,11 @@ function CandidateList({
                   {waitingText(r) ? ` · ${waitingText(r)}` : ''}
                 </span>
                 <span className="flex gap-3 text-[12.5px] tabular-nums text-muted-foreground">
-                  {r.ats_overall !== null ? <span>Resume {r.ats_overall}</span> : null}
+                  {r.ats_overall !== null ? <span>Resume {formatScore('resume', r.ats_overall)}</span> : null}
                   {r.composite_percent != null ? (
-                    <span>Avg {Math.round(r.composite_percent)}%</span>
+                    <span>Avg {formatScore('round', r.composite_percent)}</span>
                   ) : r.best_percent !== null ? (
-                    <span>Best {Math.round(r.best_percent)}%</span>
+                    <span>Best {formatScore('round', r.best_percent)}</span>
                   ) : null}
                   <span>
                     {r.rounds_taken} round{r.rounds_taken === 1 ? '' : 's'}
@@ -530,13 +530,13 @@ function DecisionPanel({
                 {row.rounds_taken} round{row.rounds_taken === 1 ? '' : 's'} taken
               </span>
               {row.composite_percent != null ? (
-                <span>average across rounds {Math.round(row.composite_percent)}%</span>
+                <span>average across rounds {formatScore('round', row.composite_percent)}</span>
               ) : row.best_percent !== null ? (
-                <span>best {Math.round(row.best_percent)}%</span>
+                <span>best {formatScore('round', row.best_percent)}</span>
               ) : null}
               {row.ats_overall !== null ? (
                 <span>
-                  resume match {row.ats_overall}
+                  resume match {formatScore('resume', row.ats_overall)}
                   {row.ats_recommendation ? ` (${row.ats_recommendation})` : ''}
                 </span>
               ) : null}
@@ -572,7 +572,7 @@ function DecisionPanel({
                         ? r.graded_by === 'human'
                           ? 'reviewed'
                           : '-'
-                        : `${Math.round(r.percent)}%`}
+                        : formatScore('round', r.percent)}
                     </span>
                     {r.passed !== null ? (
                       <span className={r.passed ? 'text-[var(--ui-ok)]' : 'text-[var(--ui-warn)]'}>
@@ -712,7 +712,7 @@ function DecisionPanel({
                 <span>
                   <span className="block text-[14px] font-semibold text-foreground">Hire</span>
                   <span className="block text-[12.5px] text-muted-foreground">
-                    Ends their candidacy for this opening. Needs a reason.
+                    Marks them hired for this opening and records it. Needs a reason.
                   </span>
                 </span>
               </button>

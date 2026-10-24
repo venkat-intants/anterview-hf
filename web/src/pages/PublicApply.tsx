@@ -44,7 +44,12 @@ import {
 import { isTransientApiError } from '@/api/client';
 import { ApplyQuestionField } from '@/components/candidate/ApplyQuestionField';
 import { requiredAnswered as allRequiredAnswered } from '@/components/candidate/applyAnswers';
-import { levelLabel, pageLanguage, useCandidateError } from '@/lib/candidateCopy';
+import {
+  applicationResultText,
+  levelLabel,
+  pageLanguage,
+  useCandidateError,
+} from '@/lib/candidateCopy';
 import { useAuth } from '@/context/AuthContext';
 import { isGuestOnly } from '@/lib/guest';
 import {
@@ -156,11 +161,13 @@ function Submitted({
   const { t } = useTranslation();
   return (
     <Shell company={company}>
+      {/* The sentence comes from `already_applied`, not the server's English
+          `message`, so a Hindi or Telugu applicant reads it in their language. */}
       <PublicNotice
         tone="ok"
         icon={<CheckCircle2 size={22} aria-hidden="true" />}
         title={result.already_applied ? t('apply.alreadyApplied') : t('apply.received')}
-        description={result.message}
+        description={applicationResultText(t, result)}
       />
       {/* Said plainly because the alternative — silence — is what makes
           candidates assume they were rejected. */}

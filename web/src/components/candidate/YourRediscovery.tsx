@@ -19,6 +19,7 @@
 
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { formatDate, uiLocale } from '@/lib/formatters';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   listMyRediscovery,
@@ -31,12 +32,6 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Section } from '@/design/components/rows';
 import { StatusTag } from '@/design/components/primitives';
-
-function localeFor(lang: string): string {
-  if (lang.startsWith('hi')) return 'hi-IN';
-  if (lang.startsWith('te')) return 'te-IN';
-  return 'en-IN';
-}
 
 function CompanyRow({
   company,
@@ -93,7 +88,7 @@ function CompanyRow({
             {company.state === 'on'
               ? company.expires_at
                 ? t('rediscovery.onUntil', {
-                    date: new Date(company.expires_at).toLocaleDateString(locale),
+                    date: formatDate(company.expires_at, locale),
                   })
                 : t('rediscovery.on')
               : t('rediscovery.off')}
@@ -165,7 +160,7 @@ function CompanyRow({
 
 export default function YourRediscovery(): JSX.Element | null {
   const { t, i18n } = useTranslation();
-  const locale = localeFor(i18n.language);
+  const locale = uiLocale(i18n.language);
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['me', 'rediscovery'],

@@ -182,7 +182,7 @@ export default function MyAvailability(): JSX.Element {
                       deleted, like every other delete (consistency B3). */}
                   <ConfirmDeleteButton
                     title={`Delete the window ${from} to ${to}`}
-                    confirmText="Delete"
+                    confirmText="Delete window"
                     confirmGroupLabel={`Delete the window ${from} to ${to}`}
                     pending={removeMut.isPending && removeMut.variables === w.id}
                     onConfirm={() => removeMut.mutate(w.id)}

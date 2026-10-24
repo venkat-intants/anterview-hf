@@ -122,6 +122,27 @@ describe('ExamAttemptDetail - the Code evidence tab', () => {
     expect(screen.queryByText('MCQ correct')).not.toBeInTheDocument();
   });
 
+  it('reads "Not graded", not "Failed", for a scored attempt with no verdict yet', async () => {
+    // Re-audit (exams): with a score but passed === null the header fell
+    // through to a red "Failed" while the stat card said "not graded yet".
+    listAttempts.mockResolvedValue([{ ...ATTEMPT, passed: null }]);
+    getAttemptBreakdown.mockResolvedValue({ ...CODING_BREAKDOWN, passed: null });
+    renderAttempt();
+
+    expect(await screen.findByText('Not graded')).toBeInTheDocument();
+    expect(screen.getByText('not graded yet')).toBeInTheDocument();
+    expect(screen.queryByText('Failed')).not.toBeInTheDocument();
+  });
+
+  it('still reads "Failed" for a graded attempt that did not pass', async () => {
+    listAttempts.mockResolvedValue([{ ...ATTEMPT, score_percent: 30, passed: false }]);
+    getAttemptBreakdown.mockResolvedValue({ ...CODING_BREAKDOWN, score_percent: 30, passed: false });
+    renderAttempt();
+
+    expect(await screen.findByText('Failed')).toBeInTheDocument();
+    expect(screen.queryByText('Not graded')).not.toBeInTheDocument();
+  });
+
   it('has no Code evidence tab for a pure MCQ attempt', async () => {
     getAttemptBreakdown.mockResolvedValue({
       attempt_id: 'a-1',

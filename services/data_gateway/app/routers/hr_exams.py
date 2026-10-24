@@ -269,6 +269,11 @@ class ExamOut(BaseModel):
 class ExamSummaryOut(ExamOut):
     question_count: int
     attempt_count: int
+    # The distinct pass marks of the exam's live rounds, ascending. Passing is
+    # decided per round, and ``pass_threshold`` above only seeded round 1 at
+    # creation, so the exam card states these rather than the exam-level one.
+    # Empty only for a legacy exam with no rounds.
+    round_pass_thresholds: list[int] = Field(default_factory=list)
 
 
 class ExamDetailOut(ExamOut):
@@ -667,12 +672,32 @@ async def list_exams(
     stmt = stmt.order_by(Exam.created_at.desc())
     exams = (await db.execute(stmt)).scalars().all()
 
+    marks: dict[uuid.UUID, list[int]] = {}
+    if exams:
+        rows = (
+            await db.execute(
+                select(ExamRound.exam_id, ExamRound.pass_threshold)
+                .where(
+                    ExamRound.company_id == company_id,
+                    ExamRound.exam_id.in_([e.id for e in exams]),
+                    ExamRound.deleted_at.is_(None),
+                )
+                .distinct()
+                .order_by(ExamRound.exam_id, ExamRound.pass_threshold)
+            )
+        ).tuples().all()
+        for exam_id, mark in rows:
+            marks.setdefault(exam_id, []).append(int(mark))
+
     out: list[ExamSummaryOut] = []
     for e in exams:
         qn = await _question_count(db, e)
         an = await _attempt_count(db, company_id, e.id)
         out.append(
-            ExamSummaryOut(**_exam_out(e).model_dump(), question_count=qn, attempt_count=an)
+            ExamSummaryOut(
+                **_exam_out(e).model_dump(), question_count=qn, attempt_count=an,
+                round_pass_thresholds=marks.get(e.id, []),
+            )
         )
     return out
 

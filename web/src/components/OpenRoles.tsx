@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { listOpenRoles, type OpenRole } from '@/api/applications';
 import { buttonVariants } from '@/components/ui/button';
+import { LoadErrorPanel } from '@/components/candidate/LoadErrorPanel';
 import { Skeleton } from '@/components/ui/skeleton';
 import { StatusTag } from '@/design/components/primitives';
 import { Building2, Check, ChevronDown } from '@/design/components/icons';
@@ -133,7 +134,26 @@ function RoleCard({ role }: { role: OpenRole }) {
   );
 }
 
-export default function OpenRoles() {
+/** True when `role` matches the search: its title or company, ignoring case. */
+function roleMatches(role: OpenRole, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    role.title.toLowerCase().includes(q) ||
+    role.company_name.toLowerCase().includes(q)
+  );
+}
+
+interface OpenRolesProps {
+  /**
+   * The page's search (the box on the Jobs page, seeded from the top bar's
+   * ?q=). It filters these jobs as well as the practice catalogue: a search for
+   * a job someone wants to apply to must reach the section that applies.
+   */
+  searchQuery?: string;
+}
+
+export default function OpenRoles({ searchQuery = '' }: OpenRolesProps = {}) {
   const { t } = useTranslation();
   const roles = useQuery({
     queryKey: ['open-roles'],
@@ -143,11 +163,13 @@ export default function OpenRoles() {
     throwOnError: false,
   });
 
-  const items = roles.data ?? [];
+  const all = roles.data ?? [];
+  const items = all.filter((role) => roleMatches(role, searchQuery));
 
   // Nothing open is a real answer, and a section that renders an empty box on
   // a page that also has practice roles just adds confusion. It disappears.
-  if (!roles.isLoading && !roles.isError && items.length === 0) return null;
+  // A search that matches none of the open jobs is different: it says so.
+  if (!roles.isLoading && !roles.isError && all.length === 0) return null;
 
   return (
     <section aria-labelledby="open-roles-heading" className="mb-10">
@@ -164,8 +186,16 @@ export default function OpenRoles() {
       </div>
 
       {roles.isError ? (
-        <p role="alert" className="text-[14px] text-[var(--ui-danger)]">
-          {t('jobs.openRolesError')}
+        <LoadErrorPanel
+          title={t('jobs.openRolesError')}
+          onRetry={() => void roles.refetch()}
+          retrying={roles.isFetching}
+        />
+      ) : null}
+
+      {all.length > 0 && items.length === 0 ? (
+        <p role="status" className="text-[14px] text-muted-foreground">
+          {t('jobs.openRolesNoMatch', { q: searchQuery.trim() })}
         </p>
       ) : null}
 

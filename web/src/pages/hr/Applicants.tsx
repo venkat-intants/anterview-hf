@@ -740,7 +740,7 @@ function ApplicantRow({
         </div>
       </TableCell>
 
-      {/* Role */}
+      {/* Opening */}
       <TableCell className={cn(TD, 'max-w-[220px]')}>
         <div className="truncate text-[14px] text-foreground">{a.target_job_title}</div>
         <div className="text-[13px] text-muted-foreground">{a.target_level}</div>
@@ -1017,7 +1017,7 @@ function UploadSection({
                     variant="ghost"
                     size="icon"
                     aria-label={`Remove ${f.name}`}
-                    className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-transparent hover:text-[var(--ui-danger)]"
+                    className="shrink-0 text-muted-foreground hover:bg-transparent hover:text-[var(--ui-danger)]"
                     onClick={() => onFileRemove(i)}
                   >
                     <X size={13} aria-hidden="true" />
@@ -1333,7 +1333,7 @@ export default function Applicants() {
       <PageHeader
         className="mb-0"
         title="Applicants"
-        description="Screen resumes in bulk. Drop in many resumes at once - each candidate's name & email are read straight from the resume, AI-scored against the role, then ranked."
+        description="Screen resumes in bulk. Drop in many resumes at once - each applicant's name & email are read straight from the resume, AI-scored against the role, then ranked."
       />
 
       {/* Upload panel */}
@@ -1421,7 +1421,7 @@ export default function Applicants() {
                   size="icon"
                   onClick={() => setQuery('')}
                   aria-label="Clear search"
-                  className="h-8 w-8 shrink-0 text-muted-foreground"
+                  className="shrink-0 text-muted-foreground"
                 >
                   <X size={14} aria-hidden="true" />
                 </Button>
@@ -1451,7 +1451,7 @@ export default function Applicants() {
           <EmptyState
             size="page"
             icon={Users}
-            title={searching || statusParam ? 'No matching candidates' : 'No applicants yet'}
+            title={searching || statusParam ? 'No matching applicants' : 'No applicants yet'}
             description={
               searching
                 ? 'Try a broader phrase or different keywords.'
@@ -1469,10 +1469,10 @@ export default function Applicants() {
               <TableHeader className="[&_tr]:border-b-0">
                 <TableRow className="border-b-0 hover:bg-transparent">
                   <TableHead scope="col" className={cn(TH, 'w-[30%]')}>
-                    Candidate
+                    Applicant
                   </TableHead>
                   <TableHead scope="col" className={TH}>
-                    Role
+                    Opening
                   </TableHead>
                   <TableHead scope="col" className={TH}>
                     Status

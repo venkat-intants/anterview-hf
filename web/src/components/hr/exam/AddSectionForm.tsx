@@ -90,7 +90,12 @@ export function AddSectionForm({ examId, roundId, onAdded, onClose }: AddSection
         className="w-24"
         aria-label="Section time limit in minutes"
       />
-      <Button type="submit" disabled={addSectionMut.isPending} aria-busy={addSectionMut.isPending}>
+      <Button
+        type="submit"
+        variant="outline"
+        disabled={addSectionMut.isPending}
+        aria-busy={addSectionMut.isPending}
+      >
         {addSectionMut.isPending ? (
           <Loader2 className="animate-spin" aria-hidden="true" />
         ) : (

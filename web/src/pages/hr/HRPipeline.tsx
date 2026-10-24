@@ -28,6 +28,7 @@ import {
 import { DecisionReasonSelect } from '@/components/hr/DecisionReasonSelect';
 import { minReasonLength, reasonsFor, useDecisionReasons } from '@/lib/decisionReasons';
 import { errorMessage } from '@/lib/errorMessage';
+import { formatScore } from '@/lib/formatters';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { toast } from '@/lib/toast';
 import CandidateDrawer from '@/components/CandidateDrawer';
@@ -129,6 +130,12 @@ const STAGE_TABS: { value: PipelineStage; label: string }[] = [
 ];
 
 /* ── Score display ──────────────────────────────────────────────────────────── */
+
+/** The chosen Hire / Reject toggle: a tinted outline, so the confirm button
+ *  below stays the only filled button on the card. */
+const TOGGLE_ON =
+  'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]';
+const TOGGLE_ON_DANGER = 'border-[var(--ui-danger)] text-[var(--ui-danger)]';
 
 function StageScore({
   value,
@@ -250,9 +257,9 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
         {/* Exam score */}
         <div className="hidden items-center gap-1 sm:flex">
           <StageScore
-            value={a.best_exam_percent}
+            value={a.best_exam_percent !== null ? formatScore('exam', a.best_exam_percent, { unit: false }) : null}
             tone={scoreToneClass(a.best_exam_percent)}
-            unit="exam %"
+            unit="exam"
           />
           {a.exam_passed === true && (
             <ClipboardCheck size={14} className="text-[var(--ui-ok)]" aria-label="Exam passed" />
@@ -324,7 +331,10 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
               <p className="mb-1.5 text-[12px] font-semibold text-muted-foreground">Exam</p>
               <div className="flex items-center gap-2">
                 <span className={cn('text-[18px] font-bold', scoreToneClass(a.best_exam_percent))}>
-                  {a.best_exam_percent !== null ? `${a.best_exam_percent}%` : '-'}
+                  {formatScore('exam', a.best_exam_percent, { unit: false })}
+                  {a.best_exam_percent !== null ? (
+                    <span className="text-[12px] font-normal text-muted-foreground">/100</span>
+                  ) : null}
                 </span>
                 {a.total_exam_attempts > 0 && (
                   <span className="text-[13px] text-muted-foreground">
@@ -391,8 +401,11 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                 {canHire && (
                   <Button
                     type="button"
-                    variant={outcome === 'hired' ? 'default' : 'outline'}
+                    // A chosen toggle, not a second primary: Confirm hire is
+                    // the one primary on this card (UI-CONVENTIONS Buttons).
+                    variant="outline"
                     aria-pressed={outcome === 'hired'}
+                    className={cn(outcome === 'hired' && TOGGLE_ON)}
                     onClick={() => chooseOutcome('hired')}
                     disabled={decideMut.isPending}
                   >
@@ -403,8 +416,9 @@ function PipelineCard({ a, onOpen }: { a: Row; onOpen: () => void }) {
                 {canReject && (
                   <Button
                     type="button"
-                    variant={outcome === 'rejected' ? 'destructive' : 'outline'}
+                    variant="outline"
                     aria-pressed={outcome === 'rejected'}
+                    className={cn(outcome === 'rejected' && TOGGLE_ON_DANGER)}
                     onClick={() => chooseOutcome('rejected')}
                     disabled={decideMut.isPending}
                   >

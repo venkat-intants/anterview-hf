@@ -163,6 +163,21 @@ describe('InterviewLoopsSection - creating a loop', () => {
     );
     expect(toastSuccess).toHaveBeenCalledWith('Interview loop created');
   });
+
+  it('draws the open form toggle as a ghost Cancel, not a link (A3)', async () => {
+    schedulingApi.listLoopsForEnrolment.mockResolvedValue([]);
+    const user = userEvent.setup();
+    renderSection();
+
+    await screen.findByText('No interview loop yet for this application.');
+    const toggle = screen.getByRole('button', { name: 'New loop' });
+    expect(toggle.className).toContain('underline-offset-4');
+    await user.click(toggle);
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    expect(cancel).toHaveAttribute('aria-expanded', 'true');
+    expect(cancel.className).not.toContain('underline-offset-4');
+    expect(cancel.className).toContain('hover:bg-accent');
+  });
 });
 
 describe('InterviewLoopsSection - adding a session', () => {
@@ -270,9 +285,17 @@ describe('InterviewLoopsSection - a session’s controls', () => {
     const user = userEvent.setup();
     renderSection();
 
-    await user.click(await screen.findByRole('button', { name: 'Mark completed' }));
+    const markCompleted = await screen.findByRole('button', { name: 'Mark completed' });
+    // Re-audit: confirmed, but a positive outcome is not drawn as destructive,
+    // while the no-show beside it keeps the danger look.
+    expect(markCompleted.className).not.toMatch(/danger|destructive/);
+    expect(screen.getByRole('button', { name: 'Mark no-show' }).className).toMatch(/danger/);
+    await user.click(markCompleted);
     // Permanent, so the first click only arms it (IV-M7).
     expect(schedulingApi.setSessionOutcome).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Mark completed' }).className).not.toMatch(
+      /danger|destructive/,
+    );
     await user.click(screen.getByRole('button', { name: 'Mark completed' }));
     await waitFor(() => expect(schedulingApi.setSessionOutcome).toHaveBeenCalledWith('sess-1', 'completed', null));
   });
@@ -417,7 +440,10 @@ describe('InterviewLoopsSection - sending again (IV-M8)', () => {
     const user = userEvent.setup();
     renderSection();
 
-    await user.click(await screen.findByRole('button', { name: 'Resend schedule' }));
+    const resend = await screen.findByRole('button', { name: 'Resend schedule' });
+    // A resend is confirmed (it emails everyone again) but is not destructive.
+    expect(resend.className).not.toMatch(/danger|destructive/);
+    await user.click(resend);
     expect(schedulingApi.sendLoop).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Resend to candidate' }));
     await waitFor(() => expect(schedulingApi.sendLoop).toHaveBeenCalledWith('loop-1'));
@@ -474,7 +500,10 @@ describe('InterviewLoopsSection - cancelling and outcomes (IV-M6, IV-M7)', () =>
         'Interviewer ill',
       ),
     );
-    expect(toastSuccess).toHaveBeenCalledWith('Interview cancelled. The loop is now cancelled.');
+    // A short title; the loop note is the description (feedback-copy rule).
+    expect(toastSuccess).toHaveBeenCalledWith('Interview cancelled', {
+      description: 'The loop is now cancelled.',
+    });
   });
 
   it('backs out of the cancel step with Keep, sending nothing', async () => {
@@ -506,7 +535,9 @@ describe('InterviewLoopsSection - cancelling and outcomes (IV-M6, IV-M7)', () =>
     await waitFor(() =>
       expect(schedulingApi.setSessionOutcome).toHaveBeenCalledWith('sess-1', 'no_show', null),
     );
-    expect(toastSuccess).toHaveBeenCalledWith('Marked as no-show. The loop is now completed.');
+    expect(toastSuccess).toHaveBeenCalledWith('Marked as no-show', {
+      description: 'The loop is now completed.',
+    });
   });
 
   it('keeps a cancelled interview listed, with no controls', async () => {

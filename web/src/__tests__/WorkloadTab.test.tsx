@@ -92,6 +92,21 @@ describe('WorkloadTab - states', () => {
   });
 });
 
+describe('WorkloadTab - hours', () => {
+  it('shows hours to one decimal, not the raw float (re-audit)', async () => {
+    // Four 20-minute interviews: the server sends 1.3333333333333333.
+    const base = workload().interviewers[0];
+    schedulingApi.getWorkload.mockResolvedValue(
+      workload({ interviewers: [{ ...base, hours: 4 / 3 }] }),
+    );
+    renderTab();
+
+    const label = await screen.findByText('Hours');
+    expect(label.nextElementSibling).toHaveTextContent(/^1\.3$/);
+    expect(screen.queryByText(/1\.33/)).not.toBeInTheDocument();
+  });
+});
+
 describe('WorkloadTab - flags in words', () => {
   it('states every flag as a sentence, never colour alone', async () => {
     schedulingApi.getWorkload.mockResolvedValue(workload());

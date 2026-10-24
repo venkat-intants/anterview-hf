@@ -8,6 +8,7 @@ import { useAccentColor } from '@/lib/useAccentColor';
 import { SelectControl } from '@/components/ui/select-control';
 import { FormField } from '@/components/ui/form-field';
 import { CONTROL_HEIGHT } from '@/components/ui/control-styles';
+import { useTabKeys } from '@/lib/tabKeys';
 
 /* ─────────────────────────  AnimatedNumber  ───────────────────────── */
 
@@ -417,18 +418,53 @@ interface SegTabsProps {
   active: string;
   onChange: (key: string) => void;
   className?: string;
+  /**
+   * Set when each tab switches a PANEL: tab `key` then gets the id
+   * `tabIds(idBase, key).tab` and `aria-controls` names
+   * `tabIds(idBase, key).panel` (lib/tabKeys), so the caller wraps each panel
+   * in `role="tabpanel"` with that id and `aria-labelledby` the tab id. Left
+   * out, the tabs name no panel (several callers use the bar as a filter over
+   * one list, where there is no panel to point at).
+   */
+  idBase?: string;
+  /** The tab list's accessible name, e.g. "Interview panel sections". */
+  label?: string;
 }
 
-export function SegTabs({ tabs, active, onChange, className }: SegTabsProps): JSX.Element {
+/** A segmented tab bar. Keyboard per the WAI-ARIA tabs pattern (IV-L14):
+ *  arrow keys move and select, Home/End jump to the ends, and only the
+ *  selected tab is in the Tab order. */
+export function SegTabs({
+  tabs,
+  active,
+  onChange,
+  className,
+  idBase,
+  label,
+}: SegTabsProps): JSX.Element {
+  const autoId = useId();
+  const base = idBase ?? `segtabs-${autoId.replace(/:/g, '')}`;
+  const keys = tabs.map((t) => t.key);
+  const nav = useTabKeys({ idBase: base, keys, active, onChange });
+  // With no tab selected (an unknown `active`), the first stays reachable.
+  const focusable = keys.includes(active) ? active : keys[0];
   return (
-    <div className={cn('inline-flex items-center gap-1 rounded-pill bg-[var(--ui-inset-strong)] p-1', className)} role="tablist">
+    <div
+      className={cn('inline-flex items-center gap-1 rounded-pill bg-[var(--ui-inset-strong)] p-1', className)}
+      role="tablist"
+      aria-label={label}
+      {...nav.tabListProps}
+    >
       {tabs.map((t) => {
         const on = t.key === active;
+        const { 'aria-controls': controls, ...tabProps } = nav.tabProps(t.key);
         return (
           <button
             key={t.key}
-            role="tab"
-            aria-selected={on}
+            type="button"
+            {...tabProps}
+            tabIndex={t.key === focusable ? 0 : -1}
+            aria-controls={idBase ? controls : undefined}
             onClick={() => onChange(t.key)}
             className={cn(
               'rounded-pill px-3.5 py-1.5 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]',

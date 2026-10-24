@@ -464,3 +464,95 @@ async def test_a_decided_application_cannot_be_invited(
         "applicant_id": str(seed["a2"]), "enrolment_id": str(seed["e2"]),
     }, headers=_auth(seed["hr"]))
     assert r.status_code == 409, r.text
+
+
+async def _eligible_flags(
+    client: AsyncClient, hr: uuid.UUID, enrolment: uuid.UUID,
+) -> tuple[bool, bool]:
+    r = await client.get("/hr/interviews/eligible-applicants?source=any", headers=_auth(hr))
+    assert r.status_code == 200, r.text
+    row = next(x for x in r.json() if x["enrolment_id"] == str(enrolment))
+    return row["has_active_invite"], row["has_started_invite"]
+
+
+async def test_the_eligible_list_flags_only_a_link_the_candidate_can_still_use(
+    client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
+) -> None:
+    # Re-audit (interviews, has_active_invite): an expired link and a finished
+    # interview were both reported as "already invited", so the form claimed
+    # the old link would stop working and offered a replacement the server
+    # then refused for a started interview.
+    h = _auth(seed["hr"])
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
+    assert await _eligible_flags(client, seed["hr"], seed["e1"]) == (False, False)
+
+    invite = (await client.post("/hr/interviews", json=body, headers=h)).json()["invite_id"]
+    assert await _eligible_flags(client, seed["hr"], seed["e1"]) == (True, False)
+
+    # Lapsed but never swept: still 'invited' on disk, no longer usable.
+    await committed_db.execute(text(
+        "UPDATE interview_invites SET expires_at = now() - interval '1 minute' WHERE id = :i"
+    ), {"i": invite})
+    await committed_db.commit()
+    assert await _eligible_flags(client, seed["hr"], seed["e1"]) == (False, False)
+
+    # Started and not over: active AND started, so the form must not offer a
+    # replacement.
+    await committed_db.execute(text(
+        "UPDATE interview_invites SET expires_at = now() + interval '1 day' WHERE id = :i"
+    ), {"i": invite})
+    await committed_db.commit()
+    sid = await _start(committed_db, invite, seed["hr"])
+    assert await _eligible_flags(client, seed["hr"], seed["e1"]) == (True, True)
+    # The server agrees: replacing that started interview is refused.
+    r = await client.post("/hr/interviews", json={**body, "replace_existing": True}, headers=h)
+    assert r.status_code == 409 and "already started" in r.json()["detail"], r.text
+
+    # Dropped out ('abandoned' stays reconnectable): still started.
+    await committed_db.execute(
+        text("UPDATE sessions SET status = 'abandoned' WHERE id = :s"), {"s": sid}
+    )
+    await committed_db.commit()
+    assert await _eligible_flags(client, seed["hr"], seed["e1"]) == (True, True)
+
+    # A started link past its expiry redeems nothing: neither flag.
+    await committed_db.execute(text(
+        "UPDATE interview_invites SET expires_at = now() - interval '1 minute' WHERE id = :i"
+    ), {"i": invite})
+    await committed_db.commit()
+    assert await _eligible_flags(client, seed["hr"], seed["e1"]) == (False, False)
+
+    # Finished (the worker marked the session completed) while still in date:
+    # neither flag.
+    await committed_db.execute(text(
+        "UPDATE interview_invites SET expires_at = now() + interval '1 day' WHERE id = :i"
+    ), {"i": invite})
+    await committed_db.execute(
+        text("UPDATE sessions SET status = 'completed' WHERE id = :s"), {"s": sid}
+    )
+    await committed_db.commit()
+    assert await _eligible_flags(client, seed["hr"], seed["e1"]) == (False, False)
+
+
+async def test_a_scored_interview_is_not_an_active_invite(
+    client: AsyncClient, committed_db: AsyncSession, seed: dict[str, uuid.UUID],
+) -> None:
+    h = _auth(seed["hr"])
+    body = {"applicant_id": str(seed["a1"]), "enrolment_id": str(seed["e1"])}
+    invite = (await client.post("/hr/interviews", json=body, headers=h)).json()["invite_id"]
+    # Scored while the session row still says in_progress (the worker had not
+    # caught up): the scorecard alone ends it, as in _interview_finished.
+    sid = await _start(committed_db, invite, seed["hr"])
+    assert await _eligible_flags(client, seed["hr"], seed["e1"]) == (True, True)
+    await committed_db.execute(text(
+        "INSERT INTO scorecards (scorecard_id, session_id, scores, summary, lang, created_at)"
+        " VALUES (:sc, :s, '{}'::jsonb, 'ok', 'en', now())"
+    ), {"sc": uuid.uuid4(), "s": sid})
+    await committed_db.commit()
+    try:
+        assert await _eligible_flags(client, seed["hr"], seed["e1"]) == (False, False)
+    finally:
+        await committed_db.execute(
+            text("DELETE FROM scorecards WHERE session_id = :s"), {"s": sid}
+        )
+        await committed_db.commit()

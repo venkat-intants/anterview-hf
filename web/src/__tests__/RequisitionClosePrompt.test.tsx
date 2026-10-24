@@ -108,10 +108,15 @@ function dash(over: Partial<RequisitionDashboard['requisition']> = {}): Requisit
   };
 }
 
-/** Close, then confirm it (HR-L16: closing takes the listing down, so it asks). */
+/**
+ * Close, and confirm it if the page asks inline (HR-L16: closing takes the
+ * listing down). With candidates still undecided there is no inline confirm:
+ * Close opens the close-anyway dialog itself, so that is the one question.
+ */
 async function closeOpening(user: ReturnType<typeof userEvent.setup>): Promise<void> {
   await user.click(await screen.findByRole('button', { name: 'Close' }));
-  await user.click(await screen.findByRole('button', { name: 'Close opening' }));
+  const inline = screen.queryByRole('button', { name: 'Close opening' });
+  if (inline) await user.click(inline);
 }
 
 function renderPage() {
@@ -194,12 +199,13 @@ describe('closing an opening (AC-12)', () => {
     setRequisitionStatus.mockRejectedValue(new UnresolvedCandidatesError(3, 'x'));
     renderPage();
     await closeOpening(user);
+    const sent = setRequisitionStatus.mock.calls.length;
     await user.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     await waitFor(() =>
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
     );
-    expect(setRequisitionStatus).toHaveBeenCalledTimes(1);
+    expect(setRequisitionStatus).toHaveBeenCalledTimes(sent);
   });
 
   it('is a modal that returns focus to Close when the manager backs out', async () => {
@@ -207,6 +213,7 @@ describe('closing an opening (AC-12)', () => {
     setRequisitionStatus.mockRejectedValue(new UnresolvedCandidatesError(3, 'x'));
     renderPage();
     await closeOpening(user);
+    const sent = setRequisitionStatus.mock.calls.length;
 
     const dialog = await screen.findByRole('dialog');
     await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
@@ -214,7 +221,7 @@ describe('closing an opening (AC-12)', () => {
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus());
-    expect(setRequisitionStatus).toHaveBeenCalledTimes(1);
+    expect(setRequisitionStatus).toHaveBeenCalledTimes(sent);
   });
 
   it('does not prompt when everyone is already settled', async () => {
@@ -239,6 +246,7 @@ describe('closing an opening (AC-12)', () => {
 describe('closing an opening - what the count means (HR-M6)', () => {
   it('separates those waiting on a decision from those still in progress', async () => {
     const user = userEvent.setup();
+    getRequisitionDashboard.mockResolvedValue(dash({ unresolved: 5 }));
     setRequisitionStatus.mockRejectedValue(new UnresolvedCandidatesError(5, 'x'));
     renderPage();
     await closeOpening(user);
@@ -264,14 +272,41 @@ describe('closing an opening - what the count means (HR-M6)', () => {
 });
 
 describe('closing asks first (HR-L16)', () => {
-  it('sends nothing until the close is confirmed, and Keep open backs out', async () => {
+  it('sends nothing until the close is confirmed, and Cancel backs out', async () => {
     const user = userEvent.setup();
+    getRequisitionDashboard.mockResolvedValue(dash({ awaiting_decision: 0 }));
     renderPage();
     await user.click(await screen.findByRole('button', { name: 'Close' }));
     expect(setRequisitionStatus).not.toHaveBeenCalled();
-    await user.click(screen.getByRole('button', { name: 'Keep open' }));
+    expect(screen.queryByRole('button', { name: 'Keep open' })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByRole('button', { name: 'Close opening' })).not.toBeInTheDocument();
     expect(setRequisitionStatus).not.toHaveBeenCalled();
+  });
+
+  it('asks once, not twice, when candidates are still undecided', async () => {
+    // The inline "Close it?" and then the 409 dialog were two questions for
+    // one close. With a known count, Close opens the dialog straight away,
+    // and the dialog carries the listing warning the inline confirm had.
+    const user = userEvent.setup();
+    getRequisitionDashboard.mockResolvedValue(dash({ unresolved: 4, awaiting_decision: 3 }));
+    setRequisitionStatus.mockResolvedValue({ ...dash().requisition, status: 'closed' });
+    renderPage();
+    await user.click(await screen.findByRole('button', { name: 'Close' }));
+
+    expect(screen.queryByRole('button', { name: 'Close opening' })).toBeNull();
+    const dialog = await screen.findByRole('dialog');
+    expect(dialog.textContent).toMatch(/4 candidates still undecided/);
+    expect(dialog.textContent).toMatch(/careers listing comes down now/);
+    expect(setRequisitionStatus).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: /Close anyway/ }));
+    await waitFor(() =>
+      expect(setRequisitionStatus).toHaveBeenCalledWith('req-1', 'closed', {
+        acknowledgeUnresolved: true,
+      }),
+    );
+    expect(setRequisitionStatus).toHaveBeenCalledTimes(1);
   });
 });
 

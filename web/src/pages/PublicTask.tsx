@@ -38,7 +38,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useCandidateError } from '@/lib/candidateCopy';
+import { pageLanguage, useCandidateError } from '@/lib/candidateCopy';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, isTransientApiError } from '@/api/client';
 import {
@@ -1328,7 +1328,7 @@ function SubmittedScreen({
 /* ── Page ───────────────────────────────────────────────────────────────── */
 
 export default function PublicTask(): JSX.Element {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const qc = useQueryClient();
 
   // SECURITY: token from the URL #fragment — never a path param or query
@@ -1376,7 +1376,11 @@ export default function PublicTask(): JSX.Element {
             // The server's own sentence when there is one — every failure it
             // can produce for a bad link reads the same, on purpose (no
             // oracle), so this is not paraphrased into a more specific claim.
-            view.error instanceof ApiError && view.error.message
+            // That sentence is English, so a Hindi or Telugu page shows the
+            // localised one, which is just as uniform (audit CA-M21).
+            pageLanguage(i18n.language) === 'en' &&
+            view.error instanceof ApiError &&
+            view.error.message
               ? view.error.message
               : t('task.invalidDesc')
           }

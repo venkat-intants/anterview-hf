@@ -69,11 +69,13 @@ export default function AvailabilityTab(): JSX.Element {
       // A window that starts after the period shown is saved but would not
       // appear below, which read as "it did not save".
       const beyond = new Date(localInputToIso(startLocal)).getTime() >= Date.parse(range.end);
-      toast.success(
-        beyond
-          ? 'Availability added. It starts after the period shown; choose a longer range to see it.'
-          : 'Availability added',
-      );
+      if (beyond) {
+        toast.success('Availability added', {
+          description: 'It starts after the period shown. Choose a longer range to see it.',
+        });
+      } else {
+        toast.success('Availability added');
+      }
       setStartLocal('');
       setEndLocal('');
       invalidate();
@@ -84,10 +86,10 @@ export default function AvailabilityTab(): JSX.Element {
   const removeMut = useMutation({
     mutationFn: (windowId: string) => removeInterviewerAvailability(windowId),
     onSuccess: () => {
-      toast.success('Window removed');
+      toast.success('Window deleted');
       invalidate();
     },
-    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not remove the window.')),
+    onError: (e: unknown) => toast.error(errorMessage(e, 'Could not delete the window.')),
   });
 
   const rows = windows.data ?? [];
@@ -221,9 +223,11 @@ export default function AvailabilityTab(): JSX.Element {
                     className="flex items-center justify-between gap-2 rounded-[9px] border border-border px-3 py-1 text-[12.5px] text-foreground"
                   >
                     <span>{label}</span>
+                    {/* A permanent delete, so it says Delete (glossary), as the
+                        interviewer's own availability list does. */}
                     <ConfirmDeleteButton
-                      title={`Remove the window ${label}`}
-                      confirmText="Remove window"
+                      title={`Delete the window ${label}`}
+                      confirmText="Delete window"
                       pending={removeMut.isPending && removeMut.variables === w.id}
                       onConfirm={() => removeMut.mutate(w.id)}
                     />

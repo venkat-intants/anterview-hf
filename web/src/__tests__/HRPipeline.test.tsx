@@ -238,6 +238,34 @@ describe('HRPipeline - hire / reject', () => {
     expect(within(cardFor('Esha Rao')).queryByRole('button', { name: /^reject$/i })).not.toBeInTheDocument();
   });
 
+  it('keeps Confirm the only filled button once an outcome is chosen', async () => {
+    const user = userEvent.setup();
+    renderPipeline();
+    const card = await expand(user, 'Esha Rao');
+    for (const [toggle, confirm] of [
+      [/^hire$/i, 'Confirm hire'],
+      [/^reject$/i, 'Confirm reject'],
+    ] as const) {
+      const chosen = within(card).getByRole('button', { name: toggle });
+      await user.click(chosen);
+      expect(chosen).toHaveAttribute('aria-pressed', 'true');
+      expect(chosen.className).not.toMatch(/\bbg-primary\b|\bbg-destructive-solid\b/);
+      const filled = within(card)
+        .getAllByRole('button')
+        .filter((b) => /\bbg-primary\b|\bbg-destructive-solid\b/.test(b.className));
+      expect(filled.map((b) => b.textContent)).toEqual([confirm]);
+    }
+  });
+
+  it('shows the exam score out of 100 in the expanded card, not as a percent', async () => {
+    const user = userEvent.setup();
+    renderPipeline();
+    const card = await expand(user, 'Esha Rao');
+    expect(within(card).queryByText('58%')).toBeNull();
+    const exam = within(card).getByText('Exam').parentElement as HTMLElement;
+    expect(exam.textContent).toMatch(/58\/100/);
+  });
+
   it('will not confirm without a reason code chosen', async () => {
     const user = userEvent.setup();
     renderPipeline();

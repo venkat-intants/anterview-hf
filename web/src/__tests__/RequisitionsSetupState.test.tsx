@@ -151,17 +151,17 @@ describe('GovernancePanel sections', () => {
     wrap(<GovernancePanel requisition={opening({ id: 'r' })} section="approval" />);
     expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Save budget' })).toBeTruthy();
-    expect(screen.queryByLabelText('Go live at')).toBeNull();
+    expect(screen.queryByLabelText(/^Go live at/)).toBeNull();
     await new Promise((r) => setTimeout(r, 20));
     expect(m.getPublishSchedule).not.toHaveBeenCalled();
   });
 
   it('schedule: only the schedule, with the reason beside a disabled control', async () => {
     wrap(<GovernancePanel requisition={opening({ id: 'r' })} section="schedule" />);
-    expect(await screen.findByLabelText('Go live at')).toBeTruthy();
+    expect(await screen.findByLabelText(/^Go live at/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Submit for approval' })).toBeNull();
     expect(screen.queryByLabelText('Budget amount')).toBeNull();
-    const input = screen.getByLabelText('Go live at');
+    const input = screen.getByLabelText(/^Go live at/);
     expect(document.getElementById(input.getAttribute('aria-describedby') as string)?.textContent).toMatch(
       /needs budget approval/i,
     );
@@ -170,7 +170,7 @@ describe('GovernancePanel sections', () => {
   it('default: both, as before', async () => {
     wrap(<GovernancePanel requisition={opening({ id: 'r', approval_status: 'approved' })} />);
     expect(screen.getByLabelText('Budget amount')).toBeTruthy();
-    expect(await screen.findByLabelText('Go live at')).toBeTruthy();
-    expect(screen.getByLabelText('Go live at').getAttribute('aria-describedby')).toBeNull();
+    expect(await screen.findByLabelText(/^Go live at/)).toBeTruthy();
+    expect(screen.getByLabelText(/^Go live at/).getAttribute('aria-describedby')).toBeNull();
   });
 });

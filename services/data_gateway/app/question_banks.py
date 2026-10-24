@@ -951,16 +951,23 @@ async def get_question(db: AsyncSession, *, company_id: uuid.UUID, qid: uuid.UUI
             .order_by(BankQuestion.version.asc())
         )
     ).scalars().all()
+    # The same "live" test as _USAGE_SQL (the bank's "Used in N exams"): a
+    # deleted exam, or a copy in a deleted section, is not a use, so the
+    # question detail and the bank card cannot disagree.
     usage = (
         await db.execute(
             text(
                 "SELECT e.exam_id AS exam_id, x.title AS exam_title FROM exam_questions e"
-                " JOIN exams x ON x.id = e.exam_id"
+                " JOIN exams x ON x.id = e.exam_id AND x.deleted_at IS NULL"
+                " LEFT JOIN exam_sections s ON s.id = e.section_id"
                 " WHERE e.source_bank_root_id = :r AND e.company_id = :c AND e.deleted_at IS NULL"
+                "   AND s.deleted_at IS NULL"
                 " UNION"
                 " SELECT c.exam_id AS exam_id, x.title AS exam_title FROM coding_questions c"
-                " JOIN exams x ON x.id = c.exam_id"
+                " JOIN exams x ON x.id = c.exam_id AND x.deleted_at IS NULL"
+                " LEFT JOIN exam_sections s ON s.id = c.section_id"
                 " WHERE c.source_bank_root_id = :r AND c.company_id = :c AND c.deleted_at IS NULL"
+                "   AND s.deleted_at IS NULL"
             ),
             {"r": q.root_id, "c": company_id},
         )

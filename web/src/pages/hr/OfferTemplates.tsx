@@ -21,13 +21,14 @@ import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { GlassCard } from '@/design/components/primitives';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { QueryErrorPanel } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Textarea } from '@/components/ui/textarea';
+import { plural } from '@/lib/formatters';
 import { Page, PageHeader, Toolbar } from '@/design/components/page';
-
-const inputCls =
-  'mt-1 w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
-const labelCls = 'text-[12px] font-medium text-[var(--ui-soft)]';
 
 const EMPLOYMENT_TYPES: EmploymentType[] = ['full_time', 'part_time', 'contract', 'internship'];
 const PAY_PERIODS: PayPeriod[] = ['annual', 'monthly', 'hourly'];
@@ -154,152 +155,134 @@ function TemplateForm({
 
   return (
     <div className="flex flex-col gap-2.5">
-      <div>
-        <label htmlFor={`${uid}-name`} className={labelCls}>
-          Name
-        </label>
-        <input
-          id={`${uid}-name`}
-          maxLength={LIMITS.name}
-          value={form.name}
-          onChange={(e) => set('name', e.target.value)}
-          className={inputCls}
-        />
-      </div>
+      <FormField id={`${uid}-name`} label="Name">
+        {(p) => (
+          <Input
+            {...p}
+            maxLength={LIMITS.name}
+            value={form.name}
+            onChange={(e) => set('name', e.target.value)}
+          />
+        )}
+      </FormField>
       <div className="grid grid-cols-2 gap-2.5">
-        <div>
-          <label htmlFor={`${uid}-type`} className={labelCls}>
-            Employment type
-          </label>
-          <select
-            id={`${uid}-type`}
-            value={form.employment_type}
-            onChange={(e) => set('employment_type', e.target.value)}
-            className={inputCls}
-          >
-            {EMPLOYMENT_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t.replace('_', ' ')}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor={`${uid}-period`} className={labelCls}>
-            Pay period
-          </label>
-          <select
-            id={`${uid}-period`}
-            value={form.pay_period}
-            onChange={(e) => set('pay_period', e.target.value)}
-            className={inputCls}
-          >
-            {PAY_PERIODS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor={`${uid}-currency`} className={labelCls}>
-            Currency
-          </label>
-          <input
-            id={`${uid}-currency`}
-            value={form.currency}
-            onChange={(e) => set('currency', e.target.value.toUpperCase())}
-            maxLength={3}
-            className={inputCls}
-          />
-        </div>
-        <div>
-          <label htmlFor={`${uid}-valid`} className={labelCls}>
-            Valid for (days)
-          </label>
-          <input
-            id={`${uid}-valid`}
-            type="number"
-            min={1}
-            max={60}
-            step={1}
-            required
-            value={form.valid_days}
-            onChange={(e) => set('valid_days', e.target.value)}
-            className={inputCls}
-          />
-        </div>
-        <div>
-          <label htmlFor={`${uid}-probation`} className={labelCls}>
-            Probation (months)
-          </label>
-          <input
-            id={`${uid}-probation`}
-            type="number"
-            min={0}
-            max={24}
-            step={1}
-            value={form.probation_months}
-            onChange={(e) => set('probation_months', e.target.value)}
-            className={inputCls}
-          />
-        </div>
-        <div>
-          <label htmlFor={`${uid}-notice`} className={labelCls}>
-            Notice period (days)
-          </label>
-          <input
-            id={`${uid}-notice`}
-            type="number"
-            min={0}
-            max={365}
-            step={1}
-            value={form.notice_period_days}
-            onChange={(e) => set('notice_period_days', e.target.value)}
-            className={inputCls}
-          />
-        </div>
+        <FormField id={`${uid}-type`} label="Employment type">
+          {(p) => (
+            <SelectControl
+              {...p}
+              value={form.employment_type}
+              onChange={(e) => set('employment_type', e.target.value)}
+            >
+              {EMPLOYMENT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {t.replace('_', ' ')}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
+        <FormField id={`${uid}-period`} label="Pay period">
+          {(p) => (
+            <SelectControl
+              {...p}
+              value={form.pay_period}
+              onChange={(e) => set('pay_period', e.target.value)}
+            >
+              {PAY_PERIODS.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
+        <FormField id={`${uid}-currency`} label="Currency">
+          {(p) => (
+            <Input
+              {...p}
+              value={form.currency}
+              onChange={(e) => set('currency', e.target.value.toUpperCase())}
+              maxLength={3}
+            />
+          )}
+        </FormField>
+        <FormField id={`${uid}-valid`} label="Valid for (days)">
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={1}
+              max={60}
+              step={1}
+              required
+              value={form.valid_days}
+              onChange={(e) => set('valid_days', e.target.value)}
+            />
+          )}
+        </FormField>
+        <FormField id={`${uid}-probation`} label="Probation (months)">
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={0}
+              max={24}
+              step={1}
+              value={form.probation_months}
+              onChange={(e) => set('probation_months', e.target.value)}
+            />
+          )}
+        </FormField>
+        <FormField id={`${uid}-notice`} label="Notice period (days)">
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={0}
+              max={365}
+              step={1}
+              value={form.notice_period_days}
+              onChange={(e) => set('notice_period_days', e.target.value)}
+            />
+          )}
+        </FormField>
       </div>
-      <div>
-        <label htmlFor={`${uid}-benefits`} className={labelCls}>
-          Benefits
-        </label>
-        <textarea
-          id={`${uid}-benefits`}
-          rows={2}
-          maxLength={LIMITS.benefits}
-          value={form.benefits}
-          onChange={(e) => set('benefits', e.target.value)}
-          className={inputCls}
-        />
-      </div>
-      <div>
-        <label htmlFor={`${uid}-terms`} className={labelCls}>
-          Terms
-        </label>
-        <textarea
-          id={`${uid}-terms`}
-          rows={3}
-          maxLength={LIMITS.terms}
-          value={form.terms}
-          onChange={(e) => set('terms', e.target.value)}
-          className={inputCls}
-        />
-      </div>
+      <FormField id={`${uid}-benefits`} label="Benefits">
+        {(p) => (
+          <Textarea
+            {...p}
+            rows={2}
+            maxLength={LIMITS.benefits}
+            value={form.benefits}
+            onChange={(e) => set('benefits', e.target.value)}
+          />
+        )}
+      </FormField>
+      <FormField id={`${uid}-terms`} label="Terms">
+        {(p) => (
+          <Textarea
+            {...p}
+            rows={3}
+            maxLength={LIMITS.terms}
+            value={form.terms}
+            onChange={(e) => set('terms', e.target.value)}
+          />
+        )}
+      </FormField>
       {showProblem ? (
         <p id={`${uid}-problem`} className="text-[12.5px] text-[var(--ui-warn)]">
           {problem}
         </p>
       ) : null}
-      <button
+      <Button
         type="button"
         disabled={problem !== null || saving}
         aria-describedby={showProblem ? `${uid}-problem` : undefined}
         onClick={() => onSave(toBody(form))}
-        className="self-start rounded-[10px] bg-primary px-4 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+        className="self-start"
       >
         {saving ? 'Saving…' : submitLabel}
-      </button>
+      </Button>
     </div>
   );
 }
@@ -333,15 +316,15 @@ function TemplateRow({ template }: { template: OfferTemplate }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-[14px] font-medium text-foreground">{template.name}</h3>
         <div className="flex items-center gap-2">
-          <button
+          <Button
             type="button"
+            variant="ghost"
             onClick={() => setEditing((v) => !v)}
             aria-label={editing ? `Cancel editing ${template.name}` : `Edit ${template.name}`}
             aria-expanded={editing}
-            className="min-h-[40px] rounded-full px-3 text-[13px] font-medium text-[var(--ui-info)] hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
           >
             {editing ? 'Cancel' : 'Edit'}
-          </button>
+          </Button>
           <ConfirmDeleteButton
             title={`Delete ${template.name}`}
             confirmText="Delete"
@@ -407,26 +390,27 @@ export default function OfferTemplates() {
           <>
             {list.data ? (
               <span className="text-[13px] tabular-nums text-muted-foreground" role="status">
-                {rows.length} of {list.data.length} template{list.data.length === 1 ? '' : 's'}
+                {rows.length} of {plural(list.data.length, 'template')}
               </span>
             ) : null}
-            <button
+            <Button
               type="button"
+              variant={creating ? 'ghost' : 'outline'}
+              aria-expanded={creating}
               onClick={() => setCreating((v) => !v)}
-              className="min-h-[40px] rounded-full border border-[var(--ui-line-strong)] px-4 py-1.5 text-[13px] font-medium text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             >
               {creating ? 'Cancel' : 'New template'}
-            </button>
+            </Button>
           </>
         }
       >
-        <input
+        <Input
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search templates"
           aria-label="Search templates"
-          className="min-h-[40px] w-full min-w-[200px] rounded-[10px] border border-border bg-secondary px-3 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] sm:max-w-[320px]"
+          className="min-w-[200px] sm:max-w-[320px]"
         />
       </Toolbar>
 

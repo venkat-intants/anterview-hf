@@ -49,19 +49,14 @@ import { browserTimezone } from '@/lib/timezone';
 import { StatusTag, Avatar, type TagTone } from '@/design/components/primitives';
 import { PageHeader, SectionCard, EmptyState, Toolbar, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { QueryErrorPanel, QueryState } from '@/components/QueryState';
 import { initialsOf } from '@/design/data/shared';
-
-/* ── Field styling ────────────────────────────────────────────────────────── */
-
-const inputCls =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 ' +
-  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] transition-colors ' +
-  'focus-visible:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
-
-const labelCls = 'mb-1 block text-[13px] font-semibold text-foreground';
 
 /** The row grid shared by the header and every invite row. Every track is
  *  bounded (minmax(0, …)) and the action column has a fixed width, so a row
@@ -418,8 +413,9 @@ function InviteRow({
               starts, the session already carries the mode and the server 409s,
               so showing a live control would be a lie. */}
           {isLive ? (
-            <select
-              className="h-9 shrink-0 rounded-[10px] border border-border bg-secondary px-2 text-[12.5px] text-foreground focus:border-[var(--accent)] focus:outline-none disabled:opacity-40"
+            <SelectControl
+              size="sm"
+              className="w-auto shrink-0"
               value={modeValue}
               disabled={pendingMode !== null}
               onChange={(e) => onSetMode(inv.invite_id, e.target.value as AvatarMode)}
@@ -427,7 +423,7 @@ function InviteRow({
             >
               <option value="avatar">Video avatar</option>
               <option value="audio">Audio only</option>
-            </select>
+            </SelectControl>
           ) : (
             <span
               className="shrink-0 text-[12.5px] text-muted-foreground"
@@ -437,16 +433,18 @@ function InviteRow({
             </span>
           )}
           {inv.can_reschedule && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               aria-label={`Reschedule interview for ${inv.applicant_name}`}
               aria-expanded={editingSched}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40 hover:bg-[var(--ui-inset)] hover:text-[var(--ui-info)]"
+              className="shrink-0 text-muted-foreground hover:text-[var(--ui-info)]"
               disabled={rescheduling}
               onClick={() => (editingSched ? setEditingSched(false) : openReschedule())}
             >
-              <Pencil size={14} aria-hidden="true" />
-            </button>
+              <Pencil aria-hidden="true" />
+            </Button>
           )}
           {isLive && (
             <ConfirmDeleteButton
@@ -479,16 +477,16 @@ function InviteRow({
       {/* End a started interview: a reason, then a confirm */}
       {isStarted && endingOpen && (
         <div className="mt-3 space-y-1.5 pl-[2.875rem]">
-          <label htmlFor={endId} className={labelCls}>
+          <label htmlFor={endId} className={cn(fieldLabelClass, 'mb-1 block')}>
             Why are you ending this interview?
           </label>
           <div className="flex flex-wrap items-center gap-2">
-            <select
+            <SelectControl
               id={endId}
               ref={endInputRef}
               value={endReason}
               onChange={(e) => setEndReason(e.target.value as EndInterviewReason | '')}
-              className="h-10 min-w-[18rem] flex-1 rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
+              className="w-auto min-w-[18rem] flex-1"
               aria-describedby={`${endId}-hint`}
             >
               <option value="">Choose a reason</option>
@@ -497,7 +495,7 @@ function InviteRow({
                   {r.label}
                 </option>
               ))}
-            </select>
+            </SelectControl>
             {endReason ? (
               <ConfirmDeleteButton
                 label="End interview"
@@ -507,14 +505,16 @@ function InviteRow({
                 onConfirm={() => onEnd(inv.invite_id, endReason, () => setEndingOpen(false))}
               />
             ) : null}
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               aria-label="Close end interview"
-              className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="text-muted-foreground"
               onClick={() => setEndingOpen(false)}
             >
-              <X size={13} aria-hidden="true" />
-            </button>
+              <X aria-hidden="true" />
+            </Button>
           </div>
           <p id={`${endId}-hint`} className="text-[12px] text-muted-foreground">
             Their link stops working at once, so they cannot reconnect. The reason is kept in the
@@ -526,25 +526,27 @@ function InviteRow({
       {/* Reschedule inline form */}
       {editingSched && (
         <div className="mt-3 space-y-1.5 pl-[2.875rem]">
-          <label htmlFor={schedId} className={labelCls}>
+          <label htmlFor={schedId} className={cn(fieldLabelClass, 'mb-1 block')}>
             New interview time (your time, {tz})
           </label>
           <div className="flex flex-wrap items-center gap-2">
-            <input
+            <Input
               id={schedId}
               ref={schedInputRef}
               type="datetime-local"
               min={nowLocalInput()}
               value={schedDraft}
               onChange={(e) => setSchedDraft(e.target.value)}
-              className="h-10 rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
+              className="w-auto"
               aria-describedby={`${schedId}-hint`}
             />
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="icon"
               aria-label={`Save new time for ${inv.applicant_name}`}
               disabled={!schedDraft || rescheduling}
-              className="flex h-10 w-10 items-center justify-center rounded-full border border-[var(--ui-ok)]/45 text-[var(--ui-ok)] transition-colors hover:bg-[var(--ui-ok-wash)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-40"
+              className="border-[var(--ui-ok)]/45 text-[var(--ui-ok)] hover:border-[var(--ui-ok)]/45 hover:bg-[var(--ui-ok-wash)] hover:text-[var(--ui-ok)]"
               onClick={() => {
                 if (!schedDraft) return;
                 // Closed only once the server has accepted it, so a refusal
@@ -555,19 +557,21 @@ function InviteRow({
               }}
             >
               {rescheduling ? (
-                <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                <Loader2 className="animate-spin" aria-hidden="true" />
               ) : (
-                <Check size={13} aria-hidden="true" />
+                <Check aria-hidden="true" />
               )}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               aria-label="Close reschedule"
-              className="flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="text-muted-foreground"
               onClick={() => setEditingSched(false)}
             >
-              <X size={13} aria-hidden="true" />
-            </button>
+              <X aria-hidden="true" />
+            </Button>
           </div>
           <p id={`${schedId}-hint`} className="text-[12px] text-muted-foreground">
             The candidate can start within {JOIN_WINDOW_MINUTES} minutes of this time. We email them
@@ -757,58 +761,52 @@ export default function HRInterviews() {
       >
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-4">
-            <div className="sm:col-span-2">
-              <label htmlFor={`${formId}-applicant`} className={labelCls}>
-                Applicant
-              </label>
-              <select
-                id={`${formId}-applicant`}
-                className={inputCls}
-                value={choice}
-                onChange={(e) => setChoice(e.target.value)}
-                disabled={eligibleQuery.isError && !eligibleQuery.data}
-              >
-                <option value="">Select an eligible applicant…</option>
-                {elig.map((a) => (
-                  <option key={keyOf(a)} value={keyOf(a)}>
-                    {a.full_name} - {a.passed_exam ? 'exam passed' : 'shortlisted'}
-                    {a.has_active_invite ? ' (already invited)' : ''}
-                    {a.opening_title ? ` · for ${a.opening_title}` : ''}
-                  </option>
-                ))}
-              </select>
-            </div>
+            <FormField id={`${formId}-applicant`} label="Applicant" className="sm:col-span-2">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  value={choice}
+                  onChange={(e) => setChoice(e.target.value)}
+                  disabled={eligibleQuery.isError && !eligibleQuery.data}
+                >
+                  <option value="">Select an eligible applicant…</option>
+                  {elig.map((a) => (
+                    <option key={keyOf(a)} value={keyOf(a)}>
+                      {a.full_name} - {a.passed_exam ? 'exam passed' : 'shortlisted'}
+                      {a.has_active_invite ? ' (already invited)' : ''}
+                      {a.opening_title ? ` · for ${a.opening_title}` : ''}
+                    </option>
+                  ))}
+                </SelectControl>
+              )}
+            </FormField>
 
-            <div>
-              <label htmlFor={`${formId}-language`} className={labelCls}>
-                Interview language
-              </label>
-              <select
-                id={`${formId}-language`}
-                className={inputCls}
-                value={language}
-                onChange={(e) => setLanguage(e.target.value as 'en' | 'hi' | 'te')}
-              >
-                <option value="en">English</option>
-                <option value="hi">हिंदी</option>
-                <option value="te">తెలుగు</option>
-              </select>
-            </div>
+            <FormField id={`${formId}-language`} label="Interview language">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as 'en' | 'hi' | 'te')}
+                >
+                  <option value="en">English</option>
+                  <option value="hi">हिंदी</option>
+                  <option value="te">తెలుగు</option>
+                </SelectControl>
+              )}
+            </FormField>
 
-            <div>
-              <label htmlFor={`${formId}-mode`} className={labelCls}>
-                Interview mode
-              </label>
-              <select
-                id={`${formId}-mode`}
-                className={inputCls}
-                value={avatarMode}
-                onChange={(e) => setAvatarMode(e.target.value as AvatarMode)}
-              >
-                <option value="avatar">Video avatar</option>
-                <option value="audio">Audio only</option>
-              </select>
-            </div>
+            <FormField id={`${formId}-mode`} label="Interview mode">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  value={avatarMode}
+                  onChange={(e) => setAvatarMode(e.target.value as AvatarMode)}
+                >
+                  <option value="avatar">Video avatar</option>
+                  <option value="audio">Audio only</option>
+                </SelectControl>
+              )}
+            </FormField>
           </div>
 
           {eligibleQuery.isError && !eligibleQuery.data ? (
@@ -826,24 +824,21 @@ export default function HRInterviews() {
             a weak connection. The questions, scoring and scorecard are identical either way.
           </p>
 
-          <div>
-            <label htmlFor={`${formId}-when`} className={labelCls}>
-              Interview time (optional, your time, {tz})
-            </label>
-            <input
-              id={`${formId}-when`}
-              type="datetime-local"
-              className={inputCls}
-              min={nowLocalInput()}
-              value={scheduledAt}
-              onChange={(e) => setScheduledAt(e.target.value)}
-              aria-describedby={`${formId}-when-hint`}
-            />
-            <p id={`${formId}-when-hint`} className="mt-1 text-[12px] text-muted-foreground">
-              With a time set, the candidate can start within {JOIN_WINDOW_MINUTES} minutes of it.
-              Leave it empty to let them start any time before the link expires.
-            </p>
-          </div>
+          <FormField
+            id={`${formId}-when`}
+            label={`Interview time (optional, your time, ${tz})`}
+            hint={`With a time set, the candidate can start within ${JOIN_WINDOW_MINUTES} minutes of it. Leave it empty to let them start any time before the link expires.`}
+          >
+            {(p) => (
+              <Input
+                {...p}
+                type="datetime-local"
+                min={nowLocalInput()}
+                value={scheduledAt}
+                onChange={(e) => setScheduledAt(e.target.value)}
+              />
+            )}
+          </FormField>
 
           {chosen?.has_active_invite ? (
             <div className="space-y-2">
@@ -886,20 +881,22 @@ export default function HRInterviews() {
                 added it to their applications page. Here is a copy, shown once:
               </p>
               <div className="flex items-center gap-2">
-                <input
+                <Input
                   readOnly
                   value={mintedLink}
-                  className="h-10 min-w-0 flex-1 rounded-[12px] border border-input bg-card px-3 text-[13px] text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  className="min-w-0 flex-1"
                   aria-label="Magic interview link"
                 />
-                <button
+                <Button
                   type="button"
+                  variant="ghost"
+                  size="icon"
                   aria-label="Copy interview link"
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-[var(--ui-ok)] transition-colors hover:bg-[var(--ui-ok-wash)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                  className="shrink-0 text-[var(--ui-ok)] hover:bg-[var(--ui-ok-wash)] hover:text-[var(--ui-ok)]"
                   onClick={() => void copyLink(mintedLink)}
                 >
-                  <Copy size={16} aria-hidden="true" />
-                </button>
+                  <Copy aria-hidden="true" />
+                </Button>
               </div>
             </div>
           )}

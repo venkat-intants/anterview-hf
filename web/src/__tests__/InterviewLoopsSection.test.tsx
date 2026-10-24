@@ -124,7 +124,7 @@ describe('InterviewLoopsSection - loading/error/empty', () => {
   it('shows a loading state', () => {
     schedulingApi.listLoopsForEnrolment.mockImplementation(() => new Promise(() => undefined));
     renderSection();
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByLabelText('Loading the interview schedule')).toHaveAttribute('aria-busy', 'true');
   });
 
   it('shows an error state on failure', async () => {

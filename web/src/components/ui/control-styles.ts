@@ -1,5 +1,5 @@
 // One look for every form control: Input, Textarea, SelectControl (whose look
-// comes from the base layer in index.css) and the Radix SelectTrigger.
+// comes from the base layer in index.css).
 //
 //   height 40px (`md`, the default) or 36px (`sm`, toolbars and dense rows)
 //   radius 10px · 1px --input border, stronger on hover · card fill

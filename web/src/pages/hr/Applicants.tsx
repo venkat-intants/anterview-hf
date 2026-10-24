@@ -47,7 +47,20 @@ import { cn } from '@/lib/utils';
 import { StatusTag, Avatar, SegTabs, type TagTone } from '@/design/components/primitives';
 import { PageHeader, SectionCard, EmptyState, Toolbar, Page } from '@/design/components/page';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { Textarea } from '@/components/ui/textarea';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { errorMessage } from '@/lib/errorMessage';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
@@ -157,13 +170,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
   }, [value, delayMs]);
   return debounced;
 }
-
-// ── Input base class ─────────────────────────────────────────────────────────
-
-const inputCls =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 ' +
-  'text-[14px] text-foreground placeholder:text-[var(--ui-faint)] transition-colors ' +
-  'focus-visible:outline-none focus-visible:border-[var(--accent)] focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 // ── Shortlist, gated on where the application stands (HR-M4) ────────────────
 //
@@ -297,21 +303,14 @@ function RejectAction({
         value={reasonCode}
         onChange={setReasonCode}
       />
-      <div>
-        <label
-          htmlFor={`reject-why-${idSuffix}`}
-          className="mb-1 block text-[13px] font-semibold text-foreground"
-        >
-          Why{chosen?.requires_explanation ? ` (at least ${minLen} characters)` : ''}
-        </label>
-        <textarea
-          id={`reject-why-${idSuffix}`}
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          rows={2}
-          className={inputCls}
-        />
-      </div>
+      <FormField
+        id={`reject-why-${idSuffix}`}
+        label={`Why${chosen?.requires_explanation ? ` (at least ${minLen} characters)` : ''}`}
+      >
+        {(p) => (
+          <Textarea {...p} value={reason} onChange={(e) => setReason(e.target.value)} rows={2} />
+        )}
+      </FormField>
       {!canConfirm ? (
         <p className="text-[12px] text-[var(--ui-warn)]">
           {!reasonCode ? 'Choose a reason first.' : `Write at least ${minLen} characters.`}
@@ -689,7 +688,7 @@ function ApplicantDrawer({
 // ── Table row ─────────────────────────────────────────────────────────────────
 
 const TH =
-  'sticky top-0 z-10 border-b border-border bg-[var(--ui-inset-soft)] px-4 py-3 text-left text-[12px] font-semibold uppercase tracking-[0.04em] text-muted-foreground first:pl-6 last:pr-6';
+  'sticky top-0 z-10 h-auto border-b border-border bg-[var(--ui-inset-soft)] px-4 py-3 text-left text-[12px] font-semibold uppercase tracking-[0.04em] text-muted-foreground first:pl-6 last:pr-6';
 const TD = 'px-4 py-3 align-middle first:pl-6 last:pr-6';
 
 /**
@@ -710,7 +709,7 @@ function ApplicantRow({
   const rec = atsInfo(a);
 
   return (
-    <tr
+    <TableRow
       onClick={() => onSelect(a)}
       data-selected={isSelected ? 'true' : undefined}
       className={cn(
@@ -719,7 +718,7 @@ function ApplicantRow({
       )}
     >
       {/* Candidate */}
-      <td className={TD}>
+      <TableCell className={TD}>
         <div className="flex min-w-0 items-center gap-3">
           <Avatar initials={initialsOf(a.full_name)} size={36} />
           <div className="min-w-0">
@@ -739,26 +738,26 @@ function ApplicantRow({
             </div>
           </div>
         </div>
-      </td>
+      </TableCell>
 
       {/* Role */}
-      <td className={cn(TD, 'max-w-[220px]')}>
+      <TableCell className={cn(TD, 'max-w-[220px]')}>
         <div className="truncate text-[14px] text-foreground">{a.target_job_title}</div>
         <div className="text-[13px] text-muted-foreground">{a.target_level}</div>
-      </td>
+      </TableCell>
 
       {/* Status */}
-      <td className={TD}>
+      <TableCell className={TD}>
         <div className="flex flex-col items-start gap-1">
           <StatusTag tone={statusTone(a.status)} dot>
             {statusLabel(a.status, 'candidate')}
           </StatusTag>
           {a.ats_recommendation && <StatusTag tone={rec.tone}>{rec.label}</StatusTag>}
         </div>
-      </td>
+      </TableCell>
 
       {/* ATS score */}
-      <td
+      <TableCell
         className={cn(
           TD,
           'text-right font-display text-[16px] font-bold tabular-nums',
@@ -766,10 +765,10 @@ function ApplicantRow({
         )}
       >
         {atsDisplay ?? '-'}
-      </td>
+      </TableCell>
 
       {/* Match score (during search) — else shortlisted badge */}
-      <td className={TD}>
+      <TableCell className={TD}>
         {a.match_score != null ? (
           <span
             className={cn(
@@ -788,13 +787,13 @@ function ApplicantRow({
             </span>
           )
         )}
-      </td>
+      </TableCell>
 
       {/* Affordance only — the name above is the control */}
-      <td className={cn(TD, 'w-10 text-right')}>
+      <TableCell className={cn(TD, 'w-10 text-right')}>
         <ArrowRight size={14} className="ml-auto text-muted-foreground" aria-hidden="true" />
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -926,8 +925,7 @@ function UploadSection({
             .
           </p>
         ) : (
-          <select
-            className={inputCls}
+          <SelectControl
             value={openingId}
             onChange={(e) => onOpening(e.target.value)}
             aria-label="Opening"
@@ -938,33 +936,27 @@ function UploadSection({
                 {o.title} · {o.level}
               </option>
             ))}
-          </select>
+          </SelectControl>
         )}
 
         {/* PH5 wave-1 follow-up (B) — applies to the whole upload, not per file:
             there is one "add applicant(s)" flow in this console, used for one
             resume or many the same way. */}
-        <div>
-          <label
-            htmlFor="upload-source"
-            className="mb-1.5 block text-[13px] font-semibold text-foreground"
-          >
-            Where did this candidate come from?
-          </label>
-          <select
-            id="upload-source"
-            className={inputCls}
-            value={source}
-            onChange={(e) => onSource(e.target.value)}
-          >
-            {sourceOptions.map((s) => (
-              <option key={s.value} value={s.value}>
-                {s.label}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-[12px] text-muted-foreground">Applies to the whole upload.</p>
-        </div>
+        <FormField
+          id="upload-source"
+          label="Where did this candidate come from?"
+          hint="Applies to the whole upload."
+        >
+          {(p) => (
+            <SelectControl {...p} value={source} onChange={(e) => onSource(e.target.value)}>
+              {sourceOptions.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
 
         {/* File drop zone */}
         <label className="flex cursor-pointer flex-col items-center justify-center gap-2 rounded-[16px] border-2 border-dashed border-[var(--ui-line-strong)] bg-[var(--ui-inset-soft)] px-4 py-8 text-center transition-colors focus-within:border-[var(--accent)] hover:border-[var(--accent)] hover:bg-[var(--ui-info-wash)]">
@@ -995,13 +987,15 @@ function UploadSection({
               <span className="text-[13px] font-semibold text-foreground">
                 {files.length} resume{files.length === 1 ? '' : 's'} selected
               </span>
-              <button
+              <Button
                 type="button"
-                className="min-h-10 rounded-full px-3 text-[13px] font-semibold text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                variant="ghost"
+                size="sm"
+                className="text-muted-foreground"
                 onClick={onFilesClear}
               >
                 Clear all
-              </button>
+              </Button>
             </div>
             <ul className="max-h-36 space-y-0.5 overflow-y-auto">
               {files.map((f, i) => (
@@ -1018,14 +1012,16 @@ function UploadSection({
                   <span className="shrink-0 text-muted-foreground">
                     {(f.size / 1024).toFixed(0)} KB
                   </span>
-                  <button
+                  <Button
                     type="button"
+                    variant="ghost"
+                    size="icon"
                     aria-label={`Remove ${f.name}`}
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-[var(--ui-danger)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+                    className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-transparent hover:text-[var(--ui-danger)]"
                     onClick={() => onFileRemove(i)}
                   >
                     <X size={13} aria-hidden="true" />
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -1397,32 +1393,40 @@ export default function Applicants() {
             </span>
           }
         >
-          <div className="flex h-10 w-full items-center gap-2 rounded-full border border-input bg-card px-3.5 focus-within:border-[var(--accent)] focus-within:ring-2 focus-within:ring-[var(--accent)]/30 sm:w-[320px]">
-            <Search size={15} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-            <input
+          <div className="relative w-full sm:w-[320px]">
+            <Search
+              size={15}
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by skill, role, or meaning…"
               aria-label="Search applicants by skills or meaning"
-              className="min-w-0 flex-1 bg-transparent text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="pl-9 pr-16"
             />
-            {searching && isFetching && (
-              <RefreshCw
-                size={13}
-                className="shrink-0 animate-spin text-muted-foreground"
-                aria-hidden="true"
-              />
-            )}
-            {query && (
-              <button
-                type="button"
-                onClick={() => setQuery('')}
-                aria-label="Clear search"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-              >
-                <X size={14} aria-hidden="true" />
-              </button>
-            )}
+            <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1">
+              {searching && isFetching && (
+                <RefreshCw
+                  size={13}
+                  className="shrink-0 animate-spin text-muted-foreground"
+                  aria-hidden="true"
+                />
+              )}
+              {query && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setQuery('')}
+                  aria-label="Clear search"
+                  className="h-8 w-8 shrink-0 text-muted-foreground"
+                >
+                  <X size={14} aria-hidden="true" />
+                </Button>
+              )}
+            </div>
           </div>
 
           <SegTabs tabs={STATUS_FILTERS} active={filter} onChange={setFilter} />
@@ -1457,44 +1461,44 @@ export default function Applicants() {
             }
           />
         ) : (
-          <div className="overflow-hidden rounded-card border border-border bg-card shadow-card">
-            <div className="max-h-[70vh] overflow-auto">
-              <table className="w-full min-w-[760px] border-collapse">
-                <caption className="sr-only">Applicants</caption>
-                <thead>
-                  <tr>
-                    <th scope="col" className={cn(TH, 'w-[30%]')}>
-                      Candidate
-                    </th>
-                    <th scope="col" className={TH}>
-                      Role
-                    </th>
-                    <th scope="col" className={TH}>
-                      Status
-                    </th>
-                    <th scope="col" className={cn(TH, 'text-right')}>
-                      ATS
-                    </th>
-                    <th scope="col" className={TH}>
-                      Badge
-                    </th>
-                    <th scope="col" className={TH}>
-                      <span className="sr-only">Open</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {list.map((a) => (
-                    <ApplicantRow
-                      key={a.id}
-                      a={a}
-                      onSelect={openApplicant}
-                      isSelected={selected?.id === a.id}
-                    />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          // The Table's own scroll wrapper is the one scroll container (capped at
+          // 70vh via the child selector), so the sticky header sticks to it.
+          <div className="overflow-hidden rounded-card border border-border bg-card shadow-card [&>div]:max-h-[70vh]">
+            <Table className="min-w-[760px] border-collapse text-[length:inherit]">
+              <TableCaption className="sr-only">Applicants</TableCaption>
+              <TableHeader className="[&_tr]:border-b-0">
+                <TableRow className="border-b-0 hover:bg-transparent">
+                  <TableHead scope="col" className={cn(TH, 'w-[30%]')}>
+                    Candidate
+                  </TableHead>
+                  <TableHead scope="col" className={TH}>
+                    Role
+                  </TableHead>
+                  <TableHead scope="col" className={TH}>
+                    Status
+                  </TableHead>
+                  <TableHead scope="col" className={cn(TH, 'text-right')}>
+                    ATS
+                  </TableHead>
+                  <TableHead scope="col" className={TH}>
+                    Badge
+                  </TableHead>
+                  <TableHead scope="col" className={TH}>
+                    <span className="sr-only">Open</span>
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {list.map((a) => (
+                  <ApplicantRow
+                    key={a.id}
+                    a={a}
+                    onSelect={openApplicant}
+                    isSelected={selected?.id === a.id}
+                  />
+                ))}
+              </TableBody>
+            </Table>
           </div>
         )}
       </div>

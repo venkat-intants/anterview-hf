@@ -16,21 +16,20 @@ import {
 } from '@/api/questionBanks';
 import type { ExamLanguage } from '@/api/exams';
 import { errorMessage } from '@/lib/errorMessage';
+import { plural } from '@/lib/formatters';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { Loader2 } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { QuestionBadges } from '@/components/bank/QuestionBadges';
 
-// A native <select> keeps the filter row keyboard- and test-driven the way it was;
-// the look matches the shared Input.
-const selectCls =
-  'h-10 rounded-[10px] border border-input bg-card px-3.5 text-[14px] text-foreground ' +
-  'hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none ' +
-  'focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
+// The filter selects share one row and grow to fill it.
+const FILTER_SELECT = 'w-auto min-w-[10.5rem] flex-1';
 
 /** A section add is one request carrying every id — an unbounded selection
  *  would be a payload of arbitrary size with no server-side cap to catch it. */
@@ -60,6 +59,8 @@ export function BankQuestionPicker({
   const [result, setResult] = useState<AddToSectionResult | null>(null);
   const qc = useQueryClient();
 
+  // No error branch on purpose: the catalogue only fills the competency
+  // filter, which still offers "Any competency" without it.
   const catalog = useQuery({
     queryKey: ['hr', 'bank-competencies'],
     queryFn: listBankCompetencies,
@@ -92,7 +93,7 @@ export function BankQuestionPicker({
       setResult(res);
       setSelected(new Set());
       if (res.added > 0) {
-        toast.success(`${res.added} question${res.added === 1 ? '' : 's'} added`);
+        toast.success(`${plural(res.added, 'question')} added`);
         onAdded();
         void qc.invalidateQueries({ queryKey: ['hr', 'bank-questions'] });
       } else {
@@ -139,35 +140,35 @@ export function BankQuestionPicker({
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search prompt…"
             aria-label="Search bank questions"
-            className="h-10 min-w-[160px] flex-1 basis-full rounded-[10px] sm:basis-40"
+            className="min-w-[160px] flex-1 basis-full sm:basis-40"
           />
-          <select
+          <SelectControl
             value={difficulty}
             onChange={(e) => setDifficulty(e.target.value as BankDifficulty | '')}
             aria-label="Filter by difficulty"
-            className={cn(selectCls, 'min-w-[10.5rem] flex-1')}
+            className={FILTER_SELECT}
           >
             <option value="">Any difficulty</option>
             <option value="easy">Easy</option>
             <option value="medium">Medium</option>
             <option value="hard">Hard</option>
-          </select>
-          <select
+          </SelectControl>
+          <SelectControl
             value={language}
             onChange={(e) => setLanguage(e.target.value as ExamLanguage | '')}
             aria-label="Filter by language"
-            className={cn(selectCls, 'min-w-[10.5rem] flex-1')}
+            className={FILTER_SELECT}
           >
             <option value="">Any language</option>
             <option value="en">English</option>
             <option value="hi">हिन्दी</option>
             <option value="te">తెలుగు</option>
-          </select>
-          <select
+          </SelectControl>
+          <SelectControl
             value={competency}
             onChange={(e) => setCompetency(e.target.value)}
             aria-label="Filter by competency"
-            className={cn(selectCls, 'min-w-[10.5rem] flex-1')}
+            className={FILTER_SELECT}
           >
             <option value="">Any competency</option>
             {(catalog.data ?? []).map((c) => (
@@ -175,7 +176,7 @@ export function BankQuestionPicker({
                 {c.name}
               </option>
             ))}
-          </select>
+          </SelectControl>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
@@ -187,14 +188,13 @@ export function BankQuestionPicker({
               <Skeleton className="h-14 rounded-[12px]" />
             </div>
           ) : search.isError ? (
-            <div role="alert" className="flex flex-wrap items-center gap-3 py-4">
-              <p className="text-[14px] text-[var(--ui-danger)]">
-                Could not load the bank&apos;s approved questions.
-              </p>
-              <Button type="button" variant="outline" onClick={() => void search.refetch()}>
-                Try again
-              </Button>
-            </div>
+            <QueryErrorPanel
+              className="my-2"
+              title="Could not load the bank's approved questions."
+              error={search.error}
+              onRetry={() => void search.refetch()}
+              retrying={search.isFetching}
+            />
           ) : rows.length === 0 ? (
             <p className="py-6 text-center text-[14px] text-muted-foreground">
               No approved {sectionKind === 'mcq' ? 'MCQ' : 'coding'} questions match these filters.
@@ -268,7 +268,7 @@ export function BankQuestionPicker({
             {selected.size}/{SELECTION_CAP} selected · {pickableCount} available
           </span>
           <div className="flex gap-2">
-            <Button type="button" variant="outline" onClick={onClose}>
+            <Button type="button" variant="ghost" onClick={onClose}>
               Done
             </Button>
             <Button

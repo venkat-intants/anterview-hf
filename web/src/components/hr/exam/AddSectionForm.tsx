@@ -11,7 +11,7 @@ import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { smallInputCls } from '@/components/hr/exam/examEditorUi';
+import { Input } from '@/components/ui/input';
 
 interface AddSectionFormProps {
   examId: string;
@@ -73,21 +73,21 @@ export function AddSectionForm({ examId, roundId, onAdded, onClose }: AddSection
           </button>
         ))}
       </div>
-      <input
-        className={cn(smallInputCls, 'min-w-[160px] flex-1')}
+      <Input
+        className="min-w-[160px] flex-1"
         placeholder="Section title (optional)"
         value={sectionTitle}
         maxLength={200}
         onChange={(e) => setSectionTitle(e.target.value)}
         aria-label="Section title"
       />
-      <input
+      <Input
         type="number"
         min={1}
         placeholder="Min limit"
         value={sectionTimeMin}
         onChange={(e) => setSectionTimeMin(e.target.value)}
-        className={cn(smallInputCls, 'w-24')}
+        className="w-24"
         aria-label="Section time limit in minutes"
       />
       <Button type="submit" disabled={addSectionMut.isPending} aria-busy={addSectionMut.isPending}>

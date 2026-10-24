@@ -20,11 +20,7 @@ import { errorMessage } from '@/lib/errorMessage';
 import { closingDatePassed } from '@/lib/openingList';
 import { updateRequisition, type Requisition } from '@/api/requisitions';
 import GovernancePanel from '@/components/workflow/GovernancePanel';
-
-/** The shared error copy (errorMessage), with this file's period-less fallbacks. */
-function errText(e: unknown, fallback: string): string {
-  return errorMessage(e, `${fallback}.`);
-}
+import { Button } from '@/components/ui/button';
 
 /**
  * HR-L11: copy, and say so only when it worked. The toast used to fire even
@@ -110,7 +106,7 @@ export function PublicApplyCard({
       toast.success(next ? 'Public applications switched on' : 'Public applications switched off');
       void invalidateAfterHrMutation(qc);
     },
-    onError: (e) => toast.error(errText(e, 'Could not change that')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not change that.')),
   });
 
   return (
@@ -170,14 +166,16 @@ export function PublicApplyCard({
             <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-[var(--ui-soft)]">
               {link}
             </span>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => void copyLink(link)}
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-inset-strong)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="shrink-0 text-muted-foreground hover:bg-[var(--ui-inset-strong)] hover:text-foreground"
               aria-label="Copy the application link"
             >
               <Copy className="h-4 w-4" aria-hidden="true" />
-            </button>
+            </Button>
             <a
               href={link}
               target="_blank"

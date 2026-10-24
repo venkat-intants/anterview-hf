@@ -900,7 +900,10 @@ describe('DecisionQueue - loading and failing, quietly', () => {
   it('reports a failure as an alert, not as an empty queue', async () => {
     getDecisionQueue.mockRejectedValue(new Error('queue is down'));
     renderQueue();
-    expect((await screen.findByRole('alert')).textContent).toBe('queue is down');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load the decision queue.');
+    expect(alert).toHaveTextContent('queue is down');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
     expect(screen.queryByText('Nobody is waiting')).toBeNull();
   });
 });

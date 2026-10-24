@@ -1,11 +1,13 @@
 // MetricInfoDialog — "How is this calculated?": label, formula, cohorts,
-// version, hash.
+// version, hash. A Radix Dialog: focus trap, Escape, the overlay click, the
+// Close button and focus return to the "How is this calculated?" trigger.
 
-import { useState } from 'react';
-import { Copy, X } from '@/design/components/icons';
+import { useRef, useState } from 'react';
+import { Copy } from '@/design/components/icons';
 import { findDefinition, metricLabel, type MetricDefinitionsResponse } from '@/api/metrics';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { formatDate } from '@/lib/formatters';
-import { useDialogFocus } from '@/hooks/useDialogFocus';
 
 export default function MetricInfoDialog({
   metricName,
@@ -17,13 +19,10 @@ export default function MetricInfoDialog({
   onClose: () => void;
 }): JSX.Element | null {
   const [copied, setCopied] = useState(false);
+  const returnFocusTo = useRef<HTMLElement | null>(null);
   // Opened by name alone (no version in hand) — the CURRENT definition, never
   // whichever version the registry happens to list first.
   const def = findDefinition(definitions, metricName);
-  // Called unconditionally — hooks cannot follow the `!def` early return
-  // below — but harmlessly, since the dialog unmounts (closes) whenever
-  // `def` is absent anyway.
-  const panelRef = useDialogFocus<HTMLDivElement>(onClose);
 
   async function copyHash(hash: string) {
     try {
@@ -39,38 +38,27 @@ export default function MetricInfoDialog({
   if (!def || !definitions) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        aria-label="Close"
-        onClick={onClose}
-        className="absolute inset-0 bg-black/50"
-      />
-      <div
-        ref={panelRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="metric-info-title"
-        tabIndex={-1}
-        className="relative max-h-[85vh] w-full max-w-[480px] overflow-y-auto rounded-card border border-border bg-card p-6 shadow-elevated outline-none"
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent
+        className="block max-h-[85vh] max-w-[480px] gap-0"
+        // Opened by a plain button, not a Radix trigger, so Radix has nothing to
+        // return focus to: hand it back to whatever opened this.
+        onOpenAutoFocus={() => {
+          returnFocusTo.current =
+            document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        }}
+        onCloseAutoFocus={(e) => {
+          e.preventDefault();
+          returnFocusTo.current?.focus();
+        }}
       >
-        <div className="flex items-start justify-between gap-3">
-          <h2 id="metric-info-title" className="text-[17px] font-bold text-foreground">
-            {metricLabel(def.name, def)}
-          </h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-[var(--ui-inset)] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-          >
-            <X size={16} aria-hidden="true" />
-          </button>
-        </div>
-        <p className="mt-1 text-[13px] text-muted-foreground">
+        <DialogTitle className="pr-10 text-[17px] font-bold leading-snug text-foreground">
+          {metricLabel(def.name, def)}
+        </DialogTitle>
+        <DialogDescription className="mt-1 text-[13px]">
           {def.name}@{def.version} · effective {formatDate(def.effective_from)}
           {def.current ? '' : ' · superseded'}
-        </p>
+        </DialogDescription>
 
         <p className="mt-3 text-[14px] leading-relaxed text-foreground">{def.description}</p>
 
@@ -114,13 +102,15 @@ export default function MetricInfoDialog({
 
         <div className="mt-4 flex items-center gap-2 text-[12px] text-muted-foreground">
           <span>registry {definitions.registry_hash.slice(0, 10)}…</span>
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => void copyHash(definitions.registry_hash)}
-            className="inline-flex min-h-9 items-center gap-1 rounded-full border border-input px-3 text-[12px] font-semibold text-foreground hover:border-[var(--ui-line-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="gap-1 px-3 text-[12px] text-foreground [&_svg]:size-[11px]"
           >
             <Copy size={11} aria-hidden="true" /> {copied ? 'Copied' : 'Copy'}
-          </button>
+          </Button>
         </div>
 
         <p className="mt-4 text-[12px] leading-relaxed text-muted-foreground">
@@ -128,7 +118,7 @@ export default function MetricInfoDialog({
           records each time you look, so they can change if a record changes (for example, an offer
           is withdrawn).
         </p>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

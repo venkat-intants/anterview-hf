@@ -350,6 +350,51 @@ describe('round panel', () => {
     );
   });
 
+  it('refuses a time limit of 0 instead of clearing the limit (re-audit)', async () => {
+    const user = userEvent.setup();
+    roundPanel(round({ time_limit_seconds: 600 }));
+
+    const input = screen.getByLabelText(/round time limit in minutes/i);
+    await user.clear(input);
+    await user.type(input, '0');
+    await user.tab();
+
+    expect(toastError).toHaveBeenCalledWith(
+      'Enter a time limit of 1 minute or more, or leave it blank for no limit.',
+    );
+    expect(api.updateRound).not.toHaveBeenCalled();
+    expect(input).toHaveValue(10);
+  });
+
+  it('puts the blank back when 0 is typed into a round with no limit (re-audit)', async () => {
+    const user = userEvent.setup();
+    roundPanel(round({ time_limit_seconds: null }));
+
+    const input = screen.getByLabelText(/round time limit in minutes/i);
+    await user.type(input, '0');
+    await user.tab();
+
+    expect(toastError).toHaveBeenCalled();
+    expect(api.updateRound).not.toHaveBeenCalled();
+    expect(input).toHaveValue(null);
+  });
+
+  it('cannot submit a section time limit of 0: the field refuses it (min 1)', async () => {
+    // The section forms submit, so the input's own min={1} stops 0 before any
+    // request; only the round field, saved on blur, needed parseMinutes.
+    const user = userEvent.setup();
+    roundPanel(round());
+
+    await user.click(screen.getByRole('button', { name: /add section/i }));
+    const form = screen.getByRole('form', { name: 'New section' });
+    const field = within(form).getByLabelText<HTMLInputElement>('Section time limit in minutes');
+    await user.type(field, '0');
+    await user.click(within(form).getByRole('button', { name: /add section/i }));
+
+    expect(field.validity.rangeUnderflow).toBe(true);
+    expect(api.createSection).not.toHaveBeenCalled();
+  });
+
   it('adds a coding section with its title and time limit, then closes the form', async () => {
     api.createSection.mockResolvedValue({ id: 's-9' });
     const user = userEvent.setup();
@@ -406,6 +451,42 @@ describe('round panel', () => {
     expect(api.deleteSection).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Delete section' }));
     await waitFor(() => expect(api.deleteSection).toHaveBeenCalledWith('e-1', 'r-1', 's-1'));
+  });
+
+  it("keeps the round's Publish as the only primary button (re-audit, one primary per view)", async () => {
+    const user = userEvent.setup();
+    roundPanel(round());
+    await user.click(screen.getByRole('button', { name: /add section/i }));
+
+    const primaries = screen.getAllByRole('button').filter(isPrimary);
+    expect(primaries.map((b) => b.textContent?.trim())).toEqual(['Publish']);
+  });
+});
+
+/** The default (primary) Button variant: its class list has a bare bg-primary. */
+function isPrimary(el: HTMLElement): boolean {
+  return el.className.split(/\s+/).includes('bg-primary');
+}
+
+describe('composer and assign actions are secondary (re-audit, one primary per view)', () => {
+  it('draws every composer action as outline, on each tab', async () => {
+    const user = userEvent.setup();
+    wrap(<McqSection examId="e-1" sectionId="s-1" locked={false} />);
+
+    expect(screen.getByRole('button', { name: 'Add question' })).not.toSatisfy(isPrimary);
+    await user.click(screen.getByRole('tab', { name: /^ai$/i }));
+    expect(screen.getAllByRole('button').filter(isPrimary)).toEqual([]);
+    await user.click(screen.getByRole('tab', { name: /spreadsheet/i }));
+    expect(screen.getAllByRole('button').filter(isPrimary)).toEqual([]);
+  });
+
+  it('draws Send links as outline', async () => {
+    getPipeline.mockResolvedValue({ items: [row({})], count: 1, limit: 200, offset: 0 });
+    wrap(<RoundAssignPanel examId="e-1" roundId="r-1" isPublished isFirstRound />);
+
+    const send = await screen.findByRole('button', { name: /send links/i });
+    expect(send).not.toSatisfy(isPrimary);
+    expect(send.className).toContain('border-input');
   });
 });
 

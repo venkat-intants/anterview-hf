@@ -15,7 +15,12 @@ import {
 } from '@/design/components/icons';
 import { updateRound, duplicateRound, deleteSection, type Round } from '@/api/exams';
 import { canUnpublishRound, roundLockReason } from '@/lib/examLocks';
-import { examEditorMutationKey, minutesToSeconds, parseThreshold } from '@/lib/examEditor';
+import {
+  examEditorMutationKey,
+  INVALID_MINUTES_MESSAGE,
+  parseMinutes,
+  parseThreshold,
+} from '@/lib/examEditor';
 import { errorMessage } from '@/lib/errorMessage';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { statusLabel } from '@/lib/statusLabel';
@@ -380,7 +385,14 @@ export function RoundPanel({
                   disabled={locked || timeLimitMut.isPending}
                   onChange={(e) => setMinutesDraft(e.target.value)}
                   onBlur={() => {
-                    const next = minutesToSeconds(minutesDraft);
+                    const parsed = parseMinutes(minutesDraft);
+                    if (parsed.kind === 'invalid') {
+                      // Refused, not read as "no limit": the saved value goes back.
+                      toast.error(INVALID_MINUTES_MESSAGE);
+                      setMinutesDraft(roundMinutes);
+                      return;
+                    }
+                    const next = parsed.kind === 'limit' ? parsed.seconds : null;
                     if (next !== round.time_limit_seconds) timeLimitMut.mutate(next);
                   }}
                   className="w-28"

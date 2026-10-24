@@ -301,7 +301,12 @@ export function McqComposer({ examId, sectionId, onChanged }: McqComposerProps) 
                   aria-label="Points"
                 />
               </label>
-              <Button type="submit" disabled={addMut.isPending} aria-busy={addMut.isPending}>
+              <Button
+                type="submit"
+                variant="outline"
+                disabled={addMut.isPending}
+                aria-busy={addMut.isPending}
+              >
                 {addMut.isPending ? (
                   <Loader2 className="animate-spin" aria-hidden="true" />
                 ) : (
@@ -376,6 +381,7 @@ export function McqComposer({ examId, sectionId, onChanged }: McqComposerProps) 
               </FormField>
               <Button
                 type="submit"
+                variant="outline"
                 className="ml-auto"
                 disabled={generateMut.isPending}
                 aria-busy={generateMut.isPending}
@@ -440,6 +446,7 @@ export function McqComposer({ examId, sectionId, onChanged }: McqComposerProps) 
             />
             <Button
               type="button"
+              variant="outline"
               disabled={importMut.isPending}
               aria-busy={importMut.isPending}
               onClick={() => fileRef.current?.click()}

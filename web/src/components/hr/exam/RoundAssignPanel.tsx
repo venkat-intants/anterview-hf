@@ -275,8 +275,11 @@ export function RoundAssignPanel({
         </p>
       ) : null}
 
+      {/* Outline: inside a round card, under the round's own primary
+          (Publish), it is a secondary action (UI conventions). */}
       <Button
         type="button"
+        variant="outline"
         disabled={assignMut.isPending || selected.size === 0}
         aria-busy={assignMut.isPending}
         onClick={() => assignMut.mutate()}

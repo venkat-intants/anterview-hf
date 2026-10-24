@@ -117,12 +117,9 @@ const NO_SEMANTIC: CorpusSearchResult = { semantic: false, passages: [] };
 const ATTESTATION = 'This is a company document, not a record about a candidate.';
 
 /** Today as the viewer's calendar day, 'YYYY-MM-DD', offset by `days`. */
+/** A UTC calendar day, offset from today: the server's clock for expiry. */
 function isoDay(days = 0): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${mm}-${dd}`;
+  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 }
 
 /**
@@ -778,6 +775,53 @@ describe('CorpusDocuments - expiry', () => {
     const currentRow = screen.getByText('Current policy').closest('tr')!;
     expect(within(currentRow).getByText('Never')).toBeInTheDocument();
     expect(within(currentRow).getByText('Ready')).toBeInTheDocument();
+  });
+
+  // The server decides expiry on the UTC day. Each instant below is a different
+  // local day than UTC somewhere (00:30Z is the previous day west of Greenwich,
+  // 23:30Z the next day east of it, as in IST), so a viewer-local "today" fails
+  // one of them on any machine that is not on UTC.
+  it.each(['2026-10-24T00:30:00.000Z', '2026-10-24T23:30:00.000Z'])(
+    'decides Expired on the UTC day, as the server does (at %s)',
+    async (now) => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date(now));
+      try {
+        api.listCorpusDocuments.mockResolvedValue([
+          doc({ id: 'a', title: 'Ends today', expires_on: '2026-10-24' }),
+          doc({ id: 'b', title: 'Ended yesterday', expires_on: '2026-10-23' }),
+        ]);
+        renderPage();
+        await screen.findByText('Ends today');
+        const today = screen.getByText('Ends today').closest('tr')!;
+        expect(within(today).getByText('Ready')).toBeInTheDocument();
+        expect(within(today).queryByText('Expired')).not.toBeInTheDocument();
+        const past = screen.getByText('Ended yesterday').closest('tr')!;
+        expect(within(past).getByText('Expired')).toBeInTheDocument();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('keeps the page Upload the one primary: row-level Save and Upload new version are outline', async () => {
+    const user = userEvent.setup();
+    api.listCorpusDocuments.mockResolvedValue([doc()]);
+    renderPage();
+    await screen.findByText('Employee handbook');
+    const primary = /(?:^|\s)bg-primary(?=\s|$)/;
+
+    await user.upload(
+      screen.getByLabelText('Replace Employee handbook'),
+      new File(['%PDF-1.4'], 'v2.pdf', { type: 'application/pdf' }),
+    );
+    expect(screen.getByRole('button', { name: 'Upload new version' }).className).not.toMatch(
+      primary,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByRole('button', { name: 'Save' }).className).not.toMatch(primary);
+    expect(screen.getByRole('button', { name: 'Upload' }).className).toMatch(primary);
   });
 
   it('prints a date-only expiry on its own calendar day', async () => {

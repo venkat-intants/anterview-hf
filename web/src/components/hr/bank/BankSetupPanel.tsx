@@ -14,15 +14,15 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Loader2 } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { errorMessage } from '@/lib/errorMessage';
 import { toast } from '@/lib/toast';
 import type { UnsavedGuard } from '@/components/bank/useUnsavedGuard';
 import { bankSetupSchema, type BankSetupValues } from './bankSetupSchema';
 import { createQuestionBank, updateQuestionBank, type BankOut } from '@/api/questionBanks';
 
-const FIELD =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 aria-[invalid=true]:border-[var(--ui-danger)]';
-const LABEL = 'mb-1.5 block text-[13px] font-semibold text-foreground';
 
 interface Props {
   /** Present when the bank exists; absent while it is being created. */
@@ -83,51 +83,31 @@ export function BankSetupPanel({ bank, guard, onCreated }: Props): JSX.Element {
       className="flex max-w-[560px] flex-col gap-4"
       onSubmit={(e) => void handleSubmit((v) => mut.mutate(v))(e)}
     >
-      <div>
-        <label htmlFor="bank-name" className={LABEL}>
-          Name
-        </label>
-        <input
-          id="bank-name"
-          autoComplete="off"
-          placeholder="e.g. Backend Engineer - Core"
-          aria-invalid={errors.name ? true : undefined}
-          aria-describedby={errors.name ? 'bank-name-error' : undefined}
-          className={`${FIELD} h-11`}
-          {...register('name')}
-        />
-        {errors.name ? (
-          <p
-            id="bank-name-error"
-            role="alert"
-            className="mt-1 text-[12.5px] text-[var(--ui-danger)]"
-          >
-            {errors.name.message}
-          </p>
-        ) : null}
-      </div>
-      <div>
-        <label htmlFor="bank-description" className={LABEL}>
-          What does it assess?
-        </label>
-        <textarea
-          id="bank-description"
-          rows={3}
-          placeholder="e.g. SQL, REST design and caching for mid-level backend roles"
-          aria-invalid={errors.description ? true : undefined}
-          aria-describedby="bank-description-hint"
-          className={`${FIELD} resize-y py-2.5`}
-          {...register('description')}
-        />
-        <p id="bank-description-hint" className="mt-1 text-[12.5px] text-muted-foreground">
-          Optional. The skill or topic, so a colleague can tell this bank from the others.
-        </p>
-        {errors.description ? (
-          <p role="alert" className="mt-1 text-[12.5px] text-[var(--ui-danger)]">
-            {errors.description.message}
-          </p>
-        ) : null}
-      </div>
+      <FormField id="bank-name" label="Name" error={errors.name?.message}>
+        {(p) => (
+          <Input
+            {...p}
+            autoComplete="off"
+            placeholder="e.g. Backend Engineer - Core"
+            {...register('name')}
+          />
+        )}
+      </FormField>
+      <FormField
+        id="bank-description"
+        label="What does it assess?"
+        hint="Optional. The skill or topic, so a colleague can tell this bank from the others."
+        error={errors.description?.message}
+      >
+        {(p) => (
+          <Textarea
+            {...p}
+            rows={3}
+            placeholder="e.g. SQL, REST design and caching for mid-level backend roles"
+            {...register('description')}
+          />
+        )}
+      </FormField>
       <div className="flex flex-wrap items-center gap-3">
         <Button type="submit" disabled={mut.isPending || (Boolean(bank) && !isDirty)}>
           {mut.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}

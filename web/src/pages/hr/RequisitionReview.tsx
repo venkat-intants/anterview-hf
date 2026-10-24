@@ -51,14 +51,15 @@ import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { StatusTag } from '@/design/components/primitives';
 import { Breadcrumbs, PageHeader, EmptyState, Page } from '@/design/components/page';
-import { buttonVariants } from '@/components/ui/button';
+import { Button } from '@/components/ui/button';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { errorMessage } from '@/lib/errorMessage';
 
 const REVIEW_KEY = ['hr', 'requisitions', 'review'] as const;
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 /* ── Backfilled opening ─────────────────────────────────────────────────────
  *
@@ -113,7 +114,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
       );
       invalidate();
     },
-    onError: (e) => toast.error(errText(e, 'Could not confirm this opening')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not confirm this opening.')),
   });
 
   const splitMut = useMutation({
@@ -129,7 +130,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
     // The server refuses a split whose candidates are mid-workflow, and says
     // who. That message is the whole value of the failure, so it is surfaced
     // verbatim rather than replaced with a generic one.
-    onError: (e) => toast.error(errText(e, 'Could not split this opening')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not split this opening.')),
   });
 
   const mergeMut = useMutation({
@@ -141,7 +142,7 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
       invalidate();
     },
     // Refusals name what to resolve (a workflow, someone who applied to both).
-    onError: (e) => toast.error(errText(e, 'Could not merge these openings')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not merge these openings.')),
   });
 
   const toggle = (id: string) =>
@@ -209,25 +210,13 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
 
         {/* Confirm / rename */}
         <div className="mt-4 flex flex-wrap items-end gap-2">
-          <div className="min-w-[220px] flex-1">
-            <label
-              htmlFor={`title-${req.id}`}
-              className="mb-1.5 block text-[13px] font-semibold text-foreground"
-            >
-              Opening title
-            </label>
-            <input
-              id={`title-${req.id}`}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full h-10 rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
-            />
-          </div>
-          <button
+          <FormField id={`title-${req.id}`} label="Opening title" className="min-w-[220px] flex-1">
+            {(p) => <Input {...p} value={title} onChange={(e) => setTitle(e.target.value)} />}
+          </FormField>
+          <Button
             type="button"
             onClick={() => confirmMut.mutate()}
             disabled={confirmMut.isPending || title.trim().length < 2}
-            className={buttonVariants()}
           >
             {confirmMut.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -237,28 +226,28 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
               <Pencil className="h-4 w-4" aria-hidden="true" />
             )}
             {title.trim() === req.title ? 'Looks right' : 'Rename & confirm'}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
             onClick={() => {
               setSplitting((s) => !s);
               setMerging(false);
             }}
-            className={buttonVariants({ variant: 'outline' })}
           >
             {splitting ? 'Cancel split' : 'Split apart'}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
+            variant="outline"
             onClick={() => {
               setMerging((m) => !m);
               setSplitting(false);
               setMergeConfirming(false);
             }}
-            className={buttonVariants({ variant: 'outline' })}
           >
             {merging ? 'Cancel merge' : 'Merge into another opening…'}
-          </button>
+          </Button>
         </div>
 
         {/* Merge into another opening */}
@@ -271,55 +260,59 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
               Everyone here moves into the opening you choose, keeping every assessment they have.
               This opening is then closed and retired.
             </p>
-            <label
-              htmlFor={`into-${req.id}`}
-              className="mb-1.5 mt-3 block text-[13px] font-semibold text-foreground"
-            >
-              Merge into
-            </label>
-            <select
-              id={`into-${req.id}`}
-              value={into}
-              onChange={(e) => {
-                setInto(e.target.value);
-                setMergeConfirming(false);
-              }}
-              className="w-full h-10 rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
-            >
-              <option value="">Choose an opening…</option>
-              {targets.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.title} · {r.status}
-                </option>
-              ))}
-            </select>
+            <FormField id={`into-${req.id}`} label="Merge into" className="mt-3">
+              {(p) => (
+                <SelectControl
+                  {...p}
+                  value={into}
+                  onChange={(e) => {
+                    setInto(e.target.value);
+                    setMergeConfirming(false);
+                  }}
+                >
+                  <option value="">
+                    {others.isLoading ? 'Loading openings…' : 'Choose an opening…'}
+                  </option>
+                  {targets.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.title} · {r.status}
+                    </option>
+                  ))}
+                </SelectControl>
+              )}
+            </FormField>
+            {others.isError ? (
+              <QueryErrorPanel
+                className="mt-3 py-4"
+                title="Could not load the other openings."
+                error={others.error}
+                onRetry={() => void others.refetch()}
+                retrying={others.isFetching}
+              />
+            ) : null}
             {mergeConfirming ? (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <span className="text-[12.5px] text-[var(--ui-soft)]">
                   Move {req.enrolments} candidate{req.enrolments === 1 ? '' : 's'} into “{intoTitle}
                   ” and retire “{req.title}”?
                 </span>
-                <button
-                  type="button"
-                  onClick={() => mergeMut.mutate()}
-                  disabled={mergeMut.isPending}
-                  className={buttonVariants()}
-                >
+                <Button type="button" onClick={() => mergeMut.mutate()} disabled={mergeMut.isPending}>
                   {mergeMut.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                   ) : null}
                   Yes, merge
-                </button>
+                </Button>
               </div>
             ) : (
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => setMergeConfirming(true)}
                 disabled={!into}
-                className={cn(buttonVariants({ variant: 'outline' }), 'mt-3')}
+                className="mt-3"
               >
                 Merge…
-              </button>
+              </Button>
             )}
           </div>
         ) : null}
@@ -336,7 +329,19 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
             </p>
 
             {candidates.isLoading ? (
-              <p className="mt-3 text-[13px] text-muted-foreground">Loading candidates…</p>
+              <div className="mt-3 flex flex-col gap-1.5" aria-busy="true">
+                <span className="sr-only">Loading candidates…</span>
+                <Skeleton className="h-8 rounded-[10px]" />
+                <Skeleton className="h-8 rounded-[10px]" />
+              </div>
+            ) : candidates.isError ? (
+              <QueryErrorPanel
+                className="mt-3 py-4"
+                title="Could not load this opening’s candidates."
+                error={candidates.error}
+                onRetry={() => void candidates.refetch()}
+                retrying={candidates.isFetching}
+              />
             ) : null}
             <div className="mt-3 flex max-h-[280px] flex-col gap-1.5 overflow-y-auto">
               {candidates.data?.map((c) => (
@@ -361,21 +366,16 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
               ))}
             </div>
 
-            <div className="mt-3">
-              <label
-                htmlFor={`new-title-${req.id}`}
-                className="mb-1.5 block text-[13px] font-semibold text-foreground"
-              >
-                New opening title
-              </label>
-              <input
-                id={`new-title-${req.id}`}
-                value={newTitle}
-                onChange={(e) => setNewTitle(e.target.value)}
-                placeholder="e.g. Senior Python Developer"
-                className="w-full h-10 rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 placeholder:text-[var(--ui-faint)]"
-              />
-            </div>
+            <FormField id={`new-title-${req.id}`} label="New opening title" className="mt-3">
+              {(p) => (
+                <Input
+                  {...p}
+                  value={newTitle}
+                  onChange={(e) => setNewTitle(e.target.value)}
+                  placeholder="e.g. Senior Python Developer"
+                />
+              )}
+            </FormField>
 
             {wouldEmpty ? (
               <p role="alert" className="mt-2 text-[13px] text-[var(--ui-warn)]">
@@ -383,18 +383,18 @@ function BackfilledCard({ req }: { req: BackfilledRequisition }) {
               </p>
             ) : null}
 
-            <button
+            <Button
               type="button"
               onClick={() => splitMut.mutate()}
               disabled={!canSplit || splitMut.isPending}
-              className={cn(buttonVariants(), 'mt-3')}
+              className="mt-3"
             >
               {splitMut.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               ) : null}
               Create opening & move {picked.length || 0} candidate
               {picked.length === 1 ? '' : 's'}
-            </button>
+            </Button>
           </div>
         ) : null}
       </div>
@@ -432,7 +432,7 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
     // A 409 here means both rows are enrolled in the same opening, and the
     // server names it. That is the one case a human must resolve first, so the
     // message is shown as-is.
-    onError: (e) => toast.error(errText(e, 'Could not merge these records')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not merge these records.')),
   });
 
   return (
@@ -509,35 +509,32 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
               </div>
             </div>
             <div className="mt-3 flex gap-2">
-              <button
+              <Button
                 type="button"
+                variant="destructive"
                 onClick={() => mergeMut.mutate()}
                 disabled={mergeMut.isPending || absorbed.length === 0}
-                className={buttonVariants({ variant: 'destructive' })}
               >
                 {mergeMut.isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                 ) : null}
                 Yes, merge permanently
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirming(false)}
-                className={buttonVariants({ variant: 'outline' })}
-              >
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setConfirming(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
-          <button
+          <Button
             type="button"
+            variant="outline"
             onClick={() => setConfirming(true)}
             disabled={absorbed.length === 0}
-            className={cn(buttonVariants({ variant: 'outline' }), 'mt-4')}
+            className="mt-4"
           >
             Merge into one person…
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -547,7 +544,7 @@ function MergeCard({ dup }: { dup: MergeCandidate }) {
 /* ── Page ───────────────────────────────────────────────────────────────── */
 
 export default function RequisitionReview(): JSX.Element {
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: REVIEW_KEY,
     queryFn: getBackfillReview,
   });
@@ -590,13 +587,12 @@ export default function RequisitionReview(): JSX.Element {
           <span className="sr-only">Loading review…</span>
         </div>
       ) : isError ? (
-        <div
-          role="alert"
-          className="flex items-center gap-2 rounded-card border border-[var(--ui-danger)]/40 bg-[var(--ui-danger-wash)] p-6 text-[14px] text-[var(--ui-danger)]"
-        >
-          <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-          {errText(error, 'Could not load the review')}
-        </div>
+        <QueryErrorPanel
+          title="Could not load the review."
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       ) : reqs.length === 0 && dupes.length === 0 ? (
         <EmptyState
           size="page"

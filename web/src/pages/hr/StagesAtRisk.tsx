@@ -10,6 +10,7 @@ import { useQuery } from '@tanstack/react-query';
 import { SegTabs } from '@/design/components/primitives';
 import { PageHeader, SectionCard, Toolbar, Page } from '@/design/components/page';
 import { Skeleton } from '@/components/ui/skeleton';
+import { QueryErrorPanel } from '@/components/QueryState';
 import { CheckCircle2 } from '@/design/components/icons';
 import { getSlaBoard, type SlaBoardRow, type SlaState } from '@/api/stageSla';
 import AtRiskRow from '@/components/AtRiskRow';
@@ -75,9 +76,12 @@ export default function StagesAtRisk(): JSX.Element {
             <span className="sr-only">Loading…</span>
           </div>
         ) : board.isError ? (
-          <p role="alert" className="text-[13px] text-[var(--ui-danger)]">
-            Could not check stage SLAs just now.
-          </p>
+          <QueryErrorPanel
+            title="Could not check stage SLAs."
+            error={board.error}
+            onRetry={() => void board.refetch()}
+            retrying={board.isFetching}
+          />
         ) : rows.length === 0 ? (
           <>
             <p className="flex items-center gap-2 text-[13px] text-muted-foreground">

@@ -11,6 +11,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listExams, createExam, type ExamSummary } from '@/api/exams';
 import { errorMessage } from '@/lib/errorMessage';
 import { parseThreshold } from '@/lib/examEditor';
+import { plural } from '@/lib/formatters';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
 import { statusLabel } from '@/lib/statusLabel';
 import { toast } from '@/lib/toast';
@@ -20,6 +21,8 @@ import { Reveal } from '@/design/components/Reveal';
 import { PageHeader, EmptyState, Toolbar, Page } from '@/design/components/page';
 import { GlassCard, StatusTag, Field, ToggleSwitch } from '@/design/components/primitives';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { ArrowLeft, Plus, Pencil, BarChart3, Sparkles, Search } from '@/design/components/icons';
 import { QueryState } from '@/components/QueryState';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -42,7 +45,7 @@ function ExamCard({ e }: { e: ExamSummary }) {
   // A closed exam, or one taken back to draft after it was sat, still has
   // results worth opening (audit E17).
   const hasResults = isPublished || e.attempt_count > 0;
-  const attempts = `${e.attempt_count} attempt${e.attempt_count === 1 ? '' : 's'}`;
+  const attempts = plural(e.attempt_count, 'attempt');
 
   return (
     <GlassCard hover className="flex h-full flex-col p-5">
@@ -191,7 +194,7 @@ export default function Exams() {
         <Toolbar
           trailing={
             <span className="text-[13px] tabular-nums text-muted-foreground" role="status">
-              {list.length} of {all.length} exam{all.length === 1 ? '' : 's'}
+              {list.length} of {plural(all.length, 'exam')}
             </span>
           }
         >
@@ -201,26 +204,26 @@ export default function Exams() {
               aria-hidden="true"
               className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
             />
-            <input
+            <Input
               type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search exams"
               aria-label="Search exams"
-              className="min-h-[40px] w-full rounded-[10px] border border-border bg-secondary pl-9 pr-3 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+              className="pl-9"
             />
           </div>
-          <select
+          <SelectControl
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             aria-label="Filter by status"
-            className="min-h-[40px] rounded-[10px] border border-border bg-secondary px-3 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
+            className="w-auto"
           >
             <option value="">Any status</option>
             <option value="draft">Only drafts</option>
             <option value="published">Only live</option>
             <option value="closed">Only closed</option>
-          </select>
+          </SelectControl>
         </Toolbar>
       ) : null}
 

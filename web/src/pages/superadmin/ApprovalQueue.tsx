@@ -32,7 +32,7 @@ import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
 import { GlassCard } from '@/design/components/primitives';
 import { DataList, Page, PageHeader } from '@/design/components/page';
-import { AlertCircle, Loader2 } from '@/design/components/icons';
+import { AlertCircle, CheckCircle2 } from '@/design/components/icons';
 import {
   DecisionPanel,
   ReviewQueueState,
@@ -162,7 +162,7 @@ function Row({ row }: { row: PendingApproval }): JSX.Element {
             role="status"
             className="flex items-center gap-2 rounded-[12px] bg-[var(--ui-inset-soft)] px-3.5 py-2.5 text-[13px] text-foreground"
           >
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            <CheckCircle2 className="h-4 w-4 text-[var(--ui-ok)]" aria-hidden="true" />
             {decided}. Updating the queue…
           </p>
         ) : (

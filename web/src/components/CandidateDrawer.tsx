@@ -52,6 +52,10 @@ import CheckinSection from '@/components/hr/CheckinSection';
 import { getMetricDefinitions, sourceLabel } from '@/api/metrics';
 import { AlertTriangle, ChevronRight, Info, XCircle } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
+import { fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { DataList } from '@/design/components/page';
 import { Collapsible, ProgressiveList } from '@/design/components/collapsible';
@@ -65,8 +69,6 @@ import { statusLabel } from '@/lib/statusLabel';
 // hairline — the drawer is a long read, so the rhythm does the grouping.
 const SECTION = 'mt-6 border-t border-border pt-5 outline-none';
 const SECTION_TITLE = 'text-[15px] font-bold text-foreground';
-const CONTROL =
-  'w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
 
 export interface DrawerCandidate {
   applicant_id: string;
@@ -132,7 +134,7 @@ function RoundScores({
   /** Scopes the results to one application; a person may have several. */
   enrolmentId?: string | null;
 }) {
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['hr', 'applicant', applicantId, 'round-results', enrolmentId ?? null],
     queryFn: () => listRoundResults(applicantId, enrolmentId),
   });
@@ -151,9 +153,13 @@ function RoundScores({
     return (
       <div id="round-results" tabIndex={-1} className={SECTION}>
         <h3 className={SECTION_TITLE}>Assessment</h3>
-        <p role="alert" className="mt-1.5 text-[13px] text-muted-foreground">
-          Scores could not be loaded. Reopen to retry.
-        </p>
+        <QueryErrorPanel
+          className="mt-2 py-4"
+          title="Could not load the scores."
+          error={error}
+          onRetry={() => void refetch()}
+          retrying={isFetching}
+        />
       </div>
     );
   }
@@ -289,29 +295,27 @@ function AssignInterviewersForm({
 
   return (
     <div className="mt-3 flex flex-col gap-3 rounded-[16px] border border-border bg-[var(--ui-inset-soft)] p-4">
-      <div>
-        <label htmlFor="assign-round" className="text-[13px] font-semibold text-foreground">
-          Round
-        </label>
-        <select
-          id="assign-round"
-          value={roundId}
-          onChange={(e) => setRoundId(e.target.value)}
-          className={cn(CONTROL, 'mt-1')}
-        >
-          <option value="">Choose a round…</option>
-          {rounds.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.title}
-            </option>
-          ))}
-        </select>
-      </div>
+      <FormField id="assign-round" label="Round">
+        {(p) => (
+          <SelectControl {...p} value={roundId} onChange={(e) => setRoundId(e.target.value)}>
+            <option value="">Choose a round…</option>
+            {rounds.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.title}
+              </option>
+            ))}
+          </SelectControl>
+        )}
+      </FormField>
 
       <fieldset className="flex flex-col gap-1.5">
-        <legend className="text-[13px] font-semibold text-foreground">Interviewers</legend>
+        <legend className={fieldLabelClass}>Interviewers</legend>
         {interviewers.isLoading ? (
-          <span className="text-[12px] text-muted-foreground">Loading…</span>
+          <div className="flex flex-col gap-1.5" aria-busy="true">
+            <span className="sr-only">Loading…</span>
+            <Skeleton className="h-5 w-2/3" />
+            <Skeleton className="h-5 w-1/2" />
+          </div>
         ) : interviewers.isError ? (
           // A failed fetch is not "nobody set up yet" (IV-L10).
           <QueryErrorPanel
@@ -346,18 +350,16 @@ function AssignInterviewersForm({
         )}
       </fieldset>
 
-      <div>
-        <label htmlFor="assign-due" className="text-[13px] font-semibold text-foreground">
-          Due date (optional)
-        </label>
-        <input
-          id="assign-due"
-          type="datetime-local"
-          value={dueAt}
-          onChange={(e) => setDueAt(e.target.value)}
-          className={cn(CONTROL, 'mt-1')}
-        />
-      </div>
+      <FormField id="assign-due" label="Due date (optional)">
+        {(p) => (
+          <Input
+            {...p}
+            type="datetime-local"
+            value={dueAt}
+            onChange={(e) => setDueAt(e.target.value)}
+          />
+        )}
+      </FormField>
 
       <Button
         type="button"
@@ -473,11 +475,18 @@ function HumanInterviewSection({
       ) : null}
 
       {scorecards.isLoading ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">Loading…</p>
+        <div className="mt-2" aria-busy="true">
+          <span className="sr-only">Loading…</span>
+          <Skeleton className="h-16 rounded-[16px]" />
+        </div>
       ) : scorecards.isError ? (
-        <p className="mt-2 text-[12.5px] text-muted-foreground">
-          Could not load interview scorecards.
-        </p>
+        <QueryErrorPanel
+          className="mt-2 py-4"
+          title="Could not load interview scorecards."
+          error={scorecards.error}
+          onRetry={() => void scorecards.refetch()}
+          retrying={scorecards.isFetching}
+        />
       ) : rounds.length === 0 ? (
         <p className="mt-2 text-[12.5px] text-muted-foreground">
           No human interview round for this application yet.
@@ -589,8 +598,9 @@ function HumanInterviewSection({
                           leave that interviewer with no current scorecard. */}
                       {sc.state !== 'submitted' && sc.state !== 'withdrawn' && !sc.is_correction ? (
                         <div className="mt-2 flex items-center gap-2">
-                          <input
+                          <Input
                             type="text"
+                            size="sm"
                             value={withdrawReasons[sc.scorecard_id] ?? ''}
                             onChange={(e) =>
                               setWithdrawReasons((prev) => ({
@@ -600,7 +610,7 @@ function HumanInterviewSection({
                             }
                             placeholder="Reason (optional)"
                             aria-label={`Withdraw reason for ${sc.interviewer_name}`}
-                            className="h-9 w-full max-w-[220px] rounded-[10px] border border-input bg-card px-3 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
+                            className="max-w-[220px]"
                           />
                           <ConfirmDeleteButton
                             label="Withdraw scorecard"
@@ -805,9 +815,20 @@ export default function CandidateDrawer({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-8 pt-1">
           {detail.isError ? (
-            <p role="alert" className="mt-4 text-[13px] text-muted-foreground">
-              Could not load this candidate. Close and try again.
-            </p>
+            <QueryErrorPanel
+              className="mt-4"
+              title="Could not load this candidate."
+              error={detail.error}
+              onRetry={() => void detail.refetch()}
+              retrying={detail.isFetching}
+            />
+          ) : detail.isLoading ? (
+            <div className="mt-5 flex flex-col gap-3" aria-busy="true">
+              <span className="sr-only">Loading…</span>
+              <Skeleton className="h-20 rounded-[16px]" />
+              <Skeleton className="h-16 rounded-[16px]" />
+              <Skeleton className="h-16 rounded-[16px]" />
+            </div>
           ) : null}
 
           {candidate ? (
@@ -984,7 +1005,10 @@ export default function CandidateDrawer({
                 <div id="answers" tabIndex={-1} className={SECTION}>
                   <h3 className={cn(SECTION_TITLE, 'mb-2')}>Application answers</h3>
                   {answers.isLoading ? (
-                    <p className="text-[12.5px] text-muted-foreground">Loading…</p>
+                    <div className="flex flex-col gap-2" aria-busy="true">
+                      <span className="sr-only">Loading…</span>
+                      <Skeleton className="h-10 rounded-[12px]" />
+                    </div>
                   ) : null}
                   {/* HR-M5: a failed load is not "no questions". */}
                   {answers.isError && answers.data === undefined ? (

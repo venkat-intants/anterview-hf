@@ -108,7 +108,9 @@ describe('AdminJobJd', () => {
     expect(screen.getByText(/select a practice role above to upload/i)).toBeInTheDocument();
     // QA ANTHIRE-011: no made-up "Published" roles, and the scope is stated.
     expect(screen.queryByText(/frontend engineer · l2/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/each company's hr adds the job description on the opening/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/each company's hr adds the job description on the opening/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/job description for/i)).not.toBeInTheDocument();
   });
 
@@ -116,13 +118,17 @@ describe('AdminJobJd', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText(/select a practice role/i));
-    await user.click(await screen.findByRole('option', { name: 'QA Engineer' }));
+    await user.selectOptions(
+      await screen.findByLabelText(/select a practice role/i),
+      'QA Engineer',
+    );
 
     expect(await screen.findByText(/job description for/i)).toHaveTextContent('QA Engineer');
     expect(screen.queryByText(/select a practice role above/i)).not.toBeInTheDocument();
     // The upload replaces what the role has, and the page says so (AD-F25).
-    expect(screen.getByText(/replaces any job description this role already has/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/replaces any job description this role already has/i),
+    ).toBeInTheDocument();
   });
 
   it('uploads against the job that was actually selected', async () => {
@@ -134,8 +140,10 @@ describe('AdminJobJd', () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText(/select a practice role/i));
-    await user.click(await screen.findByRole('option', { name: 'QA Engineer' }));
+    await user.selectOptions(
+      await screen.findByLabelText(/select a practice role/i),
+      'QA Engineer',
+    );
     await screen.findByText(/job description for/i);
 
     await user.upload(

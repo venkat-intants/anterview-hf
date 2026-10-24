@@ -9,7 +9,7 @@
 // getSystemHealth with a 60 s refetch), data-testid="overview-tiles".
 
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, AlertCircle, AlertTriangle } from '@/design/components/icons';
+import { CheckCircle2, AlertCircle } from '@/design/components/icons';
 import {
   LineChart,
   Line,
@@ -182,32 +182,26 @@ export default function AdminOverview() {
     error: overviewErr,
   } = overviewQuery;
 
-  const {
-    data: trendsData,
-    isLoading: trendsLoading,
-    isError: trendsError,
-  } = useQuery({
+  const trendsQuery = useQuery({
     queryKey: ['admin', 'trends'],
     queryFn: () => getTrends(),
     staleTime: 5 * 60 * 1000,
     retry: false,
     throwOnError: false,
   });
+  const { data: trendsData, isLoading: trendsLoading, isError: trendsError } = trendsQuery;
 
-  const {
-    data: distData,
-    isLoading: distLoading,
-    isError: distError,
-  } = useQuery({
+  const distQuery = useQuery({
     queryKey: ['admin', 'score-distribution'],
     queryFn: getScoreDistribution,
     staleTime: 5 * 60 * 1000,
     retry: false,
     throwOnError: false,
   });
+  const { data: distData, isLoading: distLoading, isError: distError } = distQuery;
 
   // System status — live peer-service + datastore health (refreshes each minute).
-  const { data: health, isLoading: healthLoading } = useQuery({
+  const healthQuery = useQuery({
     queryKey: ['admin', 'system-health'],
     queryFn: getSystemHealth,
     refetchInterval: 60 * 1000,
@@ -215,6 +209,7 @@ export default function AdminOverview() {
     retry: false,
     throwOnError: false,
   });
+  const { data: health, isLoading: healthLoading } = healthQuery;
 
   const header = (
     <PageHeader
@@ -298,9 +293,11 @@ export default function AdminOverview() {
           {trendsLoading ? (
             <ChartSkeleton height={200} />
           ) : trendsError ? (
-            <EmptyState
-              icon={AlertTriangle}
+            <QueryErrorPanel
               title="Could not load the trend."
+              error={trendsQuery.error}
+              onRetry={() => void trendsQuery.refetch()}
+              retrying={trendsQuery.isFetching}
               className="h-[200px]"
             />
           ) : trendsData && trendsData.items.length > 0 ? (
@@ -317,9 +314,11 @@ export default function AdminOverview() {
           {distLoading ? (
             <ChartSkeleton height={180} />
           ) : distError ? (
-            <EmptyState
-              icon={AlertTriangle}
+            <QueryErrorPanel
               title="Could not load the distribution."
+              error={distQuery.error}
+              onRetry={() => void distQuery.refetch()}
+              retrying={distQuery.isFetching}
               className="h-[180px]"
             />
           ) : distData ? (
@@ -397,7 +396,12 @@ export default function AdminOverview() {
                 ))}
             </ul>
           ) : (
-            <EmptyState icon={AlertTriangle} title="Status unavailable." />
+            <QueryErrorPanel
+              title="Could not load the system status."
+              error={healthQuery.error}
+              onRetry={() => void healthQuery.refetch()}
+              retrying={healthQuery.isFetching}
+            />
           )}
         </SectionCard>
 
@@ -454,7 +458,12 @@ export default function AdminOverview() {
               </p>
             </>
           ) : (
-            <EmptyState icon={AlertTriangle} title="Status unavailable." />
+            <QueryErrorPanel
+              title="Could not load the system status."
+              error={healthQuery.error}
+              onRetry={() => void healthQuery.refetch()}
+              retrying={healthQuery.isFetching}
+            />
           )}
         </SectionCard>
       </div>

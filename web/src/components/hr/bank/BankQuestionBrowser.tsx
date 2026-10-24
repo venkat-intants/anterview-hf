@@ -21,7 +21,10 @@ import { ClipboardList, Code2, Search } from '@/design/components/icons';
 import { EmptyState, Toolbar } from '@/design/components/page';
 import { QuestionBadges } from '@/components/bank/QuestionBadges';
 import type { UnsavedGuard } from '@/components/bank/useUnsavedGuard';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { questionBrief } from '@/lib/bankFlow';
+import { plural } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import type {
   BankDifficulty,
@@ -69,8 +72,8 @@ function useFitsSideBySide(el: HTMLElement | null): boolean {
   return fits;
 }
 
-const field =
-  'h-10 rounded-[10px] border border-input bg-card px-3 text-[14px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
+/** A toolbar filter select sizes to its longest option, not the whole row. */
+const FILTER_SELECT = 'w-auto';
 
 const INITIAL_ROWS = 8;
 
@@ -166,7 +169,7 @@ export function BankQuestionBrowser({
         trailing={
           <span className="text-[13px] tabular-nums text-muted-foreground" role="status">
             {rows.length === questions.length
-              ? `${questions.length} question${questions.length === 1 ? '' : 's'}`
+              ? plural(questions.length, 'question')
               : `${rows.length} of ${questions.length}`}
           </span>
         }
@@ -177,31 +180,31 @@ export function BankQuestionBrowser({
             aria-hidden="true"
             className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
           />
-          <input
+          <Input
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search these questions"
             aria-label="Search these questions"
-            className={cn(field, 'w-full pl-8')}
+            className="pl-8"
           />
         </div>
-        <select
+        <SelectControl
           value={kind}
           onChange={(e) => setKind(e.target.value as BankQuestionKind | '')}
           aria-label="Filter by kind"
-          className={field}
+          className={FILTER_SELECT}
         >
           <option value="">Any kind</option>
           <option value="mcq">MCQ</option>
           <option value="coding">Coding</option>
-        </select>
+        </SelectControl>
         {statuses.length > 1 ? (
-          <select
+          <SelectControl
             value={status}
             onChange={(e) => setStatus(e.target.value as BankQuestionStatus | '')}
             aria-label="Filter by status"
-            className={field}
+            className={FILTER_SELECT}
           >
             <option value="">Any status</option>
             {statuses.map((s) => (
@@ -209,7 +212,7 @@ export function BankQuestionBrowser({
                 {STATUS_WORD[s]}
               </option>
             ))}
-          </select>
+          </SelectControl>
         ) : null}
         <button
           type="button"
@@ -220,17 +223,17 @@ export function BankQuestionBrowser({
           {moreOpen ? 'Fewer filters' : 'More filters'}
         </button>
         {moreOpen ? (
-          <select
+          <SelectControl
             value={difficulty}
             onChange={(e) => setDifficulty(e.target.value as BankDifficulty | '')}
             aria-label="Filter by difficulty"
-            className={field}
+            className={FILTER_SELECT}
           >
             <option value="">Any difficulty</option>
             <option value="easy">Easy</option>
             <option value="medium">Medium</option>
             <option value="hard">Hard</option>
-          </select>
+          </SelectControl>
         ) : null}
       </Toolbar>
 

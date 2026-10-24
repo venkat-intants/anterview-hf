@@ -10,6 +10,8 @@ import { useQuery } from '@tanstack/react-query';
 import { listBankCompetencies, type Competency } from '@/api/questionBanks';
 import { slugifyCompetencyId } from '@/lib/competencyId';
 import { X } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 const MAX_COMPETENCIES = 8;
 
@@ -26,6 +28,8 @@ export function CompetencyTagger({
 }: CompetencyTaggerProps): JSX.Element {
   const [draft, setDraft] = useState('');
   const [hint, setHint] = useState<string | null>(null);
+  // No error branch on purpose: the catalogue only feeds suggestions, and a
+  // typed name is accepted without it, so a failed load costs nothing to show.
   const catalog = useQuery({
     queryKey: ['hr', 'bank-competencies'],
     queryFn: listBankCompetencies,
@@ -95,8 +99,9 @@ export function CompetencyTagger({
       {!disabled && value.length < MAX_COMPETENCIES ? (
         <div className="relative">
           <div className="flex gap-2">
-            <input
+            <Input
               id="competency-tagger-input"
+              size="sm"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={(e) => {
@@ -106,16 +111,16 @@ export function CompetencyTagger({
                 }
               }}
               placeholder="Type to search or add a competency…"
-              className="w-full rounded-[10px] border border-border bg-secondary px-3 py-1.5 text-[12.5px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
             />
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="sm"
               onClick={addFromDraft}
               disabled={!draft.trim()}
-              className="rounded-[10px] border border-border px-3 py-1.5 text-[12px] text-foreground disabled:opacity-40"
             >
               Add
-            </button>
+            </Button>
           </div>
           {draft.trim() && suggestions.length > 0 ? (
             <ul

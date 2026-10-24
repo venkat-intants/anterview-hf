@@ -146,7 +146,7 @@ describe('closing an opening (AC-12)', () => {
     renderPage();
     await closeOpening(user);
 
-    expect(await screen.findByRole('alertdialog')).toBeInTheDocument();
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.getByText(/3 candidates still undecided/)).toBeInTheDocument();
   });
 
@@ -168,7 +168,7 @@ describe('closing an opening (AC-12)', () => {
     renderPage();
     await closeOpening(user);
 
-    const dialog = await screen.findByRole('alertdialog');
+    const dialog = await screen.findByRole('dialog');
     expect(dialog.textContent).toMatch(/does not reject them/i);
     expect(dialog.textContent).not.toMatch(/\breject(ed|ing)\b(?!.*not)/i);
   });
@@ -197,8 +197,23 @@ describe('closing an opening (AC-12)', () => {
     await user.click(await screen.findByRole('button', { name: 'Cancel' }));
 
     await waitFor(() =>
-      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument(),
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
     );
+    expect(setRequisitionStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a modal that returns focus to Close when the manager backs out', async () => {
+    const user = userEvent.setup();
+    setRequisitionStatus.mockRejectedValue(new UnresolvedCandidatesError(3, 'x'));
+    renderPage();
+    await closeOpening(user);
+
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus());
     expect(setRequisitionStatus).toHaveBeenCalledTimes(1);
   });
 
@@ -210,7 +225,7 @@ describe('closing an opening (AC-12)', () => {
     await closeOpening(user);
 
     await waitFor(() => expect(setRequisitionStatus).toHaveBeenCalled());
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('offers Reopen rather than Close on a closed opening', async () => {
@@ -228,7 +243,7 @@ describe('closing an opening - what the count means (HR-M6)', () => {
     renderPage();
     await closeOpening(user);
 
-    const dialog = await screen.findByRole('alertdialog');
+    const dialog = await screen.findByRole('dialog');
     expect(dialog.textContent).toMatch(/3 waiting on your decision/);
     expect(dialog.textContent).toMatch(/2 still in progress/);
     expect(dialog.textContent).toMatch(/continue their rounds/);
@@ -243,7 +258,7 @@ describe('closing an opening - what the count means (HR-M6)', () => {
     renderPage();
     await closeOpening(user);
 
-    const dialog = await screen.findByRole('alertdialog');
+    const dialog = await screen.findByRole('dialog');
     expect(within(dialog).queryByRole('link', { name: /Review/ })).not.toBeInTheDocument();
   });
 });

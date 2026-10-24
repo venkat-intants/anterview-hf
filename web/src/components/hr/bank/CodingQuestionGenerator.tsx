@@ -36,8 +36,11 @@ import { Stepper, type Step } from '@/design/components/page';
 import { Well } from '@/design/components/rows';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { fieldErrorClass, fieldHintClass, fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
 import { errorMessage } from '@/lib/errorMessage';
+import { plural } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { toGenerationFailure, type GenerationFailure } from '@/lib/generationError';
 import { GenerationError } from '@/components/bank/GenerationError';
@@ -87,9 +90,7 @@ const COUNTS = Array.from({ length: BANK_CODING_MAX_GENERATED }, (_, i) => i + 1
 const TOPIC_MIN = 2;
 const TOPIC_MAX = 200;
 
-const LABEL = 'mb-1.5 block text-[13px] font-semibold text-foreground';
-const HELP = 'mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground';
-const FIELD_ERROR = 'mt-1.5 text-[12.5px] font-medium text-[var(--ui-danger)]';
+
 // 40px tall, and at least 40px wide for the one-character count chips.
 const CHIP =
   'inline-flex min-h-10 min-w-10 items-center justify-center rounded-full border px-4 text-[13px] font-medium ' +
@@ -99,9 +100,6 @@ const CHIP_ON =
   'border-[rgba(var(--accent-rgb),0.5)] bg-[rgba(var(--accent-rgb),0.14)] text-[var(--ui-info)]';
 const CHIP_OFF = 'border-border text-muted-foreground hover:text-foreground';
 
-function plural(n: number, one: string, many: string = `${one}s`): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
 
 /** A group of toggle chips with a visible label that names the group. */
 function ChipGroup({
@@ -119,13 +117,13 @@ function ChipGroup({
   const errorId = `${id}-error`;
   return (
     <div role="group" aria-labelledby={id} aria-describedby={error ? errorId : undefined}>
-      <p id={id} className={LABEL}>
+      <p id={id} className={cn(fieldLabelClass, 'mb-1.5 block')}>
         {label}
       </p>
       <div className="flex flex-wrap gap-2">{children}</div>
-      {help ? <p className={HELP}>{help}</p> : null}
+      {help ? <p className={cn(fieldHintClass, 'mt-1.5 leading-relaxed')}>{help}</p> : null}
       {error ? (
-        <p id={errorId} className={FIELD_ERROR}>
+        <p id={errorId} className={cn(fieldErrorClass, 'mt-1.5')}>
           {error}
         </p>
       ) : null}
@@ -310,7 +308,7 @@ export function CodingQuestionGenerator({
       onGenerated(saved);
     } catch (e) {
       if (!mounted.current) return;
-      setSaveError(errorMessage(e, 'The drafts could not be added.'));
+      setSaveError(errorMessage(e, 'Could not add the drafts.'));
     }
   };
 
@@ -380,42 +378,36 @@ export function CodingQuestionGenerator({
           ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <label htmlFor={topicId} className={LABEL}>
-                Topic or skill
-              </label>
-              <Input
-                id={topicId}
-                value={topic}
-                maxLength={TOPIC_MAX}
-                onChange={(e) => setTopic(e.target.value)}
-                placeholder="Binary search, string parsing, SQL-style joins in code…"
-                aria-invalid={attempted && topicError ? true : undefined}
-                aria-describedby={attempted && topicError ? `${topicId}-error` : undefined}
-              />
-              {attempted && topicError ? (
-                <p id={`${topicId}-error`} className={FIELD_ERROR}>
-                  {topicError}
-                </p>
-              ) : null}
-            </div>
-            <div>
-              <label htmlFor={roleId} className={LABEL}>
-                Role (optional)
-              </label>
-              <Input
-                id={roleId}
-                value={jobTitle}
-                maxLength={TOPIC_MAX}
-                onChange={(e) => setJobTitle(e.target.value)}
-                placeholder="Backend Engineer"
-                aria-describedby={`${roleId}-help`}
-              />
-              <p id={`${roleId}-help`} className={HELP}>
-                For software and data roles, spreads the questions across what the role is assessed
-                on.
-              </p>
-            </div>
+            <FormField
+              id={topicId}
+              label="Topic or skill"
+              error={attempted && topicError ? topicError : undefined}
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  value={topic}
+                  maxLength={TOPIC_MAX}
+                  onChange={(e) => setTopic(e.target.value)}
+                  placeholder="Binary search, string parsing, SQL-style joins in code…"
+                />
+              )}
+            </FormField>
+            <FormField
+              id={roleId}
+              label="Role (optional)"
+              hint="For software and data roles, spreads the questions across what the role is assessed on."
+            >
+              {(p) => (
+                <Input
+                  {...p}
+                  value={jobTitle}
+                  maxLength={TOPIC_MAX}
+                  onChange={(e) => setJobTitle(e.target.value)}
+                  placeholder="Backend Engineer"
+                />
+              )}
+            </FormField>
           </div>
 
           <ChipGroup label="Difficulty">
@@ -521,7 +513,7 @@ export function CodingQuestionGenerator({
             {elapsed} s elapsed
           </p>
           <div>
-            <Button type="button" variant="outline" onClick={cancel}>
+            <Button type="button" variant="ghost" onClick={cancel}>
               Cancel
             </Button>
           </div>

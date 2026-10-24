@@ -1,6 +1,6 @@
 // The dropdown system, in two halves.
 //
-//  1. SelectControl (ui/select-control.tsx, re-exported from ui/select.tsx): a thin
+//  1. SelectControl (ui/select-control.tsx): a thin
 //     wrapper that must STAY a native <select> — tests, mobile pickers and screen
 //     readers all depend on that — while adding size / invalid / leadingIcon.
 //  2. The CSS guard: index.css carries the design (a base-layer rule for every
@@ -15,7 +15,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { readFileSync } from 'node:fs';
 import { Search } from 'lucide-react';
-import { SelectControl, NativeSelect } from '@/components/ui/select';
+import { SelectControl, NativeSelect } from '@/components/ui/select-control';
 import { SelectField } from '@/design/components/primitives';
 
 describe('SelectControl', () => {

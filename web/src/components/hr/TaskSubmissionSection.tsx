@@ -50,14 +50,11 @@ import { Download, Loader2 } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { errorMessage } from '@/lib/errorMessage';
 
 // The candidate drawer's section rhythm: a hairline, then a 15px bold title.
 const SECTION = 'mt-6 border-t border-border pt-5';
 const SECTION_TITLE = 'text-[15px] font-bold text-foreground';
-
-function errText(e: unknown, fallback: string): string {
-  return e instanceof Error && e.message ? e.message : fallback;
-}
 
 const STATUS_TONE: Record<TaskSubmissionStatus, TagTone> = {
   assigned: 'neutral',
@@ -94,8 +91,9 @@ function TaskFileDownload({
       }
       window.open(url, '_blank', 'noopener,noreferrer');
     } catch (e) {
-      setError(errText(e, 'Could not open this file'));
-      toast.error(errText(e, 'Could not open this file'));
+      const msg = errorMessage(e, 'Could not open this file.');
+      setError(msg);
+      toast.error(msg);
     } finally {
       setPending(false);
     }
@@ -288,7 +286,7 @@ export default function TaskSubmissionSection({
       toast.success('A fresh link was issued');
       invalidate();
     },
-    onError: (e) => toast.error(errText(e, 'Could not re-issue this task')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not re-issue this task.')),
   });
 
   const withdrawMut = useMutation({
@@ -303,7 +301,7 @@ export default function TaskSubmissionSection({
       });
       invalidate();
     },
-    onError: (e) => toast.error(errText(e, 'Could not withdraw this submission')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not withdraw this submission.')),
   });
 
   // Nothing to show for an application with no task round — most

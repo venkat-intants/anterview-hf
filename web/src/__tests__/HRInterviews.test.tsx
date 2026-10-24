@@ -618,7 +618,9 @@ describe('HRInterviews - replacing a live link (IV-H2)', () => {
     await waitFor(() =>
       expect(toastInfo).toHaveBeenCalledWith(
         'Bhavya Nair already has this link',
-        expect.objectContaining({ description: expect.stringMatching(/no new email was sent/i) }),
+        expect.objectContaining({
+          description: expect.stringMatching(/no new email was sent/i) as unknown,
+        }),
       ),
     );
     expect(screen.queryByLabelText('Magic interview link')).not.toBeInTheDocument();

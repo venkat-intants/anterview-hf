@@ -8,7 +8,7 @@
 // finds out by never hearing back.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { OpenRole } from '../api/applications';
@@ -42,12 +42,12 @@ function role(over: Partial<OpenRole> = {}): OpenRole {
   };
 }
 
-function renderRoles() {
+function renderRoles(searchQuery?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <MemoryRouter>
-        <OpenRoles />
+        <OpenRoles searchQuery={searchQuery} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -157,9 +157,44 @@ describe('OpenRoles - nothing to show', () => {
     await vi.waitFor(() => expect(container).toBeEmptyDOMElement());
   });
 
-  it('says so when the list could not be loaded', async () => {
-    listOpenRoles.mockRejectedValue(new Error('boom'));
+  it('says so when the list could not be loaded, and offers to try again', async () => {
+    listOpenRoles.mockRejectedValueOnce(new Error('boom'));
     renderRoles();
-    expect(await screen.findByText(/Could not load open jobs/)).toBeInTheDocument();
+    expect(
+      await screen.findByText('Could not load open jobs. Please try again.'),
+    ).toBeInTheDocument();
+
+    // Try again refetches in place; the reader is not told to reload the page.
+    listOpenRoles.mockResolvedValue([role()]);
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Senior Python Engineer')).toBeInTheDocument();
+    expect(listOpenRoles).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('OpenRoles - the page search', () => {
+  beforeEach(() => {
+    listOpenRoles.mockResolvedValue([
+      role(),
+      role({ requisition_id: 'req-2', title: 'Staff Nurse', company_name: 'City Hospital' }),
+    ]);
+  });
+
+  it('filters the open jobs by title, ignoring case', async () => {
+    renderRoles('nurse');
+    expect(await screen.findByText('Staff Nurse')).toBeInTheDocument();
+    expect(screen.queryByText('Senior Python Engineer')).not.toBeInTheDocument();
+  });
+
+  it('matches the company name too', async () => {
+    renderRoles('acme');
+    expect(await screen.findByText('Senior Python Engineer')).toBeInTheDocument();
+    expect(screen.queryByText('Staff Nurse')).not.toBeInTheDocument();
+  });
+
+  it('says nothing matched rather than vanishing', async () => {
+    renderRoles('plumber');
+    expect(await screen.findByText('No open jobs match “plumber”.')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Open jobs' })).toBeInTheDocument();
   });
 });

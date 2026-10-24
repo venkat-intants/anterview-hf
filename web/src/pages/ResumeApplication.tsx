@@ -46,12 +46,13 @@ import {
   uploadDraftResume,
   type AnswerValue,
   type ApplicationDraft,
+  type ApplicationResult,
   type DraftFields,
 } from '@/api/publicApply';
 import { ApplyQuestionField } from '@/components/candidate/ApplyQuestionField';
 import { requiredAnswered } from '@/components/candidate/applyAnswers';
 import { formatDate, uiLocale } from '@/lib/formatters';
-import { useCandidateError } from '@/lib/candidateCopy';
+import { applicationResultText, useCandidateError } from '@/lib/candidateCopy';
 import { PageHeader, SectionCard } from '@/design/components/page';
 import { AlertCircle, CheckCircle2, Loader2, Upload } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
@@ -115,7 +116,9 @@ export default function ResumeApplication(): JSX.Element {
   // the "Saved" line never outlives the values it was about.
   const [savedNote, setSavedNote] = useState(false);
   const [fileError, setFileError] = useState('');
-  const [submitted, setSubmitted] = useState<string | null>(null);
+  // The submit result's flag, not its English `message`: the confirmation is
+  // worded from `already_applied` in the page language.
+  const [submitted, setSubmitted] = useState<ApplicationResult | null>(null);
   const [discarding, setDiscarding] = useState(false);
   const [discarded, setDiscarded] = useState(false);
 
@@ -224,7 +227,7 @@ export default function ResumeApplication(): JSX.Element {
     },
     onSuccess: (r) => {
       forgetFragmentToken(DRAFT_TOKEN_KEY);
-      setSubmitted(r.message);
+      setSubmitted(r);
     },
   });
 
@@ -314,7 +317,11 @@ export default function ResumeApplication(): JSX.Element {
   if (submitted) {
     return (
       <Shell company={draft.data.company_name}>
-        <PublicNotice tone="ok" title={draft.data.title} description={submitted} />
+        <PublicNotice
+          tone="ok"
+          title={draft.data.title}
+          description={applicationResultText(t, submitted)}
+        />
         <PublicNext className="mt-6">
           {t('public.resumeNext', {
             company: draft.data.company_name,
@@ -509,8 +516,11 @@ export default function ResumeApplication(): JSX.Element {
             >
               {save.isPending ? t('resumeApply.saving') : t('resumeApply.saveLater')}
             </Button>
+            {/* Highlight, not the filled primary: Submit application is this
+                page's one primary, and confirming is a step towards it. */}
             <Button
               type="button"
+              variant="highlight"
               onClick={() => confirm.mutate()}
               disabled={confirm.isPending || !(form.full_name ?? '').trim()}
               className="h-11"

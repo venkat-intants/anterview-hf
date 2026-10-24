@@ -270,6 +270,37 @@ describe('submitting', () => {
     expect(within(next).getByRole("link", { name: 'Track this in My applications' })).toHaveAttribute('href', '/login');
   });
 
+  it('says so when this email had already applied', async () => {
+    getDraft.mockResolvedValue(
+      draft({ has_resume: true, confirmed: true, full_name: 'Priya' }),
+    );
+    submitDraft.mockResolvedValue({
+      applicant_id: 'a-1',
+      enrolment_id: 'e-1',
+      full_name: 'Priya',
+      already_applied: true,
+      message: 'You have already applied for this role. We have your application.',
+    });
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Submit application/ })).toBeEnabled(),
+    );
+    await userEvent.click(screen.getByRole('button', { name: /Submit application/ }));
+    expect(
+      await screen.findByText('You have already applied for this job. We have your application.'),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps Submit application the one filled primary on the page', async () => {
+    getDraft.mockResolvedValue(draft({ has_resume: true }));
+    renderPage();
+    const submit = await screen.findByRole('button', { name: /Submit application/ });
+    const primaries = screen
+      .getAllByRole('button')
+      .filter((b) => b.className.split(/\s+/).includes('bg-primary'));
+    expect(primaries).toEqual([submit]);
+  });
+
   it('surfaces a refusal rather than failing silently', async () => {
     getDraft.mockResolvedValue(
       draft({ has_resume: true, confirmed: true, full_name: 'Priya' }),
@@ -546,6 +577,20 @@ describe('ResumeApplication - localisation', () => {
     expect(screen.getByText(cvTitle)).toBeInTheDocument();
     // And the English it replaced is genuinely gone — a fallback would leave it.
     expect(screen.queryByText('Check your details')).not.toBeInTheDocument();
+  });
+
+  it('confirms the submitted application in Hindi, not in the server\'s English', async () => {
+    getDraft.mockResolvedValue(
+      draft({ has_resume: true, confirmed: true, full_name: 'Priya' }),
+    );
+    await i18n.changeLanguage('hi');
+    renderPage();
+    const submit = await screen.findByRole('button', { name: 'आवेदन जमा करें' });
+    await waitFor(() => expect(submit).toBeEnabled());
+    await userEvent.click(submit);
+
+    expect(await screen.findByText(/धन्यवाद - आपका आवेदन मिल गया है।/)).toBeInTheDocument();
+    expect(screen.queryByText(/your application is in/)).not.toBeInTheDocument();
   });
 
   it('translates the delete control, which is the DPDP right to act', async () => {

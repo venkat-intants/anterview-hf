@@ -42,6 +42,11 @@ import { StatusTag, ToggleSwitch, type TagTone } from '@/design/components/primi
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
+import { fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   Calendar,
   ChevronDown,
@@ -53,12 +58,9 @@ import {
 } from '@/design/components/icons';
 import { statusLabel } from '@/lib/statusLabel';
 
-const inputCls =
-  'mt-1 w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] ' +
-  'text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30';
-const labelCls = 'text-[13px] font-semibold text-foreground';
-const linkBtnCls = 'text-[12px] text-[var(--ui-info)] hover:underline focus:outline-none focus-visible:underline focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
-const fieldErrCls = 'mt-1 text-[12px] text-[var(--ui-danger)]';
+/** A text action in the flow of a card (a disclosure toggle, "show more"):
+ *  the link Button without its box. */
+const TEXT_LINK = 'h-auto px-0 py-0 text-[12px] font-normal';
 
 /* ── Limits the server enforces (routers/interview_scheduling.py) ─────────── */
 // Mirrored here so a value out of range is explained beside the field rather
@@ -172,17 +174,20 @@ function StartTimeField({
   const iso = value ? localInputToIso(value) : null;
   return (
     <div>
-      <label htmlFor={id} className={labelCls}>
-        {label} (your time, {tz}){optionalNote ? ` ${optionalNote}` : ''}
-      </label>
-      <input
+      <FormField
         id={id}
-        type="datetime-local"
-        min={nowLocalInput()}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={inputCls}
-      />
+        label={`${label} (your time, ${tz})${optionalNote ? ` ${optionalNote}` : ''}`}
+      >
+        {(p) => (
+          <Input
+            {...p}
+            type="datetime-local"
+            min={nowLocalInput()}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          />
+        )}
+      </FormField>
       {iso && candidateTimezone !== tz ? (
         <p className="mt-1 text-[12px] text-muted-foreground" aria-live="polite">
           For the candidate: {formatSessionWhen(iso, candidateTimezone)}
@@ -258,52 +263,44 @@ function CreateLoopForm({ enrolmentId, onDone }: { enrolmentId: string; onDone: 
 
   return (
     <div className="mt-3 flex flex-col gap-2.5 rounded-[10px] border border-border p-3">
-      <div>
-        <label htmlFor={`${uid}-title`} className={labelCls}>
-          Title
-        </label>
-        <input
-          id={`${uid}-title`}
-          value={title}
-          maxLength={TITLE_MAX}
-          onChange={(e) => setTitle(e.target.value)}
-          className={inputCls}
-        />
-      </div>
-      <div className="grid grid-cols-2 gap-2.5">
-        <div>
-          <label htmlFor={`${uid}-tz`} className={labelCls}>
-            Candidate timezone
-          </label>
-          <select
-            id={`${uid}-tz`}
-            value={timezone}
-            onChange={(e) => setTimezone(e.target.value)}
-            className={inputCls}
-          >
-            {zoneOptions(timezone).map((z) => (
-              <option key={z} value={z}>
-                {z}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label htmlFor={`${uid}-buffer`} className={labelCls}>
-            Gap between interviews (minutes)
-          </label>
-          <input
-            id={`${uid}-buffer`}
-            type="number"
-            min={0}
-            max={BUFFER_MAX}
-            value={buffer}
-            onChange={(e) => setBuffer(e.target.value)}
-            aria-invalid={bufferProblem ? true : undefined}
-            className={inputCls}
+      <FormField id={`${uid}-title`} label="Title">
+        {(p) => (
+          <Input
+            {...p}
+            value={title}
+            maxLength={TITLE_MAX}
+            onChange={(e) => setTitle(e.target.value)}
           />
-          {bufferProblem ? <p className={fieldErrCls}>{bufferProblem}</p> : null}
-        </div>
+        )}
+      </FormField>
+      <div className="grid grid-cols-2 gap-2.5">
+        <FormField id={`${uid}-tz`} label="Candidate timezone">
+          {(p) => (
+            <SelectControl {...p} value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+              {zoneOptions(timezone).map((z) => (
+                <option key={z} value={z}>
+                  {z}
+                </option>
+              ))}
+            </SelectControl>
+          )}
+        </FormField>
+        <FormField
+          id={`${uid}-buffer`}
+          label="Gap between interviews (minutes)"
+          error={bufferProblem ?? undefined}
+        >
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={0}
+              max={BUFFER_MAX}
+              value={buffer}
+              onChange={(e) => setBuffer(e.target.value)}
+            />
+          )}
+        </FormField>
       </div>
       <label className="flex items-center justify-between gap-2 text-[12.5px] text-foreground">
         Let the candidate choose times
@@ -339,9 +336,12 @@ function InterviewerPicker({
   const full = selected.length >= MAX_INTERVIEWERS;
   return (
     <fieldset className="flex flex-col gap-1.5">
-      <legend className={labelCls}>Interviewers (up to {MAX_INTERVIEWERS})</legend>
+      <legend className={fieldLabelClass}>Interviewers (up to {MAX_INTERVIEWERS})</legend>
       {interviewers.isLoading ? (
-        <span className="text-[12px] text-muted-foreground">Loading…</span>
+        <div className="flex flex-col gap-1.5" aria-busy="true" aria-label="Loading interviewers">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-4 w-32" />
+        </div>
       ) : interviewers.isError ? (
         // A failed fetch is not "nobody set up yet".
         <QueryErrorPanel
@@ -455,69 +455,59 @@ function AddSessionForm({
 
   return (
     <div className="mt-3 flex flex-col gap-2.5 rounded-[10px] border border-border p-3">
-      <div>
-        <label htmlFor={`${uid}-round`} className={labelCls}>
-          Round
-        </label>
-        <select
-          id={`${uid}-round`}
-          value={roundId}
-          onChange={(e) => setRoundId(e.target.value)}
-          className={inputCls}
-        >
-          <option value="">Choose a round…</option>
-          {rounds.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.title}
-            </option>
-          ))}
-        </select>
-      </div>
+      <FormField id={`${uid}-round`} label="Round">
+        {(p) => (
+          <SelectControl {...p} value={roundId} onChange={(e) => setRoundId(e.target.value)}>
+            <option value="">Choose a round…</option>
+            {rounds.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.title}
+              </option>
+            ))}
+          </SelectControl>
+        )}
+      </FormField>
 
-      <div>
-        <label htmlFor={`${uid}-title`} className={labelCls}>
-          Title (optional)
-        </label>
-        <input
-          id={`${uid}-title`}
-          value={title}
-          maxLength={TITLE_MAX}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Defaults to the round's title"
-          className={inputCls}
-        />
-      </div>
+      <FormField id={`${uid}-title`} label="Title (optional)">
+        {(p) => (
+          <Input
+            {...p}
+            value={title}
+            maxLength={TITLE_MAX}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Defaults to the round's title"
+          />
+        )}
+      </FormField>
 
       <div className="grid grid-cols-2 gap-2.5">
-        <div>
-          <label htmlFor={`${uid}-duration`} className={labelCls}>
-            Duration (minutes)
-          </label>
-          <input
-            id={`${uid}-duration`}
-            type="number"
-            min={DURATION_MIN}
-            max={DURATION_MAX}
-            value={duration}
-            onChange={(e) => setDuration(e.target.value)}
-            aria-invalid={durationErr ? true : undefined}
-            className={inputCls}
-          />
-          {durationErr ? <p className={fieldErrCls}>{durationErr}</p> : null}
-        </div>
-        <div>
-          <label htmlFor={`${uid}-location`} className={labelCls}>
-            Location
-          </label>
-          <input
-            id={`${uid}-location`}
-            value={location}
-            maxLength={LOCATION_MAX}
-            onChange={(e) => setLocation(e.target.value)}
-            placeholder="Room, or a video link"
-            className={inputCls}
-          />
-        </div>
+        <FormField
+          id={`${uid}-duration`}
+          label="Duration (minutes)"
+          error={durationErr ?? undefined}
+        >
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={DURATION_MIN}
+              max={DURATION_MAX}
+              value={duration}
+              onChange={(e) => setDuration(e.target.value)}
+            />
+          )}
+        </FormField>
+        <FormField id={`${uid}-location`} label="Location">
+          {(p) => (
+            <Input
+              {...p}
+              value={location}
+              maxLength={LOCATION_MAX}
+              onChange={(e) => setLocation(e.target.value)}
+              placeholder="Room, or a video link"
+            />
+          )}
+        </FormField>
       </div>
 
       <InterviewerPicker selected={selected} setSelected={setSelected} />
@@ -589,7 +579,11 @@ function FreeSlotsPanel({
   return (
     <div className="mt-2 rounded-[10px] border border-border p-2.5">
       {slots.isLoading ? (
-        <p className="text-[12px] text-muted-foreground">Looking for free times…</p>
+        <div className="flex flex-col gap-1" aria-busy="true" aria-label="Looking for free times">
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-6 w-full" />
+          <Skeleton className="h-6 w-full" />
+        </div>
       ) : slots.isError ? (
         <QueryErrorPanel
           title="Could not check free times."
@@ -621,13 +615,15 @@ function FreeSlotsPanel({
             ))}
           </ul>
           {shown < all.length ? (
-            <button
+            <Button
               type="button"
-              className={`${linkBtnCls} mt-1.5`}
+              variant="link"
+              size="sm"
+              className={`mt-1.5 ${TEXT_LINK}`}
               onClick={() => setShown((n) => n + SLOT_PAGE)}
             >
               Show more free times
-            </button>
+            </Button>
           ) : null}
         </>
       )}
@@ -691,39 +687,44 @@ function RescheduleForm({
           }}
           candidateTimezone={candidateTimezone}
         />
-        <div>
-          <label htmlFor={`${uid}-duration`} className={labelCls}>
-            Duration (minutes)
-          </label>
-          <input
-            id={`${uid}-duration`}
-            type="number"
-            min={DURATION_MIN}
-            max={DURATION_MAX}
-            value={duration}
-            onChange={(e) => setDuration(e.target.value)}
-            aria-invalid={durationErr ? true : undefined}
-            className={inputCls}
+        <FormField
+          id={`${uid}-duration`}
+          label="Duration (minutes)"
+          error={durationErr ?? undefined}
+        >
+          {(p) => (
+            <Input
+              {...p}
+              type="number"
+              min={DURATION_MIN}
+              max={DURATION_MAX}
+              value={duration}
+              onChange={(e) => setDuration(e.target.value)}
+            />
+          )}
+        </FormField>
+      </div>
+      <FormField id={`${uid}-location`} label="Location">
+        {(p) => (
+          <Input
+            {...p}
+            value={location}
+            maxLength={LOCATION_MAX}
+            onChange={(e) => setLocation(e.target.value)}
           />
-          {durationErr ? <p className={fieldErrCls}>{durationErr}</p> : null}
-        </div>
-      </div>
-      <div>
-        <label htmlFor={`${uid}-location`} className={labelCls}>
-          Location
-        </label>
-        <input
-          id={`${uid}-location`}
-          value={location}
-          maxLength={LOCATION_MAX}
-          onChange={(e) => setLocation(e.target.value)}
-          className={inputCls}
-        />
-      </div>
+        )}
+      </FormField>
 
-      <button type="button" onClick={() => setShowSlots((v) => !v)} className={`${linkBtnCls} self-start`}>
+      <Button
+        type="button"
+        variant="link"
+        size="sm"
+        onClick={() => setShowSlots((v) => !v)}
+        aria-expanded={showSlots}
+        className={`self-start ${TEXT_LINK}`}
+      >
         {showSlots ? 'Hide free times' : 'Show free times'}
-      </button>
+      </Button>
       {showSlots ? (
         <>
           {durationChanged ? (
@@ -811,19 +812,17 @@ function CancelSessionPanel({
         {session.starts_at ? ' The candidate and interviewers are told if the schedule was sent.' : ''}
         {isLastPending ? ' It is the last one left in this loop, so the loop closes too.' : ''}
       </p>
-      <div>
-        <label htmlFor={`${uid}-reason`} className={labelCls}>
-          Reason (optional)
-        </label>
-        <input
-          id={`${uid}-reason`}
-          type="text"
-          value={reason}
-          maxLength={REASON_MAX}
-          onChange={(e) => setReason(e.target.value)}
-          className={inputCls}
-        />
-      </div>
+      <FormField id={`${uid}-reason`} label="Reason (optional)">
+        {(p) => (
+          <Input
+            {...p}
+            type="text"
+            value={reason}
+            maxLength={REASON_MAX}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        )}
+      </FormField>
       <div className="flex items-center gap-2">
         <Button
           type="button"
@@ -932,18 +931,20 @@ function SessionRow({
               HR too — the candidate may never choose one. Not once a decision
               is recorded: the server refuses the move. */}
           {!decided ? (
-            <button
+            <Button
               type="button"
+              variant="link"
+              size="sm"
               onClick={() => setRescheduling((v) => !v)}
               aria-expanded={rescheduling}
-              className={linkBtnCls}
+              className={TEXT_LINK}
             >
               {rescheduling
                 ? 'Close'
                 : session.status === 'awaiting_slot'
                   ? 'Set a time'
                   : 'Reschedule'}
-            </button>
+            </Button>
           ) : null}
           {session.status === 'scheduled' && started ? (
             <>
@@ -1103,14 +1104,16 @@ function LoopCard({
 
       {canChange ? (
         <div className="mt-2.5">
-          <button
+          <Button
             type="button"
+            variant="link"
+            size="sm"
             onClick={() => setAddingSession((v) => !v)}
             aria-expanded={addingSession}
-            className={linkBtnCls}
+            className={TEXT_LINK}
           >
             {addingSession ? 'Cancel' : 'Add interview'}
-          </button>
+          </Button>
           {addingSession ? (
             <AddSessionForm
               loop={loop}
@@ -1170,14 +1173,15 @@ function LoopCard({
         ) : null}
         {open ? (
           <div className="ml-auto flex items-center gap-2">
-            <input
+            <Input
               type="text"
+              size="sm"
               value={cancelReason}
               maxLength={REASON_MAX}
               onChange={(e) => setCancelReason(e.target.value)}
               placeholder="Cancel reason (optional)"
               aria-label={`Cancel reason for ${loop.title}`}
-              className="w-[180px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground placeholder:text-[var(--ui-faint)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30"
+              className="w-[200px]"
             />
             <ConfirmDeleteButton
               label="Cancel loop"
@@ -1235,14 +1239,16 @@ export default function InterviewLoopsSection({
           Interview schedule{rows.length > 0 ? ` (${rows.length})` : ''}
         </button>
         {!decided ? (
-          <button
+          <Button
             type="button"
+            variant="link"
+            size="sm"
             onClick={() => setCreating((v) => !v)}
             aria-expanded={creating}
-            className={linkBtnCls}
+            className={TEXT_LINK}
           >
             {creating ? 'Cancel' : 'New loop'}
-          </button>
+          </Button>
         ) : null}
       </div>
 
@@ -1261,7 +1267,14 @@ export default function InterviewLoopsSection({
           ) : null}
 
           {loops.isLoading ? (
-            <p className="mt-2 text-[12.5px] text-muted-foreground">Loading…</p>
+            <div
+              className="mt-2 flex flex-col gap-3"
+              aria-busy="true"
+              aria-label="Loading the interview schedule"
+            >
+              <Skeleton className="h-24 w-full rounded-[12px]" />
+              <Skeleton className="h-24 w-full rounded-[12px]" />
+            </div>
           ) : loops.isError ? (
             <QueryErrorPanel
               className="mt-2"

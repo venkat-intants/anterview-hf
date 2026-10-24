@@ -16,10 +16,12 @@ import {
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
 import { invalidateAfterHrMutation } from '@/lib/queryKeys';
-import { Loader2 } from '@/design/components/icons';
+import { plural } from '@/lib/formatters';
 import { GlassCard, StatusTag } from '@/design/components/primitives';
 import { QueryErrorPanel } from '@/components/QueryState';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 
 type Preset = WorkloadPeriodPreset;
 
@@ -33,9 +35,6 @@ const ROLE_LABEL: Record<WorkloadRow['role'], string> = {
   interviewer: 'Interviewer',
   hr_manager: 'HR manager',
 };
-
-const inputCls =
-  'mt-0.5 block w-[110px] rounded-[8px] border border-border bg-secondary px-2 py-1 text-[12px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]';
 
 /** The stored override as the field shows it: blank means the company default. */
 function overrideText(value: number | null | undefined): string {
@@ -84,30 +83,32 @@ function CapacityEditor({
       <div className="flex flex-wrap items-end gap-2">
         <label className="text-[12px] text-[var(--ui-soft)]">
           Daily limit
-          <input
+          <Input
             aria-label={`Daily limit for ${row.name}`}
             type="number"
+            size="sm"
             min={1}
             max={24}
             value={perDay}
             onChange={(e) => setPerDay(e.target.value)}
             placeholder={`Default (${defaults.max_per_day})`}
-            aria-invalid={dayErr ? true : undefined}
-            className={inputCls}
+            invalid={dayErr !== null}
+            className="mt-0.5 block w-[130px]"
           />
         </label>
         <label className="text-[12px] text-[var(--ui-soft)]">
           Weekly limit
-          <input
+          <Input
             aria-label={`Weekly limit for ${row.name}`}
             type="number"
+            size="sm"
             min={1}
             max={100}
             value={perWeek}
             onChange={(e) => setPerWeek(e.target.value)}
             placeholder={`Default (${defaults.max_per_week})`}
-            aria-invalid={weekErr ? true : undefined}
-            className={inputCls}
+            invalid={weekErr !== null}
+            className="mt-0.5 block w-[130px]"
           />
         </label>
         <Button
@@ -159,7 +160,7 @@ function WorkloadRowCard({
         </div>
         {flags.length > 0 ? (
           <StatusTag tone="amber">
-            {flags.length} flag{flags.length === 1 ? '' : 's'}
+            {plural(flags.length, 'flag')}
           </StatusTag>
         ) : null}
       </div>
@@ -251,9 +252,9 @@ export default function WorkloadTab(): JSX.Element {
       </p>
 
       {isLoading ? (
-        <div className="mt-4 flex items-center gap-2 text-[13px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          Loading…
+        <div className="mt-4 flex flex-col gap-3" aria-busy="true" aria-label="Loading the panel workload">
+          <Skeleton className="h-40 w-full" />
+          <Skeleton className="h-40 w-full" />
         </div>
       ) : isError && !data ? (
         <QueryErrorPanel

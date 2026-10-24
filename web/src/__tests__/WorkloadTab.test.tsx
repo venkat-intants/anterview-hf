@@ -75,7 +75,7 @@ describe('WorkloadTab - states', () => {
   it('shows a loading state', () => {
     schedulingApi.getWorkload.mockImplementation(() => new Promise(() => undefined));
     renderTab();
-    expect(screen.getByText('Loading…')).toBeInTheDocument();
+    expect(screen.getByLabelText('Loading the panel workload')).toHaveAttribute('aria-busy', 'true');
   });
 
   it('shows an error state', async () => {

@@ -269,9 +269,7 @@ describe('QuestionReviewQueue - what a reviewer sees before deciding', () => {
     const [coding, human, ai] = items;
     expect(within(coding).getByText('Coding')).toBeInTheDocument();
     expect(within(coding).getByTestId('ai-draft-badge')).toHaveTextContent('AI draft');
-    expect(within(coding).getByTestId('row-unverified-badge')).toHaveTextContent(
-      'Unverified',
-    );
+    expect(within(coding).getByTestId('row-unverified-badge')).toHaveTextContent('Unverified');
 
     expect(within(human).getByText('MCQ')).toBeInTheDocument();
     expect(within(human).queryByTestId('ai-draft-badge')).not.toBeInTheDocument();

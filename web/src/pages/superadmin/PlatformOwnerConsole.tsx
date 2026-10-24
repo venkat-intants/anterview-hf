@@ -355,9 +355,10 @@ function CompanyAdminPanel({ company, onDeleted }: { company: Company; onDeleted
               <DialogHeader>
                 <DialogTitle>Remove {admin.full_name}?</DialogTitle>
                 <DialogDescription>
-                  {admin.email} loses access to {company.name} straight away and is signed out
-                  everywhere. This cannot be undone from the console, and {company.name} has no
-                  super admin until you add a new one.
+                  {admin.email} is removed from {company.name} and their open sessions are ended. A
+                  session the server could not end stays open until it expires. This cannot be
+                  undone from the console, and {company.name} has no super admin until you add a new
+                  one.
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter className="gap-2">

@@ -423,7 +423,9 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
     await user.click(await screen.findByRole('button', { name: /delete company/i }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText(/every account in this company is removed/i)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/every account in this company is removed/i),
+    ).toBeInTheDocument();
     expect(within(dialog).getByText(/signed out straight away/i)).toBeInTheDocument();
     const confirm = within(dialog).getByRole('button', { name: 'Delete company' });
     expect(confirm).toBeDisabled();
@@ -455,9 +457,12 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByRole('heading', { name: 'Remove Asha Rao?' })).toBeInTheDocument();
-    expect(within(dialog).getByText(/sa@acme\.edu loses access/i)).toHaveTextContent(
-      /signed out everywhere/i,
+    // Session revocation on the server is best-effort, so the copy must not
+    // promise an instant sign-out everywhere.
+    expect(within(dialog).getByText(/sa@acme\.edu is removed from/i)).toHaveTextContent(
+      /could not end stays open until it expires/i,
     );
+    expect(dialog).not.toHaveTextContent(/signed out everywhere|straight away/i);
     expect(within(dialog).getByText(/has no super admin until/i)).toBeInTheDocument();
     expect(api.deleteCompanyAdmin).not.toHaveBeenCalled();
 
@@ -473,7 +478,9 @@ describe('PlatformOwnerConsole - super-admin panel', () => {
     await user.click(await screen.findByRole('button', { name: /select acme/i }));
     const removeBtn = await screen.findByRole('button', { name: 'Remove Asha Rao' });
     await user.click(removeBtn);
-    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }),
+    );
 
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(api.deleteCompanyAdmin).not.toHaveBeenCalled();

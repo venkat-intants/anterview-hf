@@ -26,7 +26,7 @@ function whatHappens(round: Round): { receive: string; asked: string } {
     case 'coding':
       return {
         receive: `An email with a private link to the ${
-          round.kind === 'coding' ? 'coding test' : 'assessment'
+          round.kind === 'coding' ? 'coding round' : 'exam'
         }, in their language.`,
         asked: `Complete it within ${round.deadline_days} day${
           round.deadline_days === 1 ? '' : 's'

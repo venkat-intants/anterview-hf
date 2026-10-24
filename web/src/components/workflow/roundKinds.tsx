@@ -61,7 +61,7 @@ export const ROUND_KIND_META: Record<RoundKind, RoundKindMeta> = {
   },
   coding: {
     kind: 'coding',
-    label: 'Coding test',
+    label: 'Coding round',
     blurb: 'Programming problems from an exam, run against test cases.',
     icon: Code2,
     tone: 'lavender',

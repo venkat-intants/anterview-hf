@@ -12,7 +12,9 @@
 // proceeds: "no round assesses Communication" may well be deliberate, so the
 // builder says it once and gets out of the way rather than demanding a fix.
 
-import { AlertTriangle, CheckCircle2, Info, Loader2 } from '@/design/components/icons';
+import { AlertTriangle, CheckCircle2, Info } from '@/design/components/icons';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import type { CoverageRow, ValidationReport } from '@/api/workflows';
 import { coverageVerdict } from '@/lib/workflowLifecycle';
@@ -27,6 +29,11 @@ interface Props {
    * (published or read-only views) leave this off and the errors show here.
    */
   blockersShownElsewhere?: boolean;
+  /**
+   * The validation query, when it failed. A failed check must not read as
+   * "add a round" (an empty state), so the panel says it failed instead.
+   */
+  failure?: { error: unknown; retry: () => void; retrying: boolean };
 }
 
 /** 0 is a gap, 1–2 is healthy, 3+ is probably an accident. Mirrors build_coverage. */
@@ -70,12 +77,25 @@ export default function CoveragePanel({
   report,
   loading,
   blockersShownElsewhere = false,
+  failure,
 }: Props): JSX.Element {
+  if (failure && !report) {
+    return (
+      <QueryErrorPanel
+        title="Could not check what this process measures."
+        error={failure.error}
+        onRetry={failure.retry}
+        retrying={failure.retrying}
+      />
+    );
+  }
   if (loading && !report) {
     return (
-      <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-        Checking…
+      <div className="flex flex-col gap-2" aria-busy="true">
+        <span className="sr-only">Checking…</span>
+        <Skeleton className="h-4 w-3/4" />
+        <Skeleton className="h-4" />
+        <Skeleton className="h-4" />
       </div>
     );
   }

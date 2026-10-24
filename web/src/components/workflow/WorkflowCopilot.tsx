@@ -21,8 +21,10 @@ import { useEffect, useRef, useState } from 'react';
 import { askAgent, type AgentChatResponse, type CitationState, type Proposal } from '@/api/agent';
 import CitationChips, { CitedText } from '@/components/agent/CitationChips';
 import EvidenceBanner from '@/components/agent/EvidenceBanner';
-import { AlertTriangle, Loader2, Send, Sparkles } from '@/design/components/icons';
-import { cn } from '@/lib/utils';
+import { AlertTriangle, Send, Sparkles } from '@/design/components/icons';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { errorMessage } from '@/lib/errorMessage';
 
 interface Turn {
@@ -203,9 +205,13 @@ export default function WorkflowCopilot({
               </div>
             ))}
             {busy ? (
-              <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                Reading the role and your exams…
+              // The reply's place, held while it is written.
+              <div className="flex flex-col gap-1.5" aria-busy="true">
+                <span role="status" className="text-[12px] text-muted-foreground">
+                  Reading the role and your exams…
+                </span>
+                <Skeleton className="h-3.5 w-4/5" />
+                <Skeleton className="h-3.5 w-3/5" />
               </div>
             ) : null}
             <div ref={endRef} />
@@ -220,25 +226,23 @@ export default function WorkflowCopilot({
         }}
         className="flex items-center gap-2 border-t border-border pt-3"
       >
-        <input
+        <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={!editable || busy}
           aria-label="Ask the design assistant"
           placeholder={editable ? 'Describe the process you want…' : 'Published - clone to edit'}
-          className="min-w-0 flex-1 rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground placeholder:text-[var(--ui-faint)] focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-50"
+          className="min-w-0 flex-1"
         />
-        <button
+        <Button
           type="submit"
+          size="icon"
           disabled={!editable || busy || !input.trim()}
           aria-label="Send"
-          className={cn(
-            'flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-primary text-primary-foreground transition-opacity',
-            (!editable || busy || !input.trim()) && 'opacity-40',
-          )}
+          className="shrink-0"
         >
-          <Send className="h-4 w-4" aria-hidden="true" />
-        </button>
+          <Send aria-hidden="true" />
+        </Button>
       </form>
     </div>
   );

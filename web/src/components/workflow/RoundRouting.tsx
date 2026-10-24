@@ -12,6 +12,9 @@
 
 import { ToggleSwitch } from '@/design/components/primitives';
 import { AlertTriangle } from '@/design/components/icons';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
 import { cn } from '@/lib/utils';
 import type { Round, RoundBranchPatch } from '@/api/workflows';
 
@@ -29,9 +32,6 @@ interface Props {
   errors: string[];
   onPatch: (fields: RoundBranchPatch) => void;
 }
-
-const SELECT =
-  'w-full rounded-[10px] border border-border bg-secondary px-3 py-2 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60';
 
 export default function RoundRouting({
   round,
@@ -65,30 +65,26 @@ export default function RoundRouting({
         <span className="font-medium">{passLabel}</span>
       </p>
 
-      <div>
-        <label
-          htmlFor={`route-fail-${round.id}`}
-          className="mb-1.5 block text-[12px] font-medium text-[var(--ui-soft)]"
-        >
-          {notPassedLabel}
-        </label>
-        <select
-          id={`route-fail-${round.id}`}
-          value={round.on_fail_next_round_id ?? ''}
-          disabled={!editable}
-          onChange={(e) =>
-            onPatch({ on_fail_next_round_id: e.target.value === '' ? null : e.target.value })
-          }
-          className={SELECT}
-        >
-          <option value="">Hold for a person</option>
-          {otherRounds.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.title}
-            </option>
-          ))}
-        </select>
-      </div>
+      <FormField id={`route-fail-${round.id}`} label={notPassedLabel}>
+        {(p) => (
+          <SelectControl
+            {...p}
+            size="sm"
+            value={round.on_fail_next_round_id ?? ''}
+            disabled={!editable}
+            onChange={(e) =>
+              onPatch({ on_fail_next_round_id: e.target.value === '' ? null : e.target.value })
+            }
+          >
+            <option value="">Hold for a person</option>
+            {otherRounds.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.title}
+              </option>
+            ))}
+          </SelectControl>
+        )}
+      </FormField>
 
       {canFastTrack ? (
         <div className="flex flex-col gap-2 border-t border-border pt-3">
@@ -118,8 +114,9 @@ export default function RoundRouting({
               <label className="sr-only" htmlFor={`fast-pct-${round.id}`}>
                 Fast-track score
               </label>
-              <input
+              <Input
                 id={`fast-pct-${round.id}`}
+                size="sm"
                 type="number"
                 min={1}
                 max={100}
@@ -130,26 +127,27 @@ export default function RoundRouting({
                     fast_track_min_percent: e.target.value === '' ? null : Number(e.target.value),
                   })
                 }
-                className="w-20 rounded-[10px] border border-border bg-secondary px-2 py-1.5 text-[13px] text-foreground focus:border-[var(--accent)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] disabled:opacity-60"
+                className="w-20"
               />
               <span>%</span>
               <span>go to</span>
               <label className="sr-only" htmlFor={`fast-target-${round.id}`}>
                 Fast-track destination
               </label>
-              <select
+              <SelectControl
                 id={`fast-target-${round.id}`}
+                size="sm"
                 value={round.on_fast_track_next_round_id ?? ''}
                 disabled={!editable}
                 onChange={(e) => onPatch({ on_fast_track_next_round_id: e.target.value })}
-                className={cn(SELECT, 'w-auto flex-1')}
+                className="w-auto min-w-0 flex-1"
               >
                 {otherRounds.map((r) => (
                   <option key={r.id} value={r.id}>
                     {r.title}
                   </option>
                 ))}
-              </select>
+              </SelectControl>
             </div>
           ) : null}
         </div>

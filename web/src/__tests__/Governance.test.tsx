@@ -27,9 +27,7 @@ const approveRequisition = vi.fn();
 const rejectRequisition = vi.fn();
 
 vi.mock('../api/requisitions', async () => {
-  const actual = await vi.importActual<typeof import('../api/requisitions')>(
-    '../api/requisitions',
-  );
+  const actual = await vi.importActual<typeof import('../api/requisitions')>('../api/requisitions');
   return {
     ...actual,
     getPublishSchedule: (...a: unknown[]) => getPublishSchedule(...a) as unknown,
@@ -146,23 +144,20 @@ describe('approval state', () => {
 
   it('offers submission from draft', async () => {
     renderPanel();
-    expect(
-      await screen.findByRole('button', { name: /Submit for approval/ }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Submit for approval/ })).toBeInTheDocument();
   });
 
   it('offers resubmission after changes were requested', async () => {
     renderPanel(requisition({ approval_status: 'rejected' }));
-    expect(
-      await screen.findByRole('button', { name: /Submit for approval/ }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Submit for approval/ })).toBeInTheDocument();
   });
 
   it('keeps one primary action: Schedule is primary only once approved (audit A5)', async () => {
     renderPanel();
     const submit = await screen.findByRole('button', { name: /Submit for approval/ });
     expect(submit.className).toMatch(/(^|\s)bg-primary(\s|$)/);
-    expect(screen.getByRole('button', { name: /^Schedule$/ }).className).not.toMatch(
+    // The schedule half loads its own query, so its button arrives after it.
+    expect((await screen.findByRole('button', { name: /^Schedule$/ })).className).not.toMatch(
       /(^|\s)bg-primary(\s|$)/,
     );
   });
@@ -170,9 +165,9 @@ describe('approval state', () => {
   it('makes Schedule the primary action on an approved opening', async () => {
     renderPanel(requisition({ approval_status: 'approved' }));
     await screen.findByText('Approved');
-    expect(
-      (await screen.findByRole('button', { name: /^Schedule$/ })).className,
-    ).toMatch(/(^|\s)bg-primary(\s|$)/);
+    expect((await screen.findByRole('button', { name: /^Schedule$/ })).className).toMatch(
+      /(^|\s)bg-primary(\s|$)/,
+    );
   });
 
   it('offers no approve button to HR at all', async () => {
@@ -202,24 +197,21 @@ describe('approval state', () => {
 describe('an unapproved opening', () => {
   it('says why it cannot go public yet', async () => {
     renderPanel();
-    expect(
-      await screen.findByText(/cannot accept public applications/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/cannot accept public applications/)).toBeInTheDocument();
   });
 
   it('cannot be scheduled', async () => {
     renderPanel();
     await screen.findByText(/Publish automatically/);
-    expect(screen.getByLabelText(/Go live at/)).toBeDisabled();
+    // The form renders once the schedule query settles (a skeleton until then).
+    expect(await screen.findByLabelText(/Go live at/)).toBeDisabled();
     expect(screen.getByRole('button', { name: /Schedule/ })).toBeDisabled();
   });
 
   it('stops saying so once approved', async () => {
     renderPanel(requisition({ approval_status: 'approved' }));
     await screen.findByText('Approved');
-    expect(
-      screen.queryByText(/cannot accept public applications/),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText(/cannot accept public applications/)).not.toBeInTheDocument();
   });
 });
 
@@ -228,9 +220,7 @@ describe('an unapproved opening', () => {
 // ===========================================================================
 describe('scheduled publishing', () => {
   it('never shows a time without the tolerance', async () => {
-    getPublishSchedule.mockResolvedValue(
-      schedule({ publish_at: '2099-01-01T09:00:00Z' }),
-    );
+    getPublishSchedule.mockResolvedValue(schedule({ publish_at: '2099-01-01T09:00:00Z' }));
     renderPanel(requisition({ approval_status: 'approved' }));
     expect(await screen.findByText(/Scheduled for/)).toBeInTheDocument();
     expect(screen.getByText(new RegExp(TOLERANCE.slice(0, 40)))).toBeInTheDocument();
@@ -238,9 +228,7 @@ describe('scheduled publishing', () => {
 
   it('shows the tolerance on the empty form too', async () => {
     renderPanel(requisition({ approval_status: 'approved' }));
-    expect(
-      await screen.findByText(new RegExp(TOLERANCE.slice(0, 40))),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(new RegExp(TOLERANCE.slice(0, 40)))).toBeInTheDocument();
   });
 
   it('sends an absolute instant, not a local wall-clock string', async () => {
@@ -257,9 +245,7 @@ describe('scheduled publishing', () => {
   });
 
   it('offers cancellation once something is scheduled', async () => {
-    getPublishSchedule.mockResolvedValue(
-      schedule({ publish_at: '2099-01-01T09:00:00Z' }),
-    );
+    getPublishSchedule.mockResolvedValue(schedule({ publish_at: '2099-01-01T09:00:00Z' }));
     renderPanel(requisition({ approval_status: 'approved' }));
     await userEvent.click(
       await screen.findByRole('button', { name: /Cancel scheduled publication/ }),
@@ -275,6 +261,14 @@ describe('scheduled publishing', () => {
     renderPanel(requisition({ approval_status: 'approved', public_apply_enabled: true }));
     expect(await screen.findByText(/already accepting applications/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Schedule/ })).toBeDisabled();
+  });
+
+  it('says the schedule could not load, instead of offering to schedule over it', async () => {
+    getPublishSchedule.mockRejectedValue(new Error('offline'));
+    renderPanel(requisition({ approval_status: 'approved' }));
+    expect(await screen.findByText('Could not load the publish schedule.')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Go live at/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
 });
 

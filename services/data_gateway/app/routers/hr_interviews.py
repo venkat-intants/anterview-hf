@@ -142,7 +142,13 @@ class EligibleApplicantOut(BaseModel):
     status: str
     ats_overall: int | None
     passed_exam: bool
+    # A link the candidate can still use: an unexpired 'invited' one, or an
+    # unexpired started interview that is not over (application_progress).
     has_active_invite: bool
+    # The started half of that alone. The server refuses to replace it (409),
+    # so the form says "end the started interview first" instead of offering
+    # a replacement.
+    has_started_invite: bool = False
 
 
 class InterviewOutcome(BaseModel):
@@ -634,7 +640,8 @@ _ELIGIBLE_SQL = text(
     """
 SELECT applicant_id, enrolment_id, opening_title, full_name, target_job_title,
        target_level, stored_status, ats_overall,
-       COALESCE(exam_passed, false) AS passed_exam, has_active_invite
+       COALESCE(exam_passed, false) AS passed_exam, has_active_invite,
+       has_started_invite
   FROM application_progress
  WHERE company_id = :cid
    AND stored_status NOT IN ('hired', 'rejected')
@@ -670,6 +677,7 @@ async def eligible_applicants(
             target_level=r["target_level"], status=r["stored_status"],
             ats_overall=r["ats_overall"], passed_exam=bool(r["passed_exam"]),
             has_active_invite=bool(r["has_active_invite"]),
+            has_started_invite=bool(r["has_started_invite"]),
         )
         for r in rows
     ]
@@ -810,7 +818,8 @@ async def create_invite(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"{applicant.full_name} already has an active interview link for this "
-                "opening. Confirm the replacement to revoke it and send a new one."
+                "opening, so no new link was sent. To send one anyway, replace the "
+                "existing link from AI interviews."
             ),
         )
 

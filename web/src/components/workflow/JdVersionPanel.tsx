@@ -20,7 +20,7 @@
 // history. Rewriting the past would make "historical versions cannot be
 // accidentally overwritten" false.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   discardJdDraft,
@@ -71,6 +71,85 @@ function liveWindow(v: JdVersion): string | null {
   if (!v.published_at) return null;
   const from = formatDate(v.published_at);
   return v.superseded_at ? `Live ${from} - ${formatDate(v.superseded_at)}` : `Live since ${from}`;
+}
+
+/**
+ * Restore asks once before acting: it puts that wording in front of
+ * candidates straight away. Not a ConfirmDeleteButton, because nothing is
+ * deleted and the red treatment would say otherwise. Arming focuses Cancel,
+ * Escape backs out, and focus returns to Restore.
+ */
+function RestoreButton({
+  version,
+  pending,
+  onConfirm,
+}: {
+  version: number;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const [armed, setArmed] = useState(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+
+  useEffect(() => {
+    if (armed) {
+      cancelRef.current?.focus();
+    } else if (returnFocus.current) {
+      returnFocus.current = false;
+      triggerRef.current?.focus();
+    }
+  }, [armed]);
+
+  const disarm = () => {
+    returnFocus.current = true;
+    setArmed(false);
+  };
+
+  if (!armed) {
+    return (
+      <Button
+        ref={triggerRef}
+        type="button"
+        variant="outline"
+        onClick={() => setArmed(true)}
+        disabled={pending}
+        className="shrink-0"
+      >
+        Restore
+      </Button>
+    );
+  }
+  return (
+    <div
+      role="group"
+      aria-label={`Confirm: restore v${version}`}
+      className="flex shrink-0 flex-wrap items-center gap-2"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          disarm();
+        }
+      }}
+    >
+      <span className="text-[13px] text-foreground">Make v{version} the live job description?</span>
+      <Button
+        type="button"
+        variant="outline"
+        onClick={() => {
+          onConfirm();
+          disarm();
+        }}
+        disabled={pending}
+      >
+        Restore v{version}
+      </Button>
+      <Button ref={cancelRef} type="button" variant="ghost" onClick={disarm}>
+        Cancel
+      </Button>
+    </div>
+  );
 }
 
 export default function JdVersionPanel({ requisition }: { requisition: Requisition }) {
@@ -325,15 +404,11 @@ export default function JdVersionPanel({ requisition }: { requisition: Requisiti
                         ) : null}
                       </div>
                       {v.status === 'archived' ? (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => restore.mutate(v.id)}
-                          disabled={restore.isPending}
-                          className="shrink-0"
-                        >
-                          Restore
-                        </Button>
+                        <RestoreButton
+                          version={v.version}
+                          pending={restore.isPending}
+                          onConfirm={() => restore.mutate(v.id)}
+                        />
                       ) : null}
                     </li>
                   )}

@@ -362,7 +362,7 @@ export default function LiveKitInterview({
                 ? 'bg-vivid-mint'
                 : status === 'error'
                   ? 'bg-destructive'
-                  : 'bg-amber-glow animate-pulse',
+                  : 'bg-amber-glow motion-safe:animate-pulse',
             )}
             aria-hidden="true"
           />
@@ -386,7 +386,7 @@ export default function LiveKitInterview({
               <ShieldCheck
                 className={cn(
                   'h-3.5 w-3.5 flex-shrink-0',
-                  proctoringReady ? 'text-vivid-mint' : 'text-amber-glow animate-pulse',
+                  proctoringReady ? 'text-vivid-mint' : 'text-amber-glow motion-safe:animate-pulse',
                 )}
                 aria-hidden="true"
               />

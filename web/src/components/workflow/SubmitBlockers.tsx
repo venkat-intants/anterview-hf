@@ -6,6 +6,7 @@
 
 import { AlertTriangle } from '@/design/components/icons';
 import { Well } from '@/design/components/rows';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   errors: string[];
@@ -40,14 +41,15 @@ export default function SubmitBlockers({ errors, rounds, onGoToRound }: Props): 
             >
               <span className="min-w-0 break-words">{error}</span>
               {round ? (
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={() => onGoToRound(round.id)}
                   aria-label={`Go to ${round.title}`}
-                  className="inline-flex min-h-[32px] items-center rounded-pill border border-[var(--ui-line-strong)] px-3 text-[12.5px] font-medium text-foreground hover:bg-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 >
                   Go to {round.title}
-                </button>
+                </Button>
               ) : null}
             </li>
           );

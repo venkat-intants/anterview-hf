@@ -18,14 +18,18 @@
 // is why the panel shows relative emphasis rather than pretending the numbers
 // must add to 100 here.
 
-import { useId, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { AlertTriangle, ChevronDown, ExternalLink, Info, Loader2 } from '@/design/components/icons';
 import { StatusTag } from '@/design/components/primitives';
 import { Well } from '@/design/components/rows';
 import { Button } from '@/components/ui/button';
+import { fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
 import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
@@ -48,16 +52,12 @@ import TaskEditor from './TaskEditor';
 import { NumberField } from './NumberField';
 
 // The panel sits beside the canvas, so — like the candidate drawer — each group
-// is a titled block divided from the last by a hairline. Native <select> and
-// <textarea> share the Input's look; the shadcn Select is a popover and would
-// change how these are driven.
+// is a titled block divided from the last by a hairline. Selects stay native
+// (SelectControl); the Radix Select is a popover and would change how these
+// are driven.
 const SECTION = 'flex flex-col gap-3 border-t border-border pt-5';
 const SECTION_TITLE = 'text-[15px] font-bold text-foreground';
-const LABEL = 'text-[13px] font-semibold text-foreground';
-const SELECT =
-  'h-11 w-full rounded-[12px] border border-input bg-card px-3.5 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
-const TEXTAREA =
-  'w-full resize-y rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-[14px] text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-[var(--accent)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]/30 disabled:opacity-60';
+const LABEL = cn(fieldLabelClass, 'mb-1.5 block');
 
 interface Props {
   round: Round;
@@ -141,22 +141,18 @@ function ExamPicker({
           </div>
           {editable ? (
             <>
-              <label className={LABEL} htmlFor="exam-select">
-                Take questions from
-              </label>
-              <select
-                id="exam-select"
-                value={examId}
-                onChange={(e) => setExamId(e.target.value)}
-                className={SELECT}
-              >
-                <option value="">Choose an exam…</option>
-                {(exams.data ?? []).map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.title} ({e.question_count} questions)
-                  </option>
-                ))}
-              </select>
+              <FormField id="exam-select" label="Take questions from">
+                {(p) => (
+                  <SelectControl {...p} value={examId} onChange={(e) => setExamId(e.target.value)}>
+                    <option value="">Choose an exam…</option>
+                    {(exams.data ?? []).map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.title} ({e.question_count} questions)
+                      </option>
+                    ))}
+                  </SelectControl>
+                )}
+              </FormField>
               {exams.isLoading ? (
                 <div aria-busy="true">
                   <span className="sr-only">Loading exams…</span>
@@ -477,22 +473,19 @@ function LinesEditor({
   editable: boolean;
   onChange: (next: string[]) => void;
 }) {
-  const id = useId();
   return (
-    <div>
-      <label htmlFor={id} className="mb-1.5 block text-[13px] font-medium text-[var(--ui-soft)]">
-        {label}
-      </label>
-      <textarea
-        id={id}
-        value={value.join('\n')}
-        disabled={!editable}
-        onChange={(e) => onChange(e.target.value.split('\n'))}
-        rows={3}
-        placeholder="One per line"
-        className={TEXTAREA}
-      />
-    </div>
+    <FormField label={label}>
+      {(p) => (
+        <Textarea
+          {...p}
+          value={value.join('\n')}
+          disabled={!editable}
+          onChange={(e) => onChange(e.target.value.split('\n'))}
+          rows={3}
+          placeholder="One per line"
+        />
+      )}
+    </FormField>
   );
 }
 
@@ -554,8 +547,7 @@ function KitEditor({
       toast.success('Interview kit saved');
       void qc.invalidateQueries({ queryKey: ['hr', 'round-kit', roundId] });
     },
-    onError: (e) =>
-      toast.error(errorMessage(e, 'Could not save the interview kit.')),
+    onError: (e) => toast.error(errorMessage(e, 'Could not save the interview kit.')),
   });
 
   if (kit.isLoading) {
@@ -583,32 +575,28 @@ function KitEditor({
 
   return (
     <div className="flex flex-col gap-3">
-      <div>
-        <label htmlFor="kit-instructions" className={LABEL}>
-          Instructions for interviewers
-        </label>
-        <textarea
-          id="kit-instructions"
-          value={instructions}
-          disabled={!editable}
-          onChange={(e) => setInstructions(e.target.value)}
-          rows={2}
-          className={`${TEXTAREA} mt-1.5`}
-        />
-      </div>
-      <div>
-        <label htmlFor="kit-notes" className={LABEL}>
-          Notes for interviewers
-        </label>
-        <textarea
-          id="kit-notes"
-          value={notes}
-          disabled={!editable}
-          onChange={(e) => setNotes(e.target.value)}
-          rows={2}
-          className={`${TEXTAREA} mt-1.5`}
-        />
-      </div>
+      <FormField id="kit-instructions" label="Instructions for interviewers">
+        {(p) => (
+          <Textarea
+            {...p}
+            value={instructions}
+            disabled={!editable}
+            onChange={(e) => setInstructions(e.target.value)}
+            rows={2}
+          />
+        )}
+      </FormField>
+      <FormField id="kit-notes" label="Notes for interviewers">
+        {(p) => (
+          <Textarea
+            {...p}
+            value={notes}
+            disabled={!editable}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+          />
+        )}
+      </FormField>
 
       {criteria.map((c) => (
         <div key={c.id} className="rounded-[16px] border border-border p-3.5">
@@ -706,18 +694,18 @@ export default function RoundInspector({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             {editable ? (
-              <select
+              <SelectControl
                 aria-label="Round type"
                 value={round.kind}
                 onChange={(e) => onPatch({ kind: e.target.value as RoundKind })}
-                className={cn(SELECT, 'w-auto min-w-0 font-semibold')}
+                className="w-auto min-w-0 font-semibold"
               >
                 {ROUND_KIND_ORDER.map((k) => (
                   <option key={k} value={k}>
                     {ROUND_KIND_META[k].label}
                   </option>
                 ))}
-              </select>
+              </SelectControl>
             ) : (
               <StatusTag tone={meta.tone}>{meta.label}</StatusTag>
             )}
@@ -738,26 +726,24 @@ export default function RoundInspector({
       {/* 1. What it is */}
       <section className="flex flex-col gap-3">
         <h3 className={SECTION_TITLE}>Round settings</h3>
-        <div>
-          <label htmlFor="round-title" className={LABEL}>
-            Round name
-          </label>
-          <Input
-            id="round-title"
-            value={title}
-            disabled={!editable}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => {
-              const next = title.trim();
-              if (next && next !== round.title) onPatch({ title: next });
-            }}
-            className="mt-1.5"
-          />
-        </div>
+        <FormField id="round-title" label="Round name">
+          {(p) => (
+            <Input
+              {...p}
+              value={title}
+              disabled={!editable}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => {
+                const next = title.trim();
+                if (next && next !== round.title) onPatch({ title: next });
+              }}
+            />
+          )}
+        </FormField>
 
         <div className="grid grid-cols-1 gap-3 min-[420px]:grid-cols-2">
           <div>
-            <label htmlFor="deadline" className={cn(LABEL, 'mb-1.5 block')}>
+            <label htmlFor="deadline" className={LABEL}>
               Days to complete
             </label>
             {/* HR-H2: saved on blur or Enter, after a range check, not per keystroke. */}
@@ -774,7 +760,7 @@ export default function RoundInspector({
             />
           </div>
           <div>
-            <label htmlFor="timelimit" className={cn(LABEL, 'mb-1.5 block')}>
+            <label htmlFor="timelimit" className={LABEL}>
               Time limit (min)
             </label>
             {/* Empty means no limit. The server caps a round at 24 hours. */}
@@ -802,10 +788,10 @@ export default function RoundInspector({
             real answer — collapsing it into "automatic" would freeze this round
             at whatever the workflow happened to say today. */}
         <div>
-          <label htmlFor="autoadvance" className={cn(LABEL, 'mb-1.5 block')}>
+          <label htmlFor="autoadvance" className={LABEL}>
             After a candidate passes
           </label>
-          <select
+          <SelectControl
             id="autoadvance"
             disabled={!editable}
             value={round.auto_advance === null ? 'inherit' : round.auto_advance ? 'auto' : 'manual'}
@@ -813,12 +799,11 @@ export default function RoundInspector({
               const v = e.target.value;
               onPatch({ auto_advance: v === 'inherit' ? null : v === 'auto' });
             }}
-            className={SELECT}
           >
             <option value="inherit">Follow the workflow default</option>
             <option value="auto">Move them on automatically</option>
             <option value="manual">Hold for my review</option>
-          </select>
+          </SelectControl>
           <p
             className="mt-1.5 text-[12.5px] leading-relaxed text-muted-foreground"
             data-testid="hold-behaviour-copy"
@@ -916,7 +901,7 @@ export default function RoundInspector({
         <section className={SECTION}>
           <h3 className={SECTION_TITLE}>Advance threshold</h3>
           <div>
-            <label htmlFor="threshold" className={cn(LABEL, 'mb-1.5 block')}>
+            <label htmlFor="threshold" className={LABEL}>
               Advance at or above
             </label>
             <div className="flex items-center gap-2">

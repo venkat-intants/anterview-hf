@@ -18,6 +18,14 @@ import { LoadErrorPanel } from '@/components/candidate/LoadErrorPanel';
 import { cn } from '@/lib/utils';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { Page, PageHeader, EmptyState } from '@/design/components/page';
 import { StatusTag } from '@/design/components/primitives';
 import { initialsOf } from '@/design/data/shared';
@@ -102,7 +110,8 @@ function HistoryEmpty() {
   );
 }
 
-const TH = 'px-4 py-3 text-left text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--ui-soft)]';
+const TH = 'h-auto px-4 py-3 text-left text-[12px] font-semibold uppercase tracking-[0.06em] text-[var(--ui-soft)]';
+const TD = 'px-4 py-3';
 
 /** Desktop table row */
 function SessionRow({ session }: { session: SessionListItem }) {
@@ -114,11 +123,11 @@ function SessionRow({ session }: { session: SessionListItem }) {
   const langLabel = langKey ? t(langKey) : session.language.toUpperCase();
 
   return (
-    <tr
-      className="border-t border-border transition-colors hover:bg-[var(--ui-inset-soft)]"
+    <TableRow
+      className="border-border hover:bg-[var(--ui-inset-soft)]"
       data-testid={`session-row-${session.session_id}`}
     >
-      <td className="px-4 py-3">
+      <TableCell className={TD}>
         <div className="flex min-w-0 items-center gap-3">
           <RoleTile title={session.job_title} />
           <div className="min-w-0">
@@ -131,19 +140,19 @@ function SessionRow({ session }: { session: SessionListItem }) {
             </div>
           </div>
         </div>
-      </td>
-      <td className="whitespace-nowrap px-4 py-3 text-[13px] tabular-nums text-[var(--ui-soft)]">
+      </TableCell>
+      <TableCell className={cn(TD, 'whitespace-nowrap text-[13px] tabular-nums text-[var(--ui-soft)]')}>
         {fmt.date(session.created_at)}
-      </td>
-      <td className="px-4 py-3">
+      </TableCell>
+      <TableCell className={TD}>
         <StatusTag tone={tone} dot>
           {label}
         </StatusTag>
-      </td>
-      <td className="whitespace-nowrap px-4 py-3 text-right text-[13px] tabular-nums text-muted-foreground">
+      </TableCell>
+      <TableCell className={cn(TD, 'whitespace-nowrap text-right text-[13px] tabular-nums text-muted-foreground')}>
         {fmt.duration(session.duration_seconds)}
-      </td>
-      <td className="px-4 py-3 text-right">
+      </TableCell>
+      <TableCell className={cn(TD, 'text-right')}>
         {session.scorecard_id ? (
           <Link
             to={`/scorecard/${session.scorecard_id}`}
@@ -158,8 +167,8 @@ function SessionRow({ session }: { session: SessionListItem }) {
             -
           </span>
         )}
-      </td>
-    </tr>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -325,26 +334,25 @@ export default function History() {
 
             {/* Desktop table */}
             <div className="hidden md:block">
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] border-collapse">
-                  <thead className="bg-[var(--ui-inset-soft)]">
-                    <tr>
-                      <th scope="col" className={TH}>{t('history.columnRole')}</th>
-                      <th scope="col" className={TH}>{t('history.columnDate')}</th>
-                      <th scope="col" className={TH}>{t('history.columnStatus')}</th>
-                      <th scope="col" className={cn(TH, 'text-right')}>{t('history.columnDuration')}</th>
-                      <th scope="col" className={TH}>
-                        <span className="sr-only">{t('history.columnScorecard')}</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sessions.map((session) => (
-                      <SessionRow key={session.session_id} session={session} />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+              {/* Table owns the sideways scroll below 560px. */}
+              <Table className="min-w-[560px] border-collapse">
+                <TableHeader className="bg-[var(--ui-inset-soft)] [&_tr]:border-border">
+                  <TableRow className="hover:bg-transparent">
+                    <TableHead scope="col" className={TH}>{t('history.columnRole')}</TableHead>
+                    <TableHead scope="col" className={TH}>{t('history.columnDate')}</TableHead>
+                    <TableHead scope="col" className={TH}>{t('history.columnStatus')}</TableHead>
+                    <TableHead scope="col" className={cn(TH, 'text-right')}>{t('history.columnDuration')}</TableHead>
+                    <TableHead scope="col" className={TH}>
+                      <span className="sr-only">{t('history.columnScorecard')}</span>
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {sessions.map((session) => (
+                    <SessionRow key={session.session_id} session={session} />
+                  ))}
+                </TableBody>
+              </Table>
               {totalPages > 1 && (
                 <div className="border-t border-border px-4 pb-4">
                   <PaginationBar page={page} totalPages={totalPages} onPrev={goPrev} onNext={goNext} />

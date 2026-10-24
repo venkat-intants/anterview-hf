@@ -21,7 +21,7 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
+import { fieldErrorClass } from '@/components/ui/control-styles';
 
 export interface NumberFieldProps {
   id: string;
@@ -152,10 +152,10 @@ export function NumberField({
         onKeyDown={onKeyDown}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
-        className={cn(error && 'border-[var(--ui-danger)]', className)}
+        className={className}
       />
       {error ? (
-        <p id={errorId} role="alert" className="text-[12.5px] text-[var(--ui-danger)]">
+        <p id={errorId} role="alert" className={fieldErrorClass}>
           {error}
         </p>
       ) : null}

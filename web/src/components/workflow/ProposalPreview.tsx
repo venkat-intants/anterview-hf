@@ -24,7 +24,7 @@ import { commitProposal, type Proposal } from '@/api/agent';
 import { Check, Loader2, Sparkles, X } from '@/design/components/icons';
 import { StatusTag } from '@/design/components/primitives';
 import { toast } from '@/lib/toast';
-import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import type { RoundKind } from '@/api/workflows';
 import { ROUND_KIND_META } from './roundKinds';
 import { errorMessage } from '@/lib/errorMessage';
@@ -201,30 +201,19 @@ export default function ProposalPreview({
       ) : null}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void apply()}
-          disabled={state === 'applying'}
-          className={cn(
-            'inline-flex min-h-[40px] items-center gap-1.5 rounded-full bg-primary px-5 py-2 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-            state === 'applying' && 'opacity-50',
-          )}
-        >
+        <Button type="button" onClick={() => void apply()} disabled={state === 'applying'}>
           {state === 'applying' ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            <Loader2 className="animate-spin" aria-hidden="true" />
           ) : (
-            <Check className="h-3.5 w-3.5" aria-hidden="true" />
+            <Check aria-hidden="true" />
           )}
           {proposal.commit.label}
-        </button>
-        <button
-          type="button"
-          onClick={onDismiss}
-          className="inline-flex min-h-[40px] items-center gap-1.5 rounded-full border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-foreground hover:bg-[var(--ui-inset-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
-        >
-          <X className="h-3.5 w-3.5" aria-hidden="true" />
+        </Button>
+        {/* Abandons the draft and changes nothing, so it takes the Cancel role. */}
+        <Button type="button" variant="ghost" onClick={onDismiss}>
+          <X aria-hidden="true" />
           Discard
-        </button>
+        </Button>
         <details open className="ml-auto text-[12px] text-[var(--ui-faint)]">
           <summary className="cursor-pointer select-none">What this sends</summary>
           <pre className="mt-2 max-w-[420px] overflow-x-auto rounded bg-[var(--ui-inset)] p-2">

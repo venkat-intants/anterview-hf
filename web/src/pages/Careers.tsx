@@ -32,6 +32,9 @@ import { ApiError } from '@/api/client';
 import { levelLabel } from '@/lib/candidateCopy';
 import { Briefcase, MapPin, Search, X } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Skeleton } from '@/components/ui/skeleton';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { EmptyState } from '@/design/components/page';
 import { formatDate, formatNumber, uiLocale } from '@/lib/formatters';
@@ -145,8 +148,8 @@ function Card({ job }: { job: JobCard }) {
   );
 }
 
-const SELECT_CLASS =
-  'h-11 max-w-full rounded-[12px] border border-input bg-card px-3 text-[14px] text-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20';
+/** A filter dropdown sizes to its options in the wrapping row, not the row's width. */
+const FILTER_SELECT = 'w-auto max-w-full';
 
 /**
  * Salary rungs for the filter, in rupees.
@@ -255,10 +258,10 @@ export default function Careers() {
         <label className="relative block">
           <span className="sr-only">{t('careers.searchLabel')}</span>
           <Search
-            className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ui-soft)]"
+            className="pointer-events-none absolute start-3.5 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-[var(--ui-soft)]"
             aria-hidden="true"
           />
-          <input
+          <Input
             // Keyed on the applied term so "Clear filters" (or Back) empties
             // the box instead of leaving stale text a blur re-applies
             // (audit CA-M24). Typing stays uncontrolled until Enter or blur.
@@ -270,7 +273,7 @@ export default function Careers() {
               if (e.key === 'Enter') setFilter('q', e.currentTarget.value.trim());
             }}
             onBlur={(e) => setFilter('q', e.currentTarget.value.trim())}
-            className="h-11 w-full rounded-full border border-input bg-card pl-10 pr-4 text-base text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm"
+            className="rounded-full ps-10 pe-4"
           />
         </label>
 
@@ -279,11 +282,11 @@ export default function Careers() {
             board that simply does not sort by that. */}
         <div className="flex flex-wrap items-center gap-2">
           {filters && filters.departments.length > 0 ? (
-            <select
+            <SelectControl
               aria-label={t('careers.departmentAria')}
               value={params.get('department') ?? ''}
               onChange={(e) => setFilter('department', e.target.value)}
-              className={SELECT_CLASS}
+              className={FILTER_SELECT}
             >
               <option value="">{t('careers.allDepartments')}</option>
               {filters.departments.map((d) => (
@@ -291,15 +294,15 @@ export default function Careers() {
                   {d}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           ) : null}
 
           {filters && filters.locations.length > 0 ? (
-            <select
+            <SelectControl
               aria-label={t('careers.locationAria')}
               value={params.get('location') ?? ''}
               onChange={(e) => setFilter('location', e.target.value)}
-              className={SELECT_CLASS}
+              className={FILTER_SELECT}
             >
               <option value="">{t('careers.allLocations')}</option>
               {filters.locations.map((l) => (
@@ -307,15 +310,15 @@ export default function Careers() {
                   {l}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           ) : null}
 
           {filters && filters.employment_types.length > 0 ? (
-            <select
+            <SelectControl
               aria-label={t('careers.employmentAria')}
               value={params.get('employment_type') ?? ''}
               onChange={(e) => setFilter('employment_type', e.target.value)}
-              className={SELECT_CLASS}
+              className={FILTER_SELECT}
             >
               <option value="">{t('careers.anyType')}</option>
               {filters.employment_types.map((type) => (
@@ -323,17 +326,17 @@ export default function Careers() {
                   {employmentLabel(t, type)}
                 </option>
               ))}
-            </select>
+            </SelectControl>
           ) : null}
 
           {/* Salary is a band, not a free-text box: a candidate thinks in
               "at least X", and an open number field on a public page invites
               nonsense that returns nothing. */}
-          <select
+          <SelectControl
             aria-label={t('careers.salaryAria')}
             value={params.get('min_salary') ?? ''}
             onChange={(e) => setFilter('min_salary', e.target.value)}
-            className={SELECT_CLASS}
+            className={FILTER_SELECT}
           >
             <option value="">{t('careers.anySalary')}</option>
             {SALARY_STEPS.map((s) => (
@@ -341,23 +344,23 @@ export default function Careers() {
                 {s.label}
               </option>
             ))}
-          </select>
+          </SelectControl>
 
           {/* Relevance is offered only alongside a search term, because
               without one it has nothing to rank and would silently behave as
               newest while claiming otherwise. */}
           {params.get('q') ? (
-            <select
+            <SelectControl
               aria-label={t('careers.sortAria')}
               value={params.get('sort') ?? 'newest'}
               onChange={(e) =>
                 setFilter('sort', e.target.value === 'relevance' ? 'relevance' : '')
               }
-              className={SELECT_CLASS}
+              className={FILTER_SELECT}
             >
               <option value="newest">{t('careers.newestFirst')}</option>
               <option value="relevance">{t('careers.mostRelevant')}</option>
-            </select>
+            </SelectControl>
           ) : null}
 
           {activeCount > 0 ? (
@@ -383,8 +386,8 @@ export default function Careers() {
       <div className="flex flex-col gap-3">
         {board.isLoading ? (
           <>
-            <div className="h-[118px] animate-pulse rounded-card border border-border bg-[var(--ui-inset-soft)]" />
-            <div className="h-[118px] animate-pulse rounded-card border border-border bg-[var(--ui-inset-soft)]" />
+            <Skeleton aria-hidden="true" className="h-[118px] rounded-card" />
+            <Skeleton aria-hidden="true" className="h-[118px] rounded-card" />
           </>
         ) : null}
 

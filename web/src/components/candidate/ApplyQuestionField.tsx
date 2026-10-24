@@ -7,10 +7,10 @@
 
 import { useTranslation } from 'react-i18next';
 import type { AnswerValue, PostingQuestion } from '@/api/publicApply';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
-
-const INPUT_CLASS =
-  'flex min-h-11 w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-base text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm';
 
 export function ApplyQuestionField({
   question,
@@ -85,11 +85,10 @@ export function ApplyQuestionField({
     return (
       <div>
         <label htmlFor={id}>{label}</label>
-        <select
+        <SelectControl
           id={id}
           value={typeof value === 'string' ? value : ''}
           onChange={(e) => onChange(e.target.value)}
-          className={INPUT_CLASS}
         >
           <option value="">{t('apply.chooseOne')}</option>
           {question.options.map((o) => (
@@ -97,7 +96,7 @@ export function ApplyQuestionField({
               {o}
             </option>
           ))}
-        </select>
+        </SelectControl>
         {help}
       </div>
     );
@@ -143,12 +142,11 @@ export function ApplyQuestionField({
     return (
       <div>
         <label htmlFor={id}>{label}</label>
-        <textarea
+        <Textarea
           id={id}
           rows={4}
           value={typeof value === 'string' ? value : ''}
           onChange={(e) => onChange(e.target.value)}
-          className={INPUT_CLASS}
         />
         {help}
       </div>
@@ -158,12 +156,11 @@ export function ApplyQuestionField({
   return (
     <div>
       <label htmlFor={id}>{label}</label>
-      <input
+      <Input
         id={id}
         type={question.kind === 'number' ? 'number' : 'text'}
         value={typeof value === 'string' ? value : ''}
         onChange={(e) => onChange(e.target.value)}
-        className={INPUT_CLASS}
       />
       {help}
     </div>

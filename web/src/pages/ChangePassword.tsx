@@ -13,12 +13,14 @@ import { changePassword, logout } from '@/api/auth';
 import { homePathFor } from '@/components/layout/navSections';
 import { useAuth } from '@/context/AuthContext';
 import { toast } from '@/lib/toast';
+import { useCandidateError } from '@/lib/candidateCopy';
 import { CenteredCard, FormError, PasswordField, PasswordStrength } from '@/components/layout/AuthLayout';
 import { ShieldCheck, Lock } from '@/design/components/icons';
 import { Button } from '@/components/ui/button';
 
 export default function ChangePassword() {
   const { t } = useTranslation();
+  const errorText = useCandidateError();
   const navigate = useNavigate();
   const { accessToken, user, setAuth, clearAuth } = useAuth();
   const queryClient = useQueryClient();
@@ -36,7 +38,7 @@ export default function ChangePassword() {
       void navigate(homePathFor(user?.roles ?? []), { replace: true });
     },
     onError: (err: unknown) => {
-      setError(err instanceof Error ? err.message : t('changePassword.errGeneric'));
+      setError(errorText(err, t('changePassword.errGeneric')));
     },
   });
 

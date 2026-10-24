@@ -55,6 +55,12 @@ import {
 } from './publicApplyDrop';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
+import { fieldLabelClass } from '@/components/ui/control-styles';
+import { FormField } from '@/components/ui/form-field';
+import { Input } from '@/components/ui/input';
+import { SelectControl } from '@/components/ui/select-control';
+import { LoadingSkeleton } from '@/components/candidate/LoadingSkeleton';
+import { errorMessage } from '@/lib/errorMessage';
 import { PublicFrame, PublicNotice } from '@/components/PublicFrame';
 import { PublicNext } from '@/components/PublicNext';
 import { SUPPORT_EMAIL } from '@/lib/contact';
@@ -229,23 +235,13 @@ function SeedPanel({
       </ul>
 
       <div className="mt-4 flex gap-2">
-        <button
-          type="button"
-          onClick={onRun}
-          disabled={running}
-          className="inline-flex items-center gap-1.5 rounded-[12px] bg-primary px-4 py-2 text-[13px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
-        >
+        <Button type="button" size="sm" onClick={onRun} disabled={running}>
           {running ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
           {running ? 'Seeding…' : `Send ${rows.length} applications`}
-        </button>
-        <button
-          type="button"
-          onClick={onClear}
-          disabled={running}
-          className="rounded-[12px] border border-[var(--ui-line-strong)] px-4 py-2 text-[13px] text-[var(--ui-soft)] hover:text-foreground disabled:opacity-40"
-        >
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={onClear} disabled={running}>
           Clear
-        </button>
+        </Button>
       </div>
     </Panel>
   );
@@ -681,11 +677,12 @@ export default function PublicApply(): JSX.Element {
           ),
         );
       } catch (err) {
-        const message = err instanceof Error && err.message ? err.message : 'failed';
         // A 429 is not a failure, it is the server pacing us. Wait out the
         // fixed one-minute window and retry the same file rather than
         // recording a loss the operator would have to chase.
-        if (/too many requests/i.test(message)) {
+        const raw = err instanceof Error ? err.message : '';
+        const message = errorMessage(err, 'Could not send this application.');
+        if (/too many requests/i.test(raw)) {
           setSeedRows((prev) =>
             prev.map((r, j) =>
               j === i ? { ...r, status: 'waiting', detail: 'rate limited - waiting' } : r,
@@ -706,10 +703,7 @@ export default function PublicApply(): JSX.Element {
   if (posting.isLoading) {
     return (
       <Shell>
-        <div role="status" className="flex items-center justify-center gap-2 py-20 text-[14px] text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          {t('apply.loading')}
-        </div>
+        <LoadingSkeleton label={t('apply.loading')} />
       </Shell>
     );
   }
@@ -753,8 +747,6 @@ export default function PublicApply(): JSX.Element {
         : step === questionsStep
           ? requiredAnswered
           : true;
-  const field =
-    'flex min-h-11 w-full rounded-[12px] border border-input bg-card px-3.5 py-2.5 text-base text-foreground placeholder:text-muted-foreground hover:border-[var(--ui-line-strong)] focus-visible:border-ring focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/20 md:text-sm';
 
   return (
     <Shell company={job.company_name} step={t('public.step.apply')}>
@@ -830,65 +822,66 @@ export default function PublicApply(): JSX.Element {
         >
           {step === 0 ? (
             <>
-          <div>
-            <label htmlFor="name" className="mb-1.5 block text-[13px] font-medium text-foreground">
-              {t('apply.yourName')}
-            </label>
-            <input
-              id="name"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              autoComplete="name"
-              className={field}
-            />
-          </div>
+              <FormField id="name" label={t('apply.yourName')}>
+                {(p) => (
+                  <Input
+                    {...p}
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    autoComplete="name"
+                  />
+                )}
+              </FormField>
 
-          <div>
-            <label htmlFor="email" className="mb-1.5 block text-[13px] font-medium text-foreground">
-              {t('apply.email')}
-            </label>
-            <input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              onBlur={() => setEmailTouched(true)}
-              autoComplete="email"
-              readOnly={accountEmail !== null}
-              aria-invalid={emailTouched && !emailValid ? true : undefined}
-              aria-describedby="email-hint"
-              className={cn(field, accountEmail !== null && 'bg-[var(--ui-inset)]')}
-            />
-            {emailTouched && !emailValid ? (
-              <p id="email-hint" role="alert" className="mt-1 text-[12.5px] text-[var(--ui-danger)]">
-                {t('apply.errEmail')}
-              </p>
-            ) : (
-              <p id="email-hint" className="mt-1 text-[12.5px] text-[var(--ui-soft)]">
-                {accountEmail !== null ? t('apply.emailAccountHint') : t('apply.emailHint')}
-              </p>
-            )}
-          </div>
-
-              <div>
-                <label
-                  htmlFor="phone"
-                  className="mb-1.5 block text-[13px] font-medium text-foreground"
-                >
-                  {t('apply.phone')}{' '}
-                  <span className="font-normal text-[var(--ui-soft)]">
-                    {t('apply.optional')}
-                  </span>
+              {/* Wired by hand rather than through FormField: one line under the
+                  control is either the hint or the error, never both, and both
+                  answer to the same id. */}
+              <div className="flex flex-col gap-1.5">
+                <label htmlFor="email" className={fieldLabelClass}>
+                  {t('apply.email')}
                 </label>
-                <input
-                  id="phone"
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  autoComplete="tel"
-                  className={field}
+                <Input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  onBlur={() => setEmailTouched(true)}
+                  autoComplete="email"
+                  readOnly={accountEmail !== null}
+                  invalid={emailTouched && !emailValid}
+                  aria-describedby="email-hint"
+                  className={cn(accountEmail !== null && 'bg-[var(--ui-inset)]')}
                 />
+                {emailTouched && !emailValid ? (
+                  <p id="email-hint" role="alert" className="text-[12.5px] text-[var(--ui-danger)]">
+                    {t('apply.errEmail')}
+                  </p>
+                ) : (
+                  <p id="email-hint" className="text-[12.5px] text-[var(--ui-soft)]">
+                    {accountEmail !== null ? t('apply.emailAccountHint') : t('apply.emailHint')}
+                  </p>
+                )}
               </div>
+
+              <FormField
+                id="phone"
+                label={
+                  <>
+                    {t('apply.phone')}{' '}
+                    <span className="font-normal text-[var(--ui-soft)]">{t('apply.optional')}</span>
+                  </>
+                }
+              >
+                {(p) => (
+                  <Input
+                    {...p}
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    autoComplete="tel"
+                  />
+                )}
+              </FormField>
             </>
           ) : null}
 
@@ -898,87 +891,62 @@ export default function PublicApply(): JSX.Element {
                 {t('apply.optionalIntro')}
               </p>
               <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label
-                    htmlFor="years"
-                    className="mb-1.5 block text-[13px] font-medium text-foreground"
-                  >
-                    {t('apply.years')}
-                  </label>
-                  <input
-                    id="years"
-                    type="number"
-                    min={0}
-                    max={60}
-                    value={yearsExperience}
-                    onChange={(e) => setYearsExperience(e.target.value)}
-                    className={field}
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="company"
-                    className="mb-1.5 block text-[13px] font-medium text-foreground"
-                  >
-                    {t('apply.currentCompany')}
-                  </label>
-                  <input
-                    id="company"
-                    value={currentCompany}
-                    onChange={(e) => setCurrentCompany(e.target.value)}
-                    autoComplete="organization"
-                    className={field}
-                  />
-                </div>
+                <FormField id="years" label={t('apply.years')}>
+                  {(p) => (
+                    <Input
+                      {...p}
+                      type="number"
+                      min={0}
+                      max={60}
+                      value={yearsExperience}
+                      onChange={(e) => setYearsExperience(e.target.value)}
+                    />
+                  )}
+                </FormField>
+                <FormField id="company" label={t('apply.currentCompany')}>
+                  {(p) => (
+                    <Input
+                      {...p}
+                      value={currentCompany}
+                      onChange={(e) => setCurrentCompany(e.target.value)}
+                      autoComplete="organization"
+                    />
+                  )}
+                </FormField>
               </div>
-              <div>
-                <label
-                  htmlFor="title"
-                  className="mb-1.5 block text-[13px] font-medium text-foreground"
-                >
-                  {t('apply.currentRole')}
-                </label>
-                <input
-                  id="title"
-                  value={currentTitle}
-                  onChange={(e) => setCurrentTitle(e.target.value)}
-                  autoComplete="organization-title"
-                  className={field}
-                />
-              </div>
+              <FormField id="title" label={t('apply.currentRole')}>
+                {(p) => (
+                  <Input
+                    {...p}
+                    value={currentTitle}
+                    onChange={(e) => setCurrentTitle(e.target.value)}
+                    autoComplete="organization-title"
+                  />
+                )}
+              </FormField>
               <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label
-                    htmlFor="linkedin"
-                    className="mb-1.5 block text-[13px] font-medium text-foreground"
-                  >
-                    {t('apply.linkedin')}
-                  </label>
-                  <input
-                    id="linkedin"
-                    type="url"
-                    inputMode="url"
-                    value={linkedinUrl}
-                    onChange={(e) => setLinkedinUrl(e.target.value)}
-                    className={field}
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="github"
-                    className="mb-1.5 block text-[13px] font-medium text-foreground"
-                  >
-                    {t('apply.github')}
-                  </label>
-                  <input
-                    id="github"
-                    type="url"
-                    inputMode="url"
-                    value={githubUrl}
-                    onChange={(e) => setGithubUrl(e.target.value)}
-                    className={field}
-                  />
-                </div>
+                <FormField id="linkedin" label={t('apply.linkedin')}>
+                  {(p) => (
+                    <Input
+                      {...p}
+                      type="url"
+                      inputMode="url"
+                      value={linkedinUrl}
+                      onChange={(e) => setLinkedinUrl(e.target.value)}
+                    />
+                  )}
+                </FormField>
+                <FormField id="github" label={t('apply.github')}>
+                  {(p) => (
+                    <Input
+                      {...p}
+                      type="url"
+                      inputMode="url"
+                      value={githubUrl}
+                      onChange={(e) => setGithubUrl(e.target.value)}
+                    />
+                  )}
+                </FormField>
               </div>
             </>
           ) : null}
@@ -1096,24 +1064,19 @@ export default function PublicApply(): JSX.Element {
                 ))}
               </div>
 
-          <div>
-            <label
-              htmlFor="apply-language"
-              className="mb-1.5 block text-[13px] font-medium text-foreground"
-            >
-              {t('apply.emailLanguage')}
-            </label>
-            <select
-              id="apply-language"
-              value={language}
-              onChange={(e) => setLanguage(e.target.value as 'en' | 'hi' | 'te')}
-              className={field}
-            >
-              <option value="en">English</option>
-              <option value="hi">हिन्दी (Hindi)</option>
-              <option value="te">తెలుగు (Telugu)</option>
-            </select>
-          </div>
+          <FormField id="apply-language" label={t('apply.emailLanguage')}>
+            {(p) => (
+              <SelectControl
+                {...p}
+                value={language}
+                onChange={(e) => setLanguage(e.target.value as 'en' | 'hi' | 'te')}
+              >
+                <option value="en">English</option>
+                <option value="hi">हिन्दी (Hindi)</option>
+                <option value="te">తెలుగు (Telugu)</option>
+              </SelectControl>
+            )}
+          </FormField>
 
           {/* The lawful basis. Unticked by default, and the button below cannot
               be pressed until it is ticked. */}
@@ -1158,12 +1121,12 @@ export default function PublicApply(): JSX.Element {
                 <p className="text-[14px] font-semibold text-foreground">
                   {t('apply.savedTitle')}
                 </p>
-                <input
+                <Input
                   readOnly
                   aria-label={t('apply.resumeLinkAria')}
                   value={`${window.location.origin}/apply/draft#${saveLater.data.token}`}
                   onFocus={(e) => e.currentTarget.select()}
-                  className="mt-2 w-full rounded-[12px] border border-border bg-transparent px-3 py-2.5 text-[13px] text-[var(--ui-soft)]"
+                  className="mt-2 bg-transparent text-[var(--ui-soft)] md:text-[13px]"
                 />
                 <p
                   className={cn(

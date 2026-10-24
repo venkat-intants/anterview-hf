@@ -16,6 +16,9 @@ import {
   XCircle,
 } from '@/design/components/icons';
 import { StatusTag } from '@/design/components/primitives';
+import { QueryErrorPanel } from '@/components/QueryState';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { toast } from '@/lib/toast';
 import {
@@ -185,26 +188,36 @@ export default function DryRunPanel({ workflowId }: { workflowId: string }): JSX
             run publishes nothing.
           </p>
         </div>
-        <button
+        {/* Outline: this panel shares the review sheet with Submit for review,
+            and the page header already carries the step's one primary. */}
+        <Button
           type="button"
+          variant="outline"
+          size="sm"
           onClick={() => runMut.mutate()}
           disabled={runMut.isPending}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-[10px] bg-primary px-3.5 py-2 text-[12.5px] font-medium text-primary-foreground disabled:opacity-40"
+          className="shrink-0"
         >
-          {runMut.isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-          ) : null}
+          {runMut.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
           {result ? 'Run again' : 'Run dry run'}
-        </button>
+        </Button>
       </div>
 
-      {latest.isLoading ? (
-        <p className="text-[12px] text-muted-foreground">Loading the last dry run…</p>
-      ) : latest.isError ? (
+      {latest.isError && result === undefined ? (
         // Not "never run": a failed read says nothing about whether one exists.
-        <p role="alert" className="text-[12px] text-[var(--ui-danger)]">
-          Could not load the last dry run. Try again, or run a new one.
-        </p>
+        <QueryErrorPanel
+          title="Could not load the last dry run."
+          error={latest.error}
+          onRetry={() => void latest.refetch()}
+          retrying={latest.isFetching}
+        />
+      ) : latest.isLoading ? (
+        <div className="flex flex-col gap-2" aria-busy="true">
+          <span className="sr-only">Loading the last dry run…</span>
+          <Skeleton className="h-6 w-40 rounded-full" />
+          <Skeleton className="h-12" />
+          <Skeleton className="h-12" />
+        </div>
       ) : !result ? (
         <p className="text-[12px] text-muted-foreground">Not run yet for this version.</p>
       ) : (

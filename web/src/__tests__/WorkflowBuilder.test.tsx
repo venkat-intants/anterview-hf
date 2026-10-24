@@ -889,6 +889,20 @@ describe('WorkflowBuilder - one primary action, always the next step', () => {
     expect(primaries()).toHaveLength(0);
   });
 
+  it('the version picker names each status in words, not the raw value', async () => {
+    listWorkflows.mockResolvedValue([...VERSIONS_DRAFT, ...VERSIONS_LIVE]);
+    getWorkflow.mockImplementation((id: string) =>
+      Promise.resolve(id === 'wf-live' ? PUBLISHED : DRAFT),
+    );
+    renderBuilder();
+    await screen.findByText('Fundamentals');
+    const picker = screen.getByRole('combobox', { name: 'Workflow version' });
+    const labels = Array.from(picker.querySelectorAll('option')).map((o) => o.textContent ?? '');
+    expect(labels.some((l) => /· Draft\b/.test(l))).toBe(true);
+    expect(labels.some((l) => /· Published\b/.test(l))).toBe(true);
+    expect(labels.some((l) => /· (draft|published)\b/.test(l))).toBe(false);
+  });
+
   it('archived: no primary, and the track says Archived rather than implying it is live', async () => {
     const ARCHIVED = { ...VERSIONS_LIVE[0], id: 'wf-old', version: 1, status: 'archived' as const };
     listWorkflows.mockResolvedValue([{ ...VERSIONS_LIVE[0], id: 'wf-live', version: 2 }, ARCHIVED]);

@@ -100,6 +100,7 @@ import StageSettings from '@/components/workflow/StageSettings';
 import { NumberField } from '@/components/workflow/NumberField';
 import { ConfirmDeleteButton } from '@/components/ConfirmDeleteButton';
 import { errorMessage } from '@/lib/errorMessage';
+import { statusLabel } from '@/lib/statusLabel';
 import { applicationsWarning, nextAction, publishImpact } from '@/lib/workflowLifecycle';
 import { ROUND_KIND_META } from '@/components/workflow/roundKinds';
 
@@ -817,7 +818,7 @@ export default function WorkflowBuilder(): JSX.Element {
                 >
                   {(versions.data ?? []).map((v) => (
                     <option key={v.id} value={v.id}>
-                      v{v.version} · {v.status}
+                      v{v.version} · {statusLabel(v.status, 'workflow')}
                       {v.enrolled_candidates > 0 ? ` · ${v.enrolled_candidates} inside` : ''}
                     </option>
                   ))}

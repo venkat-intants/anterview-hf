@@ -21,6 +21,7 @@
 // check", because the list does not prove them.
 
 import type { Requisition } from '@/api/requisitions';
+import { statusLabel } from '@/lib/statusLabel';
 
 export type DotState = 'done' | 'waiting' | 'open' | 'unknown' | 'optional';
 
@@ -96,7 +97,7 @@ export function setupDots(r: ListFields): SetupDot[] {
       case 'pending_approval':
         return { key: 'approval', label, state: 'waiting', text: `${label}: waiting for approval` } as const;
       case 'rejected':
-        return { key: 'approval', label, state: 'open', text: `${label}: changes requested` } as const;
+        return { key: 'approval', label, state: 'open', text: `${label}: ${statusLabel('rejected', 'approval').toLowerCase()}` } as const;
       default:
         return { key: 'approval', label, state: 'open', text: `${label}: not submitted` } as const;
     }

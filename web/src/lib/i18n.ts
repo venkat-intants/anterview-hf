@@ -258,6 +258,7 @@ const en = {
       planNudgeBody: "Tell us the role you're aiming for and we'll build a practice plan - the exact skills you'll be assessed on, and where you stand on each.",
       planPersonalize: 'Personalise',
       planTitle: 'Your practice plan',
+      planLoadError: 'Could not load your practice plan.',
       planReadiness: 'readiness',
       planFresh: 'This is what a {{role}} interview will assess. Do one practice interview and every bar below fills in.',
       planPractiseThis: '← practise this',
@@ -659,7 +660,7 @@ const en = {
     jobs: {
       pageTitle: 'Jobs',
       pageSubtitle: 'Apply to open jobs at companies hiring on AntHire, or rehearse for any job with a practice interview.',
-      searchPlaceholder: 'Search roles…',
+      searchPlaceholder: 'Search jobs…',
       interviewLanguage: 'Interview language',
       filterByLevel: 'Filter by level',
       allLevels: 'All levels',
@@ -687,8 +688,9 @@ const en = {
       languageAria: 'Language: {{language}}',
       openRolesTitle: 'Open jobs',
       openRolesDesc: 'Real jobs at companies hiring on AntHire - applying here reaches their hiring team.',
-      openRolesError: 'Could not load open jobs just now. Refresh to try again.',
-      openRolesLoading: 'Loading open roles…',
+      openRolesError: 'Could not load open jobs. Please try again.',
+      openRolesLoading: 'Loading open jobs…',
+      openRolesNoMatch: 'No open jobs match “{{q}}”.',
       openRolesPracticeNote: 'Practice interviews are below - those are for rehearsing, not applying.',
       viewApply: 'View & apply',
       applied: 'Applied',
@@ -797,7 +799,7 @@ const en = {
         doneNewTitle: 'You’re all set',
         signIn: 'Sign in',
         existingFallback:
-          'This email already had an account, so we added the application to it. Sign in with your existing password.',
+          'This email already had an account, so we added the application to it. If that account was never verified, sign in with the password you just chose; otherwise use your existing password.',
         inApplications: 'Your application is in My applications.',
         doneNew:
           'Your application is in My applications. Sign in to see which stage it is at and what happens next.',
@@ -1324,7 +1326,7 @@ const en = {
       pageNotFoundDesc: 'The page you are looking for does not exist or has been moved.',
       goHome: 'Go to home',
       errorBoundaryTitle: 'Could not show this page',
-      errorBoundaryDesc: 'An unexpected error occurred. Reload the page to try again.',
+      errorBoundaryDesc: 'An unexpected error occurred. Please try again.',
       reload: 'Reload page',
     },
     // ── PH3-B5: Save & Resume + the confirmation step ──────────────────
@@ -1463,6 +1465,8 @@ const en = {
         'The job may have been filled or closed. If you were sent this link recently, check with whoever shared it - they will have the current one.',
       alreadyApplied: 'You have already applied',
       received: 'Application received',
+      receivedDesc: 'Thanks - your application is in. We will be in touch by email.',
+      alreadyAppliedDesc: 'You have already applied for this job. We have your application.',
       // ui-copy-exempt: consent or automated-decision disclosure; its wording changes only with legal review (the CV -> resume rename is held).
       reviewNote:
         'Your CV is with the hiring team for {{title}}. Depending on the role, some steps - such as scoring your CV, or moving you on when you meet its standard - may be automatic. If you move forward, you will get an email with the next step. Every hire or reject decision is made by a person.',
@@ -1848,7 +1852,7 @@ const en = {
       notReadyRequired: 'Answer every required item before submitting.',
     },
     profile: {
-      title: 'Your profile',
+      title: 'Profile',
       descCandidate: 'Keep this current - it personalises your AI interviews and is what recruiters see.',
       descHr: 'How candidates and your team see you across the hiring workspace.',
       descAdmin: 'Your account details across the platform.',
@@ -2197,6 +2201,7 @@ const hi = {
       planNudgeBody: 'हमें बताइए कि आप किस भूमिका के लिए तैयारी कर रहे हैं, हम एक अभ्यास योजना बनाएँगे - वे कौशल जिन पर आपका आकलन होगा, और हर एक पर आप कहाँ हैं।',
       planPersonalize: 'अपने अनुसार बनाएँ',
       planTitle: 'आपकी अभ्यास योजना',
+      planLoadError: 'आपकी अभ्यास योजना लोड नहीं हो सकी।',
       planReadiness: 'तैयारी',
       planFresh: '{{role}} के इंटरव्यू में इन्हीं का आकलन होगा। एक अभ्यास इंटरव्यू दीजिए और नीचे की हर पट्टी भर जाएगी।',
       planPractiseThis: '← इसका अभ्यास करें',
@@ -2582,7 +2587,7 @@ const hi = {
     jobs: {
       pageTitle: 'नौकरियाँ',
       pageSubtitle: 'AntHire पर भर्ती कर रही कंपनियों की खुली नौकरियों के लिए आवेदन करें, या किसी भी नौकरी के लिए अभ्यास इंटरव्यू से तैयारी करें।',
-      searchPlaceholder: 'पद खोजें…',
+      searchPlaceholder: 'नौकरियाँ खोजें…',
       interviewLanguage: 'इंटरव्यू भाषा',
       filterByLevel: 'स्तर के अनुसार फ़िल्टर करें',
       allLevels: 'सभी स्तर',
@@ -2610,8 +2615,9 @@ const hi = {
       languageAria: 'भाषा: {{language}}',
       openRolesTitle: 'खुली नौकरियाँ',
       openRolesDesc: 'AntHire पर भर्ती कर रही कंपनियों की असली नौकरियाँ - यहाँ आवेदन करने से आपका आवेदन उनकी हायरिंग टीम तक पहुँचता है।',
-      openRolesError: 'अभी खुली नौकरियाँ लोड नहीं हो सकीं। दोबारा कोशिश के लिए पेज रीफ़्रेश करें।',
-      openRolesLoading: 'खुली भूमिकाएँ लोड हो रही हैं…',
+      openRolesError: 'खुली नौकरियाँ लोड नहीं हो सकीं। कृपया फिर से कोशिश करें।',
+      openRolesLoading: 'खुली नौकरियाँ लोड हो रही हैं…',
+      openRolesNoMatch: 'कोई खुली नौकरी “{{q}}” से मेल नहीं खाती।',
       openRolesPracticeNote: 'अभ्यास इंटरव्यू नीचे हैं - वे अभ्यास के लिए हैं, आवेदन के लिए नहीं।',
       viewApply: 'देखें और आवेदन करें',
       applied: 'आवेदन किया',
@@ -2717,7 +2723,7 @@ const hi = {
         doneNewTitle: 'सब तैयार है',
         signIn: 'साइन इन करें',
         existingFallback:
-          'इस ईमेल पर पहले से खाता था, इसलिए हमने आवेदन उसमें जोड़ दिया। अपने मौजूदा पासवर्ड से साइन इन करें।',
+          'इस ईमेल पर पहले से खाता था, इसलिए हमने आवेदन उसमें जोड़ दिया। अगर वह खाता कभी सत्यापित नहीं हुआ था, तो अभी चुने गए पासवर्ड से साइन इन करें; नहीं तो अपने मौजूदा पासवर्ड से।',
         inApplications: 'आपका आवेदन “मेरे आवेदन” में है।',
         doneNew:
           'आपका आवेदन “मेरे आवेदन” में है। साइन इन करके देखें कि वह किस चरण में है और आगे क्या होगा।',
@@ -2990,7 +2996,7 @@ const hi = {
       codingProblems_one: '{{count}} coding समस्या',
       codingProblems_other: '{{count}} coding समस्याएं',
       codingInputLabel: 'इनपुट',
-      codingExpectedLabel: 'अपेक्षित output',
+      codingExpectedLabel: 'अपेक्षित आउटपुट',
       codingLanguageLabel: 'भाषा',
       codingEditorPlaceholder: 'यहाँ अपना solution लिखें…',
       codingExpected: 'अपेक्षित',
@@ -3220,9 +3226,9 @@ const hi = {
       pageNotFoundTitle: 'पृष्ठ नहीं मिला',
       pageNotFoundDesc: 'आप जो पृष्ठ खोज रहे हैं वह मौजूद नहीं है या हटा दिया गया है।',
       goHome: 'होम पर जाएं',
-      errorBoundaryTitle: 'कुछ गड़बड़ हुई',
-      errorBoundaryDesc: 'एक अप्रत्याशित error आई। पृष्ठ reload करके पुनः प्रयास करें।',
-      reload: 'पृष्ठ reload करें',
+      errorBoundaryTitle: 'यह पृष्ठ नहीं दिखाया जा सका',
+      errorBoundaryDesc: 'एक अप्रत्याशित त्रुटि हुई। कृपया फिर से कोशिश करें।',
+      reload: 'पृष्ठ फिर से लोड करें',
     },
     resumeApply: {
       loading: 'आपका आवेदन खोजा जा रहा है…',
@@ -3353,6 +3359,8 @@ const hi = {
         'यह नौकरी भर चुकी होगी या बंद कर दी गई होगी। अगर आपको यह लिंक हाल ही में भेजा गया था, तो जिसने भेजा है उनसे जाँचें - उनके पास मौजूदा लिंक होगा।',
       alreadyApplied: 'आप पहले ही आवेदन कर चुके हैं',
       received: 'आवेदन मिल गया',
+      receivedDesc: 'धन्यवाद - आपका आवेदन मिल गया है। हम ईमेल से आपसे संपर्क करेंगे।',
+      alreadyAppliedDesc: 'आप इस नौकरी के लिए पहले ही आवेदन कर चुके हैं। आपका आवेदन हमारे पास है।',
       // ui-copy-exempt: consent or automated-decision disclosure; its wording changes only with legal review (the CV -> resume rename is held).
       reviewNote:
         'आपका CV {{title}} की नियुक्ति टीम के पास है। भूमिका के अनुसार, कुछ चरण - जैसे आपके CV का मूल्यांकन, या मानक पूरा करने पर आपको आगे बढ़ाना - स्वतः हो सकते हैं। यदि आप आगे बढ़ते हैं, तो आपको अगले चरण की जानकारी ईमेल से मिलेगी। नियुक्ति या अस्वीकृति का हर निर्णय कोई व्यक्ति लेता है।',
@@ -3692,7 +3700,7 @@ const hi = {
       notReadyRequired: 'सबमिट करने से पहले हर आवश्यक आइटम का उत्तर दें।',
     },
     profile: {
-      title: 'आपकी प्रोफ़ाइल',
+      title: 'प्रोफ़ाइल',
       descCandidate: 'इसे अपडेट रखें - यह आपके AI इंटरव्यू को आपके अनुरूप बनाती है और रिक्रूटर्स को यही दिखती है।',
       descHr: 'हायरिंग वर्कस्पेस में उम्मीदवार और आपकी टीम आपको कैसे देखते हैं।',
       descAdmin: 'प्लेटफ़ॉर्म पर आपके अकाउंट की जानकारी।',
@@ -4044,6 +4052,7 @@ const te = {
       planNudgeBody: 'మీరు లక్ష్యంగా పెట్టుకున్న ఉద్యోగం చెప్పండి, మేము ప్రాక్టీస్ ప్లాన్ రూపొందిస్తాము - మీ అంచనా జరిగే నైపుణ్యాలు, వాటిలో మీరు ఎక్కడ ఉన్నారో.',
       planPersonalize: 'వ్యక్తిగతీకరించండి',
       planTitle: 'మీ ప్రాక్టీస్ ప్లాన్',
+      planLoadError: 'మీ ప్రాక్టీస్ ప్లాన్‌ను లోడ్ చేయలేకపోయాం.',
       planReadiness: 'సన్నద్ధత',
       planFresh: '{{role}} ఇంటర్వ్యూలో వీటినే అంచనా వేస్తారు. ఒక సాధన ఇంటర్వ్యూ చేస్తే కింది ప్రతి బార్ నిండుతుంది.',
       planPractiseThis: '← దీన్ని ప్రాక్టీస్ చేయండి',
@@ -4431,7 +4440,7 @@ const te = {
     jobs: {
       pageTitle: 'ఉద్యోగాలు',
       pageSubtitle: 'AntHire లో నియామకం చేస్తున్న కంపెనీల ఖాళీ ఉద్యోగాలకు దరఖాస్తు చేయండి, లేదా ఏ ఉద్యోగానికైనా సాధన ఇంటర్వ్యూతో సిద్ధం అవ్వండి.',
-      searchPlaceholder: 'పదవులు వెతకండి…',
+      searchPlaceholder: 'ఉద్యోగాలు వెతకండి…',
       interviewLanguage: 'ఇంటర్వ్యూ భాష',
       filterByLevel: 'స్థాయి ఆధారంగా ఫిల్టర్ చేయండి',
       allLevels: 'అన్ని స్థాయిలు',
@@ -4459,8 +4468,9 @@ const te = {
       languageAria: 'భాష: {{language}}',
       openRolesTitle: 'ఖాళీ ఉద్యోగాలు',
       openRolesDesc: 'AntHire లో నియామకాలు చేస్తున్న కంపెనీల నిజమైన ఉద్యోగాలు - ఇక్కడ దరఖాస్తు చేస్తే అది వారి హైరింగ్ టీమ్‌కు చేరుతుంది.',
-      openRolesError: 'ఇప్పుడు ఖాళీ ఉద్యోగాలను లోడ్ చేయలేకపోయాం. మళ్లీ ప్రయత్నించడానికి రిఫ్రెష్ చేయండి.',
+      openRolesError: 'ఖాళీ ఉద్యోగాలను లోడ్ చేయలేకపోయాం. దయచేసి మళ్లీ ప్రయత్నించండి.',
       openRolesLoading: 'ఖాళీ ఉద్యోగాలు లోడ్ అవుతున్నాయి…',
+      openRolesNoMatch: '“{{q}}”కి సరిపోయే ఖాళీ ఉద్యోగాలు లేవు.',
       openRolesPracticeNote: 'ప్రాక్టీస్ ఇంటర్వ్యూలు కింద ఉన్నాయి - అవి సాధన కోసం, దరఖాస్తు కోసం కాదు.',
       viewApply: 'చూసి దరఖాస్తు చేయండి',
       applied: 'దరఖాస్తు చేశారు',
@@ -4567,7 +4577,7 @@ const te = {
         doneNewTitle: 'అంతా సిద్ధం',
         signIn: 'సైన్ ఇన్',
         existingFallback:
-          'ఈ ఇమెయిల్‌కు ఇప్పటికే ఖాతా ఉంది, అందుకే దరఖాస్తును అందులో జోడించాం. మీ ప్రస్తుత పాస్‌వర్డ్‌తో సైన్ ఇన్ చేయండి.',
+          'ఈ ఇమెయిల్‌కు ఇప్పటికే ఖాతా ఉంది, అందుకే దరఖాస్తును అందులో జోడించాం. ఆ ఖాతా ఎప్పుడూ ధృవీకరించబడకపోతే, మీరు ఇప్పుడే ఎంచుకున్న పాస్‌వర్డ్‌తో సైన్ ఇన్ చేయండి; లేకపోతే మీ ప్రస్తుత పాస్‌వర్డ్‌ను ఉపయోగించండి.',
         inApplications: 'మీ దరఖాస్తు “నా దరఖాస్తులు”లో ఉంది.',
         doneNew:
           'మీ దరఖాస్తు “నా దరఖాస్తులు”లో ఉంది. సైన్ ఇన్ చేసి అది ఏ దశలో ఉందో, తర్వాత ఏమి జరుగుతుందో చూడండి.',
@@ -4841,7 +4851,7 @@ const te = {
       codingProblems_one: '{{count}} coding సమస్య',
       codingProblems_other: '{{count}} coding సమస్యలు',
       codingInputLabel: 'ఇన్‌పుట్',
-      codingExpectedLabel: 'అంచనా output',
+      codingExpectedLabel: 'అంచనా అవుట్‌పుట్',
       codingLanguageLabel: 'భాష',
       codingEditorPlaceholder: 'మీ పరిష్కారం ఇక్కడ రాయండి…',
       codingExpected: 'ఆశించినది',
@@ -5072,9 +5082,9 @@ const te = {
       pageNotFoundTitle: 'పేజీ కనుగొనబడలేదు',
       pageNotFoundDesc: 'మీరు వెతుకుతున్న పేజీ లేదు లేదా తరలించబడింది.',
       goHome: 'హోమ్‌కి వెళ్ళండి',
-      errorBoundaryTitle: 'ఏదో తప్పు జరిగింది',
-      errorBoundaryDesc: 'అనూహ్యమైన error వచ్చింది. పేజీ reload చేసి మళ్ళీ ప్రయత్నించండి.',
-      reload: 'పేజీ reload చేయండి',
+      errorBoundaryTitle: 'ఈ పేజీని చూపించలేకపోయాం',
+      errorBoundaryDesc: 'అనూహ్యమైన లోపం జరిగింది. దయచేసి మళ్లీ ప్రయత్నించండి.',
+      reload: 'పేజీని మళ్లీ లోడ్ చేయండి',
     },
     resumeApply: {
       loading: 'మీ దరఖాస్తును వెతుకుతున్నాం…',
@@ -5206,6 +5216,8 @@ const te = {
         'ఈ ఉద్యోగం భర్తీ అయి ఉండవచ్చు లేదా మూసివేయబడి ఉండవచ్చు. ఈ లింక్ మీకు ఇటీవల పంపినట్లయితే, పంపినవారితో సరిచూడండి - ప్రస్తుత లింక్ వారి వద్ద ఉంటుంది.',
       alreadyApplied: 'మీరు ఇప్పటికే దరఖాస్తు చేశారు',
       received: 'దరఖాస్తు అందింది',
+      receivedDesc: 'ధన్యవాదాలు - మీ దరఖాస్తు అందింది. మేము ఈమెయిల్ ద్వారా మిమ్మల్ని సంప్రదిస్తాం.',
+      alreadyAppliedDesc: 'మీరు ఈ ఉద్యోగానికి ఇప్పటికే దరఖాస్తు చేశారు. మీ దరఖాస్తు మా వద్ద ఉంది.',
       // ui-copy-exempt: consent or automated-decision disclosure; its wording changes only with legal review (the CV -> resume rename is held).
       reviewNote:
         'మీ CV {{title}} నియామక బృందం వద్ద ఉంది. పాత్రను బట్టి, కొన్ని దశలు - మీ CV మూల్యాంకనం, లేదా ప్రమాణాన్ని అందుకుంటే మిమ్మల్ని ముందుకు తీసుకెళ్లడం వంటివి - ఆటోమేటిక్‌గా జరగవచ్చు. మీరు ముందుకు వెళ్తే, తదుపరి దశ గురించి ఈమెయిల్ వస్తుంది. నియామకం లేదా తిరస్కరణ ప్రతి నిర్ణయం ఒక వ్యక్తి తీసుకుంటారు.',
@@ -5549,7 +5561,7 @@ const te = {
       notReadyRequired: 'సమర్పించే ముందు ప్రతి తప్పనిసరి ఐటెమ్‌కు సమాధానం ఇవ్వండి.',
     },
     profile: {
-      title: 'మీ ప్రొఫైల్',
+      title: 'ప్రొఫైల్',
       descCandidate: 'దీనిని తాజాగా ఉంచండి - ఇది మీ AI ఇంటర్వ్యూలను మీకు తగినట్లు మారుస్తుంది, రిక్రూటర్లకు ఇదే కనిపిస్తుంది.',
       descHr: 'హైరింగ్ వర్క్‌స్పేస్‌లో అభ్యర్థులు మరియు మీ బృందం మిమ్మల్ని ఎలా చూస్తారో ఇది చూపిస్తుంది.',
       descAdmin: 'ప్లాట్‌ఫామ్‌లో మీ ఖాతా వివరాలు.',

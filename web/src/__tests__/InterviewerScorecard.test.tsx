@@ -195,6 +195,22 @@ describe('InterviewerScorecard - loading and error', () => {
   });
 });
 
+describe('InterviewerScorecard - the header state tag (AD-F30)', () => {
+  // The same words as the assignments list, keyed on the server's state, so an
+  // untouched scorecard never reads "Assigned" there and "In progress" here.
+  it.each([
+    ['assigned', 'assigned', 'Assigned'],
+    ['in_progress', 'in_progress', 'In progress'],
+    ['late', 'in_progress', 'Late'],
+    ['submitted', 'submitted', 'Submitted'],
+  ] as const)('shows state %s (status %s) as "%s"', async (state, status, label) => {
+    api.getScorecard.mockResolvedValue(detail({ state, status }));
+    renderPage();
+    expect(await screen.findByText(label, { exact: true })).toBeInTheDocument();
+    if (state === 'assigned') expect(screen.queryByText('In progress')).not.toBeInTheDocument();
+  });
+});
+
 describe('InterviewerScorecard - the interview kit tab', () => {
   it('opens on the kit tab, showing instructions, HR notes and per-criterion guidance', async () => {
     renderPage();

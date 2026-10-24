@@ -159,6 +159,31 @@ describe('ProposalCard - commit gate', () => {
     expect(screen.queryByRole('button', { name: 'Send invite' })).not.toBeInTheDocument();
   });
 
+  it('stops asking for approval once a refusal leaves nothing to click', async () => {
+    commitProposal.mockRejectedValue(
+      new ApiError('Applicant must be shortlisted or have passed an exam before an interview.', 409),
+    );
+    renderCard();
+    expect(screen.getByText('Needs your approval')).toBeInTheDocument();
+    expect(screen.getByText('Nothing is sent until you click.')).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Send invite' }));
+
+    await screen.findByRole('alert');
+    expect(screen.getByText('Not sent')).toBeInTheDocument();
+    expect(screen.queryByText('Needs your approval')).not.toBeInTheDocument();
+    expect(screen.queryByText('Nothing is sent until you click.')).not.toBeInTheDocument();
+  });
+
+  it('keeps asking for approval while a transient failure can still be retried', async () => {
+    commitProposal.mockRejectedValue(new ApiError('', 503, undefined, false));
+    renderCard();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Send invite' }));
+
+    await screen.findByRole('alert');
+    expect(screen.getByText('Needs your approval')).toBeInTheDocument();
+    expect(screen.queryByText('Not sent')).not.toBeInTheDocument();
+  });
+
   it('offers exactly one retry for a transient failure', async () => {
     commitProposal.mockRejectedValueOnce(new ApiError('', 503, undefined, false));
     commitProposal.mockResolvedValueOnce({});

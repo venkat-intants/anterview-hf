@@ -228,6 +228,10 @@ export default function ProposalCard({
   }
 
   const failed = outcome?.state === 'failed' ? outcome : null;
+  // A failure with no way forward (a refusal, a session that ended, or a
+  // retryable one on a draft that has since expired) leaves no button, so the
+  // card must stop asking for an approval it can no longer take.
+  const notSent = failed !== null && (!failed.retryable || expired);
   const link = isDone ? freshLink : null;
 
   return (
@@ -246,7 +250,11 @@ export default function ProposalCard({
               <StatusTag tone={isDone ? 'forest' : 'electric'}>
                 {isDone ? 'Completed' : KIND_LABEL[proposal.kind]}
               </StatusTag>
-              {!isDone && <StatusTag tone="neutral">Needs your approval</StatusTag>}
+              {notSent ? (
+                <StatusTag tone="ember">Not sent</StatusTag>
+              ) : (
+                !isDone && <StatusTag tone="neutral">Needs your approval</StatusTag>
+              )}
             </div>
             <h4 className="break-words text-[15px] font-bold text-foreground">{proposal.title}</h4>
             <p className="mt-0.5 text-sm text-muted-foreground">{proposal.summary}</p>
@@ -362,7 +370,8 @@ export default function ProposalCard({
             </p>
           ) : (
             state !== 'committing' &&
-            !expired && (
+            !expired &&
+            !notSent && (
               <span className="text-[12.5px] text-muted-foreground">
                 Nothing is sent until you click.
               </span>

@@ -48,7 +48,7 @@ beforeEach(() => {
 describe('HR QuestionReviews', () => {
   it('fetches through the HR review-queue endpoint', async () => {
     renderWith(<HrQuestionReviews />);
-    expect(await screen.findByText('Nothing is waiting for review.')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing is waiting on you.')).toBeInTheDocument();
     expect(listBankReviewQueue).toHaveBeenCalledTimes(1);
     expect(listAdminQuestionReviews).not.toHaveBeenCalled();
   });
@@ -57,7 +57,7 @@ describe('HR QuestionReviews', () => {
 describe('Super admin QuestionReviews', () => {
   it('fetches through the admin review-queue endpoint, mirroring HR', async () => {
     renderWith(<SuperAdminQuestionReviews />);
-    expect(await screen.findByText('Nothing is waiting for review.')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing is waiting on you.')).toBeInTheDocument();
     expect(listAdminQuestionReviews).toHaveBeenCalledTimes(1);
     expect(listBankReviewQueue).not.toHaveBeenCalled();
   });

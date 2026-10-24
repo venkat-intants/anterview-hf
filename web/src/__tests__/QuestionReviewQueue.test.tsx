@@ -166,7 +166,7 @@ describe('QuestionReviewQueue - approving someone else’s question', () => {
     );
   });
 
-  it('requires at least 5 characters before Send back is enabled', async () => {
+  it('requires at least 10 characters before Send back is enabled, like every review queue', async () => {
     const user = userEvent.setup();
     const fetchQueue = vi.fn().mockResolvedValue([row()]);
     const requestChanges = vi.fn().mockResolvedValue(row({ status: 'draft' }));
@@ -177,14 +177,42 @@ describe('QuestionReviewQueue - approving someone else’s question', () => {
     const sendBack = screen.getByRole('button', { name: 'Send back' });
     expect(sendBack).toBeDisabled();
 
-    await user.type(noteInput, 'fix');
+    // Seven characters cleared the old five-character floor; it is not enough now.
+    await user.type(noteInput, 'fix opt');
     expect(sendBack).toBeDisabled();
+    expect(screen.getByText('Write at least 10 characters.')).toBeInTheDocument();
 
-    await user.type(noteInput, ' the options');
+    await user.type(noteInput, 'ions');
     expect(sendBack).toBeEnabled();
 
     await user.click(sendBack);
-    await waitFor(() => expect(requestChanges).toHaveBeenCalledWith('q-1', 'fix the options'));
+    await waitFor(() => expect(requestChanges).toHaveBeenCalledWith('q-1', 'fix options'));
+  });
+
+  it('makes Approve the primary action, as on the other review queues (AD-F12)', async () => {
+    const fetchQueue = vi.fn().mockResolvedValue([row()]);
+    renderQueue({ fetchQueue, approve: vi.fn(), requestChanges: vi.fn() });
+
+    const approveBtn = await screen.findByRole('button', { name: 'Approve' });
+    expect(approveBtn.className).toMatch(/(?:^|\s)bg-primary(?=\s|$)/);
+    expect(screen.getByRole('button', { name: 'Request changes' }).className).not.toMatch(
+      /(?:^|\s)bg-primary(?=\s|$)/,
+    );
+  });
+
+  it('caps the note at the server limit so a send-back never fails with a 422', async () => {
+    const user = userEvent.setup();
+    const fetchQueue = vi.fn().mockResolvedValue([row()]);
+    const requestChanges = vi.fn().mockResolvedValue(row({ status: 'draft' }));
+    renderQueue({ fetchQueue, approve: vi.fn(), requestChanges });
+
+    await user.click(await screen.findByRole('button', { name: 'Request changes' }));
+    const noteInput = screen.getByLabelText('What needs to change (required)');
+    await user.click(noteInput);
+    await user.paste('x'.repeat(1200));
+    expect((noteInput as HTMLInputElement).value).toHaveLength(1000);
+    await user.click(screen.getByRole('button', { name: 'Send back' }));
+    await waitFor(() => expect(requestChanges).toHaveBeenCalledWith('q-1', 'x'.repeat(1000)));
   });
 });
 
@@ -192,7 +220,7 @@ describe('QuestionReviewQueue - empty and error states', () => {
   it('shows the empty hint when nothing is waiting', async () => {
     const fetchQueue = vi.fn().mockResolvedValue([]);
     renderQueue({ fetchQueue, approve: vi.fn(), requestChanges: vi.fn() });
-    expect(await screen.findByText('Nothing is waiting for review.')).toBeInTheDocument();
+    expect(await screen.findByText('Nothing is waiting on you.')).toBeInTheDocument();
     expect(screen.getByText('Nothing yet.')).toBeInTheDocument();
   });
 
@@ -278,7 +306,7 @@ describe('QuestionReviewQueue - what a reviewer sees before deciding', () => {
     expect(within(content).getAllByText('Correct answer')).toHaveLength(1);
   });
 
-  it('keeps the decision unchanged: a coding item still needs the 5-character note to send back', async () => {
+  it('keeps the decision the same for a coding item: it still needs the 10-character note to send back', async () => {
     const user = userEvent.setup();
     const requestChanges = vi.fn().mockResolvedValue(CODING_ROW({ status: 'draft' }));
     const fetchQueue = vi.fn().mockResolvedValue([CODING_ROW()]);

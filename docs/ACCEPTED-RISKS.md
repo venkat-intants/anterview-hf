@@ -953,3 +953,49 @@ PH4 HI/TE review item).
 | **AR-9** | Gaze detection flags candidates for looking away; weighted lowest, never decisive, never validated for accuracy | Camera proctoring 2026-09-29 | `platform_owner` (+ `product-manager`) | A gaze/accessibility complaint, a request to weight it higher or rank by it, a false-positive pattern, or DPDP biometric guidance |
 | **AR-10** | A company `super_admin` views named candidates (and HR's free-text notes on them) on the hiring board, read-only; cannot act | Owner decision 2026-10-12 | `platform_owner` (+ `security-auditor`) | An objection to super-admin visibility of candidate names/notes, any added field/link/write on the view, a new `super_admin`-reachable route, or a candidate tool for the super-admin copilot |
 | **AR-11** | An opted-in workflow shortlists on the ATS score with no person confirming; advance-only, approval-gated, off by default | Owner decision 2026-10-15 | `platform_owner` (DPO co-sign pending) | A government bid, a progression complaint, any ATS model/prompt change, the below-bar queue going stale, or any proposal to automate the final decision |
+
+---
+
+## AR-12 — Interview slots can still be pinned by an account that never joins
+
+| | |
+|---|---|
+| **Source finding** | Code review F4 and security review H2 residual / C4, fix round 2026-10-26 (branch `fix/interview-capacity-defects`) |
+| **Status** | **ACCEPTED — reduced, not removed; demo tier only** |
+| **Owner** | `platform_owner` (support@intants.com); `security-auditor` re-reviews when the trigger fires |
+| **Trigger to revisit** | Any of: (a) `WORKER_MAX_CONCURRENT_JOBS` raised above its demo values (Space 2, replica 12) or more than one worker replica; (b) a paying customer or a drive/campus event depends on interview capacity; (c) any sign of `rooms.token.user_slot_busy` / `rooms.token.worker_full` warnings from one user id in the logs; (d) email verification or per-IP gating for self-registration is introduced (then close this by using it) |
+
+**The decision.** Interview capacity is a small global cap held in a Redis
+ledger. The token endpoint takes a slot when a candidate asks to join and holds it
+for `SLOT_RESERVATION_SECONDS` (180 s) until the worker accepts the job. We
+shipped the ledger with the per-account limits below and are NOT adding
+account-age, verified-email or per-IP gating now, because the only deployment is
+the free demo Space and the gate would block real demo users.
+
+**What the code does limit.** One reservation per user (`USER_BUSY`); the API can
+never lengthen a hold - only the worker's `extend_slot` on accept does; a join
+token is never valid longer than its reservation; the worker re-checks the
+one-interview-per-user rule when it has to CLAIM a slot; `/redispatch` needs the
+candidate to be in the room, so it cannot be used to start interviews.
+
+**What is accepted — the residual paths.**
+1. *One account can pin one slot indefinitely without joining.* Mint a token, let
+   the 180 s reservation lapse, mint again. The hold never extends, but it can be
+   retaken after each lapse. On the Space (cap 2) that is half of capacity from
+   one free account.
+2. *N free accounts hold N slots.* Self-registration is rate-limited per IP and
+   email verification is optional, so taking the whole cap is cheap. Any small
+   global cap has this property; the old counter could not be pinned this way
+   because it only counted accepted jobs.
+3. *A worker crash that skips the release* leaves a slot (and the user's pointer)
+   until the lease expires — up to `SLOT_LEASE_SECONDS` (30 min).
+
+**What is NOT true.** There is no per-IP or account-age limit on token requests
+beyond the 20/min per-user rate limit, and that limiter fails OPEN when Redis is
+down. The cap is therefore a *fairness* control for honest users and an
+*availability* control against an accidental storm, not an abuse control.
+
+**Impact.** Availability only (503 "all slots occupied" for other candidates). No
+data exposure, and the pinned slot costs nothing because no interviewer ever
+runs for it.
+

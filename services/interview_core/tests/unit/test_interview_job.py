@@ -330,7 +330,10 @@ async def test_wall_clock_cap_is_silent_when_close_already_ran() -> None:
 async def test_admit_registers_the_decrement_before_anything_can_fail() -> None:
     """The counter release is registered on entry so every exit path frees the slot."""
     job = _job()
-    with patch.object(wk, "_publish_capacity", new=AsyncMock()):
+    with (
+        patch.object(wk, "_extend_slot_lease", new=AsyncMock()),
+        patch.object(wk, "_release_slot", new=AsyncMock()),
+    ):
         before = wk._active_jobs
         try:
             await job._admit()

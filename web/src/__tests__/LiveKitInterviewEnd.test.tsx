@@ -19,6 +19,10 @@ vi.mock('../hooks/useLiveKitInterview', () => ({
     disconnect,
     toggleMic: vi.fn(),
     toggleCamera: vi.fn(),
+    interviewerStatus: 'joined',
+    redispatchAttempt: 0,
+    maxRedispatch: 2,
+    retryInterviewer: vi.fn(() => Promise.resolve()),
   }),
 }));
 vi.mock('../features/proctoring/useProctoring', () => ({

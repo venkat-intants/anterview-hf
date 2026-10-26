@@ -13,6 +13,10 @@ from shared.security import validate_cors_origins as _validate_cors_origins
 from shared.security import validate_database_ssl as _validate_database_ssl
 from shared.security import validate_redis_tls as _validate_redis_tls
 
+# Agent names for explicit dispatch (see Settings.interview_agent_name).
+PRODUCTION_AGENT_NAME = "anthire-interviewer"
+DEV_AGENT_NAME = "anthire-dev"
+
 # app/config.py -> app -> <service> -> services -> repo root
 _SERVICE_DIR = pathlib.Path(__file__).resolve().parents[1]
 _REPO_ROOT = _SERVICE_DIR.parents[1]
@@ -202,8 +206,79 @@ class Settings(BaseSettings):
     # in request_fnc will silently reject below the advertised ceiling.
     # test_effective_cap_equals_configured_cap in test_worker_reliability.py
     # asserts this invariant automatically.
-    worker_load_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    #
+    # WORKER LOAD IS JOBS / CAP, NOT CPU (2026-10 load test). The worker reports
+    # load = running_jobs / worker_max_concurrent_jobs (interview_worker._worker_load)
+    # and is marked FULL when load >= worker_load_threshold. livekit-agents' own
+    # default - a 2.5 s moving average of the whole container's CPU against 0.75 -
+    # flapped FULL/AVAILABLE every few seconds in the single-container Space
+    # because API bursts count, and a job offered while FULL is never re-offered.
+    # So the default threshold is now 1.0: AVAILABLE until the cap is reached,
+    # FULL exactly at it. Lower it only if you want headroom BELOW the cap (e.g.
+    # 0.75 with a cap of 4 means FULL at 3 jobs).
+    worker_load_threshold: float = Field(default=1.0, ge=0.0, le=1.0)
     worker_max_concurrent_jobs: int = Field(default=4, ge=0)
+
+    # Explicit dispatch. The worker registers under this name; the token endpoint
+    # embeds a dispatch for it in the candidate's join token, and
+    # POST /api/rooms/{id}/redispatch creates one on demand. EMPTY STRING =
+    # legacy AUTOMATIC dispatch on both sides (worker registers unnamed, API
+    # creates no dispatches). The API and worker ship in the same image, so a
+    # change here moves them together; a mixed rollout (API named, worker
+    # unnamed) would leave rooms with no interviewer, so never set it on only one.
+    #
+    # DEFAULT IS ENVIRONMENT-AWARE ("auto"): the production name only when
+    # APP_ENV=production, otherwise ``anthire-dev``. Local .env files point at the
+    # SAME LiveKit project as the live Space, so a local worker that defaulted to
+    # the production name would take real candidates' dispatches (security review
+    # N4). Set INTERVIEW_AGENT_NAME explicitly to override either way; "" stays
+    # the kill switch back to automatic dispatch.
+    interview_agent_name: str = "auto"
+
+    # Warm job processes. None = the job cap, bounded at 8 (see
+    # interview_worker._idle_process_target). livekit-agents' default is
+    # min(cpu_count, 4) - 2 on this host - so a third interview inside a few
+    # seconds waited for a process to be created and timed out. Each idle process
+    # holds the prewarmed VAD model (~100-200 MB); set lower on small hosts.
+    worker_num_idle_processes: int | None = Field(default=None, ge=0, le=16)
+    # Seconds a job process may take to prewarm before livekit-agents kills it.
+    # Library default 10 s; under CPU contention (4 processes loading ONNX
+    # models at once) that was too tight and itself caused "no warmed process".
+    worker_initialize_timeout_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
+
+    # Slot ledger leases (app/worker_capacity.py). A reservation is taken when the
+    # token endpoint admits a candidate; it must outlive click-to-interviewer
+    # (connect + dispatch + process start, normally < 30 s, worst case several
+    # re-dispatches) and then lapses on its own if nobody ever arrives. When the
+    # worker accepts the job the slot becomes a lease long enough for the longest
+    # legal interview (~10 min) plus margin; it is released explicitly when the
+    # interview ends, and expires on its own if the worker crashes.
+    slot_reservation_seconds: int = Field(default=180, ge=30, le=900)
+    slot_lease_seconds: int = Field(default=1800, ge=300, le=7200)
+
+    # Re-dispatch (candidate has no interviewer): per-user rate limit and a hard
+    # per-session ceiling so a stuck client cannot hammer the LiveKit API.
+    # Redis key namespace for the slot ledger / dispatch locks / job markers.
+    # Empty = APP_ENV. Local dev shares the production Upstash (services/*/.env),
+    # so un-namespaced keys let a developer's run touch production slots.
+    redis_key_namespace: str = ""
+    # Debounce / lock around one list->delete->create dispatch cycle. Shorter than
+    # the frontend's 20 s watchdog so a legitimate second attempt is never refused.
+    dispatch_lock_seconds: int = Field(default=15, ge=5, le=60)
+    # One interviewer job per room: marker TTL while the job is STARTING, i.e.
+    # worker_initialize_timeout_seconds (30) + slack. It must be short: a job that
+    # is accepted but never reaches the job process (init timeout, missed
+    # assignment, crash) never clears its marker, and every redispatch inside the
+    # TTL would be refused as a "duplicate" - the stranded case this exists to fix
+    # (review F1). Once the job is running, _admit re-sets the marker to the
+    # interview lease and the shutdown callback clears it.
+    job_marker_seconds: int = Field(default=45, ge=15, le=300)
+    # Hard ceiling for each LiveKit API call (the library default is 60 s, which
+    # would pin a request - and, before the DB session is released, a DB
+    # connection - for minutes during a LiveKit incident).
+    livekit_api_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    room_redispatch_per_minute: int = Field(default=10, ge=0)
+    room_redispatch_max_per_session: int = Field(default=4, ge=1)
 
     # Per-USER cost guards (M3). Session creation and room-token issuance (which
     # DISPATCHES a worker: LLM + speech + avatar) were unlimited. Defaults are far
@@ -328,6 +403,15 @@ class Settings(BaseSettings):
     def validate_cors_origins(cls, v: str) -> str:
         """Reject wildcard / non-http(s) origins (shared/security.py)."""
         return _validate_cors_origins(v)
+
+    @model_validator(mode="after")
+    def resolve_agent_name(self) -> "Settings":
+        """Resolve ``interview_agent_name="auto"`` from APP_ENV (see the field)."""
+        if self.interview_agent_name.strip().lower() == "auto":
+            self.interview_agent_name = (
+                PRODUCTION_AGENT_NAME if self.app_env == "production" else DEV_AGENT_NAME
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_secret_strength(self) -> "Settings":

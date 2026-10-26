@@ -41,7 +41,7 @@ _redis: Redis | None = None
 def init_redis() -> None:
     """Create the Redis connection pool. Call at application startup."""
     global _redis
-    _redis = build_redis_client(settings.redis_url, decode_responses=True, max_connections=20)
+    _redis = build_redis_client(settings.redis_url, decode_responses=True)
 
 
 async def close_redis() -> None:

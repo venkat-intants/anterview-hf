@@ -14,7 +14,7 @@ client IP: these routes are authenticated, and an IP key would make every candid
 behind a college NAT share one bucket.
 
 FAILS OPEN, consistently with data_gateway's limiter and with this service's own
-worker-capacity check (``rooms.py`` step 4, ``worker_capacity.read_active_jobs``): a
+worker-capacity check (``rooms.py`` step 6, ``worker_capacity.reserve_slot``): a
 Redis error skips the check rather than refusing a candidate mid-interview-setup. The
 compensating control that does NOT depend on Redis is the single-active-session rule
 in ``rooms.py`` (a database query), which bounds concurrent workers per user even

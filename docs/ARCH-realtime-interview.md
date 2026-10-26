@@ -39,9 +39,13 @@
 > app/agent/audio_resample.py                        ← reachable only from avatar/simli.py
 > ```
 >
-> **They are imported at ASGI startup, but never executed.** `routers/rooms.py:38`
-> does `from app.agent.launcher import dispatch_interview_agent`, and
-> `app/agent/__init__.py:19` re-exports from `app.agent.orchestrator`, which pulls
+> **They are imported at ASGI startup, but never executed** - with one exception:
+> `app/agent/launcher.py` is NOT part of the island any more. Its
+> `room_configuration()` and `ensure_interviewer()` are the live dispatch path of
+> `POST /api/rooms/{id}/token` and `POST /api/rooms/{id}/redispatch` (see §4,
+> "Dispatch & capacity"). The rest is imported by `routers/rooms.py` only through
+> that module, and `app/agent/__init__.py` re-exports from
+> `app.agent.orchestrator`, which pulls
 > in `graph.brain` → `graph.nodes`. So "dead code" is not a safe assumption for
 > dependency pruning, image size, or import-time failure analysis — a syntax or
 > import error in the island still breaks the ASGI service at boot. What is dead
@@ -218,6 +222,66 @@ main remaining value — its STT/TTS plugins — which is another reason the thi
 - **Self-host option:** LiveKit is open-source and self-hostable. This is the
   hook for Tier-2 India-residency (run the SFU in Mumbai) — unlike the avatar
   SaaS, the transport itself can be made compliant.
+- **Dispatch & capacity (changed 2026-10; supersedes "AUTOMATIC dispatch").**
+  The interview worker used to run with no `agent_name` (AUTOMATIC dispatch):
+  LiveKit offered each room's job exactly once, and a room whose job was refused
+  (worker FULL at that instant, no warmed process, assignment timeout) was never
+  offered again — the candidate sat alone until the room timed out (12.7 min
+  observed in the 2026-10 load test). Now:
+  - the worker registers as `INTERVIEW_AGENT_NAME` (default environment-aware: `anthire-interviewer` when `APP_ENV=production`, otherwise `anthire-dev`, so a local worker never takes real dispatches by default);
+    `POST /api/rooms/{id}/token` embeds a dispatch for that name in the join token
+    (`RoomConfiguration.agents`). LiveKit applies it when the candidate's join
+    CREATES the room, the same moment automatic dispatch fired; a rejoin to a room
+    that still exists gets no new dispatch from the token, so recovery there is the
+    watchdog + `/redispatch`;
+  - `POST /api/rooms/{id}/redispatch` is the idempotent RECOVERY path, never an
+    entry path. It runs the same database gates as `/token` (ownership, not
+    finished, consent, one running interview per user - shared in
+    `_load_open_session`), then the per-session ceiling (fails CLOSED on a Redis
+    error), then requires the room to exist and contain the user's own
+    `candidate-<id>` participant (LiveKit would otherwise create the room as a side
+    effect of the dispatch and run a paid interviewer into an empty one). It does
+    nothing if an agent is present or a dispatch is live (a RUNNING job, or any dispatch
+    younger than 15 s); otherwise, under a per-room lock, it deletes
+    dead dispatches, reserves a slot and creates a fresh dispatch. The frontend
+    (`useInterviewerWatchdog`) calls it after 20 s with no interviewer, at most
+    twice, then shows an "interviewer unavailable" state; "Try again" rejoins with a
+    fresh token (which also resets the re-dispatch budget). A 429 from the server
+    is shown as such;
+  - **capacity is an atomic Redis ledger** (`<ns>:interview:slots`, a sorted set
+    keyed by session id, `app/worker_capacity.py`; `<ns>` is `APP_ENV` unless
+    `REDIS_KEY_NAMESPACE` is set, so a local run against the shared Redis cannot
+    touch production slots). The token endpoint reserves a slot with one Lua
+    script *before* issuing the token (full → HTTP 503). **One reservation per
+    user**, and **the API never lengthens a hold** — only the worker's
+    `extend_slot` on accept does — so one account cannot hoard slots by
+    refreshing. The worker releases the slot on every exit path; a lease that is
+    never released simply expires. This replaces the `worker:active_jobs`
+    counter, which was written by the job child processes (each sees only itself)
+    and only rose after a job was accepted;
+  - one interviewer JOB per room: the worker refuses a job for a room it already
+    runs, and a per-room `SET NX` marker covers other workers; a slot is released
+    on a refused job only if that call claimed it;
+  - the worker reports load to LiveKit as `running jobs / (cap + 2)`
+    (`load_threshold` 1.0), not container CPU. The 2 slots of headroom exist
+    because livekit-agents counts an in-flight job offer twice, which made it
+    report FULL one slot short of the cap on the 12-slot replica test; the exact
+    cap is the ledger's. It keeps `WORKER_NUM_IDLE_PROCESSES` warm processes
+    (default `min(cap, 2 per CPU, 8)` — a reasoned bound, not a measured optimum);
+  - `reject()` is now non-terminal (`terminate=False`).
+  Fail-open vs fail-closed: the slot reservation fails OPEN at the token endpoint,
+  in the worker's `request_fnc` and in `/redispatch` (never strand a waiting
+  candidate to protect a counter). The `/redispatch` ceiling and dispatch lock fail
+  CLOSED (recovery is not the entry path; the candidate can still rejoin). Release
+  is best-effort with lease expiry as the backstop. `/redispatch` is gated by the
+  same ledger, so it recovers a candidate whose JOB was lost; it does not rescue an
+  over-admitted one (it answers 503 when full).
+  `INTERVIEW_AGENT_NAME=""` restores automatic dispatch on both sides — API and
+  worker ship in one image, so they switch together; never set it on only one.
+  **A local worker defaults to `anthire-dev`, but two developers share it — set your
+  own `INTERVIEW_AGENT_NAME`** (or never run a worker): the LiveKit project is shared with the Space, and a local worker with the
+  same name — or an unnamed one, which receives automatic dispatch for every new
+  room — would answer real candidates' rooms.
 
 ## 5. Orchestration: thin custom LiveKit agent
 

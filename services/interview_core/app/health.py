@@ -22,11 +22,11 @@ from typing import Any
 
 import boto3
 import httpx
-import redis.asyncio as aioredis
 import structlog
 from anthropic import AsyncAnthropic
 from botocore.client import Config as BotoConfig
 from fastapi import APIRouter
+from shared.redis_factory import build_redis_client
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.sql import text
 
@@ -61,14 +61,19 @@ async def _check_postgres() -> dict[str, Any]:
 
 
 async def _check_redis() -> dict[str, Any]:
+    client = None
     try:
-        client = aioredis.from_url(settings.redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
+        client = build_redis_client(settings.redis_url)
         pong = await client.ping()
-        await client.aclose()
         return {"ok": pong is True}
     except Exception as exc:
         log.warning("health.redis.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
         return {"ok": False, "error": type(exc).__name__}
+    finally:
+        # Closed on every path: each call builds its own pool.
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.aclose()
 
 
 async def _check_s3() -> dict[str, Any]:

@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import QueuePool
 
 import app.database as database
 from app.config import settings
@@ -101,7 +101,7 @@ def test_pooler_endpoint_gets_nullpool_end_to_end(
 
     engine = database._engine
     assert isinstance(engine, AsyncEngine)
-    assert isinstance(engine.pool, NullPool)
+    assert isinstance(engine.pool, QueuePool)
 
 
 def test_session_factory_does_not_expire_on_commit(

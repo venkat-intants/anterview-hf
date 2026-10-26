@@ -116,7 +116,6 @@ async def test_request_fnc_accepts_under_ceiling() -> None:
 
         with (
             patch.object(wk, "settings", fake_settings),
-            patch.object(wk, "_publish_capacity", new=AsyncMock()),
         ):
             await wk._request_fnc(mock_request)
 
@@ -143,7 +142,6 @@ async def test_request_fnc_rejects_at_ceiling() -> None:
 
         with (
             patch.object(wk, "settings", fake_settings),
-            patch.object(wk, "_publish_capacity", new=AsyncMock()),
         ):
             await wk._request_fnc(mock_request)
 
@@ -170,7 +168,6 @@ async def test_request_fnc_rejects_over_ceiling() -> None:
 
         with (
             patch.object(wk, "settings", fake_settings),
-            patch.object(wk, "_publish_capacity", new=AsyncMock()),
         ):
             await wk._request_fnc(mock_request)
 
@@ -198,7 +195,6 @@ async def test_request_fnc_zero_cap_always_accepts() -> None:
 
         with (
             patch.object(wk, "settings", fake_settings),
-            patch.object(wk, "_publish_capacity", new=AsyncMock()),
         ):
             await wk._request_fnc(mock_request)
 
@@ -715,7 +711,6 @@ async def test_request_fnc_rejects_on_memory_estimate() -> None:
 
         with (
             patch.object(wk, "settings", fake_settings),
-            patch.object(wk, "_publish_capacity", new=AsyncMock()),
         ):
             await wk._request_fnc(mock_request)
 
@@ -743,7 +738,6 @@ async def test_request_fnc_accepts_within_memory_budget() -> None:
 
         with (
             patch.object(wk, "settings", fake_settings),
-            patch.object(wk, "_publish_capacity", new=AsyncMock()),
         ):
             await wk._request_fnc(mock_request)
 
@@ -771,7 +765,6 @@ async def test_request_fnc_zero_memory_limit_skips_check() -> None:
 
         with (
             patch.object(wk, "settings", fake_settings),
-            patch.object(wk, "_publish_capacity", new=AsyncMock()),
         ):
             await wk._request_fnc(mock_request)
 
@@ -781,34 +774,31 @@ async def test_request_fnc_zero_memory_limit_skips_check() -> None:
 
 
 @pytest.mark.asyncio
-async def test_request_fnc_publishes_capacity_on_reject() -> None:
-    """On rejection, _publish_capacity must be called so the HTTP server can
-    read the latest active-job count and return 503 before issuing a token."""
+async def test_request_fnc_rejection_is_not_terminal() -> None:
+    """A rejection must not tell LiveKit the job is dead for good.
+
+    ``reject()`` defaults to ``terminate=True`` - "the job will not be assigned
+    to another worker" - which is how a candidate was left in a room LiveKit
+    would never offer again. The re-dispatch path can only recover a room whose
+    job was rejected NON-terminally.
+    """
     import app.worker.interview_worker as wk
 
     original = wk._active_jobs
     try:
         wk._active_jobs = 4
         mock_request = AsyncMock()
-        mock_publish = AsyncMock()
 
         fake_settings = MagicMock()
         fake_settings.worker_max_concurrent_jobs = 4  # at ceiling
         fake_settings.job_memory_limit_mb = 0
         fake_settings.container_memory_limit_mb = 0
-        fake_settings.redis_url = "redis://localhost"
 
-        with (
-            patch.object(wk, "settings", fake_settings),
-            patch.object(wk, "_publish_capacity", mock_publish),
-        ):
+        with patch.object(wk, "settings", fake_settings):
             await wk._request_fnc(mock_request)
 
-        mock_request.reject.assert_called_once()
-        mock_publish.assert_called_once(), (
-            "_publish_capacity must be called on rejection so the HTTP server "
-            "can return HTTP 503 instead of issuing a join token for a dead room"
-        )
+        mock_request.reject.assert_called_once_with(terminate=False)
+        mock_request.accept.assert_not_called()
     finally:
         wk._active_jobs = original
 
@@ -940,10 +930,7 @@ async def test_request_fnc_accepts_exactly_cap_jobs_sequentially() -> None:
             wk._active_jobs = slot - 1  # simulate jobs already running
             mock_request = AsyncMock()
 
-            with (
-                patch.object(wk, "_publish_capacity", new=AsyncMock()),
-            ):
-                await wk._request_fnc(mock_request)
+            await wk._request_fnc(mock_request)
 
             if mock_request.accept.called:
                 accepted += 1

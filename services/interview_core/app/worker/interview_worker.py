@@ -37,6 +37,7 @@ are not:
     app/worker/consent.py        DPDP §11 resolver + mid-session watchdog
     app/worker/session_store.py  sessions/turns writes from the worker process
     app/worker/avatar_mode.py    per-interview avatar vs audio-only choice
+    app/worker/admission.py      slot ledger, reported load, warm-process count
 
 All four are imported back into this namespace, so nothing that referred to
 ``app.worker.interview_worker.<name>`` — including every ``mock.patch`` target
@@ -113,7 +114,7 @@ from shared.redis_factory import build_redis_client
 
 from app.avatars import resolve_avatar
 from app.config import settings
-from app.worker import close_path
+from app.worker import admission, close_path
 from app.worker.avatar_mode import effective_avatar_provider, normalise_avatar_mode
 
 # IC-4: four sibling modules carved out of this file (constants, prompt,
@@ -157,7 +158,6 @@ from app.worker.session_store import (
     _read_session_status,
     _update_session_status,
 )
-from app.worker_capacity import publish_active_jobs
 
 logger = logging.getLogger("interview-worker")
 
@@ -242,10 +242,18 @@ def _configure_worker_logging() -> None:
 # ---------------------------------------------------------------------------
 # Admission control — thread-safe counter of currently running interviews.
 # ---------------------------------------------------------------------------
-# We track active jobs ourselves (in addition to load_threshold) so request_fnc
-# can reject jobs over the ceiling WITHOUT waiting for the OS load average to
-# catch up (the default _DefaultLoadCalc is CPU-based; on our Oracle Free Tier
-# VM the CPU can look idle even as memory fills with VAD models).
+# Two layers, and the first is NOT this counter:
+#
+#   1. The Redis slot ledger (app/worker_capacity.py) is the authoritative,
+#      cross-process count. livekit-agents runs each interview in its OWN child
+#      process, so this module-level counter, incremented inside the job, is
+#      invisible to request_fnc (which runs in the parent). It used to be the
+#      only gate, which is why the cap never actually held.
+#   2. This counter remains a local backstop: exact where jobs share a process
+#      (thread executor, dev on Windows) and harmless where they do not.
+#
+# The worker's reported LOAD (load_fnc below) is jobs/cap, deliberately not
+# container CPU - see _worker_load.
 _active_jobs: int = 0
 
 
@@ -261,28 +269,14 @@ def _active_jobs_decrement() -> None:
     _active_jobs = max(0, _active_jobs - 1)
 
 
-async def _publish_capacity() -> None:
-    """Publish the current active-job count to Redis (best-effort, never raises).
+# Slot-ledger plumbing lives in app/worker/admission.py (IC-4); these bind it to
+# this process's Redis client and the configured lease length.
+async def _extend_slot_lease(room_name: str) -> bool:
+    return await admission.extend_lease(_get_checkpoint_redis, room_name, settings.slot_lease_seconds)
 
-    Called after every admission change (increment and decrement) so the HTTP
-    server process can read the counter and reject overloaded candidates with
-    a clear HTTP 503 before issuing a LiveKit join token — preventing the silent
-    "dead room" failure mode where a candidate joins a room with no interviewer.
-    """
-    import contextlib
 
-    import redis.asyncio as _aioredis
-
-    with contextlib.suppress(Exception):
-        rc = _aioredis.from_url(  # type: ignore[no-untyped-call]
-            settings.redis_url,
-            decode_responses=True,
-            socket_connect_timeout=1,
-        )
-        try:
-            await publish_active_jobs(rc, _active_jobs)
-        finally:
-            await rc.aclose()
+async def _release_slot(room_name: str) -> None:
+    await admission.release(_get_checkpoint_redis, room_name)
 
 
 # ---------------------------------------------------------------------------
@@ -559,9 +553,20 @@ async def _lookup_session(room_name: str) -> SessionContext:
                 session_id=session_id,
             )
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "interview-worker: _lookup_session DB query failed room=%s err=%s",
-            room_name, type(exc).__name__,
+        # Keep the interview alive on a generic context, but say WHAT failed:
+        # type, driver type and SQLSTATE - never the message (driver text can echo
+        # SQL parameters and ERROR lines reach Sentry; DPDP minimisation).
+        # Programming errors log at ERROR with a traceback.
+        is_code_bug = isinstance(exc, AttributeError | TypeError | KeyError | NameError)
+        log_fn = logger.error if is_code_bug else logger.warning
+        orig = getattr(exc, "orig", None)
+        sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+        log_fn(
+            "interview-worker: _lookup_session failed room=%s exc_type=%s driver_type=%s "
+            "sqlstate=%s -> starting with a GENERIC SessionContext (no job title/JD/resume)",
+            room_name, type(exc).__name__, type(orig).__name__ if orig else "-",
+            sqlstate or "-",
+            exc_info=is_code_bug,
         )
         return SessionContext()
 
@@ -1665,6 +1670,8 @@ class InterviewJob:
         # ctx.connect() has populated the room info, so reading it in __init__
         # would silently give every job the session_id "".
         self.session_id: str = ""
+        # Ledger key for this job's slot (== the room name). Set in _admit.
+        self._slot_room: str = ""
 
         # Job metadata — read from the DB in _resolve_context. Defaults match
         # SessionContext's, so a failed lookup still yields a usable interview.
@@ -1737,20 +1744,18 @@ class InterviewJob:
     async def _admit(self) -> None:
         """Count this job against the concurrency ceiling and register its release."""
         _active_jobs_increment()
-        # Publish the updated count immediately so the HTTP server can reject
-        # further requests if we're now at the ceiling.  Best-effort — never raises.
-        await _publish_capacity()
-
-        # Register the decrement immediately so it fires on any exit path (normal
-        # close, abrupt disconnect, SIGTERM drain, crash).  add_shutdown_callback
-        # guarantees this runs even when the entrypoint raises.
+        # Room == session id; ctx.job is populated before connect().
+        self._slot_room = admission.job_room_name(self.ctx.job)
+        # Register the release FIRST: a job cancelled during the awaited Redis
+        # call below would otherwise leak the counter and the lease.
         self.ctx.add_shutdown_callback(self._decrement_job_counter)
+        # Short reservation -> interview-long lease (best-effort, logs if gone).
+        await _extend_slot_lease(self._slot_room)
 
     async def _decrement_job_counter(self) -> None:
-        """Shutdown callback — free this job's slot in the admission counter."""
+        """Shutdown callback — free this job's slot in the counter and the ledger."""
         _active_jobs_decrement()
-        # Publish the decremented count so the HTTP server sees freed capacity.
-        await _publish_capacity()
+        await _release_slot(self._slot_room)
 
     async def _resolve_context(self) -> None:
         """Resolve session metadata, role model and avatar. Requires a connected room."""
@@ -2475,62 +2480,35 @@ def _write_heartbeat(path: str, timestamp: str) -> None:
 
 
 async def _request_fnc(job_request: Any) -> None:
-    """Gate incoming job requests against the max-concurrent-jobs and memory ceilings.
+    """Gate incoming job requests (guards: ``admission.decide``).
 
-    Called by the LiveKit framework BEFORE dispatching the job to entrypoint().
-    Rejection here is clean: the framework notifies the room with a
-    'worker_unavailable' event so the token/launch endpoint can detect the
-    rejection and return a clear HTTP 503 to the candidate instead of silently
-    leaving them in a dead LiveKit room with no interviewer.
-
-    Two complementary guards:
-    1. Concurrency cap (worker_max_concurrent_jobs > 0): reject when the
-       application-tracked active-job counter meets or exceeds the ceiling.
-       This is additive to load_threshold: CPU load may look low while
-       network I/O (Sarvam streams) or memory fills up, so we enforce both.
-    2. Memory estimation (job_memory_limit_mb > 0 AND container_memory_limit_mb
-       > 0): if accepting one more job would push the estimated RSS above the
-       VM's hard cap, reject pre-emptively.  A spike OOM-kill terminates ALL
-       live interviews simultaneously, which is far worse than one polite
-       rejection.
-
-    ``settings.worker_max_concurrent_jobs == 0`` disables the concurrency cap
-    (not recommended for production; useful for single-job dev testing).
+    Rejection is NON-terminal (``terminate=False``): the bare ``reject()`` default
+    is "never assign to another worker", which left candidates in rooms LiveKit
+    would not offer again. ``worker_max_concurrent_jobs == 0`` disables the cap.
     """
-    cap = settings.worker_max_concurrent_jobs
-    reason: str | None = None
-
-    if cap > 0 and _active_jobs >= cap:
-        reason = f"concurrency ceiling reached (active={_active_jobs} cap={cap})"
-
-    if reason is None:
-        mem_per_job = settings.job_memory_limit_mb
-        mem_limit = settings.container_memory_limit_mb
-        if mem_per_job > 0 and mem_limit > 0:
-            # Conservative estimate: jobs already running × per-job RSS.
-            # The actual prewarmed VAD model RSS (≈100–200 MB) is already in
-            # the worker process and shared across jobs, so we only count
-            # the *incremental* cost per additional job here.
-            estimated_rss_mb = (_active_jobs + 1) * mem_per_job
-            if estimated_rss_mb > mem_limit:
-                reason = (
-                    f"estimated RSS {estimated_rss_mb} MB would exceed "
-                    f"container limit {mem_limit} MB"
-                )
-
+    room_name = admission.job_room_name(job_request)
+    reason, verdict, active = await admission.decide(
+        _get_checkpoint_redis,
+        room_name,
+        server=_server,
+        active_local=_active_jobs,
+        cap=settings.worker_max_concurrent_jobs,
+        ttl_seconds=settings.slot_reservation_seconds,
+        mem_per_job_mb=settings.job_memory_limit_mb,
+        mem_limit_mb=settings.container_memory_limit_mb,
+        marker_ttl_seconds=settings.job_marker_seconds,
+        lease_seconds=settings.slot_lease_seconds,
+    )
     if reason is not None:
         logger.warning(
-            "interview-worker.admission_rejected active=%d - %s",
-            _active_jobs, reason,
+            "interview-worker.admission_rejected room=%s active=%d - %s",
+            room_name, active, reason,
         )
-        # reject() signals 'worker_unavailable' to LiveKit.  The HTTP token
-        # endpoint reads the active-job count from Redis (written by
-        # _publish_capacity) BEFORE issuing the join token, and returns HTTP 503
-        # with a human-readable "server busy, try again" message so the candidate
-        # is never silently dropped into a dead room with no interviewer.
-        await job_request.reject()
-        # Publish current capacity so the HTTP layer sees the latest count.
-        await _publish_capacity()
+        # Give back a slot only if THIS call claimed it. A HELD slot belongs to
+        # the token endpoint's reservation or to a job that is already running.
+        if verdict == admission.SLOT_CLAIMED:
+            await _release_slot(room_name)
+        await job_request.reject(terminate=False)
         return
 
     # livekit-agents 1.x: accept() takes keyword-only args; the entrypoint is
@@ -2538,13 +2516,31 @@ async def _request_fnc(job_request: Any) -> None:
     await job_request.accept()
 
 
+# livekit-agents server handle, captured via load_fnc (request_fnc has none).
+_server: Any = None
+
+
+def _worker_load(server: Any) -> float:
+    """Load reported to LiveKit: jobs / cap, not container CPU (admission.worker_load)."""
+    global _server  # noqa: PLW0603 - per-process handle, same pattern as _active_jobs
+    _server = server
+    return admission.worker_load(server, settings.worker_max_concurrent_jobs)
+
+
 def run() -> None:
     """Start the LiveKit worker with prewarm, heartbeat, and admission control.
 
-    NO agent_name -> AUTOMATIC dispatch: the worker joins every room created.
-    Each interview is its own room (named after session_id), so this is the
-    correct + proven model. (Explicit agent_name dispatch did not connect
-    reliably in testing 2026-05-31.)
+    EXPLICIT dispatch (since 2026-10): the worker registers under
+    ``settings.interview_agent_name``. The token endpoint embeds a dispatch for
+    that name in the candidate's join token, and ``POST /api/rooms/{id}/redispatch``
+    re-creates it if no interviewer joined. Under AUTOMATIC dispatch LiveKit
+    offered a room's job exactly once; if the worker was FULL at that instant,
+    or the assignment timed out, the room was never re-offered and the candidate
+    sat alone until timeout. Explicit dispatch makes "give this room an
+    interviewer" something we can ask for again. Setting INTERVIEW_AGENT_NAME to
+    the empty string restores automatic dispatch on BOTH sides (the worker
+    registers without a name and the API stops creating dispatches) - the API
+    and the worker ship in one image, so they switch together.
 
     drain_timeout (graceful shutdown): on SIGTERM the worker deregisters (takes
     no new jobs) and waits up to this long for active interviews to finish
@@ -2601,7 +2597,15 @@ def run() -> None:
             # leave the heartbeat probe above pointed at nothing.
             host=_WORKER_HTTP_HOST,
             port=_WORKER_HTTP_PORT,
+            # Load = active jobs / cap (see _worker_load); threshold 1.0 = FULL
+            # exactly at the cap. Not container CPU.
+            load_fnc=_worker_load,
             load_threshold=settings.worker_load_threshold,
+            num_idle_processes=admission.idle_process_target(
+                settings.worker_num_idle_processes, settings.worker_max_concurrent_jobs
+            ),
+            initialize_process_timeout=settings.worker_initialize_timeout_seconds,
+            agent_name=settings.interview_agent_name,
             ws_url=settings.livekit_url,
             api_key=settings.livekit_api_key,
             api_secret=settings.livekit_api_secret,

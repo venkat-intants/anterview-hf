@@ -45,6 +45,7 @@ from shared.db.engine import (
     ECHO_SQL,
     MAX_OVERFLOW,
     POOL_RECYCLE_SECONDS,
+    POOLER_POOL_RECYCLE_SECONDS,
     build_engine,
     build_session_factory,
     is_pooler_host,
@@ -113,11 +114,43 @@ def _connect_params(engine: AsyncEngine) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def test_pgbouncer_endpoint_gets_nullpool() -> None:
-    """pgBouncer already pools server-side. A client-side pool on top hands back
-    a connection pgBouncer has since re-assigned to someone else."""
+def test_pgbouncer_endpoint_gets_a_bounded_client_pool() -> None:
+    """Load-test defect: NullPool opened a fresh TLS + SCRAM connection per
+    request (~60% of data_gateway CPU, 29 vs 160 req/s). The pooler branch now
+    keeps a small client pool, bounded by pool_size + MAX_OVERFLOW."""
     engine = build_engine(database_url=_POOLER_URL, database_ssl="require", pool_size=10)
-    assert isinstance(engine.pool, NullPool)
+    assert isinstance(engine.pool, QueuePool)
+    assert not isinstance(engine.pool, NullPool)
+    assert engine.pool.size() == 10
+    assert engine.pool._max_overflow == MAX_OVERFLOW
+
+
+def test_pgbouncer_pool_recycles_and_prefers_recent_connections() -> None:
+    """Recycle sooner than the direct branch; LIFO lets a burst's surplus
+    connections sit idle and age out. Neither sends traffic while idle, so
+    neither can keep a serverless compute awake."""
+    engine = build_engine(database_url=_POOLER_URL, database_ssl="require", pool_size=10)
+    assert engine.pool._recycle == POOLER_POOL_RECYCLE_SECONDS
+    assert POOLER_POOL_RECYCLE_SECONDS < POOL_RECYCLE_SECONDS
+    assert engine.pool._pool.use_lifo is True
+
+
+def test_pgbouncer_endpoint_disables_the_sqlalchemy_prepared_statement_cache() -> None:
+    """SQLAlchemy's asyncpg adapter keeps its own per-connection cache of
+    prepared statements. With a long-lived pooled connection it would replay a
+    statement name on a server connection that never prepared it."""
+    engine = build_engine(database_url=_POOLER_URL, database_ssl="require", pool_size=10)
+    assert _connect_params(engine)["prepared_statement_cache_size"] == 0
+
+
+def test_pgbouncer_endpoint_uses_unique_prepared_statement_names() -> None:
+    """Two client connections mapped onto one server connection must never
+    collide on a statement name."""
+    engine = build_engine(database_url=_POOLER_URL, database_ssl="require", pool_size=10)
+    name_func = _connect_params(engine)["prepared_statement_name_func"]
+    names = {name_func() for _ in range(50)}
+    assert len(names) == 50
+    assert all(n.startswith("__asyncpg_") for n in names)
 
 
 def test_pgbouncer_endpoint_disables_the_prepared_statement_cache() -> None:
@@ -135,13 +168,11 @@ def test_pgbouncer_endpoint_still_negotiates_tls() -> None:
     assert _connect_params(engine)["ssl"] == "require"
 
 
-def test_pgbouncer_endpoint_ignores_pool_size() -> None:
-    """NullPool holds nothing, so pool_size is inert here. Asserted so a reader
-    of the signature does not assume the parameter is doing something."""
+def test_pgbouncer_endpoint_honours_pool_size() -> None:
     small = build_engine(database_url=_POOLER_URL, database_ssl="require", pool_size=1)
     large = build_engine(database_url=_POOLER_URL, database_ssl="require", pool_size=50)
-    assert isinstance(small.pool, NullPool)
-    assert isinstance(large.pool, NullPool)
+    assert small.pool.size() == 1
+    assert large.pool.size() == 50
 
 
 # --------------------------------------------------------------------------
@@ -224,6 +255,7 @@ def test_a_pooler_host_without_ssl_still_takes_the_local_branch() -> None:
     for a case the services never hit — pinned so the ordering is deliberate."""
     engine = build_engine(database_url=_POOLER_URL, database_ssl="", pool_size=10)
     assert isinstance(engine.pool, QueuePool)
+    assert engine.pool._recycle == -1  # the local branch, not the pgBouncer one
 
 
 # --------------------------------------------------------------------------
@@ -383,7 +415,7 @@ def test_factory_stays_dependency_light() -> None:
     on the allowlist because all four already pin SQLAlchemy==2.0.50, so this
     module adds nothing to any requirements file — a claim that stops being
     true the moment a heavier dependency is added, which is what this guards."""
-    allowed = {"__future__", "urllib", "sqlalchemy", "pydantic", "structlog", "typing"}
+    allowed = {"__future__", "urllib", "uuid", "sqlalchemy", "pydantic", "structlog", "typing"}
     source = pathlib.Path(__file__).parent.parent / "db" / "engine.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
 
@@ -415,3 +447,30 @@ def test_the_package_init_re_exports_without_adding_dependencies() -> None:
         if isinstance(node, ast.ImportFrom) and node.module
     }
     assert modules == {"shared.db.engine"}
+
+
+# --------------------------------------------------------------------------
+# Review fixes (2026-10): parameters hidden, bounded pool wait
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "ssl"),
+    [(_POOLER_URL, "require"), (_DIRECT_URL, "require"), (_LOCAL_URL, "")],
+    ids=["pgbouncer", "direct", "local"],
+)
+def test_bound_parameters_are_hidden_from_error_text(url: str, ssl: str) -> None:
+    """Exception text reaches logs and Sentry; with the default it carries
+    "[parameters: (...)]" - candidate names, emails, transcripts (L1)."""
+    engine = build_engine(database_url=url, database_ssl=ssl, pool_size=10)
+    assert engine.sync_engine.hide_parameters is True
+
+
+def test_pooler_pool_fails_fast_instead_of_the_30s_default() -> None:
+    """Saturating the now-bounded pool must shed load in seconds, not stall every
+    request for SQLAlchemy's default 30 s (M3)."""
+    from shared.db.engine import POOLER_POOL_TIMEOUT_SECONDS
+
+    engine = build_engine(database_url=_POOLER_URL, database_ssl="require", pool_size=10)
+    assert engine.pool._timeout == POOLER_POOL_TIMEOUT_SECONDS
+    assert 5 <= POOLER_POOL_TIMEOUT_SECONDS <= 10

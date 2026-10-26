@@ -18,6 +18,7 @@ from httpx import AsyncClient
 
 from app.config import settings
 from app.routers.rooms import _has_other_active_session
+from app.worker_capacity import SlotResult
 from tests.integration.test_rooms_router import (  # noqa: F401 - fixtures + helpers
     _livekit_configured,
     _patch_db,
@@ -114,8 +115,8 @@ async def test_second_session_is_refused_while_another_is_running(
 ) -> None:
     import app.routers.rooms as rooms
 
-    dispatch = AsyncMock(return_value=True)
-    monkeypatch.setattr(rooms, "dispatch_interview_agent", dispatch)
+    dispatch = AsyncMock(return_value=(SlotResult.RESERVED, 1))
+    monkeypatch.setattr(rooms, "reserve_slot", dispatch)
     uid = str(uuid.uuid4())
     override = _patch_db(
         session_user_id=uid, session_status="created", has_consent=True, other_active_sessions=1
@@ -123,7 +124,7 @@ async def test_second_session_is_refused_while_another_is_running(
     resp = await _post_token(client, str(uuid.uuid4()), _token(uid), override=override)
     assert resp.status_code == 409, resp.text
     assert "in progress" in resp.json()["detail"].lower()
-    dispatch.assert_not_awaited()  # no worker was started
+    dispatch.assert_not_awaited()  # no interview slot was taken
 
 
 @pytest.mark.asyncio
@@ -133,7 +134,9 @@ async def test_rejoining_the_same_session_is_not_blocked(
     """The probe excludes THIS session, so a reload of the running one finds none."""
     import app.routers.rooms as rooms
 
-    monkeypatch.setattr(rooms, "dispatch_interview_agent", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        rooms, "reserve_slot", AsyncMock(return_value=(SlotResult.RESERVED, 1))
+    )
     uid = str(uuid.uuid4())
     sid = str(uuid.uuid4())
     override = _patch_db(

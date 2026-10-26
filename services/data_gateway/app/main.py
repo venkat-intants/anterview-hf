@@ -40,6 +40,7 @@ from shared.http_observability import (
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
+from shared.redis_factory import verify_redis_connection
 
 from app import reconciliation, reminders, scheduled_publishing
 from app.accommodations import purge as purge_accommodations
@@ -444,6 +445,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
 
     init_engine()
     init_redis()
+    await verify_redis_connection(
+        get_redis(), service=settings.service_name, skip=settings.app_env == "test"
+    )
     provider = get_auth_provider(
         settings=settings,
         db_session_factory=get_db_session,

@@ -55,6 +55,8 @@ MATRIX: dict[tuple[str, str], str] = {
     ("GET", "/api/sessions"): OWNER,  # a guest is narrowed to its bound session in-handler
     ("POST", "/api/sessions"): OWNER_NO_GUEST,
     ("POST", "/api/rooms/{session_id}/token"): OWNER_GUEST_BOUND,
+    # Same dependency as /token: a guest may re-dispatch ONLY its bound session.
+    ("POST", "/api/rooms/{session_id}/redispatch"): OWNER_GUEST_BOUND,
     ("POST", "/api/sessions/{session_id}/integrity-events"): OWNER_GUEST_BOUND,
     ("GET", "/api/sessions/{session_id}/integrity"): OWNER_GUEST_BOUND,
 }

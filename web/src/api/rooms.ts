@@ -37,3 +37,33 @@ export async function getRoomToken(sessionId: string): Promise<RoomTokenResponse
     { method: 'POST', body: JSON.stringify({}) },
   );
 }
+
+export interface RedispatchResponse {
+  /**
+   * already_connected - an interviewer is in the room.
+   * starting          - a dispatch has a running job; the interviewer is about to join.
+   * dispatched        - a fresh dispatch was created.
+   * automatic         - explicit dispatch is switched off server-side.
+   */
+  status: 'already_connected' | 'starting' | 'dispatched' | 'automatic';
+  /** Re-dispatch calls made so far for this session. */
+  attempt: number;
+  /** Server-side ceiling; beyond it the endpoint answers 429. */
+  max_attempts: number;
+}
+
+/**
+ * Ask the server to (re-)dispatch the interviewer into this room.
+ *
+ * POST /api/rooms/{session_id}/redispatch
+ *
+ * Idempotent: safe to call when an interviewer is already present or starting
+ * (the server does nothing). Called by useLiveKitInterview when no interviewer
+ * has joined within a few seconds of the candidate connecting.
+ */
+export async function redispatchInterviewer(sessionId: string): Promise<RedispatchResponse> {
+  return clientFetch<RedispatchResponse>(
+    `${INTERVIEW_BASE}/api/rooms/${pathId(sessionId)}/redispatch`,
+    { method: 'POST', body: JSON.stringify({}) },
+  );
+}

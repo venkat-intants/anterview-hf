@@ -30,6 +30,8 @@ async def _run_lifespan(monkeypatch: pytest.MonkeyPatch, enabled: bool) -> tuple
     with (
         patch.object(main, "init_engine"),
         patch.object(main, "init_redis"),
+        patch.object(main, "get_redis", return_value=object()),
+        patch.object(main, "verify_redis_connection", new=AsyncMock(return_value=True)),
         patch.object(main, "dispose_engine", new=AsyncMock()),
         patch.object(main, "close_redis", new=AsyncMock()),
         patch.object(main, "_instrumented_erasure_task", fake_task),

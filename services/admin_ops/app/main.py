@@ -25,12 +25,13 @@ from shared.http_observability import (
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
+from shared.redis_factory import verify_redis_connection
 
 from app.admin_auth import verify_admin_role
 from app.config import settings
 from app.database import dispose_engine, get_session_factory, init_engine
 from app.health import router as health_router
-from app.redis_client import close_redis, init_redis
+from app.redis_client import close_redis, get_redis, init_redis
 
 # ---------------------------------------------------------------------------
 # PII redaction processor (defense-in-depth — DPDP §8)
@@ -163,6 +164,9 @@ async def _instrumented_erasure_task() -> None:
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     init_engine()
     init_redis()
+    await verify_redis_connection(
+        get_redis(), service=settings.service_name, skip=settings.app_env == "test"
+    )
     log.info("service.start", service=settings.service_name, env=settings.app_env)
 
     # Start the DPDP erasure executor as a background task, unless

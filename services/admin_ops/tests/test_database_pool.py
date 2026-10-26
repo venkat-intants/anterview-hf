@@ -44,12 +44,13 @@ def _pool(url: str, ssl: str, monkeypatch: pytest.MonkeyPatch) -> object:
     return engine.pool
 
 
-async def test_pooler_host_uses_nullpool(
+async def test_pooler_host_uses_a_bounded_client_pool(
     monkeypatch: pytest.MonkeyPatch, clean_engine: None
 ) -> None:
-    """pgBouncer already pools server-side — pooling on top of it breaks
-    prepared statements in transaction mode."""
-    assert isinstance(_pool(POOLED_URL, "require", monkeypatch), NullPool)
+    """The pooler branch keeps a small bounded client pool: NullPool paid a TLS
+    handshake per request and was the load-test CPU sink. Prepared-statement
+    safety under pgBouncer is asserted in shared/tests/test_db_engine.py."""
+    assert isinstance(_pool(POOLED_URL, "require", monkeypatch), QueuePool)
 
 
 async def test_direct_ssl_host_keeps_a_real_pool(

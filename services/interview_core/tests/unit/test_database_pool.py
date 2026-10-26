@@ -20,7 +20,7 @@ from collections.abc import AsyncGenerator
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.pool import QueuePool
 
 from app import database as database_mod
 from app.config import settings
@@ -57,12 +57,12 @@ def _engine(url: str, ssl: str, monkeypatch: pytest.MonkeyPatch) -> AsyncEngine:
     return engine
 
 
-async def test_pooler_host_uses_nullpool(
+async def test_pooler_host_uses_a_bounded_client_pool(
     monkeypatch: pytest.MonkeyPatch, clean_engine: None
 ) -> None:
     """pgBouncer already pools server-side; pooling on top of it hands back a
     connection pgBouncer has since reassigned to another client."""
-    assert isinstance(_engine(POOLED_URL, "require", monkeypatch).pool, NullPool)
+    assert isinstance(_engine(POOLED_URL, "require", monkeypatch).pool, QueuePool)
 
 
 async def test_direct_ssl_host_keeps_a_real_pool(
@@ -175,7 +175,7 @@ async def test_dispose_then_init_builds_a_fresh_engine(
     to whatever engine it first built.
     """
     first = _engine(POOLED_URL, "require", monkeypatch)
-    assert isinstance(first.pool, NullPool)
+    assert isinstance(first.pool, QueuePool)
 
     await database_mod.dispose_engine()
     # Disposal clears the sessionmaker too: a factory bound to a disposed engine

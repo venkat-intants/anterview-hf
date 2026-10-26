@@ -1,6 +1,7 @@
 """Async SQLAlchemy engine + session factory for admin_ops.
 
-The three-way pool choice (pgBouncer -> NullPool, direct+SSL -> QueuePool with
+The three-way pool choice (pgBouncer -> small QueuePool with statement caches off,
+direct+SSL -> QueuePool with
 pool_recycle, local -> plain QueuePool) and the reasoning behind each branch now
 live once in ``shared/db/engine.py``. This module used to carry its own copy of
 that branch, as did the other three services; the copies were logically

@@ -447,3 +447,30 @@ def test_the_package_init_re_exports_without_adding_dependencies() -> None:
         if isinstance(node, ast.ImportFrom) and node.module
     }
     assert modules == {"shared.db.engine"}
+
+
+# --------------------------------------------------------------------------
+# Review fixes (2026-10): parameters hidden, bounded pool wait
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("url", "ssl"),
+    [(_POOLER_URL, "require"), (_DIRECT_URL, "require"), (_LOCAL_URL, "")],
+    ids=["pgbouncer", "direct", "local"],
+)
+def test_bound_parameters_are_hidden_from_error_text(url: str, ssl: str) -> None:
+    """Exception text reaches logs and Sentry; with the default it carries
+    "[parameters: (...)]" - candidate names, emails, transcripts (L1)."""
+    engine = build_engine(database_url=url, database_ssl=ssl, pool_size=10)
+    assert engine.sync_engine.hide_parameters is True
+
+
+def test_pooler_pool_fails_fast_instead_of_the_30s_default() -> None:
+    """Saturating the now-bounded pool must shed load in seconds, not stall every
+    request for SQLAlchemy's default 30 s (M3)."""
+    from shared.db.engine import POOLER_POOL_TIMEOUT_SECONDS
+
+    engine = build_engine(database_url=_POOLER_URL, database_ssl="require", pool_size=10)
+    assert engine.pool._timeout == POOLER_POOL_TIMEOUT_SECONDS
+    assert 5 <= POOLER_POOL_TIMEOUT_SECONDS <= 10

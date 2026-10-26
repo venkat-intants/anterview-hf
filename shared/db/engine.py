@@ -126,6 +126,8 @@ from sqlalchemy.ext.asyncio import (
 
 __all__ = [
     "ECHO_SQL",
+    "HIDE_PARAMETERS",
+    "POOLER_POOL_TIMEOUT_SECONDS",
     "MAX_OVERFLOW",
     "POOLER_HOST_MARKER",
     "POOLER_POOL_RECYCLE_SECONDS",
@@ -171,6 +173,21 @@ def _unique_statement_name() -> str:
 # for all four services, and that turning it on is a deliberate edit here.
 ECHO_SQL = False
 
+# Bound parameters are what carry candidate names, emails and transcripts. With
+# the default (False) a failed statement's exception text - which reaches logs
+# and Sentry (US) - includes "[parameters: (...)]". Hiding them keeps the failure
+# diagnosable (statement + SQLSTATE) without the data. DPDP data minimisation;
+# pinned next to ECHO_SQL for the same reason.
+HIDE_PARAMETERS = True
+
+# How long a request waits for a pooled connection on the pgBouncer branch before
+# failing. SQLAlchemy's default is 30 s, which under saturation (the pool is now
+# bounded: pool_size + MAX_OVERFLOW per process) turns "all connections busy" into
+# 30 s stalls on every request and then a 500. 10 s fails fast enough to shed
+# load and is still well above a normal checkout. Handlers must not hold a
+# session across slow external I/O (rooms.py releases it before LiveKit calls).
+POOLER_POOL_TIMEOUT_SECONDS = 10
+
 
 def is_pooler_host(database_url: str) -> bool:
     """True when *database_url* points at a pgBouncer (server-side pooled) host.
@@ -214,6 +231,7 @@ def build_engine(
             pool_size=pool_size,
             pool_pre_ping=True,
             echo=ECHO_SQL,
+            hide_parameters=HIDE_PARAMETERS,
         )
 
     if is_pooler_host(database_url):
@@ -230,7 +248,9 @@ def build_engine(
             pool_pre_ping=True,
             pool_recycle=POOLER_POOL_RECYCLE_SECONDS,
             pool_use_lifo=True,
+            pool_timeout=POOLER_POOL_TIMEOUT_SECONDS,
             echo=ECHO_SQL,
+            hide_parameters=HIDE_PARAMETERS,
         )
 
     return create_async_engine(
@@ -241,6 +261,7 @@ def build_engine(
         pool_pre_ping=True,
         pool_recycle=POOL_RECYCLE_SECONDS,
         echo=ECHO_SQL,
+        hide_parameters=HIDE_PARAMETERS,
     )
 
 

@@ -161,8 +161,21 @@ def build_redis_client(
         max_connections = int(_env_number("REDIS_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS))
     if pool_wait_seconds is None:
         pool_wait_seconds = _env_number("REDIS_POOL_WAIT_SECONDS", DEFAULT_POOL_WAIT_SECONDS)
+    # TLS: redis-py verifies the certificate CHAIN by default but not the HOSTNAME
+    # (ssl_check_hostname=False), so any certificate from a trusted CA would pass.
+    # Verify the hostname for rediss:// (security review L4). The kwarg is only
+    # valid on the SSL connection class, so it is added for rediss:// alone.
+    # REDIS_SSL_CHECK_HOSTNAME=0 is the escape hatch if a provider's certificate
+    # ever stops matching its hostname - an outage of every Redis-backed control
+    # is worse than the pre-existing posture, so it must be switchable by config.
+    tls_kwargs: dict[str, bool] = {}
+    if url.lower().startswith("rediss://") and os.environ.get(
+        "REDIS_SSL_CHECK_HOSTNAME", "1"
+    ).strip().lower() not in ("0", "false", "no", "off"):
+        tls_kwargs["ssl_check_hostname"] = True
     pool = BlockingConnectionPool.from_url(
         url,
+        **tls_kwargs,
         max_connections=max_connections,
         timeout=pool_wait_seconds,
         decode_responses=decode_responses,

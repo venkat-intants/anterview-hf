@@ -292,6 +292,25 @@ def test_tls_urls_get_the_same_hardening() -> None:
     assert isinstance(kwargs["retry"], Retry)
 
 
+def test_tls_urls_verify_the_server_hostname() -> None:
+    """A trusted-CA certificate for ANOTHER host must not be accepted (L4)."""
+    kwargs = build_redis_client(_TLS_URL).connection_pool.connection_kwargs
+    assert kwargs["ssl_check_hostname"] is True
+
+
+def test_hostname_check_can_be_switched_off_by_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REDIS_SSL_CHECK_HOSTNAME", "0")
+    kwargs = build_redis_client(_TLS_URL).connection_pool.connection_kwargs
+    assert "ssl_check_hostname" not in kwargs or kwargs["ssl_check_hostname"] is False
+
+
+def test_plain_urls_get_no_tls_only_arguments() -> None:
+    """ssl_check_hostname is invalid on the plain connection class."""
+    assert "ssl_check_hostname" not in _connection_kwargs()
+
+
 def test_each_client_gets_its_own_pool() -> None:
     """The factory is a builder, not a singleton. Services keep their own
     init/close lifecycle, so two calls must not share a pool — closing one

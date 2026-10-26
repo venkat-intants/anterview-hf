@@ -44,8 +44,8 @@ from sqlalchemy.pool import NullPool, QueuePool
 from shared.db.engine import (
     ECHO_SQL,
     MAX_OVERFLOW,
-    POOLER_POOL_RECYCLE_SECONDS,
     POOL_RECYCLE_SECONDS,
+    POOLER_POOL_RECYCLE_SECONDS,
     build_engine,
     build_session_factory,
     is_pooler_host,

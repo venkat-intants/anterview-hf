@@ -17,11 +17,12 @@ from shared.http_observability import (
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
+from shared.redis_factory import verify_redis_connection
 
 from app.config import settings
 from app.database import dispose_engine, init_engine
 from app.health import router as health_router
-from app.redis_client import close_redis, init_redis
+from app.redis_client import close_redis, get_redis, init_redis
 from app.routers.score import router as score_router
 from app.routers.scorecard import router as scorecard_router
 from app.routers.scorecard_list import router as scorecard_list_router
@@ -66,6 +67,9 @@ log = structlog.get_logger(__name__)
 async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     init_engine()
     init_redis()
+    await verify_redis_connection(
+        get_redis(), service=settings.service_name, skip=settings.app_env == "test"
+    )
     log.info("service.start", service=settings.service_name, env=settings.app_env)
     yield
     await dispose_engine()

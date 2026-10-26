@@ -306,6 +306,85 @@ def test_hostname_check_can_be_switched_off_by_config(
     assert "ssl_check_hostname" not in kwargs or kwargs["ssl_check_hostname"] is False
 
 
+def test_turning_the_hostname_check_off_is_never_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Security N5: a transport check must not be disabled without a log line,
+    and the line is emitted once per process, not per client."""
+    from structlog.testing import capture_logs
+
+    import shared.redis_factory as rf
+
+    monkeypatch.setattr(rf, "_hostname_warning_logged", False)
+    monkeypatch.setenv("REDIS_SSL_CHECK_HOSTNAME", "0")
+    with capture_logs() as logs:
+        build_redis_client(_TLS_URL)
+        build_redis_client(_TLS_URL)
+    warnings = [e for e in logs if e["event"] == "redis.tls_hostname_check_disabled"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+
+
+def test_no_warning_when_the_check_is_on_or_the_url_is_plain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from structlog.testing import capture_logs
+
+    import shared.redis_factory as rf
+
+    monkeypatch.setattr(rf, "_hostname_warning_logged", False)
+    with capture_logs() as logs:
+        build_redis_client(_TLS_URL)
+        monkeypatch.setenv("REDIS_SSL_CHECK_HOSTNAME", "0")
+        build_redis_client(_PLAIN_URL)  # nothing to verify on a plain URL
+    assert not [e for e in logs if e["event"] == "redis.tls_hostname_check_disabled"]
+
+
+async def test_startup_check_logs_error_with_the_exception_type_only() -> None:
+    """Every Redis-backed control fails OPEN, so a handshake failure (e.g. the
+    certificate not matching the host) must be loud at boot (review F7)."""
+    import ssl
+
+    from structlog.testing import capture_logs
+
+    from shared.redis_factory import verify_redis_connection
+
+    class _Client:
+        async def ping(self) -> bool:
+            raise ssl.SSLCertVerificationError("password=hunter2 host mismatch")
+
+    with capture_logs() as logs:
+        ok = await verify_redis_connection(_Client(), service="svc")  # type: ignore[arg-type]
+    assert ok is False
+    (entry,) = (e for e in logs if e["event"] == "redis.startup_check_failed")
+    assert entry["log_level"] == "error"
+    assert entry["exc_type"] == "SSLCertVerificationError"
+    assert entry["service"] == "svc"
+    assert "hunter2" not in str(entry)  # never the message: it can carry the URL
+
+
+async def test_startup_check_passes_quietly_skips_and_never_hangs_boot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio as aio
+
+    import shared.redis_factory as rf
+
+    class _Ok:
+        async def ping(self) -> bool:
+            return True
+
+    class _Hung:
+        async def ping(self) -> bool:
+            await aio.sleep(60)
+            return True
+
+    assert await rf.verify_redis_connection(_Ok(), service="s") is True  # type: ignore[arg-type]
+    assert await rf.verify_redis_connection(_Hung(), service="s", skip=True) is True  # type: ignore[arg-type]
+    monkeypatch.setattr(rf, "STARTUP_PING_TIMEOUT_SECONDS", 0.05)
+    assert await rf.verify_redis_connection(_Hung(), service="s") is False  # type: ignore[arg-type]
+
+
 def test_plain_urls_get_no_tls_only_arguments() -> None:
     """ssl_check_hostname is invalid on the plain connection class."""
     assert "ssl_check_hostname" not in _connection_kwargs()
@@ -331,7 +410,7 @@ def test_factory_stays_dependency_light() -> None:
     for a heavier third-party dep would put it in four requirements files. The
     allowlist is deliberately narrow: widening it should be a decision someone
     makes on purpose, not a diff nobody notices."""
-    allowed = {"__future__", "os", "typing", "redis", "pydantic", "structlog"}
+    allowed = {"__future__", "asyncio", "os", "typing", "redis", "pydantic", "structlog"}
     source = pathlib.Path(__file__).parent.parent / "redis_factory.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
 

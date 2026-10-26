@@ -84,8 +84,10 @@ asserts that mechanically.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
+import structlog
 from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
@@ -100,6 +102,9 @@ SOCKET_TIMEOUT_SECONDS = 5
 RETRY_ATTEMPTS = 3
 BACKOFF_BASE_SECONDS = 0.1
 BACKOFF_CAP_SECONDS = 2.0
+log = structlog.get_logger(__name__)
+_hostname_warning_logged = False
+STARTUP_PING_TIMEOUT_SECONDS = 5.0
 DEFAULT_MAX_CONNECTIONS = 50
 DEFAULT_POOL_WAIT_SECONDS = 3.0
 
@@ -169,10 +174,13 @@ def build_redis_client(
     # ever stops matching its hostname - an outage of every Redis-backed control
     # is worse than the pre-existing posture, so it must be switchable by config.
     tls_kwargs: dict[str, bool] = {}
-    if url.lower().startswith("rediss://") and os.environ.get(
-        "REDIS_SSL_CHECK_HOSTNAME", "1"
-    ).strip().lower() not in ("0", "false", "no", "off"):
-        tls_kwargs["ssl_check_hostname"] = True
+    if url.lower().startswith("rediss://"):
+        if os.environ.get("REDIS_SSL_CHECK_HOSTNAME", "1").strip().lower() not in (
+            "0", "false", "no", "off",
+        ):
+            tls_kwargs["ssl_check_hostname"] = True
+        else:
+            _warn_hostname_check_disabled()
     pool = BlockingConnectionPool.from_url(
         url,
         **tls_kwargs,
@@ -195,3 +203,48 @@ def build_redis_client(
     # ``from_pool`` marks the client as owning the pool, so ``aclose()`` still
     # tears the pool down exactly as ``from_url`` did.
     return Redis.from_pool(pool)
+
+
+def _warn_hostname_check_disabled() -> None:
+    """Log, once per process, that TLS hostname verification has been switched off.
+
+    The certificate CHAIN is still verified, so the exposure is limited to someone
+    holding a trusted-CA certificate for a different host - but turning a
+    transport check off must never be silent (security review N5).
+    """
+    global _hostname_warning_logged  # noqa: PLW0603 - once-per-process flag
+    if not _hostname_warning_logged:
+        _hostname_warning_logged = True
+        log.warning(
+            "redis.tls_hostname_check_disabled",
+            note="REDIS_SSL_CHECK_HOSTNAME is off; certificate chain is still verified",
+        )
+
+
+async def verify_redis_connection(client: Redis, *, service: str, skip: bool = False) -> bool:
+    """Ping Redis once at startup; log ERROR (once, loudly) if it cannot connect.
+
+    Redis-backed controls (rate limits, grading locks, slot ledger, worker
+    admission) all FAIL OPEN, so a Redis that is unreachable - or a TLS
+    handshake that fails because hostname verification rejects the certificate -
+    switches them off with nothing but per-call warnings. This turns that into
+    one unmissable line at boot, with the exception TYPE (never the message: the
+    URL carries the password). Never raises and never blocks boot beyond
+    ``STARTUP_PING_TIMEOUT_SECONDS``. Returns True when the ping succeeded.
+    ``skip`` is for test environments with no Redis.
+    """
+    if skip:
+        return True
+    try:
+        await asyncio.wait_for(client.ping(), STARTUP_PING_TIMEOUT_SECONDS)
+    except Exception as exc:  # noqa: BLE001 - any failure is the same operator signal
+        log.error(
+            "redis.startup_check_failed",
+            service=service,
+            exc_type=type(exc).__name__,
+            hint="Redis-backed controls will FAIL OPEN until this is fixed; "
+            "for a TLS error see REDIS_SSL_CHECK_HOSTNAME",
+        )
+        return False
+    log.info("redis.startup_check_ok", service=service)
+    return True

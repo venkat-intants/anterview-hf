@@ -202,8 +202,53 @@ class Settings(BaseSettings):
     # in request_fnc will silently reject below the advertised ceiling.
     # test_effective_cap_equals_configured_cap in test_worker_reliability.py
     # asserts this invariant automatically.
-    worker_load_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    #
+    # WORKER LOAD IS JOBS / CAP, NOT CPU (2026-10 load test). The worker reports
+    # load = running_jobs / worker_max_concurrent_jobs (interview_worker._worker_load)
+    # and is marked FULL when load >= worker_load_threshold. livekit-agents' own
+    # default - a 2.5 s moving average of the whole container's CPU against 0.75 -
+    # flapped FULL/AVAILABLE every few seconds in the single-container Space
+    # because API bursts count, and a job offered while FULL is never re-offered.
+    # So the default threshold is now 1.0: AVAILABLE until the cap is reached,
+    # FULL exactly at it. Lower it only if you want headroom BELOW the cap (e.g.
+    # 0.75 with a cap of 4 means FULL at 3 jobs).
+    worker_load_threshold: float = Field(default=1.0, ge=0.0, le=1.0)
     worker_max_concurrent_jobs: int = Field(default=4, ge=0)
+
+    # Explicit dispatch. The worker registers under this name; the token endpoint
+    # embeds a dispatch for it in the candidate's join token, and
+    # POST /api/rooms/{id}/redispatch creates one on demand. EMPTY STRING =
+    # legacy AUTOMATIC dispatch on both sides (worker registers unnamed, API
+    # creates no dispatches). The API and worker ship in the same image, so a
+    # change here moves them together; a mixed rollout (API named, worker
+    # unnamed) would leave rooms with no interviewer, so never set it on only one.
+    interview_agent_name: str = "anthire-interviewer"
+
+    # Warm job processes. None = the job cap, bounded at 8 (see
+    # interview_worker._idle_process_target). livekit-agents' default is
+    # min(cpu_count, 4) - 2 on this host - so a third interview inside a few
+    # seconds waited for a process to be created and timed out. Each idle process
+    # holds the prewarmed VAD model (~100-200 MB); set lower on small hosts.
+    worker_num_idle_processes: int | None = Field(default=None, ge=0, le=16)
+    # Seconds a job process may take to prewarm before livekit-agents kills it.
+    # Library default 10 s; under CPU contention (4 processes loading ONNX
+    # models at once) that was too tight and itself caused "no warmed process".
+    worker_initialize_timeout_seconds: float = Field(default=30.0, ge=5.0, le=120.0)
+
+    # Slot ledger leases (app/worker_capacity.py). A reservation is taken when the
+    # token endpoint admits a candidate; it must outlive click-to-interviewer
+    # (connect + dispatch + process start, normally < 30 s, worst case several
+    # re-dispatches) and then lapses on its own if nobody ever arrives. When the
+    # worker accepts the job the slot becomes a lease long enough for the longest
+    # legal interview (~10 min) plus margin; it is released explicitly when the
+    # interview ends, and expires on its own if the worker crashes.
+    slot_reservation_seconds: int = Field(default=180, ge=30, le=900)
+    slot_lease_seconds: int = Field(default=1800, ge=300, le=7200)
+
+    # Re-dispatch (candidate has no interviewer): per-user rate limit and a hard
+    # per-session ceiling so a stuck client cannot hammer the LiveKit API.
+    room_redispatch_per_minute: int = Field(default=10, ge=0)
+    room_redispatch_max_per_session: int = Field(default=4, ge=1)
 
     # Per-USER cost guards (M3). Session creation and room-token issuance (which
     # DISPATCHES a worker: LLM + speech + avatar) were unlimited. Defaults are far

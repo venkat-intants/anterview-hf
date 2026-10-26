@@ -19,6 +19,18 @@ gets a scoped token that lets it join exactly its own room. The interview agent
 (worker tier) joins the same room separately. Self-hosting LiveKit in Mumbai
 for the bid changes only LIVEKIT_URL — this code is unchanged.
 
+POST /api/rooms/{session_id}/redispatch
+
+Idempotent "my interviewer never showed up" path. The worker runs under
+EXPLICIT dispatch (see ``app/agent/launcher.py``): the join token carries the
+first dispatch, and this endpoint creates another if no agent has joined. The
+frontend calls it when no interviewer appears within a few seconds of joining.
+
+CAPACITY. Admission is an atomic reservation in the Redis slot ledger
+(``app/worker_capacity.py``) taken by the token endpoint, so N concurrent
+candidates cannot all pass a cap that only counted jobs the worker had already
+accepted. A full ledger is a clear 503 BEFORE any token is issued.
+
 PII: never log the token or candidate text. Log only event + ids.
 """
 
@@ -26,8 +38,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
+import aiohttp
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from livekit import api
@@ -35,17 +48,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.launcher import dispatch_interview_agent
+from app.agent.launcher import ensure_interviewer, room_configuration
 from app.config import settings
 from app.consent_guard import has_active_consent
 from app.database import get_db_session
 from app.dependencies import GuestBoundUserDep
-from app.graph.state import Language as InterviewLanguage
-from app.models import Job
 from app.models import Session as InterviewSession
 from app.rate_limit import enforce_user_rate_limit
 from app.redis_client import get_redis
-from app.worker_capacity import read_active_jobs
+from app.worker_capacity import SlotResult, note_redispatch, reserve_slot
 
 log = structlog.get_logger(__name__)
 
@@ -111,38 +122,15 @@ async def _has_other_active_session(
     return int(running) >= cap
 
 
-@router.post(
-    "/{session_id}/token",
-    response_model=RoomTokenResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Mint a LiveKit join token for an interview session",
-)
-async def create_room_token(
-    session_id: uuid.UUID,
-    current_user: GuestBoundUserDep,
-    db: Annotated[AsyncSession, Depends(get_db_session)],
-) -> RoomTokenResponse:
-    """Issue a LiveKit join token after auth + ownership + consent checks.
+async def _load_open_session(
+    db: AsyncSession, session_id: uuid.UUID, user_id_str: str
+) -> InterviewSession:
+    """Load the session and enforce existence, ownership and not-finished.
 
-    Guest-session binding (Phase 3, B7 — a magic-link guest token carries a
-    session_id claim and may join ONLY that one session) is enforced by the
-    ``GuestBoundUserDep`` dependency before this function body runs.
+    Shared by the token and re-dispatch endpoints so the two can never drift:
+    a gate added to one and not the other would let ``/redispatch`` start an
+    interviewer for a session ``/token`` refuses.
     """
-    if not (settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret):
-        # Misconfiguration — fail loud server-side, generic detail to client.
-        log.error("rooms.token.livekit_not_configured")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Real-time transport is not configured.",
-        )
-
-    user_id_str: str = current_user["sub"]
-
-    # 0. Per-user cap on token requests (M3). Each successful call can dispatch a
-    #    worker. 20/min is far above a reload or a flaky-network retry; a script
-    #    hits it at once. Before any DB work so a flood is cheap to refuse.
-    await enforce_user_rate_limit("room_token", user_id_str, settings.room_token_per_minute)
-
     # 1. Session must exist.
     result = await db.execute(
         select(InterviewSession).where(InterviewSession.id == session_id)
@@ -192,34 +180,42 @@ async def create_room_token(
             status_code=status.HTTP_409_CONFLICT,
             detail="This interview session has already finished and cannot be re-entered.",
         )
+    return session
 
-    # 4. Worker capacity check — BEFORE issuing a token.
-    #    The worker publishes its active-job count to Redis on every admission
-    #    change.  We read it here so a full worker returns HTTP 503 with a clear
-    #    human-readable message BEFORE the candidate enters a dead LiveKit room.
-    #    Fails open: if Redis is unavailable we issue the token and let the
-    #    worker's in-process gate handle overload (silent dead-room risk is
-    #    preferable to blocking ALL token issuance on a Redis outage).
-    cap = settings.worker_max_concurrent_jobs
-    if cap > 0:
-        try:
-            active = await read_active_jobs(get_redis())
-        except Exception:  # noqa: BLE001
-            active = None
-        if active is not None and active >= cap:
-            log.warning(
-                "rooms.token.worker_full",
-                session_id=str(session_id),
-                active_jobs=active,
-                cap=cap,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    "All interview slots are currently occupied. "
-                    "Please wait a few minutes and try again."
-                ),
-            )
+
+@router.post(
+    "/{session_id}/token",
+    response_model=RoomTokenResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Mint a LiveKit join token for an interview session",
+)
+async def create_room_token(
+    session_id: uuid.UUID,
+    current_user: GuestBoundUserDep,
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+) -> RoomTokenResponse:
+    """Issue a LiveKit join token after auth + ownership + consent checks.
+
+    Guest-session binding (Phase 3, B7 — a magic-link guest token carries a
+    session_id claim and may join ONLY that one session) is enforced by the
+    ``GuestBoundUserDep`` dependency before this function body runs.
+    """
+    if not (settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret):
+        # Misconfiguration — fail loud server-side, generic detail to client.
+        log.error("rooms.token.livekit_not_configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Real-time transport is not configured.",
+        )
+
+    user_id_str: str = current_user["sub"]
+
+    # 0. Per-user cap on token requests (M3). Each successful call can dispatch a
+    #    worker. 20/min is far above a reload or a flaky-network retry; a script
+    #    hits it at once. Before any DB work so a flood is cheap to refuse.
+    await enforce_user_rate_limit("room_token", user_id_str, settings.room_token_per_minute)
+
+    await _load_open_session(db, session_id, user_id_str)
 
     # 5. DPDP consent must be present (server-side; can't bypass via curl).
     if not await has_active_consent(db, user_id_str):
@@ -251,26 +247,56 @@ async def create_room_token(
             ),
         )
 
-    # 6. Dispatch the interview WORKER into this room with session metadata.
-    #    The worker (app/worker/interview_worker.py) must be running separately;
-    #    it drives the Simli avatar + Sarvam voice. Idempotent per room.
+    # 6. Atomically RESERVE an interview slot - after every other gate, so a
+    #    refusal above never leaves a reservation behind, and BEFORE the token,
+    #    so a full worker is a clear 503 instead of a dead room.
+    #    The old check read a counter that only rose once the worker had
+    #    ACCEPTED a job: N concurrent requests all saw "0 active" and all
+    #    passed the cap. The ledger reservation is a single Lua script, so
+    #    concurrent requests are serialised by Redis. Re-requesting for the SAME
+    #    session (reload, retry) refreshes its slot and never takes a second.
+    #    Fails OPEN on a Redis error: blocking every candidate because the
+    #    ledger is unreachable is worse than over-admitting briefly; the worker's
+    #    own load/memory gates still bound the real load and /redispatch
+    #    recovers anyone who is over-admitted.
     room_name = str(session_id)
-    job_result = await db.execute(select(Job).where(Job.id == session.job_id))
-    job: Job | None = job_result.scalar_one_or_none()
-    job_title = job.title if job is not None else "the role"
-    raw_lang = (session.language or "en").lower()
-    language: InterviewLanguage = raw_lang if raw_lang in ("en", "hi", "te") else "en"  # type: ignore[assignment]
-    dispatched = await dispatch_interview_agent(
-        room_name=room_name,
-        session_id=str(session_id),
-        job_id=str(session.job_id),
-        job_title=job_title,
-        language=language,
-    )
-    log.info("rooms.token.agent_dispatch", session_id=str(session_id), dispatched=dispatched)
+    cap = settings.worker_max_concurrent_jobs
+    if cap > 0:
+        try:
+            slot, occupied = await reserve_slot(
+                get_redis(),
+                room_name,
+                cap=cap,
+                ttl_seconds=settings.slot_reservation_seconds,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail OPEN, see above
+            log.warning(
+                "rooms.token.capacity_check_failed_open",
+                session_id=room_name,
+                err=type(exc).__name__,
+            )
+        else:
+            if slot is SlotResult.FULL:
+                log.warning(
+                    "rooms.token.worker_full",
+                    session_id=room_name,
+                    active_jobs=occupied,
+                    cap=cap,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        "All interview slots are currently occupied. "
+                        "Please wait a few minutes and try again."
+                    ),
+                    headers={"Retry-After": "30"},
+                )
+
+    # The interviewer is dispatched by the join token itself (explicit
+    # dispatch, see 7) - there is no separate launch call to forget.
 
     # 7. Mint the LiveKit join token, scoped to this one room.
-    token = (
+    access = (
         api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity(f"candidate-{user_id_str}")
         .with_name("Candidate")
@@ -293,8 +319,14 @@ async def create_room_token(
                 can_publish_data=False,
             )
         )
-        .to_jwt()
     )
+    # EXPLICIT dispatch: the join token itself asks LiveKit to dispatch the
+    # interviewer when the candidate's join creates the room. Under the legacy
+    # automatic mode (INTERVIEW_AGENT_NAME="") there is nothing to add.
+    room_config = room_configuration()
+    if room_config is not None:
+        access = access.with_room_config(room_config)
+    token = access.to_jwt()
 
     log.info(
         "rooms.token.issued",
@@ -306,4 +338,140 @@ async def create_room_token(
         url=settings.livekit_url,
         token=token,
         room_name=room_name,
+    )
+
+
+class RedispatchResponse(BaseModel):
+    """Result of an interviewer re-dispatch attempt."""
+
+    status: Literal["already_connected", "starting", "dispatched", "automatic"] = Field(
+        ...,
+        description=(
+            "already_connected: an interviewer is in the room. starting: a "
+            "dispatch has a running job, the interviewer is about to join. "
+            "dispatched: a fresh dispatch was created. automatic: explicit "
+            "dispatch is switched off, nothing to do."
+        ),
+    )
+    attempt: int = Field(..., ge=1, description="Re-dispatch calls made for this session.")
+    max_attempts: int = Field(..., ge=1, description="Ceiling before the server refuses (429).")
+
+
+@router.post(
+    "/{session_id}/redispatch",
+    response_model=RedispatchResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Ask for an interviewer if none has joined the room (idempotent)",
+)
+async def redispatch_interviewer(
+    session_id: uuid.UUID,
+    current_user: GuestBoundUserDep,
+    db: Annotated[AsyncSession, Depends(get_db_session)],
+) -> RedispatchResponse:
+    """Re-create the interviewer dispatch for a room that has no interviewer.
+
+    IDEMPOTENT by construction (this is the mutation-idempotency contract for
+    this endpoint, in place of a client-supplied key): calling it while an agent
+    is in the room, or while a dispatch already has a running job, changes
+    nothing and returns ``already_connected`` / ``starting``. Only a room with
+    NO interviewer and no live job gets a new dispatch, and any dead dispatch is
+    removed first, so there is never more than one live dispatch per room.
+
+    Same gates as ``POST /token`` (ownership, not finished, consent) plus the
+    slot ledger: the session must hold - or be able to take - a slot, so this
+    cannot be used to run interviews past the cap.
+
+    Bounded three ways: a per-user rate limit, a hard per-session ceiling
+    (``room_redispatch_max_per_session``, then 429), and the LiveKit-side
+    idempotence above. Every call counts towards the ceiling, including the
+    no-op ones, which is why the frontend polls rarely.
+    """
+    if not (settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret):
+        log.error("rooms.redispatch.livekit_not_configured")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Real-time transport is not configured.",
+        )
+
+    user_id_str: str = current_user["sub"]
+    await enforce_user_rate_limit(
+        "room_redispatch", user_id_str, settings.room_redispatch_per_minute
+    )
+    await _load_open_session(db, session_id, user_id_str)
+
+    if not await has_active_consent(db, user_id_str):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="DPDP consent required before starting an interview session.",
+        )
+
+    room_name = str(session_id)
+    max_attempts = settings.room_redispatch_max_per_session
+    cap = settings.worker_max_concurrent_jobs
+
+    # Redis serves two purposes here and fails OPEN for both (an outage must not
+    # strand the candidate who is already waiting): the per-session ceiling and
+    # the slot ledger.
+    attempt = 1
+    try:
+        redis = get_redis()
+        attempt = await note_redispatch(redis, room_name)
+        if cap > 0:
+            slot, occupied = await reserve_slot(
+                redis, room_name, cap=cap, ttl_seconds=settings.slot_reservation_seconds
+            )
+            if slot is SlotResult.FULL:
+                log.warning(
+                    "rooms.redispatch.worker_full",
+                    session_id=room_name,
+                    active_jobs=occupied,
+                    cap=cap,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=(
+                        "All interview slots are currently occupied. "
+                        "Please wait a few minutes and try again."
+                    ),
+                    headers={"Retry-After": "30"},
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - fail OPEN, see above
+        log.warning(
+            "rooms.redispatch.ledger_failed_open",
+            session_id=room_name,
+            err=type(exc).__name__,
+        )
+
+    if attempt > max_attempts:
+        log.warning("rooms.redispatch.ceiling", session_id=room_name, attempt=attempt)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="We could not start your interviewer. Please try again later.",
+        )
+
+    try:
+        outcome = await ensure_interviewer(room_name)
+    except (api.TwirpError, aiohttp.ClientError, TimeoutError) as exc:
+        log.error(
+            "rooms.redispatch.livekit_error",
+            session_id=room_name,
+            err=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The interview service is temporarily unavailable. Please try again.",
+        ) from exc
+
+    log.info(
+        "rooms.redispatch.done",
+        session_id=room_name,
+        outcome=outcome.value,
+        attempt=attempt,
+    )
+    return RedispatchResponse(
+        status=outcome.value,  # type: ignore[arg-type]
+        attempt=attempt,
+        max_attempts=max_attempts,
     )

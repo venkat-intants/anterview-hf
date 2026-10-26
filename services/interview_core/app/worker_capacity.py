@@ -1,90 +1,164 @@
-"""Worker capacity — shared-state helpers for admission control.
+"""Interview slot ledger - the one atomic source of truth for worker capacity.
 
-WHY this module exists:
-    The LiveKit interview worker (``app/worker/interview_worker.py``) runs as a
-    SEPARATE process from the FastAPI HTTP server.  When the worker is at or
-    near its concurrency ceiling, the HTTP ``POST /api/rooms/{id}/token``
-    endpoint has no way to know — it issues the join token, the candidate
-    enters the LiveKit room, and then… the worker's ``request_fnc`` rejects the
-    job.  Under AUTOMATIC dispatch this leaves the candidate in a dead room
-    with NO interviewer and no feedback.  That silent failure is WORSE than a
-    clear HTTP 503 before the token is issued.
+WHY this module exists
+----------------------
+The LiveKit interview worker (``app/worker/interview_worker.py``) is a SEPARATE
+process from the FastAPI server, and livekit-agents runs every interview in its
+OWN child process. The old design had the job process publish its module-level
+``_active_jobs`` counter to a single Redis key (``worker:active_jobs``) and the
+token endpoint read that key. That could not work:
 
-    This module bridges the two processes via a shared Redis key.  The worker
-    writes its current active-job count on every admission change; the token
-    endpoint reads it BEFORE issuing the token.
+* each job process only ever sees its own counter (0 or 1), so the published
+  value was whichever process wrote last;
+* the counter only rose AFTER the worker accepted a job, so N concurrent token
+  requests all read "0 active" and all passed the cap together (load test,
+  2026-10: candidates admitted past the cap, then stranded in rooms with no
+  interviewer).
 
-Redis key:
-    ``worker:active_jobs``  — integer string, no TTL (the worker refreshes it
-    continuously; the token endpoint only reads it).
+The ledger
+----------
+A Redis sorted set, ``interview:slots``: member = session_id (== LiveKit room
+name), score = the unix time the slot EXPIRES. One member per interview that is
+either waiting for its interviewer or running one.
 
-Stale-value safety:
-    If the worker crashes without decrementing, the key may be too high,
-    causing spurious rejections.  This is the SAFE failure mode — a candidate
-    gets a 503 rather than a dead room.  The key is updated on every
-    increment/decrement so it goes stale only when the worker process is dead
-    (which means there is genuinely no capacity).
+* ``reserve_slot`` (token endpoint) - one Lua script that drops expired members,
+  then either refreshes an already-held slot (a reload / re-dispatch of the same
+  session must never consume a second slot), or admits a new one if
+  ``ZCARD < cap``, or refuses. Atomic, so concurrent requests cannot oversubscribe.
+* ``extend_slot`` (job process, on accept) - the short reservation lease becomes
+  a long interview lease.
+* ``release_slot`` (job process, shutdown callback) - frees the slot the moment
+  the interview ends, on every exit path.
+* The lease is the crash backstop: a worker that dies without releasing leaves a
+  member that simply expires. Capacity is therefore self-healing, with no
+  "counter stuck too high forever" mode.
 
-FAIL OPEN on Redis errors:
-    The token endpoint's capacity check fails OPEN — if Redis is unavailable,
-    the endpoint issues the token and lets the worker's in-process gate handle
-    overload.  Redis unavailability does NOT block token issuance entirely.
+FAIL-OPEN vs FAIL-CLOSED (deliberate, unchanged in spirit)
+-----------------------------------------------------------
+Every helper here RAISES on a Redis error and leaves the policy to the caller:
+
+* token endpoint: fails OPEN. A Redis outage must not block every candidate from
+  starting; the worker's own gates (``load_fnc`` and the memory estimate) still
+  bound the real load, and an over-admitted candidate is recovered by the
+  re-dispatch path rather than being stranded.
+* worker ``request_fnc``: fails OPEN too (accept) - rejecting a job for a ledger
+  we cannot read is the one choice that strands a candidate for certain.
+* release: best-effort. A failed release is repaired by lease expiry.
+
+Redis keys are namespaced with the ``interview:`` prefix; nothing else in the
+codebase writes them.
 """
 
 from __future__ import annotations
 
-import logging
+import time
+from enum import Enum
 from typing import Any
 
-logger = logging.getLogger("interview-worker")
+import structlog
 
-# Redis key — stable across the lifetime of the worker process.
-_ACTIVE_JOBS_KEY: str = "worker:active_jobs"
-# Short TTL so a worker crash eventually clears stale state (next worker
-# startup will re-publish the correct count immediately anyway).
-_ACTIVE_JOBS_TTL_SECONDS: int = 60
+log = structlog.get_logger(__name__)
+
+SLOTS_KEY: str = "interview:slots"
+# Redis key counting how many times a session has been re-dispatched, so a
+# misbehaving client cannot hammer the LiveKit API for one room.
+REDISPATCH_COUNT_KEY_PREFIX: str = "interview:redispatch:"
+REDISPATCH_COUNT_TTL_SECONDS: int = 3600
 
 
-async def publish_active_jobs(redis: Any, count: int) -> None:
-    """Write the current active-job count to Redis.
+class SlotResult(str, Enum):
+    """Outcome of ``reserve_slot``."""
 
-    Called by the worker on every increment/decrement so the HTTP server can
-    read it.  Best-effort — a Redis error must never propagate into the
-    interview entrypoint or the admission gate.
+    RESERVED = "reserved"  # a new slot was taken
+    HELD = "held"  # this session already held a slot; lease refreshed
+    FULL = "full"  # at the cap, nothing taken
 
-    Args:
-        redis: a ``redis.asyncio.Redis`` client (or any object with
-               an async ``setex(key, seconds, value)`` method).
-        count: the current value of the module-level ``_active_jobs`` counter.
+
+# KEYS[1] = ledger; ARGV = now, ttl_seconds, cap, member.
+# Returns {code, count}: code 1 = reserved, 2 = already held (refreshed), 0 = full;
+# count = occupied slots after the call (excluding expired).
+# An already-held slot keeps the LATER of its current expiry and now+ttl, so a
+# re-dispatch can never SHORTEN a running interview's long lease.
+_RESERVE_LUA = """
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+local held = redis.call('ZSCORE', KEYS[1], ARGV[4])
+local expiry = tonumber(ARGV[1]) + tonumber(ARGV[2])
+if held then
+  if tonumber(held) < expiry then
+    redis.call('ZADD', KEYS[1], expiry, ARGV[4])
+  end
+  return {2, redis.call('ZCARD', KEYS[1])}
+end
+local count = redis.call('ZCARD', KEYS[1])
+if count >= tonumber(ARGV[3]) then
+  return {0, count}
+end
+redis.call('ZADD', KEYS[1], expiry, ARGV[4])
+return {1, count + 1}
+"""
+
+# KEYS[1] = ledger; ARGV = now, ttl_seconds, member. Extends only a slot that is
+# still held; returns 1 if extended, 0 if the slot was gone.
+_EXTEND_LUA = """
+redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+if redis.call('ZSCORE', KEYS[1], ARGV[3]) then
+  redis.call('ZADD', KEYS[1], tonumber(ARGV[1]) + tonumber(ARGV[2]), ARGV[3])
+  return 1
+end
+return 0
+"""
+
+
+async def reserve_slot(
+    redis: Any, session_id: str, *, cap: int, ttl_seconds: int
+) -> tuple[SlotResult, int]:
+    """Atomically take (or confirm) this session's slot.
+
+    Returns ``(result, occupied)``. ``cap <= 0`` means "no cap": the slot is
+    still recorded so the ledger stays accurate, but it is never refused.
+    Raises on a Redis error - see the module docstring for who fails open.
     """
-    try:
-        await redis.setex(_ACTIVE_JOBS_KEY, _ACTIVE_JOBS_TTL_SECONDS, str(count))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "interview-worker.capacity_publish_failed count=%d err=%s",
-            count, type(exc).__name__,
-        )
+    now = int(time.time())
+    effective_cap = cap if cap > 0 else 1_000_000
+    raw = await redis.eval(
+        _RESERVE_LUA, 1, SLOTS_KEY, now, ttl_seconds, effective_cap, session_id
+    )
+    code, occupied = int(raw[0]), int(raw[1])
+    if code == 1:
+        return SlotResult.RESERVED, occupied
+    if code == 2:
+        return SlotResult.HELD, occupied
+    return SlotResult.FULL, occupied
 
 
-async def read_active_jobs(redis: Any) -> int | None:
-    """Read the current active-job count published by the worker.
+async def extend_slot(redis: Any, session_id: str, *, ttl_seconds: int) -> bool:
+    """Turn a short reservation into the long interview lease. False if gone."""
+    now = int(time.time())
+    raw = await redis.eval(_EXTEND_LUA, 1, SLOTS_KEY, now, ttl_seconds, session_id)
+    return int(raw) == 1
 
-    Returns:
-        The current active-job count (int), or ``None`` if the key is absent
-        or Redis is unavailable (caller should fail open).
 
-    Args:
-        redis: a ``redis.asyncio.Redis`` client (or any object with
-               an async ``get(key)`` method).
-    """
-    try:
-        raw: str | None = await redis.get(_ACTIVE_JOBS_KEY)
-        if raw is None:
-            return None
-        return int(raw)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "rooms.capacity_read_failed err=%s - failing open",
-            type(exc).__name__,
-        )
-        return None
+async def release_slot(redis: Any, session_id: str) -> None:
+    """Free this session's slot. Idempotent; raises on a Redis error."""
+    await redis.zrem(SLOTS_KEY, session_id)
+
+
+async def count_slots(redis: Any) -> int:
+    """Number of unexpired slots (expired members are trimmed first)."""
+    await redis.zremrangebyscore(SLOTS_KEY, "-inf", int(time.time()))
+    return int(await redis.zcard(SLOTS_KEY))
+
+
+async def slot_held(redis: Any, session_id: str) -> bool:
+    """True when this session holds an unexpired slot."""
+    score = await redis.zscore(SLOTS_KEY, session_id)
+    return score is not None and float(score) > time.time()
+
+
+async def note_redispatch(redis: Any, session_id: str) -> int:
+    """Count one re-dispatch for this session and return the new total."""
+    key = f"{REDISPATCH_COUNT_KEY_PREFIX}{session_id}"
+    total = int(await redis.incr(key))
+    if total == 1:
+        await redis.expire(key, REDISPATCH_COUNT_TTL_SECONDS)
+    return total

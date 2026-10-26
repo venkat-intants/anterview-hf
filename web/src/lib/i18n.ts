@@ -419,6 +419,11 @@ const en = {
       statusError: 'Connection error',
       connectingOverlayTitle: 'Connecting you to your interviewer…',
       connectingOverlaySub: 'This takes a few seconds.',
+      interviewerRetrying: 'Still connecting your interviewer…',
+      interviewerRetryingSub: 'Trying again (attempt {{attempt}} of {{max}}). Please keep this page open.',
+      interviewerUnavailableTitle: 'We could not reach your interviewer.',
+      interviewerUnavailableSub:
+        'Your answers have not been recorded. Please try again - if this keeps happening, contact support.',
       errorFallback: 'Could not connect to the interview. Please try again.',
       tryAgain: 'Try again',
       muteMic: 'Mute microphone',
@@ -2359,6 +2364,12 @@ const hi = {
       statusError: 'कनेक्शन में त्रुटि',
       connectingOverlayTitle: 'आपके इंटरव्यूअर से जोड़ा जा रहा है…',
       connectingOverlaySub: 'इसमें कुछ सेकंड लगते हैं।',
+      interviewerRetrying: 'आपके इंटरव्यूअर से अभी भी जोड़ा जा रहा है…',
+      interviewerRetryingSub:
+        'फिर से कोशिश की जा रही है ({{max}} में से प्रयास {{attempt}})। कृपया यह पेज खुला रखें।',
+      interviewerUnavailableTitle: 'हम आपके इंटरव्यूअर तक नहीं पहुँच पाए।',
+      interviewerUnavailableSub:
+        'आपके उत्तर रिकॉर्ड नहीं हुए हैं। कृपया फिर कोशिश करें - अगर यह बार-बार हो, तो सपोर्ट से संपर्क करें।',
       errorFallback: 'इंटरव्यू से connect करने में कुछ गड़बड़ हुई।',
       tryAgain: 'फिर कोशिश करें',
       muteMic: 'माइक्रोफ़ोन म्यूट करें',
@@ -4210,6 +4221,12 @@ const te = {
       statusError: 'కనెక్షన్ లోపం',
       connectingOverlayTitle: 'మీ ఇంటర్వ్యూయర్‌కి కనెక్ట్ అవుతోంది…',
       connectingOverlaySub: 'ఇది కొన్ని సెకన్లు పడుతుంది.',
+      interviewerRetrying: 'మీ ఇంటర్వ్యూయర్‌కి ఇంకా కనెక్ట్ అవుతోంది…',
+      interviewerRetryingSub:
+        'మళ్ళీ ప్రయత్నిస్తున్నాం ({{max}}లో ప్రయత్నం {{attempt}}). దయచేసి ఈ పేజీని తెరిచే ఉంచండి.',
+      interviewerUnavailableTitle: 'మేము మీ ఇంటర్వ్యూయర్‌ని చేరుకోలేకపోయాం.',
+      interviewerUnavailableSub:
+        'మీ సమాధానాలు రికార్డ్ కాలేదు. దయచేసి మళ్ళీ ప్రయత్నించండి - ఇది పదే పదే జరిగితే, సపోర్ట్‌ని సంప్రదించండి.',
       errorFallback: 'ఇంటర్వ్యూకి కనెక్ట్ అవ్వడంలో ఏదో తప్పు జరిగింది.',
       tryAgain: 'మళ్ళీ ప్రయత్నించండి',
       muteMic: 'మైక్రోఫోన్ మ్యూట్ చేయండి',

@@ -77,6 +77,10 @@ export default function LiveKitInterview({
     disconnect,
     toggleMic,
     toggleCamera,
+    interviewerStatus,
+    redispatchAttempt,
+    maxRedispatch,
+    retryInterviewer,
   } = useLiveKitInterview(sessionId, cameraConsented);
 
   // Phase B — proctoring runs only when the candidate consented to the camera
@@ -152,11 +156,14 @@ export default function LiveKitInterview({
   // within 30 s of connecting (slow/cold/hung provider), force-clear the overlay
   // so the candidate is never stranded on "Connecting you to your interviewer…".
   // The video events still win in the normal path (they fire well before 30 s).
+  // Only once an interviewer is actually in the room: before that the overlay is
+  // telling the candidate the truth (we are still getting them an interviewer),
+  // and clearing it would show a black screen with nobody on it.
   useEffect(() => {
-    if (status !== 'connected' || avatarReady) return;
+    if (status !== 'connected' || avatarReady || interviewerStatus !== 'joined') return;
     const id = setTimeout(() => setAvatarReady(true), 30_000);
     return () => clearTimeout(id);
-  }, [status, avatarReady]);
+  }, [status, avatarReady, interviewerStatus]);
 
   // Live timer — counts seconds from the moment the room reaches 'connected'.
   // The ONLY new state/effect added by this redesign pass.
@@ -278,16 +285,51 @@ export default function LiveKitInterview({
       {/* ── Avatar-joining overlay (z-10, room connected but frame not yet rendered) ── */}
       {/* Sits ABOVE the video (which is still black at this point) but BELOW    */}
       {/* the HUD bars (z-20) so mic / End remain fully clickable.               */}
-      {isConnected && !avatarReady && (
+      {/* Until an interviewer has joined, this overlay also tells the candidate  */}
+      {/* what is happening: waiting -> retrying (we asked for another dispatch)   */}
+      {/* -> unavailable (we gave up; offer a fresh attempt). Never a silent wait. */}
+      {isConnected && (interviewerStatus !== 'joined' || !avatarReady) && (
         <div
+          aria-live="polite"
           className={cn(
             'absolute inset-0 z-10 flex flex-col items-center justify-center',
             'gap-4 px-6 text-center bg-black/80 backdrop-blur-sm',
           )}
         >
-          <Loader2 className="h-10 w-10 animate-spin text-electric-signal" aria-hidden="true" />
-          <p className="text-body-sm text-mist">{t('interview.connectingOverlayTitle')}</p>
-          <p className="text-caption text-ash">{t('interview.connectingOverlaySub')}</p>
+          {interviewerStatus === 'unavailable' ? (
+            <>
+              <AlertCircle className="h-10 w-10 text-destructive" aria-hidden="true" />
+              <p className="max-w-sm text-body-sm text-mist">
+                {t('interview.interviewerUnavailableTitle')}
+              </p>
+              <p className="max-w-sm text-caption text-ash">
+                {t('interview.interviewerUnavailableSub')}
+              </p>
+              <Button onClick={() => void retryInterviewer()} variant="secondary">
+                {t('interview.tryAgain')}
+              </Button>
+            </>
+          ) : (
+            <>
+              <Loader2
+                className="h-10 w-10 animate-spin text-electric-signal"
+                aria-hidden="true"
+              />
+              <p className="text-body-sm text-mist">
+                {interviewerStatus === 'retrying'
+                  ? t('interview.interviewerRetrying')
+                  : t('interview.connectingOverlayTitle')}
+              </p>
+              <p className="text-caption text-ash">
+                {interviewerStatus === 'retrying'
+                  ? t('interview.interviewerRetryingSub', {
+                      attempt: redispatchAttempt,
+                      max: maxRedispatch,
+                    })
+                  : t('interview.connectingOverlaySub')}
+              </p>
+            </>
+          )}
         </div>
       )}
 

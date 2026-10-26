@@ -40,7 +40,7 @@
 > ```
 >
 > **They are imported at ASGI startup, but never executed.** `routers/rooms.py:38`
-> does `from app.agent.launcher import dispatch_interview_agent`, and
+> does `from app.agent.launcher import ensure_interviewer, room_configuration`, and
 > `app/agent/__init__.py:19` re-exports from `app.agent.orchestrator`, which pulls
 > in `graph.brain` → `graph.nodes`. So "dead code" is not a safe assumption for
 > dependency pruning, image size, or import-time failure analysis — a syntax or
@@ -218,6 +218,37 @@ main remaining value — its STT/TTS plugins — which is another reason the thi
 - **Self-host option:** LiveKit is open-source and self-hostable. This is the
   hook for Tier-2 India-residency (run the SFU in Mumbai) — unlike the avatar
   SaaS, the transport itself can be made compliant.
+- **Dispatch & capacity (changed 2026-10; supersedes "AUTOMATIC dispatch").**
+  The interview worker used to run with no `agent_name` (AUTOMATIC dispatch):
+  LiveKit offered each room's job exactly once, and a room whose job was refused
+  (worker FULL at that instant, no warmed process, assignment timeout) was never
+  offered again — the candidate sat alone until the room timed out (12.7 min
+  observed in the 2026-10 load test). Now:
+  - the worker registers as `INTERVIEW_AGENT_NAME` (default `anthire-interviewer`);
+    `POST /api/rooms/{id}/token` embeds a dispatch for that name in the join token
+    (`RoomConfiguration.agents`), applied when the candidate's join creates the
+    room — the same moment automatic dispatch fired;
+  - `POST /api/rooms/{id}/redispatch` is the idempotent recovery path. It does
+    nothing if an agent participant is in the room or a dispatch has a running
+    job; otherwise it deletes any dead dispatch and creates a fresh one. The
+    frontend (`useInterviewerWatchdog`) calls it after 20 s with no interviewer,
+    at most twice, then shows an "interviewer unavailable" state with a retry;
+  - **capacity is an atomic Redis ledger** (`interview:slots`, a sorted set keyed
+    by session id, `app/worker_capacity.py`). The token endpoint reserves a slot
+    with one Lua script *before* issuing the token (full → HTTP 503), the worker
+    extends it to an interview-long lease on accept and releases it on every exit
+    path, and a lease that is never released simply expires. This replaces the
+    `worker:active_jobs` counter, which was written by the job child processes
+    (each sees only itself) and only rose after a job was accepted;
+  - the worker reports load to LiveKit as `running jobs / WORKER_MAX_CONCURRENT_JOBS`
+    (`load_threshold` 1.0), not container CPU, and keeps `WORKER_NUM_IDLE_PROCESSES`
+    (default: the job cap, max 8) warm processes;
+  - `reject()` is now non-terminal (`terminate=False`).
+  Fail-open vs fail-closed: a Redis outage fails OPEN at the token endpoint, in the
+  worker's `request_fnc` and in `/redispatch` (never strand a waiting candidate to
+  protect a counter); release is best-effort with lease expiry as the backstop.
+  `INTERVIEW_AGENT_NAME=""` restores automatic dispatch on both sides — API and
+  worker ship in one image, so they switch together; never set it on only one.
 
 ## 5. Orchestration: thin custom LiveKit agent
 

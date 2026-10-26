@@ -73,7 +73,12 @@ same-origin and `space/Caddyfile` fans it out — no CORS, first-party cookies.
 
    Useful variables (defaults in `space/entrypoint.sh`): `AVATAR_PROVIDER`
    (`none` = voice-only default; `tavus`/`simli` need their keys),
-   `WORKER_MAX_CONCURRENT_JOBS` (default 2 — sized for 2 vCPU).
+   `WORKER_MAX_CONCURRENT_JOBS` (default 2 — sized for 2 vCPU; enforced by an atomic
+   Redis slot ledger at token time, and the worker's reported load is jobs/cap, not CPU),
+   `INTERVIEW_AGENT_NAME` (explicit-dispatch name, default `anthire-interviewer`;
+   empty = legacy automatic dispatch), `WORKER_NUM_IDLE_PROCESSES` (warm job
+   processes, default = the job cap), `REDIS_MAX_CONNECTIONS` /
+   `REDIS_POOL_WAIT_SECONDS` (per-process Redis pool, defaults 50 / 3.0).
 3. **Restart the Space.** Boot order: secret check → alembic migrations →
    supervisord starts caddy + 4 services + worker.
 

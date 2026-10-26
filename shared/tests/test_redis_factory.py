@@ -16,10 +16,12 @@ asserted below rather than assumed.
 from __future__ import annotations
 
 import ast
+import asyncio
 import pathlib
 from typing import Any
 
 import pytest
+from redis.asyncio import BlockingConnectionPool
 from redis.asyncio.connection import SSLConnection
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
@@ -209,7 +211,66 @@ def test_defaults_match_what_the_services_already_relied_on() -> None:
     change smuggled in as a refactor."""
     client = build_redis_client(_PLAIN_URL)
     assert client.connection_pool.connection_kwargs["decode_responses"] is True
-    assert client.connection_pool.max_connections == 20
+    assert client.connection_pool.max_connections == 50
+
+
+def test_pool_waits_instead_of_raising_when_exhausted() -> None:
+    """The load-test defect: the default pool raised 'Too many connections' at
+    20 in-flight commands and every caller failed open, switching rate limits
+    and grading locks off during the burst."""
+    pool = build_redis_client(_PLAIN_URL).connection_pool
+    assert isinstance(pool, BlockingConnectionPool)
+    assert pool.timeout == 3.0
+
+
+async def test_exhausted_pool_blocks_then_serves_the_waiter() -> None:
+    """Behavioural proof, no socket: with 1 slot a second caller waits for the
+    first to release rather than raising."""
+    pool = build_redis_client(_PLAIN_URL, max_connections=1).connection_pool
+    first = pool.make_connection()
+    pool._in_use_connections.add(first)
+
+    async def release_soon() -> None:
+        await asyncio.sleep(0.05)
+        await pool.release(first)
+
+    async def ensure_noop(conn: Any) -> None:
+        return None
+
+    pool.ensure_connection = ensure_noop  # type: ignore[method-assign]
+    release = asyncio.create_task(release_soon())
+    got = await asyncio.wait_for(pool.get_connection(), timeout=2)
+    await release
+    assert got is first
+
+
+async def test_exhausted_pool_gives_up_after_the_wait() -> None:
+    """Bounded wait: a wedged Redis must still reach the caller's fail-open or
+    fail-closed branch, not hang the request."""
+    pool = build_redis_client(_PLAIN_URL, max_connections=1, pool_wait_seconds=0.05).connection_pool
+    pool._in_use_connections.add(pool.make_connection())
+    with pytest.raises(RedisConnectionError):
+        await pool.get_connection()
+
+
+def test_pool_limits_are_configurable_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REDIS_MAX_CONNECTIONS", "80")
+    monkeypatch.setenv("REDIS_POOL_WAIT_SECONDS", "1.5")
+    pool = build_redis_client(_PLAIN_URL).connection_pool
+    assert pool.max_connections == 80
+    assert pool.timeout == 1.5
+
+
+def test_junk_environment_values_fall_back_to_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("REDIS_MAX_CONNECTIONS", "lots")
+    monkeypatch.setenv("REDIS_POOL_WAIT_SECONDS", "-4")
+    pool = build_redis_client(_PLAIN_URL).connection_pool
+    assert pool.max_connections == 50
+    assert pool.timeout == 3.0
 
 
 def test_callers_can_override_the_defaults() -> None:
@@ -251,7 +312,7 @@ def test_factory_stays_dependency_light() -> None:
     for a heavier third-party dep would put it in four requirements files. The
     allowlist is deliberately narrow: widening it should be a decision someone
     makes on purpose, not a diff nobody notices."""
-    allowed = {"__future__", "typing", "redis", "pydantic", "structlog"}
+    allowed = {"__future__", "os", "typing", "redis", "pydantic", "structlog"}
     source = pathlib.Path(__file__).parent.parent / "redis_factory.py"
     tree = ast.parse(source.read_text(encoding="utf-8"))
 

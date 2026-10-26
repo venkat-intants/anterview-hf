@@ -53,6 +53,27 @@ Why each setting is here
     retries only transport failures — a genuine application error (a bad
     command, a WRONGTYPE) is raised on the first attempt, not four times.
 
+Why a BlockingConnectionPool (load test, 2026-10)
+-------------------------------------------------
+The pool used to be redis-py's default ``ConnectionPool`` capped at 20. That
+class does NOT wait when it is exhausted: it raises ``ConnectionError("Too many
+connections")`` immediately. In a 200-400 user exam burst that surfaced as 1,381
+``rate_limit.skipped`` and 175 ``exam.grading_claim.skipped`` log lines -
+callers (correctly, for availability) fail OPEN on a Redis error, so the burst
+that most needed the rate limiter and the grading lock was exactly the moment
+both silently switched off.
+
+``BlockingConnectionPool`` parks the caller until a connection is returned, for
+at most ``REDIS_POOL_WAIT_SECONDS`` (default 3.0). Redis commands hold a
+connection for ~1 RTT, so a short wait absorbs a burst without any caller
+failing; if Redis is genuinely wedged the wait still expires and the caller sees
+``ConnectionError`` and takes its existing fail-open/fail-closed branch, so the
+wait is bounded and cannot pin a request forever. The pool-wait error is raised
+from ``get_connection`` OUTSIDE ``Retry.call_with_retry``, so it is not
+multiplied by the 3 transport retries. Ceiling: ``REDIS_MAX_CONNECTIONS``
+(default 50, per process; four service processes + the worker share one Upstash
+plan, so keep the product within the plan's connection limit).
+
 Dependency rule
 ---------------
 ``shared/`` is COPY'd into all four service images, so it may import only
@@ -63,8 +84,9 @@ asserts that mechanically.
 
 from __future__ import annotations
 
-import redis.asyncio as aioredis
-from redis.asyncio import Redis
+import os
+
+from redis.asyncio import BlockingConnectionPool, Redis
 from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import ConnectionError as RedisConnectionError
@@ -78,6 +100,22 @@ SOCKET_TIMEOUT_SECONDS = 5
 RETRY_ATTEMPTS = 3
 BACKOFF_BASE_SECONDS = 0.1
 BACKOFF_CAP_SECONDS = 2.0
+DEFAULT_MAX_CONNECTIONS = 50
+DEFAULT_POOL_WAIT_SECONDS = 3.0
+
+
+def _env_number(name: str, default: float) -> float:
+    """Read a positive number from the environment, falling back on junk.
+
+    A typo in an ops-set variable must not stop a service booting, so anything
+    unparseable or non-positive degrades to the default rather than raising.
+    """
+    raw = os.environ.get(name, "").strip()
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 # ``Redis`` is NOT subscripted here, deliberately. The annotation used to carry
@@ -94,7 +132,8 @@ def build_redis_client(
     url: str,
     *,
     decode_responses: bool = True,
-    max_connections: int = 20,
+    max_connections: int | None = None,
+    pool_wait_seconds: float | None = None,
 ) -> Redis:
     """Return a Redis client hardened for serverless (Upstash) Redis.
 
@@ -112,15 +151,21 @@ def build_redis_client(
         decode_responses: Return ``str`` rather than ``bytes``. Every caller in
             this repo stores text (JTIs, epochs, JSON), so this defaults on; the
             flag exists for a future byte-oriented value.
-        max_connections: Per-process ceiling on the pool.
+        max_connections: Per-process ceiling on the pool. ``None`` reads
+            ``REDIS_MAX_CONNECTIONS`` (default 50).
+        pool_wait_seconds: How long a caller waits for a free connection when
+            the pool is exhausted before ``ConnectionError``. ``None`` reads
+            ``REDIS_POOL_WAIT_SECONDS`` (default 3.0). See module docstring.
     """
-    # Both ignore codes are needed the day mypy is tightened per CLAUDE.md:
-    # from_url is untyped in redis-py, so it is a no-untyped-call whose result
-    # is Any. Neither fires under the current non-strict root config.
-    return aioredis.from_url(  # type: ignore[no-any-return,no-untyped-call]
+    if max_connections is None:
+        max_connections = int(_env_number("REDIS_MAX_CONNECTIONS", DEFAULT_MAX_CONNECTIONS))
+    if pool_wait_seconds is None:
+        pool_wait_seconds = _env_number("REDIS_POOL_WAIT_SECONDS", DEFAULT_POOL_WAIT_SECONDS)
+    pool = BlockingConnectionPool.from_url(
         url,
-        decode_responses=decode_responses,
         max_connections=max_connections,
+        timeout=pool_wait_seconds,
+        decode_responses=decode_responses,
         health_check_interval=HEALTH_CHECK_INTERVAL_SECONDS,
         socket_keepalive=True,
         socket_connect_timeout=SOCKET_CONNECT_TIMEOUT_SECONDS,
@@ -134,3 +179,6 @@ def build_redis_client(
         # transport errors or a dropped connection is re-raised, not retried.
         retry_on_error=[RedisConnectionError, RedisTimeoutError],
     )
+    # ``from_pool`` marks the client as owning the pool, so ``aclose()`` still
+    # tears the pool down exactly as ``from_url`` did.
+    return Redis.from_pool(pool)

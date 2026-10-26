@@ -22,7 +22,6 @@ from typing import Any
 
 import boto3
 import httpx
-import redis.asyncio as aioredis
 import structlog
 from anthropic import AsyncAnthropic
 from botocore.client import Config as BotoConfig
@@ -32,6 +31,7 @@ from sqlalchemy.sql import text
 
 from app.config import settings
 from app.dependencies import ServiceUserDep
+from shared.redis_factory import build_redis_client
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/health", tags=["health"])
@@ -62,7 +62,7 @@ async def _check_postgres() -> dict[str, Any]:
 
 async def _check_redis() -> dict[str, Any]:
     try:
-        client = aioredis.from_url(settings.redis_url, decode_responses=True)  # type: ignore[no-untyped-call]
+        client = build_redis_client(settings.redis_url)
         pong = await client.ping()
         await client.aclose()
         return {"ok": pong is True}

@@ -23,6 +23,7 @@ the real load.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import os
@@ -52,6 +53,10 @@ SLOT_UNKNOWN = "unknown"  # Redis unreachable / no room name -> fail OPEN
 # VAD model, and an unbounded WORKER_MAX_CONCURRENT_JOBS must not become an
 # unbounded number of idle processes.
 MAX_IDLE_PROCESSES = 8
+
+# Bound on the security-N1 claim check inside request_fnc: past it the check
+# fails open, so a slow database delays an accept by at most this long.
+CLAIM_CHECK_TIMEOUT_SECONDS = 3.0
 
 RedisFactory = Callable[[], Any]
 
@@ -186,55 +191,67 @@ async def claim_permitted(redis_factory: RedisFactory, room_name: str) -> bool:
     the dispatch bypassed the token endpoint). The user must not already hold
     another slot or another in-progress session - the one-interview-per-user rule
     that ``/token`` enforces and that a lapsed-then-claimed slot would otherwise
-    bypass. Fails OPEN on any error: refusing on a lookup failure strands a
-    candidate.
+    bypass. Fails OPEN on any error, and on a lookup slower than
+    ``CLAIM_CHECK_TIMEOUT_SECONDS`` (a cold Neon wake-up must not hold the job
+    offer): refusing on a lookup failure strands a candidate.
     """
     try:
-        import uuid
-
-        from sqlalchemy import select, text
-
-        from app.config import settings
-        from app.database import get_session_factory, init_engine
-        from app.models import Session as InterviewSession
-
-        init_engine()
-        async with get_session_factory()() as db:
-            user_id = (
-                await db.execute(
-                    select(InterviewSession.user_id).where(
-                        InterviewSession.id == uuid.UUID(room_name)
-                    )
-                )
-            ).scalar_one_or_none()
-            if user_id is None:
-                return True
-            if settings.max_active_sessions_per_user > 0:
-                others = (
-                    await db.execute(
-                        text(
-                            "SELECT count(*) FROM sessions WHERE user_id = :uid AND id <> :sid"
-                            " AND status = 'in_progress' AND deleted_at IS NULL"
-                            " AND updated_at > now() - make_interval(mins => :mins)"
-                        ),
-                        {
-                            "uid": user_id,
-                            "sid": uuid.UUID(room_name),
-                            "mins": settings.active_session_window_minutes,
-                        },
-                    )
-                ).scalar_one()
-                if int(others) >= settings.max_active_sessions_per_user:
-                    return False
-        redis = redis_factory()
-        pointer = await redis.get(user_pointer_key(str(user_id)))
-        return not (pointer and pointer != room_name and await slot_held(redis, pointer))
+        return await asyncio.wait_for(
+            _claim_permitted(redis_factory, room_name), timeout=CLAIM_CHECK_TIMEOUT_SECONDS
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "interview-worker.claim_check_failed room=%s err=%s - failing open",
             room_name, type(exc).__name__,
         )
         return True
+
+
+async def _claim_permitted(redis_factory: RedisFactory, room_name: str) -> bool:
+    import uuid
+
+    from sqlalchemy import select, text
+
+    from app.config import settings
+    from app.database import get_session_factory, init_engine
+    from app.models import Session as InterviewSession
+
+    init_engine()
+    async with get_session_factory()() as db:
+        user_id = (
+            await db.execute(
+                select(InterviewSession.user_id).where(
+                    InterviewSession.id == uuid.UUID(room_name)
+                )
+            )
+        ).scalar_one_or_none()
+        if user_id is None:
+            return True
+        if settings.max_active_sessions_per_user > 0:
+            others = (
+                await db.execute(
+                    text(
+                        "SELECT count(*) FROM sessions WHERE user_id = :uid AND id <> :sid"
+                        " AND status = 'in_progress' AND deleted_at IS NULL"
+                        " AND updated_at > now() - make_interval(mins => :mins)"
+                    ),
+                    {
+                        "uid": user_id,
+                        "sid": uuid.UUID(room_name),
+                        "mins": settings.active_session_window_minutes,
+                    },
+                )
+            ).scalar_one()
+            if int(others) >= settings.max_active_sessions_per_user:
+                return False
+    redis = redis_factory()
+    pointer = await redis.get(user_pointer_key(str(user_id)))
+    # The worker's Redis client is built without decode_responses, so the pointer
+    # arrives as bytes; comparing bytes to the str room name is always unequal and
+    # would treat the candidate's OWN slot as "another" one (review r3 S1).
+    if isinstance(pointer, bytes):
+        pointer = pointer.decode()
+    return not (pointer and pointer != room_name and await slot_held(redis, pointer))
 
 
 async def decide(

@@ -200,7 +200,7 @@ class _FakeDb:
         return result
 
 
-def _patch_claim(db: _FakeDb, pointer: str | None, pointer_held: bool) -> Any:
+def _patch_claim(db: _FakeDb, pointer: str | bytes | None, pointer_held: bool) -> Any:
     from contextlib import ExitStack
 
     redis = MagicMock()
@@ -239,6 +239,36 @@ async def test_claim_permitted_allows_a_clean_user_and_a_lapsed_pointer() -> Non
         assert await adm.claim_permitted(lambda: redis, ROOM) is True
     stack, redis = _patch_claim(_FakeDb("u1", others=0), ROOM, True)  # our own slot
     with stack:
+        assert await adm.claim_permitted(lambda: redis, ROOM) is True
+
+
+@pytest.mark.asyncio
+async def test_claim_permitted_treats_a_bytes_pointer_to_our_own_room_as_ours() -> None:
+    """The worker's Redis client returns bytes; our own slot must not count as another."""
+    stack, redis = _patch_claim(_FakeDb("u1", others=0), ROOM.encode(), True)
+    with stack:
+        assert await adm.claim_permitted(lambda: redis, ROOM) is True
+
+
+@pytest.mark.asyncio
+async def test_claim_permitted_refuses_a_bytes_pointer_to_another_held_slot() -> None:
+    stack, redis = _patch_claim(_FakeDb("u1", others=0), b"other-session", True)
+    with stack:
+        assert await adm.claim_permitted(lambda: redis, ROOM) is False
+
+
+@pytest.mark.asyncio
+async def test_claim_permitted_fails_open_when_the_database_is_slow() -> None:
+    """A cold database must not hold the job offer past the bound."""
+    import asyncio
+
+    class _SlowDb(_FakeDb):
+        async def execute(self, *_a: Any, **_k: Any) -> Any:
+            await asyncio.sleep(5)
+            return await super().execute()
+
+    stack, redis = _patch_claim(_SlowDb("u1", others=1), None, False)
+    with stack, patch.object(adm, "CLAIM_CHECK_TIMEOUT_SECONDS", 0.05):
         assert await adm.claim_permitted(lambda: redis, ROOM) is True
 
 

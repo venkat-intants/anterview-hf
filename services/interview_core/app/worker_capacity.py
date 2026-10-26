@@ -17,36 +17,53 @@ token endpoint read that key. That could not work:
 
 The ledger
 ----------
-A Redis sorted set, ``interview:slots``: member = session_id (== LiveKit room
-name), score = the unix time the slot EXPIRES. One member per interview that is
-either waiting for its interviewer or running one.
+A Redis sorted set, ``<ns>:interview:slots``: member = session_id (== LiveKit
+room name), score = the unix time the slot EXPIRES. One member per interview
+that is either waiting for its interviewer or running one.
 
 * ``reserve_slot`` (token endpoint) - one Lua script that drops expired members,
-  then either refreshes an already-held slot (a reload / re-dispatch of the same
-  session must never consume a second slot), or admits a new one if
+  then either confirms an already-held slot, or admits a new one if
   ``ZCARD < cap``, or refuses. Atomic, so concurrent requests cannot oversubscribe.
-* ``extend_slot`` (job process, on accept) - the short reservation lease becomes
-  a long interview lease.
+* **The API can never lengthen a hold.** Confirming an existing slot returns
+  HELD and leaves its expiry alone. Only ``extend_slot`` (job process, on accept)
+  lengthens a lease. A re-request can take a slot again once the reservation has
+  lapsed, but cannot refresh it indefinitely (security review H2: refreshing
+  every <180 s let one account hold slots forever without ever joining).
+* **One reservation per user.** ``reserve_slot(user_id=...)`` records
+  ``user -> session`` in the same script and refuses a second, different session
+  while the first still holds its slot (``USER_BUSY``). One account can therefore
+  hold at most one slot.
 * ``release_slot`` (job process, shutdown callback) - frees the slot the moment
   the interview ends, on every exit path.
 * The lease is the crash backstop: a worker that dies without releasing leaves a
-  member that simply expires. Capacity is therefore self-healing, with no
-  "counter stuck too high forever" mode.
+  member that simply expires. Capacity is self-healing.
 
-FAIL-OPEN vs FAIL-CLOSED (deliberate, unchanged in spirit)
------------------------------------------------------------
-Every helper here RAISES on a Redis error and leaves the policy to the caller:
+KEY NAMESPACE
+-------------
+Every key is prefixed with ``settings.redis_key_namespace`` (default: ``APP_ENV``).
+Local development shares the production Upstash instance (services/*/.env), so an
+un-namespaced ledger let a developer's API or worker reserve, and RELEASE,
+production slots. ``development:`` and ``production:`` ledgers cannot touch each
+other. (The LiveKit project is shared too - see ``INTERVIEW_AGENT_NAME`` in
+``.env.example``.)
 
-* token endpoint: fails OPEN. A Redis outage must not block every candidate from
-  starting; the worker's own gates (``load_fnc`` and the memory estimate) still
-  bound the real load, and an over-admitted candidate is recovered by the
-  re-dispatch path rather than being stranded.
+FAIL-OPEN vs FAIL-CLOSED
+------------------------
+Every helper RAISES on a Redis error and leaves the policy to the caller:
+
+* token endpoint: the slot reservation fails OPEN. A Redis outage must not block
+  every candidate from starting; the worker's own gates (load function, memory
+  estimate) still bound the real load.
 * worker ``request_fnc``: fails OPEN too (accept) - rejecting a job for a ledger
   we cannot read is the one choice that strands a candidate for certain.
+* ``/redispatch``: the per-session ceiling and the dispatch lock fail CLOSED (it
+  is a recovery path, not the entry path; the candidate can still use "Try
+  again", which is a fresh ``/token``). Only the slot reservation fails open.
 * release: best-effort. A failed release is repaired by lease expiry.
 
-Redis keys are namespaced with the ``interview:`` prefix; nothing else in the
-codebase writes them.
+NOTE on recovery: ``/redispatch`` is gated by the same ledger, so it recovers a
+candidate whose JOB was lost (refused, timed out, crashed) - it does not rescue
+an over-admitted candidate; when the ledger is full it answers 503.
 """
 
 from __future__ import annotations
@@ -57,43 +74,72 @@ from typing import Any
 
 import structlog
 
+from app.config import settings
+
 log = structlog.get_logger(__name__)
 
-SLOTS_KEY: str = "interview:slots"
-# Redis key counting how many times a session has been re-dispatched, so a
-# misbehaving client cannot hammer the LiveKit API for one room.
-REDISPATCH_COUNT_KEY_PREFIX: str = "interview:redispatch:"
 REDISPATCH_COUNT_TTL_SECONDS: int = 3600
+# How long the per-user "this is your session" pointer outlives its slot; the
+# pointer is only trusted while its session still holds an unexpired slot.
+USER_POINTER_TTL_SECONDS: int = 7200
+
+
+def _ns() -> str:
+    """Key namespace: explicit setting, else APP_ENV (see module docstring)."""
+    return (settings.redis_key_namespace or settings.app_env or "development").strip()
+
+
+def slots_key() -> str:
+    return f"{_ns()}:interview:slots"
+
+
+def user_pointer_key(user_id: str) -> str:
+    return f"{_ns()}:interview:user_slot:{user_id}"
+
+
+def redispatch_count_key(session_id: str) -> str:
+    return f"{_ns()}:interview:redispatch:{session_id}"
+
+
+def dispatch_lock_key(room: str) -> str:
+    return f"{_ns()}:interview:dispatch_lock:{room}"
+
+
+def job_marker_key(room: str) -> str:
+    return f"{_ns()}:interview:job:{room}"
 
 
 class SlotResult(str, Enum):
     """Outcome of ``reserve_slot``."""
 
     RESERVED = "reserved"  # a new slot was taken
-    HELD = "held"  # this session already held a slot; lease refreshed
+    HELD = "held"  # this session already held a slot (expiry NOT extended)
     FULL = "full"  # at the cap, nothing taken
+    USER_BUSY = "user_busy"  # this user already holds a slot for another session
 
 
-# KEYS[1] = ledger; ARGV = now, ttl_seconds, cap, member.
-# Returns {code, count}: code 1 = reserved, 2 = already held (refreshed), 0 = full;
-# count = occupied slots after the call (excluding expired).
-# An already-held slot keeps the LATER of its current expiry and now+ttl, so a
-# re-dispatch can never SHORTEN a running interview's long lease.
+# KEYS[1] = ledger, KEYS[2] = per-user pointer
+# ARGV = now, ttl_seconds, cap, member, user_id ("" = no per-user rule), pointer_ttl
+# Returns {code, count}: 1 reserved, 2 held (NOT extended), 0 full, 3 user busy.
 _RESERVE_LUA = """
 redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
-local held = redis.call('ZSCORE', KEYS[1], ARGV[4])
-local expiry = tonumber(ARGV[1]) + tonumber(ARGV[2])
-if held then
-  if tonumber(held) < expiry then
-    redis.call('ZADD', KEYS[1], expiry, ARGV[4])
-  end
+if redis.call('ZSCORE', KEYS[1], ARGV[4]) then
   return {2, redis.call('ZCARD', KEYS[1])}
+end
+if ARGV[5] ~= '' then
+  local other = redis.call('GET', KEYS[2])
+  if other and other ~= ARGV[4] and redis.call('ZSCORE', KEYS[1], other) then
+    return {3, redis.call('ZCARD', KEYS[1])}
+  end
 end
 local count = redis.call('ZCARD', KEYS[1])
 if count >= tonumber(ARGV[3]) then
   return {0, count}
 end
-redis.call('ZADD', KEYS[1], expiry, ARGV[4])
+redis.call('ZADD', KEYS[1], tonumber(ARGV[1]) + tonumber(ARGV[2]), ARGV[4])
+if ARGV[5] ~= '' then
+  redis.call('SET', KEYS[2], ARGV[4], 'EX', tonumber(ARGV[6]))
+end
 return {1, count + 1}
 """
 
@@ -108,57 +154,104 @@ end
 return 0
 """
 
+# KEYS[1] = counter; ARGV = ttl. INCR and EXPIRE in one step so a failure between
+# them can never leave a counter with no TTL (which would block a session for good).
+_INCR_EXPIRE_LUA = """
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1])) end
+return n
+"""
+
 
 async def reserve_slot(
-    redis: Any, session_id: str, *, cap: int, ttl_seconds: int
+    redis: Any,
+    session_id: str,
+    *,
+    cap: int,
+    ttl_seconds: int,
+    user_id: str = "",
 ) -> tuple[SlotResult, int]:
     """Atomically take (or confirm) this session's slot.
 
-    Returns ``(result, occupied)``. ``cap <= 0`` means "no cap": the slot is
-    still recorded so the ledger stays accurate, but it is never refused.
+    Returns ``(result, occupied)``. ``cap <= 0`` means "no cap". ``user_id`` ""
+    skips the one-reservation-per-user rule (the worker's own claim has no user).
     Raises on a Redis error - see the module docstring for who fails open.
     """
     now = int(time.time())
     effective_cap = cap if cap > 0 else 1_000_000
     raw = await redis.eval(
-        _RESERVE_LUA, 1, SLOTS_KEY, now, ttl_seconds, effective_cap, session_id
+        _RESERVE_LUA,
+        2,
+        slots_key(),
+        user_pointer_key(user_id) if user_id else user_pointer_key("-"),
+        now,
+        ttl_seconds,
+        effective_cap,
+        session_id,
+        user_id,
+        USER_POINTER_TTL_SECONDS,
     )
     code, occupied = int(raw[0]), int(raw[1])
     if code == 1:
         return SlotResult.RESERVED, occupied
     if code == 2:
         return SlotResult.HELD, occupied
+    if code == 3:
+        return SlotResult.USER_BUSY, occupied
     return SlotResult.FULL, occupied
 
 
 async def extend_slot(redis: Any, session_id: str, *, ttl_seconds: int) -> bool:
     """Turn a short reservation into the long interview lease. False if gone."""
     now = int(time.time())
-    raw = await redis.eval(_EXTEND_LUA, 1, SLOTS_KEY, now, ttl_seconds, session_id)
+    raw = await redis.eval(_EXTEND_LUA, 1, slots_key(), now, ttl_seconds, session_id)
     return int(raw) == 1
 
 
 async def release_slot(redis: Any, session_id: str) -> None:
     """Free this session's slot. Idempotent; raises on a Redis error."""
-    await redis.zrem(SLOTS_KEY, session_id)
+    await redis.zrem(slots_key(), session_id)
 
 
 async def count_slots(redis: Any) -> int:
     """Number of unexpired slots (expired members are trimmed first)."""
-    await redis.zremrangebyscore(SLOTS_KEY, "-inf", int(time.time()))
-    return int(await redis.zcard(SLOTS_KEY))
+    await redis.zremrangebyscore(slots_key(), "-inf", int(time.time()))
+    return int(await redis.zcard(slots_key()))
 
 
 async def slot_held(redis: Any, session_id: str) -> bool:
     """True when this session holds an unexpired slot."""
-    score = await redis.zscore(SLOTS_KEY, session_id)
+    score = await redis.zscore(slots_key(), session_id)
     return score is not None and float(score) > time.time()
 
 
 async def note_redispatch(redis: Any, session_id: str) -> int:
-    """Count one re-dispatch for this session and return the new total."""
-    key = f"{REDISPATCH_COUNT_KEY_PREFIX}{session_id}"
-    total = int(await redis.incr(key))
-    if total == 1:
-        await redis.expire(key, REDISPATCH_COUNT_TTL_SECONDS)
-    return total
+    """Count one re-dispatch for this session (atomic INCR+EXPIRE)."""
+    return int(
+        await redis.eval(
+            _INCR_EXPIRE_LUA, 1, redispatch_count_key(session_id), REDISPATCH_COUNT_TTL_SECONDS
+        )
+    )
+
+
+async def reset_redispatch(redis: Any, session_id: str) -> None:
+    """A fresh join token starts a fresh re-dispatch budget (best-effort)."""
+    await redis.delete(redispatch_count_key(session_id))
+
+
+async def acquire_dispatch_lock(redis: Any, room: str, ttl_seconds: int) -> bool:
+    """Per-room debounce/lock around list -> delete -> create. False = held."""
+    return bool(await redis.set(dispatch_lock_key(room), "1", nx=True, ex=ttl_seconds))
+
+
+async def release_dispatch_lock(redis: Any, room: str) -> None:
+    await redis.delete(dispatch_lock_key(room))
+
+
+async def claim_job_marker(redis: Any, room: str, ttl_seconds: int) -> bool:
+    """One interviewer JOB per room: True if this caller is the first."""
+    return bool(await redis.set(job_marker_key(room), "1", nx=True, ex=ttl_seconds))
+
+
+async def clear_job_marker(redis: Any, room: str) -> None:
+    await redis.delete(job_marker_key(room))

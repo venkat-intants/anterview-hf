@@ -1,11 +1,17 @@
 """Explicit dispatch (app/agent/launcher.py).
 
-Every case is about one property: a room with no interviewer gets exactly ONE
-live dispatch, however many times the candidate's browser asks.
+Properties pinned here:
+  * a room with no interviewer gets exactly ONE live dispatch, however often the
+    browser asks;
+  * it is a RECOVERY path: no candidate in the room => nothing is created (a
+    dispatch would make LiveKit create the room and run a paid interviewer into
+    an empty one - security review H1);
+  * a job that is still starting is never duplicated (review S1 / M1).
 """
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -14,16 +20,29 @@ from livekit import api
 
 from app.agent import launcher
 from app.config import settings
+from app.worker_capacity import dispatch_lock_key
 
 AGENT = "anthire-interviewer"
+USER = "user-42"
+CANDIDATE = f"candidate-{USER}"
 
 
-def _participant(kind: Any) -> Any:
-    return api.ParticipantInfo(identity="p", kind=kind)
+def _participant(kind: Any = None, identity: str = CANDIDATE) -> Any:
+    kind = api.ParticipantInfo.Kind.STANDARD if kind is None else kind
+    return api.ParticipantInfo(identity=identity, kind=kind)
+
+
+def _agent() -> Any:
+    return _participant(api.ParticipantInfo.Kind.AGENT, identity="agent-1")
 
 
 def _dispatch(
-    dispatch_id: str, *, agent: str = AGENT, job_status: Any = None, deleted: int = 0
+    dispatch_id: str,
+    *,
+    agent: str = AGENT,
+    job_status: Any = None,
+    deleted: int = 0,
+    age_seconds: float = 1000.0,
 ) -> Any:
     jobs = []
     if job_status is not None:
@@ -32,8 +51,29 @@ def _dispatch(
         id=dispatch_id,
         agent_name=agent,
         room="r",
-        state=api.AgentDispatchState(jobs=jobs, deleted_at=deleted),
+        state=api.AgentDispatchState(
+            jobs=jobs, deleted_at=deleted, created_at=int(time.time() - age_seconds)
+        ),
     )
+
+
+class _FakeRedis:
+    """SET NX EX + DEL, which is all the dispatch lock uses."""
+
+    def __init__(self, *, down: bool = False) -> None:
+        self.keys: dict[str, str] = {}
+        self.down = down
+
+    async def set(self, key: str, value: str, *, nx: bool = False, ex: int | None = None) -> Any:
+        if self.down:
+            raise ConnectionError("redis down")
+        if nx and key in self.keys:
+            return None
+        self.keys[key] = value
+        return True
+
+    async def delete(self, key: str) -> None:
+        self.keys.pop(key, None)
 
 
 class _FakeLiveKit:
@@ -46,11 +86,12 @@ class _FakeLiveKit:
         dispatches: list[Any] | None = None,
         room_missing: bool = False,
     ) -> None:
-        self.participants = participants or []
+        self.participants = [_participant()] if participants is None else participants
         self.dispatches = dispatches or []
         self.room_missing = room_missing
         self.created: list[Any] = []
         self.deleted: list[str] = []
+        self.client_kwargs: dict[str, Any] = {}
         self.room = SimpleNamespace(
             list_rooms=self._list_rooms, list_participants=self._list_participants
         )
@@ -96,8 +137,21 @@ def _explicit(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _use(monkeypatch: pytest.MonkeyPatch, fake: _FakeLiveKit) -> _FakeLiveKit:
-    monkeypatch.setattr(launcher.api, "LiveKitAPI", lambda *a, **k: fake)
+    def factory(*args: Any, **kwargs: Any) -> _FakeLiveKit:
+        fake.client_kwargs = kwargs
+        return fake
+
+    monkeypatch.setattr(launcher.api, "LiveKitAPI", factory)
     return fake
+
+
+async def _ensure(
+    redis: _FakeRedis | None = None, hook: Any = None, user: str = USER
+) -> launcher.DispatchOutcome:
+    redis = redis or _FakeRedis()
+    return await launcher.ensure_interviewer(
+        "r", user, redis_getter=lambda: redis, before_create=hook
+    )
 
 
 # ------------------------------------------------------------- token embedding
@@ -121,6 +175,56 @@ def test_no_candidate_data_rides_in_the_dispatch() -> None:
     assert cfg.agents[0].metadata == ""
 
 
+# ------------------------------------------------- recovery only (security H1)
+
+
+@pytest.mark.asyncio
+async def test_a_room_that_does_not_exist_is_never_created_by_a_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LiveKit creates the room as a side effect of CreateDispatch; doing so for
+    a room nobody joined starts a paid interviewer in an empty room."""
+    fake = _use(monkeypatch, _FakeLiveKit(room_missing=True))
+    hook_called: list[int] = []
+
+    async def hook() -> None:
+        hook_called.append(1)
+
+    assert await _ensure(hook=hook) is launcher.DispatchOutcome.NOT_JOINED
+    assert fake.created == [] and hook_called == []
+
+
+@pytest.mark.asyncio
+async def test_a_room_without_this_candidate_gets_no_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _use(monkeypatch, _FakeLiveKit(participants=[]))
+    assert await _ensure() is launcher.DispatchOutcome.NOT_JOINED
+    assert fake.created == []
+
+
+@pytest.mark.asyncio
+async def test_another_users_candidate_participant_does_not_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _use(monkeypatch, _FakeLiveKit(participants=[_participant(identity="candidate-other")]))
+    assert await _ensure() is launcher.DispatchOutcome.NOT_JOINED
+    assert fake.created == []
+
+
+@pytest.mark.asyncio
+async def test_an_agent_identity_cannot_pose_as_the_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _use(
+        monkeypatch,
+        _FakeLiveKit(participants=[_participant(api.ParticipantInfo.Kind.AGENT, CANDIDATE)]),
+    )
+    # The only participant is an agent => it is "already connected", not a join.
+    assert await _ensure() is launcher.DispatchOutcome.NOT_JOINED
+    assert fake.created == []
+
+
 # -------------------------------------------------------------- ensure_interviewer
 
 
@@ -128,11 +232,8 @@ def test_no_candidate_data_rides_in_the_dispatch() -> None:
 async def test_an_agent_already_in_the_room_means_do_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake = _use(
-        monkeypatch,
-        _FakeLiveKit(participants=[_participant(api.ParticipantInfo.Kind.AGENT)]),
-    )
-    assert await launcher.ensure_interviewer("r") is launcher.DispatchOutcome.ALREADY_CONNECTED
+    fake = _use(monkeypatch, _FakeLiveKit(participants=[_participant(), _agent()]))
+    assert await _ensure() is launcher.DispatchOutcome.ALREADY_CONNECTED
     assert fake.created == [] and fake.deleted == []
 
 
@@ -140,44 +241,90 @@ async def test_an_agent_already_in_the_room_means_do_nothing(
 async def test_a_candidate_alone_in_the_room_gets_a_fresh_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake = _use(
-        monkeypatch,
-        _FakeLiveKit(participants=[_participant(api.ParticipantInfo.Kind.STANDARD)]),
-    )
-    assert await launcher.ensure_interviewer("r") is launcher.DispatchOutcome.DISPATCHED
+    fake = _use(monkeypatch, _FakeLiveKit())
+    assert await _ensure() is launcher.DispatchOutcome.DISPATCHED
     assert [(c.agent_name, c.room) for c in fake.created] == [(AGENT, "r")]
 
 
 @pytest.mark.asyncio
-async def test_a_room_that_does_not_exist_yet_is_not_an_error(
+async def test_before_create_runs_after_every_check_and_before_the_create(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake = _use(monkeypatch, _FakeLiveKit(room_missing=True))
-    assert await launcher.ensure_interviewer("r") is launcher.DispatchOutcome.DISPATCHED
+    fake = _use(monkeypatch, _FakeLiveKit())
+    order: list[str] = []
+
+    async def hook() -> None:
+        order.append(f"hook(created={len(fake.created)})")
+
+    await _ensure(hook=hook)
+    assert order == ["hook(created=0)"]
     assert len(fake.created) == 1
 
 
 @pytest.mark.asyncio
+async def test_a_refusing_before_create_hook_prevents_the_dispatch_and_frees_the_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _use(monkeypatch, _FakeLiveKit())
+    redis = _FakeRedis()
+
+    async def hook() -> None:
+        raise RuntimeError("ledger full")
+
+    with pytest.raises(RuntimeError):
+        await _ensure(redis, hook)
+    assert fake.created == []
+    assert dispatch_lock_key("r") not in redis.keys  # a retry is not blocked
+
+
+@pytest.mark.asyncio
 async def test_a_running_job_is_never_duplicated(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The agent process is starting but has not joined: a second dispatch would
-    run two interviews in one room."""
     fake = _use(
         monkeypatch,
         _FakeLiveKit(dispatches=[_dispatch("d1", job_status=api.JobStatus.JS_RUNNING)]),
     )
-    assert await launcher.ensure_interviewer("r") is launcher.DispatchOutcome.STARTING
+    assert await _ensure() is launcher.DispatchOutcome.STARTING
     assert fake.created == [] and fake.deleted == []
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "job_status", [None, api.JobStatus.JS_PENDING, api.JobStatus.JS_FAILED]
-)
-async def test_a_dead_dispatch_is_replaced_not_stacked(
+@pytest.mark.parametrize("job_status", [api.JobStatus.JS_PENDING, None])
+async def test_a_young_dispatch_counts_as_live_whatever_its_job_list_says(
+    monkeypatch: pytest.MonkeyPatch, job_status: Any
+) -> None:
+    """Accepted by the worker, process still starting, no agent participant yet:
+    deleting it and creating a second dispatch runs TWO interviewers (S1). Against
+    a real livekit-server a running job can even list ``jobs: []`` at this point,
+    so the job list alone cannot be trusted."""
+    fake = _use(
+        monkeypatch,
+        _FakeLiveKit(dispatches=[_dispatch("d1", job_status=job_status, age_seconds=5)]),
+    )
+    assert await _ensure() is launcher.DispatchOutcome.STARTING
+    assert fake.created == [] and fake.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_an_old_pending_job_is_the_stranded_case_and_is_replaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _use(
+        monkeypatch,
+        _FakeLiveKit(
+            dispatches=[_dispatch("old", job_status=api.JobStatus.JS_PENDING, age_seconds=300)]
+        ),
+    )
+    assert await _ensure() is launcher.DispatchOutcome.DISPATCHED
+    assert fake.deleted == ["old"] and len(fake.created) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("job_status", [None, api.JobStatus.JS_FAILED])
+async def test_an_old_dead_dispatch_is_replaced_not_stacked(
     monkeypatch: pytest.MonkeyPatch, job_status: Any
 ) -> None:
     fake = _use(monkeypatch, _FakeLiveKit(dispatches=[_dispatch("old", job_status=job_status)]))
-    assert await launcher.ensure_interviewer("r") is launcher.DispatchOutcome.DISPATCHED
+    assert await _ensure() is launcher.DispatchOutcome.DISPATCHED
     assert fake.deleted == ["old"]
     assert len(fake.created) == 1
 
@@ -195,20 +342,60 @@ async def test_other_agents_dispatches_and_deleted_ones_are_left_alone(
             ]
         ),
     )
-    assert await launcher.ensure_interviewer("r") is launcher.DispatchOutcome.DISPATCHED
+    assert await _ensure() is launcher.DispatchOutcome.DISPATCHED
     assert fake.deleted == []
 
 
+# ------------------------------------------------------------- lock (review M1)
+
+
 @pytest.mark.asyncio
-async def test_calling_twice_is_idempotent_once_the_job_runs(
+async def test_concurrent_callers_create_exactly_one_dispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Three parallel /redispatch calls (the rate limit allows it) must not all
+    run list -> delete -> create."""
+    import asyncio
+
     fake = _use(monkeypatch, _FakeLiveKit())
-    assert await launcher.ensure_interviewer("r") is launcher.DispatchOutcome.DISPATCHED
-    # LiveKit now reports the dispatch we created, with a running job.
-    fake.dispatches = [_dispatch("new", job_status=api.JobStatus.JS_RUNNING)]
-    assert await launcher.ensure_interviewer("r") is launcher.DispatchOutcome.STARTING
+    redis = _FakeRedis()
+    outcomes = await asyncio.gather(*[_ensure(redis) for _ in range(3)])
+    assert sorted(o.value for o in outcomes) == ["dispatched", "starting", "starting"]
     assert len(fake.created) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_held_lock_means_starting_without_touching_dispatches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _use(monkeypatch, _FakeLiveKit(dispatches=[_dispatch("old")]))
+    redis = _FakeRedis()
+    redis.keys[dispatch_lock_key("r")] = "1"
+    assert await _ensure(redis) is launcher.DispatchOutcome.STARTING
+    assert fake.created == [] and fake.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_the_lock_fails_closed_when_redis_is_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without the lock two callers can create two interviewers."""
+    fake = _use(monkeypatch, _FakeLiveKit())
+    with pytest.raises(ConnectionError):
+        await _ensure(_FakeRedis(down=True))
+    assert fake.created == []
+
+
+# ------------------------------------------------------------- timeouts / errors
+
+
+@pytest.mark.asyncio
+async def test_livekit_calls_have_an_explicit_short_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The library default is 60 s per call (M3)."""
+    fake = _use(monkeypatch, _FakeLiveKit())
+    await _ensure()
+    timeout = fake.client_kwargs["timeout"]
+    assert timeout.total == settings.livekit_api_timeout_seconds <= 10
 
 
 @pytest.mark.asyncio
@@ -219,12 +406,19 @@ async def test_other_twirp_errors_propagate(monkeypatch: pytest.MonkeyPatch) -> 
 
     _use(monkeypatch, _Broken())
     with pytest.raises(api.TwirpError):
-        await launcher.ensure_interviewer("r")
+        await _ensure()
 
 
 @pytest.mark.asyncio
 async def test_automatic_mode_does_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "interview_agent_name", "", raising=False)
     fake = _use(monkeypatch, _FakeLiveKit())
-    assert await launcher.ensure_interviewer("r") is launcher.DispatchOutcome.AUTOMATIC
+    assert await _ensure() is launcher.DispatchOutcome.AUTOMATIC
     assert fake.created == []
+
+
+def test_dispatch_age_handles_every_timestamp_unit() -> None:
+    now = time.time()
+    for scale in (1, 10**3, 10**6, 10**9):
+        assert launcher._age_seconds(int((now - 10) * scale)) == pytest.approx(10, abs=2)
+    assert launcher._age_seconds(0) == float("inf")

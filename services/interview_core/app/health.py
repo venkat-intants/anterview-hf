@@ -61,14 +61,19 @@ async def _check_postgres() -> dict[str, Any]:
 
 
 async def _check_redis() -> dict[str, Any]:
+    client = None
     try:
         client = build_redis_client(settings.redis_url)
         pong = await client.ping()
-        await client.aclose()
         return {"ok": pong is True}
     except Exception as exc:
         log.warning("health.redis.fail", exc_type=type(exc).__name__, exc_msg=str(exc))
         return {"ok": False, "error": type(exc).__name__}
+    finally:
+        # Closed on every path: each call builds its own pool.
+        if client is not None:
+            with contextlib.suppress(Exception):
+                await client.aclose()
 
 
 async def _check_s3() -> dict[str, Any]:

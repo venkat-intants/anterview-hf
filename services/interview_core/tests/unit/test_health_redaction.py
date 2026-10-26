@@ -146,3 +146,23 @@ def test_deep_health_response_body_carries_no_connection_detail(
     assert body["checks"]["postgres"]["error"] == "DriverBoomError"
     for fragment in _LEAKY_FRAGMENTS:
         assert fragment not in response.text
+
+
+async def test_the_redis_health_client_is_closed_even_when_ping_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each call builds its own BlockingConnectionPool; a failed ping used to
+    leave it open (review N8)."""
+    closed: list[bool] = []
+
+    class _Client:
+        async def ping(self) -> bool:
+            raise ConnectionError("down")
+
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(health, "build_redis_client", lambda *_a, **_k: _Client())
+    result = await health._check_redis()
+    assert result == {"ok": False, "error": "ConnectionError"}
+    assert closed == [True]

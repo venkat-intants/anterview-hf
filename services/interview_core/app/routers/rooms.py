@@ -48,7 +48,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agent.launcher import ensure_interviewer, room_configuration
+from app.agent.launcher import DispatchOutcome, ensure_interviewer, room_configuration
 from app.config import settings
 from app.consent_guard import has_active_consent
 from app.database import get_db_session
@@ -56,7 +56,7 @@ from app.dependencies import GuestBoundUserDep
 from app.models import Session as InterviewSession
 from app.rate_limit import enforce_user_rate_limit
 from app.redis_client import get_redis
-from app.worker_capacity import SlotResult, note_redispatch, reserve_slot
+from app.worker_capacity import SlotResult, note_redispatch, reserve_slot, reset_redispatch
 
 log = structlog.get_logger(__name__)
 
@@ -180,6 +180,37 @@ async def _load_open_session(
             status_code=status.HTTP_409_CONFLICT,
             detail="This interview session has already finished and cannot be re-entered.",
         )
+
+    # 4. DPDP consent must be present (server-side; can't bypass via curl).
+    if not await has_active_consent(db, user_id_str):
+        log.info("rooms.token.consent_required", session_id=str(session_id))
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "DPDP consent required before starting an interview session. "
+                "Call POST /consent (data_gateway) first."
+            ),
+        )
+
+    # 5. One RUNNING interview per user (M3). Another of this user's sessions in
+    #    progress refuses this one -- unless this request IS that session, which
+    #    is a reload / rejoin (the probe excludes `session_id`). A database check,
+    #    so it holds even while every Redis control fails open. It lives in this
+    #    shared gate, not in /token alone: /redispatch skipped it once (security
+    #    review H1) and so could start workers past the rule.
+    if await _has_other_active_session(db, user_id_str, session_id):
+        log.warning(
+            "rooms.token.other_session_active",
+            session_id=str(session_id),
+            user_id=user_id_str,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "You already have an interview in progress. Finish it, or wait a "
+                "few minutes for it to close, before starting another."
+            ),
+        )
     return session
 
 
@@ -217,35 +248,11 @@ async def create_room_token(
 
     await _load_open_session(db, session_id, user_id_str)
 
-    # 5. DPDP consent must be present (server-side; can't bypass via curl).
-    if not await has_active_consent(db, user_id_str):
-        log.info("rooms.token.consent_required", session_id=str(session_id))
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "DPDP consent required before starting an interview session. "
-                "Call POST /consent (data_gateway) first."
-            ),
-        )
-
-    # 5b. One RUNNING interview per user (M3). A second worker is refused while
-    #     another of this user's sessions is in progress -- unless this request is
-    #     for that same session, which is a reload / rejoin and must keep working
-    #     (the probe excludes `session_id`, and dispatch is idempotent per room).
-    #     A database check, so it holds even while the Redis limiter fails open.
-    if await _has_other_active_session(db, user_id_str, session_id):
-        log.warning(
-            "rooms.token.other_session_active",
-            session_id=str(session_id),
-            user_id=user_id_str,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "You already have an interview in progress. Finish it, or wait a "
-                "few minutes for it to close, before starting another."
-            ),
-        )
+    # The gates above (and consent / one-running-interview, now in the shared
+    # gate) are all database reads. Return the connection to the pool BEFORE the
+    # Redis round trip and the rest: nothing below touches the DB, and a pooled
+    # connection is a scarce slot (security review M3).
+    await db.close()
 
     # 6. Atomically RESERVE an interview slot - after every other gate, so a
     #    refusal above never leaves a reservation behind, and BEFORE the token,
@@ -268,6 +275,7 @@ async def create_room_token(
                 room_name,
                 cap=cap,
                 ttl_seconds=settings.slot_reservation_seconds,
+                user_id=user_id_str,
             )
         except Exception as exc:  # noqa: BLE001 - fail OPEN, see above
             log.warning(
@@ -276,6 +284,17 @@ async def create_room_token(
                 err=type(exc).__name__,
             )
         else:
+            if slot is SlotResult.USER_BUSY:
+                # One reservation per user: stops one account holding slots it
+                # never uses (security review H2).
+                log.warning("rooms.token.user_slot_busy", session_id=room_name)
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "You already have another interview waiting to start. "
+                        "Join it, or wait a few minutes for it to expire."
+                    ),
+                )
             if slot is SlotResult.FULL:
                 log.warning(
                     "rooms.token.worker_full",
@@ -327,6 +346,12 @@ async def create_room_token(
     if room_config is not None:
         access = access.with_room_config(room_config)
     token = access.to_jwt()
+    # A fresh join starts a fresh re-dispatch budget, so a candidate who used it
+    # up on an earlier attempt is not locked out of recovery for an hour.
+    try:
+        await reset_redispatch(get_redis(), room_name)
+    except Exception as exc:  # noqa: BLE001 - best effort
+        log.warning("rooms.token.redispatch_reset_failed", err=type(exc).__name__)
 
     log.info(
         "rooms.token.issued",
@@ -348,8 +373,8 @@ class RedispatchResponse(BaseModel):
         ...,
         description=(
             "already_connected: an interviewer is in the room. starting: a "
-            "dispatch has a running job, the interviewer is about to join. "
-            "dispatched: a fresh dispatch was created. automatic: explicit "
+            "dispatch is live (or being created), the interviewer is about to "
+            "join. dispatched: a fresh dispatch was created. automatic: explicit "
             "dispatch is switched off, nothing to do."
         ),
     )
@@ -370,21 +395,27 @@ async def redispatch_interviewer(
 ) -> RedispatchResponse:
     """Re-create the interviewer dispatch for a room that has no interviewer.
 
+    A RECOVERY path for a candidate who has already joined, never an entry path:
+    it refuses (409) unless the room exists and contains this user's own
+    ``candidate-<id>`` participant, because LiveKit would otherwise create the
+    room as a side effect of the dispatch and a paid interviewer would run into
+    an empty room (security review H1).
+
     IDEMPOTENT by construction (this is the mutation-idempotency contract for
-    this endpoint, in place of a client-supplied key): calling it while an agent
-    is in the room, or while a dispatch already has a running job, changes
-    nothing and returns ``already_connected`` / ``starting``. Only a room with
-    NO interviewer and no live job gets a new dispatch, and any dead dispatch is
-    removed first, so there is never more than one live dispatch per room.
+    this endpoint, in place of a client-supplied key): while an agent is in the
+    room, or a dispatch is live or being created, it changes nothing and returns
+    ``already_connected`` / ``starting``. Only a room with NO interviewer and no
+    live dispatch gets a new one, after dead dispatches are removed.
 
-    Same gates as ``POST /token`` (ownership, not finished, consent) plus the
-    slot ledger: the session must hold - or be able to take - a slot, so this
-    cannot be used to run interviews past the cap.
+    Gates, in order: per-user rate limit; the SAME database gates as ``/token``
+    (ownership, not finished, consent, one running interview per user - shared in
+    ``_load_open_session`` so they cannot drift); the per-session ceiling, which
+    FAILS CLOSED on a Redis error; the participant check and dispatch lock (also
+    fail closed); and only then the slot reservation, which is non-extending and
+    fails open. The ceiling and participant check come BEFORE reserving, so a
+    refused call never touches the ledger.
 
-    Bounded three ways: a per-user rate limit, a hard per-session ceiling
-    (``room_redispatch_max_per_session``, then 429), and the LiveKit-side
-    idempotence above. Every call counts towards the ceiling, including the
-    no-op ones, which is why the frontend polls rarely.
+    The DB connection is released before any LiveKit call (M3).
     """
     if not (settings.livekit_url and settings.livekit_api_key and settings.livekit_api_secret):
         log.error("rooms.redispatch.livekit_not_configured")
@@ -398,52 +429,25 @@ async def redispatch_interviewer(
         "room_redispatch", user_id_str, settings.room_redispatch_per_minute
     )
     await _load_open_session(db, session_id, user_id_str)
-
-    if not await has_active_consent(db, user_id_str):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="DPDP consent required before starting an interview session.",
-        )
+    await db.close()  # nothing below touches the DB; LiveKit calls can be slow
 
     room_name = str(session_id)
     max_attempts = settings.room_redispatch_max_per_session
     cap = settings.worker_max_concurrent_jobs
+    redis = get_redis()
 
-    # Redis serves two purposes here and fails OPEN for both (an outage must not
-    # strand the candidate who is already waiting): the per-session ceiling and
-    # the slot ledger.
-    attempt = 1
     try:
-        redis = get_redis()
         attempt = await note_redispatch(redis, room_name)
-        if cap > 0:
-            slot, occupied = await reserve_slot(
-                redis, room_name, cap=cap, ttl_seconds=settings.slot_reservation_seconds
-            )
-            if slot is SlotResult.FULL:
-                log.warning(
-                    "rooms.redispatch.worker_full",
-                    session_id=room_name,
-                    active_jobs=occupied,
-                    cap=cap,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=(
-                        "All interview slots are currently occupied. "
-                        "Please wait a few minutes and try again."
-                    ),
-                    headers={"Retry-After": "30"},
-                )
-    except HTTPException:
-        raise
-    except Exception as exc:  # noqa: BLE001 - fail OPEN, see above
-        log.warning(
-            "rooms.redispatch.ledger_failed_open",
+    except Exception as exc:  # noqa: BLE001 - fail CLOSED, see docstring
+        log.error(
+            "rooms.redispatch.ceiling_unavailable",
             session_id=room_name,
             err=type(exc).__name__,
         )
-
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Please try again in a moment.",
+        ) from exc
     if attempt > max_attempts:
         log.warning("rooms.redispatch.ceiling", session_id=room_name, attempt=attempt)
         raise HTTPException(
@@ -451,8 +455,50 @@ async def redispatch_interviewer(
             detail="We could not start your interviewer. Please try again later.",
         )
 
+    async def reserve() -> None:
+        """Take (never extend) this session's slot, right before dispatching."""
+        if cap <= 0:
+            return
+        try:
+            slot, occupied = await reserve_slot(
+                redis,
+                room_name,
+                cap=cap,
+                ttl_seconds=settings.slot_reservation_seconds,
+                user_id=user_id_str,
+            )
+        except Exception as exc:  # noqa: BLE001 - the ledger fails OPEN
+            log.warning(
+                "rooms.redispatch.ledger_failed_open",
+                session_id=room_name,
+                err=type(exc).__name__,
+            )
+            return
+        if slot is SlotResult.FULL:
+            log.warning(
+                "rooms.redispatch.worker_full",
+                session_id=room_name,
+                active_jobs=occupied,
+                cap=cap,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "All interview slots are currently occupied. "
+                    "Please wait a few minutes and try again."
+                ),
+                headers={"Retry-After": "30"},
+            )
+        if slot is SlotResult.USER_BUSY:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="You already have another interview waiting to start.",
+            )
+
     try:
-        outcome = await ensure_interviewer(room_name)
+        outcome = await ensure_interviewer(
+            room_name, user_id_str, redis_getter=get_redis, before_create=reserve
+        )
     except (api.TwirpError, aiohttp.ClientError, TimeoutError) as exc:
         log.error(
             "rooms.redispatch.livekit_error",
@@ -463,6 +509,24 @@ async def redispatch_interviewer(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The interview service is temporarily unavailable. Please try again.",
         ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001 - the dispatch lock fails CLOSED
+        log.error(
+            "rooms.redispatch.lock_unavailable",
+            session_id=room_name,
+            err=type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Please try again in a moment.",
+        ) from exc
+
+    if outcome is DispatchOutcome.NOT_JOINED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Join the interview room first; there is nothing to restart yet.",
+        )
 
     log.info(
         "rooms.redispatch.done",

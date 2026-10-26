@@ -3,14 +3,14 @@
 Two layers:
 
 * Wrapper tests use a stub whose ``eval`` returns what the Lua script returns, so
-  they run everywhere and pin the result mapping.
+  they run everywhere and pin the result mapping and the key namespace.
 * Semantics tests run the REAL Lua scripts against a throwaway Redis named by
-  ``LEDGER_TEST_REDIS_URL`` (e.g. ``redis://127.0.0.1:56379/0``) and are skipped
-  when it is unset. They are the only thing that proves atomicity, which is the
-  whole point of the ledger: the defect they guard is N concurrent candidates all
-  passing a cap that only counted jobs the worker had already accepted. NEVER
-  point the variable at a shared or production Redis - the tests write
-  ``interview:slots``.
+  ``LEDGER_TEST_REDIS_URL`` and are skipped when it is unset. They are the only
+  thing that proves atomicity, which is the whole point of the ledger: the defect
+  they guard is N concurrent candidates all passing a cap that only counted jobs
+  the worker had already accepted. CI sets the variable (ci.yml starts a
+  throwaway redis:7 service for the interview_core job). NEVER point it at a
+  shared or production Redis - the tests write ``*:interview:*`` keys.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import pytest
 import pytest_asyncio
 
 from app import worker_capacity as wc
+from app.config import settings
 from app.worker_capacity import SlotResult
 
 # --------------------------------------------------------------------- wrappers
@@ -47,6 +48,7 @@ class _StubRedis:
         ([1, 3], (SlotResult.RESERVED, 3)),
         ([2, 3], (SlotResult.HELD, 3)),
         ([0, 4], (SlotResult.FULL, 4)),
+        ([3, 2], (SlotResult.USER_BUSY, 2)),
     ],
 )
 async def test_reserve_maps_the_script_result(raw: list[int], expected: Any) -> None:
@@ -55,20 +57,19 @@ async def test_reserve_maps_the_script_result(raw: list[int], expected: Any) -> 
 
 
 @pytest.mark.asyncio
-async def test_reserve_passes_cap_and_member_to_the_script() -> None:
+async def test_reserve_passes_cap_member_and_user_to_the_script() -> None:
     redis = _StubRedis([1, 1])
-    await wc.reserve_slot(redis, "sess-9", cap=7, ttl_seconds=90)
-    _script, nkeys, key, _now, ttl, cap, member = redis.calls[0]
-    assert (nkeys, key, ttl, cap, member) == (1, wc.SLOTS_KEY, 90, 7, "sess-9")
+    await wc.reserve_slot(redis, "sess-9", cap=7, ttl_seconds=90, user_id="u1")
+    _script, nkeys, ledger, pointer, _now, ttl, cap, member, user, _ptl = redis.calls[0]
+    assert (nkeys, ledger, ttl, cap, member, user) == (2, wc.slots_key(), 90, 7, "sess-9", "u1")
+    assert pointer == wc.user_pointer_key("u1")
 
 
 @pytest.mark.asyncio
 async def test_a_zero_cap_means_unlimited_not_always_full() -> None:
-    """cap=0 is documented as "no cap"; passing 0 to the script would refuse
-    everyone."""
     redis = _StubRedis([1, 1])
     await wc.reserve_slot(redis, "s", cap=0, ttl_seconds=60)
-    assert redis.calls[0][5] >= 1_000_000
+    assert redis.calls[0][6] >= 1_000_000
 
 
 @pytest.mark.asyncio
@@ -81,6 +82,39 @@ async def test_a_redis_error_propagates_so_the_caller_chooses_the_policy() -> No
         await wc.reserve_slot(_Down(), "s", cap=4, ttl_seconds=60)
 
 
+# ------------------------------------------------------------------ namespacing
+
+
+def test_every_key_is_namespaced_by_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Local dev shares the production Upstash; an un-namespaced ledger let a
+    developer's API or worker reserve - and RELEASE - production slots (L3)."""
+    monkeypatch.setattr(settings, "redis_key_namespace", "", raising=False)
+    monkeypatch.setattr(settings, "app_env", "production", raising=False)
+    prod = {
+        wc.slots_key(),
+        wc.user_pointer_key("u"),
+        wc.redispatch_count_key("s"),
+        wc.dispatch_lock_key("r"),
+        wc.job_marker_key("r"),
+    }
+    monkeypatch.setattr(settings, "app_env", "development", raising=False)
+    dev = {
+        wc.slots_key(),
+        wc.user_pointer_key("u"),
+        wc.redispatch_count_key("s"),
+        wc.dispatch_lock_key("r"),
+        wc.job_marker_key("r"),
+    }
+    assert prod.isdisjoint(dev)
+    assert all(k.startswith("production:interview:") for k in prod)
+    assert all(k.startswith("development:interview:") for k in dev)
+
+
+def test_an_explicit_namespace_wins_over_app_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "redis_key_namespace", "staging-b", raising=False)
+    assert wc.slots_key() == "staging-b:interview:slots"
+
+
 # ----------------------------------------------------------- real-Redis semantics
 
 _REDIS_URL = os.environ.get("LEDGER_TEST_REDIS_URL", "")
@@ -90,15 +124,17 @@ needs_redis = pytest.mark.skipif(
 
 
 @pytest_asyncio.fixture
-async def redis() -> AsyncIterator[Any]:
+async def redis(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
     import redis.asyncio as aioredis
 
+    # A private namespace per test so a shared CI Redis is never disturbed.
+    monkeypatch.setattr(settings, "redis_key_namespace", f"t-{uuid.uuid4().hex[:8]}", raising=False)
     client = aioredis.from_url(_REDIS_URL, decode_responses=True)  # type: ignore[no-untyped-call]
-    await client.delete(wc.SLOTS_KEY)
     try:
         yield client
     finally:
-        await client.delete(wc.SLOTS_KEY)
+        for key in await client.keys(f"{settings.redis_key_namespace}:*"):
+            await client.delete(key)
         await client.aclose()
 
 
@@ -122,8 +158,7 @@ async def test_concurrent_requests_cannot_oversubscribe(redis: Any) -> None:
     results = await asyncio.gather(
         *[wc.reserve_slot(redis, str(uuid.uuid4()), cap=4, ttl_seconds=60) for _ in range(40)]
     )
-    won = [r for r, _ in results if r is SlotResult.RESERVED]
-    assert len(won) == 4
+    assert [r for r, _ in results].count(SlotResult.RESERVED) == 4
     assert [r for r, _ in results].count(SlotResult.FULL) == 36
     assert await wc.count_slots(redis) == 4
 
@@ -140,10 +175,62 @@ async def test_re_requesting_the_same_session_never_takes_a_second_slot(redis: A
 
 @needs_redis
 @pytest.mark.asyncio
+async def test_the_api_can_never_extend_a_hold(redis: Any) -> None:
+    """Security review H2: refreshing a reservation every <180 s let one account
+    hold a slot forever without joining. A re-request must leave the expiry
+    exactly where it was."""
+    await wc.reserve_slot(redis, "s", cap=2, ttl_seconds=60)
+    before = float(await redis.zscore(wc.slots_key(), "s"))
+    await asyncio.sleep(1.1)
+    result, _ = await wc.reserve_slot(redis, "s", cap=2, ttl_seconds=3600)
+    assert result is SlotResult.HELD
+    assert float(await redis.zscore(wc.slots_key(), "s")) == before
+
+
+@needs_redis
+@pytest.mark.asyncio
+async def test_a_lapsed_reservation_can_be_taken_again(redis: Any) -> None:
+    await wc.reserve_slot(redis, "s", cap=1, ttl_seconds=-1)  # already expired
+    result, _ = await wc.reserve_slot(redis, "s", cap=1, ttl_seconds=60)
+    assert result is SlotResult.RESERVED
+
+
+@needs_redis
+@pytest.mark.asyncio
+async def test_one_user_holds_at_most_one_slot(redis: Any) -> None:
+    """Security review H2: four 'created' sessions + a reservation each = four
+    slots held by an account that never joins."""
+    first, _ = await wc.reserve_slot(redis, "a", cap=4, ttl_seconds=60, user_id="u1")
+    second, occupied = await wc.reserve_slot(redis, "b", cap=4, ttl_seconds=60, user_id="u1")
+    other_user, _ = await wc.reserve_slot(redis, "c", cap=4, ttl_seconds=60, user_id="u2")
+    assert (first, second, other_user) == (
+        SlotResult.RESERVED,
+        SlotResult.USER_BUSY,
+        SlotResult.RESERVED,
+    )
+    assert occupied == 1
+    assert not await wc.slot_held(redis, "b")  # nothing was taken for the refused one
+
+
+@needs_redis
+@pytest.mark.asyncio
+async def test_a_user_can_take_another_slot_once_the_first_is_released_or_lapsed(
+    redis: Any,
+) -> None:
+    await wc.reserve_slot(redis, "a", cap=4, ttl_seconds=60, user_id="u1")
+    await wc.release_slot(redis, "a")
+    result, _ = await wc.reserve_slot(redis, "b", cap=4, ttl_seconds=60, user_id="u1")
+    assert result is SlotResult.RESERVED
+    await wc.reserve_slot(redis, "x", cap=4, ttl_seconds=-1, user_id="u3")  # lapses at once
+    result, _ = await wc.reserve_slot(redis, "y", cap=4, ttl_seconds=60, user_id="u3")
+    assert result is SlotResult.RESERVED
+
+
+@needs_redis
+@pytest.mark.asyncio
 async def test_a_full_ledger_still_confirms_a_session_that_already_holds_a_slot(
     redis: Any,
 ) -> None:
-    """A reload of a running interview must not be told 'full' by its own slot."""
     await wc.reserve_slot(redis, "running", cap=1, ttl_seconds=60)
     result, _ = await wc.reserve_slot(redis, "running", cap=1, ttl_seconds=60)
     assert result is SlotResult.HELD
@@ -162,24 +249,19 @@ async def test_release_frees_the_slot_for_the_next_candidate(redis: Any) -> None
 @needs_redis
 @pytest.mark.asyncio
 async def test_an_abandoned_reservation_expires_on_its_own(redis: Any) -> None:
-    """The crash backstop: nothing ever releases this slot, yet it frees."""
-    await wc.reserve_slot(redis, "ghost", cap=1, ttl_seconds=-1)  # already expired
+    await wc.reserve_slot(redis, "ghost", cap=1, ttl_seconds=-1)
     result, occupied = await wc.reserve_slot(redis, "live", cap=1, ttl_seconds=60)
-    assert result is SlotResult.RESERVED
-    assert occupied == 1
+    assert (result, occupied) == (SlotResult.RESERVED, 1)
 
 
 @needs_redis
 @pytest.mark.asyncio
-async def test_extend_promotes_a_reservation_and_a_refresh_never_shortens_it(
-    redis: Any,
-) -> None:
+async def test_only_the_worker_extend_lengthens_a_lease(redis: Any) -> None:
     await wc.reserve_slot(redis, "s", cap=2, ttl_seconds=60)
     assert await wc.extend_slot(redis, "s", ttl_seconds=1800)
-    long_score = float(await redis.zscore(wc.SLOTS_KEY, "s"))
-    # A later token/redispatch refresh with the SHORT ttl must not cut the lease.
+    long_score = float(await redis.zscore(wc.slots_key(), "s"))
     await wc.reserve_slot(redis, "s", cap=2, ttl_seconds=60)
-    assert float(await redis.zscore(wc.SLOTS_KEY, "s")) >= long_score
+    assert float(await redis.zscore(wc.slots_key(), "s")) == long_score
 
 
 @needs_redis
@@ -193,11 +275,35 @@ async def test_extend_does_not_resurrect_a_released_slot(redis: Any) -> None:
 
 @needs_redis
 @pytest.mark.asyncio
-async def test_redispatch_counter_counts_and_expires(redis: Any) -> None:
+async def test_redispatch_counter_counts_expires_and_resets(redis: Any) -> None:
     sid = f"rd-{uuid.uuid4()}"
-    try:
-        assert [await wc.note_redispatch(redis, sid) for _ in range(3)] == [1, 2, 3]
-        ttl = await redis.ttl(f"{wc.REDISPATCH_COUNT_KEY_PREFIX}{sid}")
-        assert 0 < ttl <= wc.REDISPATCH_COUNT_TTL_SECONDS
-    finally:
-        await redis.delete(f"{wc.REDISPATCH_COUNT_KEY_PREFIX}{sid}")
+    assert [await wc.note_redispatch(redis, sid) for _ in range(3)] == [1, 2, 3]
+    ttl = await redis.ttl(wc.redispatch_count_key(sid))
+    assert 0 < ttl <= wc.REDISPATCH_COUNT_TTL_SECONDS
+    await wc.reset_redispatch(redis, sid)
+    assert await wc.note_redispatch(redis, sid) == 1
+
+
+@needs_redis
+@pytest.mark.asyncio
+async def test_the_counter_always_has_a_ttl(redis: Any) -> None:
+    """INCR and EXPIRE are one script: there is no instant at which the counter
+    exists without a TTL (L2)."""
+    sid = f"rd-{uuid.uuid4()}"
+    await wc.note_redispatch(redis, sid)
+    assert await redis.ttl(wc.redispatch_count_key(sid)) > 0
+
+
+@needs_redis
+@pytest.mark.asyncio
+async def test_dispatch_lock_and_job_marker_are_exclusive_and_expire(redis: Any) -> None:
+    assert await wc.acquire_dispatch_lock(redis, "r", 15)
+    assert not await wc.acquire_dispatch_lock(redis, "r", 15)
+    await wc.release_dispatch_lock(redis, "r")
+    assert await wc.acquire_dispatch_lock(redis, "r", 15)
+
+    assert await wc.claim_job_marker(redis, "r", 120)
+    assert not await wc.claim_job_marker(redis, "r", 120)
+    assert 0 < await redis.ttl(wc.job_marker_key("r")) <= 120
+    await wc.clear_job_marker(redis, "r")
+    assert await wc.claim_job_marker(redis, "r", 120)

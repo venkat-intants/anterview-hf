@@ -247,6 +247,19 @@ class Settings(BaseSettings):
 
     # Re-dispatch (candidate has no interviewer): per-user rate limit and a hard
     # per-session ceiling so a stuck client cannot hammer the LiveKit API.
+    # Redis key namespace for the slot ledger / dispatch locks / job markers.
+    # Empty = APP_ENV. Local dev shares the production Upstash (services/*/.env),
+    # so un-namespaced keys let a developer's run touch production slots.
+    redis_key_namespace: str = ""
+    # Debounce / lock around one list->delete->create dispatch cycle. Shorter than
+    # the frontend's 20 s watchdog so a legitimate second attempt is never refused.
+    dispatch_lock_seconds: int = Field(default=15, ge=5, le=60)
+    # One interviewer job per room: marker TTL, covering accept -> connect.
+    job_marker_seconds: int = Field(default=120, ge=30, le=900)
+    # Hard ceiling for each LiveKit API call (the library default is 60 s, which
+    # would pin a request - and, before the DB session is released, a DB
+    # connection - for minutes during a LiveKit incident).
+    livekit_api_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
     room_redispatch_per_minute: int = Field(default=10, ge=0)
     room_redispatch_max_per_session: int = Field(default=4, ge=1)
 

@@ -141,7 +141,7 @@ async def test_a_programming_error_is_logged_loudly_with_its_message(
     record = records[0]
     assert record.levelno == logging.ERROR
     assert "AttributeError" in record.getMessage()
-    assert "has no attribute" in record.getMessage()  # the message, not just the type
+    assert "has no attribute" not in record.getMessage()  # type only, never the message
     assert record.exc_info is not None  # traceback attached
 
 
@@ -160,4 +160,33 @@ async def test_a_db_outage_is_a_warning_not_an_error(
     records = [r for r in caplog.records if "_lookup_session failed" in r.getMessage()]
     assert records
     assert records[0].levelno == logging.WARNING
-    assert "db unreachable" in records[0].getMessage()
+    assert "db unreachable" not in records[0].getMessage()
+    assert "exc_type=ConnectionError" in records[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_a_driver_error_logs_its_sqlstate_but_never_its_parameters(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SQLAlchemy/asyncpg text can carry '[parameters: (...)]'; ERROR lines reach
+    Sentry (US). Type + SQLSTATE say what failed without echoing data (L1)."""
+
+    class _OrigError(Exception):
+        sqlstate = "57P01"
+
+    class _DriverError(Exception):
+        orig = _OrigError("terminating connection")
+
+    class _Leaky(_FakeDb):
+        async def execute(self, _stmt: object) -> _Result:
+            raise _DriverError("SELECT ... [parameters: ('priya@example.com', 'resume text')]")
+
+    _install(monkeypatch, _Leaky([]))
+    with caplog.at_level(logging.WARNING, logger=interview_worker.logger.name):
+        await _lookup_session(str(_SID))
+
+    message = next(r for r in caplog.records if "_lookup_session failed" in r.getMessage()).getMessage()
+    assert "sqlstate=57P01" in message
+    assert "driver_type=_OrigError" in message
+    assert "priya@example.com" not in message
+    assert "resume text" not in message

@@ -271,8 +271,8 @@ def _active_jobs_decrement() -> None:
 
 # Slot-ledger plumbing lives in app/worker/admission.py (IC-4); these bind it to
 # this process's Redis client and the configured lease length.
-async def _extend_slot_lease(room_name: str) -> None:
-    await admission.extend_lease(_get_checkpoint_redis, room_name, settings.slot_lease_seconds)
+async def _extend_slot_lease(room_name: str) -> bool:
+    return await admission.extend_lease(_get_checkpoint_redis, room_name, settings.slot_lease_seconds)
 
 
 async def _release_slot(room_name: str) -> None:
@@ -553,18 +553,19 @@ async def _lookup_session(room_name: str) -> SessionContext:
                 session_id=session_id,
             )
     except Exception as exc:  # noqa: BLE001
-        # Falling back to a default context keeps the interview alive, but it
-        # also turns a CODE bug into a generic interview that nobody notices:
-        # an unmapped Job column (AttributeError) did exactly that to every live
-        # session until the 2026-10 load test, because only the exception TYPE
-        # was logged. So: log the message too, and log programming errors
-        # (as opposed to a DB outage) at ERROR with a traceback so they page.
+        # Keep the interview alive on a generic context, but say WHAT failed:
+        # type, driver type and SQLSTATE - never the message (driver text can echo
+        # SQL parameters and ERROR lines reach Sentry; DPDP minimisation).
+        # Programming errors log at ERROR with a traceback.
         is_code_bug = isinstance(exc, AttributeError | TypeError | KeyError | NameError)
         log_fn = logger.error if is_code_bug else logger.warning
+        orig = getattr(exc, "orig", None)
+        sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
         log_fn(
-            "interview-worker: _lookup_session failed room=%s exc_type=%s err=%s "
-            "-> starting with a GENERIC SessionContext (no job title/JD/resume)",
-            room_name, type(exc).__name__, str(exc)[:300],
+            "interview-worker: _lookup_session failed room=%s exc_type=%s driver_type=%s "
+            "sqlstate=%s -> starting with a GENERIC SessionContext (no job title/JD/resume)",
+            room_name, type(exc).__name__, type(orig).__name__ if orig else "-",
+            sqlstate or "-",
             exc_info=is_code_bug,
         )
         return SessionContext()
@@ -1743,23 +1744,17 @@ class InterviewJob:
     async def _admit(self) -> None:
         """Count this job against the concurrency ceiling and register its release."""
         _active_jobs_increment()
-        # The room is named after the session (see _lookup_session); ctx.job is
-        # populated before connect(), unlike ctx.room.name.
+        # Room == session id; ctx.job is populated before connect().
         self._slot_room = admission.job_room_name(self.ctx.job)
-        # Promote the short token-time reservation to the interview-long lease so
-        # it cannot lapse mid-interview. Best-effort — never raises.
-        await _extend_slot_lease(self._slot_room)
-
-        # Register the release immediately so it fires on any exit path (normal
-        # close, abrupt disconnect, SIGTERM drain, crash).  add_shutdown_callback
-        # guarantees this runs even when the entrypoint raises.
+        # Register the release FIRST: a job cancelled during the awaited Redis
+        # call below would otherwise leak the counter and the lease.
         self.ctx.add_shutdown_callback(self._decrement_job_counter)
+        # Short reservation -> interview-long lease (best-effort, logs if gone).
+        await _extend_slot_lease(self._slot_room)
 
     async def _decrement_job_counter(self) -> None:
         """Shutdown callback — free this job's slot in the counter and the ledger."""
         _active_jobs_decrement()
-        # Free the cross-process slot so the next candidate is admitted at once
-        # instead of waiting for the lease to expire.
         await _release_slot(self._slot_room)
 
     async def _resolve_context(self) -> None:
@@ -2485,17 +2480,19 @@ def _write_heartbeat(path: str, timestamp: str) -> None:
 
 
 async def _request_fnc(job_request: Any) -> None:
-    """Gate incoming job requests (see ``admission.decide`` for the three guards).
+    """Gate incoming job requests (guards: ``admission.decide``).
 
-    Rejection is NON-terminal (``reject(terminate=False)``): LiveKit may offer the
-    job to another worker and the candidate's ``/redispatch`` can retry it when
-    capacity frees. The previous bare ``reject()`` defaults to ``terminate=True`` -
-    "the job will not be assigned to another worker" - which is how a candidate
-    ended up alone in a room LiveKit would never offer again.
-
-    ``settings.worker_max_concurrent_jobs == 0`` disables the concurrency cap.
+    Rejection is NON-terminal (``terminate=False``): the bare ``reject()`` default
+    is "never assign to another worker", which left candidates in rooms LiveKit
+    would not offer again. ``worker_max_concurrent_jobs == 0`` disables the cap.
     """
     room_name = admission.job_room_name(job_request)
+    # A second job for a room we already run = two interviewers; refuse it
+    # owning nothing (releasing would free the running interview's slot).
+    if admission.room_has_job(_server, room_name):
+        logger.warning("interview-worker.duplicate_job_rejected room=%s", room_name)
+        await job_request.reject(terminate=False)
+        return
     reason, verdict, active = await admission.decide(
         _get_checkpoint_redis,
         room_name,
@@ -2504,15 +2501,16 @@ async def _request_fnc(job_request: Any) -> None:
         ttl_seconds=settings.slot_reservation_seconds,
         mem_per_job_mb=settings.job_memory_limit_mb,
         mem_limit_mb=settings.container_memory_limit_mb,
+        marker_ttl_seconds=settings.job_marker_seconds,
     )
     if reason is not None:
         logger.warning(
             "interview-worker.admission_rejected room=%s active=%d - %s",
             room_name, active, reason,
         )
-        # Give back a slot WE just claimed (or the token endpoint held) for a job
-        # we are now refusing, so the ledger does not count a ghost.
-        if verdict in (admission.SLOT_CLAIMED, admission.SLOT_HELD):
+        # Give back a slot only if THIS call claimed it. A HELD slot belongs to
+        # the token endpoint's reservation or to a job that is already running.
+        if verdict == admission.SLOT_CLAIMED:
             await _release_slot(room_name)
         await job_request.reject(terminate=False)
         return
@@ -2522,8 +2520,14 @@ async def _request_fnc(job_request: Any) -> None:
     await job_request.accept()
 
 
+# livekit-agents server handle, captured via load_fnc (request_fnc has none).
+_server: Any = None
+
+
 def _worker_load(server: Any) -> float:
     """Load reported to LiveKit: jobs / cap, not container CPU (admission.worker_load)."""
+    global _server  # noqa: PLW0603 - per-process handle, same pattern as _active_jobs
+    _server = server
     return admission.worker_load(server, settings.worker_max_concurrent_jobs)
 
 

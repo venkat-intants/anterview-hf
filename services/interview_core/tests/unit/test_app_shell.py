@@ -42,7 +42,13 @@ def _recorded_lifecycle(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         calls.append("close_redis")
 
     monkeypatch.setattr(main, "init_engine", lambda: calls.append("init_engine"))
+    async def _verify_redis(client: object, *, service: str, skip: bool = False) -> bool:
+        calls.append("verify_redis")
+        return True
+
     monkeypatch.setattr(main, "init_redis", lambda: calls.append("init_redis"))
+    monkeypatch.setattr(main, "get_redis", lambda: object())
+    monkeypatch.setattr(main, "verify_redis_connection", _verify_redis)
     monkeypatch.setattr(main, "dispose_engine", _dispose_engine)
     monkeypatch.setattr(main, "close_redis", _close_redis)
     return calls
@@ -61,7 +67,7 @@ def test_app_starts_and_stops_through_the_lifespan_path(
     monkeypatch.setattr(main, "build_default_adapter", lambda: dummy_adapter)
 
     with TestClient(app) as client:
-        assert _recorded_lifecycle == ["init_engine", "init_redis"]
+        assert _recorded_lifecycle == ["init_engine", "init_redis", "verify_redis"]
         # The app is genuinely serving while inside the context.
         assert client.get("/health/live").status_code == 200
         assert app.state.llm_adapter is dummy_adapter
@@ -69,6 +75,7 @@ def test_app_starts_and_stops_through_the_lifespan_path(
     assert _recorded_lifecycle == [
         "init_engine",
         "init_redis",
+        "verify_redis",
         "dispose_engine",
         "close_redis",
     ]

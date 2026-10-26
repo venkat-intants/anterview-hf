@@ -24,6 +24,7 @@ the real load.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from collections.abc import Callable
 from typing import Any
@@ -33,8 +34,11 @@ from app.worker_capacity import (
     claim_job_marker,
     clear_job_marker,
     extend_slot,
+    refresh_job_marker,
     release_slot,
     reserve_slot,
+    slot_held,
+    user_pointer_key,
 )
 
 logger = logging.getLogger("interview-worker")
@@ -88,8 +92,19 @@ async def claim_slot(
     return verdict, max(0, occupied - 1)
 
 
-async def extend_lease(redis_factory: RedisFactory, room_name: str, ttl_seconds: int) -> bool:
+async def extend_lease(
+    redis_factory: RedisFactory,
+    room_name: str,
+    ttl_seconds: int,
+    *,
+    refresh_marker: bool = True,
+) -> bool:
     """Promote the short token-time reservation to the interview-long lease.
+
+    ``refresh_marker`` also re-sets the room's job marker to the same lease: it is
+    claimed with a SHORT starting-time TTL (so an accepted job that never reaches
+    the job process cannot block a re-dispatch), and once the job is genuinely
+    running it must protect the room for the whole interview, across replicas too.
 
     False when the slot was already gone (the reservation lapsed before the job
     started) or Redis failed: the interview then runs with no ledger entry and
@@ -98,7 +113,10 @@ async def extend_lease(redis_factory: RedisFactory, room_name: str, ttl_seconds:
     if not room_name:
         return False
     try:
-        extended = await extend_slot(redis_factory(), room_name, ttl_seconds=ttl_seconds)
+        redis = redis_factory()
+        extended = await extend_slot(redis, room_name, ttl_seconds=ttl_seconds)
+        if refresh_marker:
+            await refresh_job_marker(redis, room_name, ttl_seconds)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "interview-worker.slot_extend_failed room=%s err=%s",
@@ -144,27 +162,109 @@ def room_has_job(server: Any, room_name: str) -> bool:
         return False
 
 
+def at_capacity(server: Any, cap: int) -> bool:
+    """Has this worker already LAUNCHED ``cap`` jobs? Needs no Redis.
+
+    The parent process is where ``request_fnc`` runs, and ``server.active_jobs``
+    is the one place it can see running jobs (they live in child processes, so a
+    module counter incremented inside the job is invisible here). This is the
+    exact backstop for when Redis is down and the ledger fails open - without it
+    the worker takes ``cap + LOAD_HEADROOM_SLOTS`` jobs during an outage.
+    """
+    if cap <= 0 or server is None:
+        return False
+    try:
+        return len(server.active_jobs) >= cap
+    except (AttributeError, TypeError):
+        return False
+
+
+async def claim_permitted(redis_factory: RedisFactory, room_name: str) -> bool:
+    """May this worker CLAIM a fresh slot for the room's user? (security N1)
+
+    Called only when there was no live reservation (the join token outlived it, or
+    the dispatch bypassed the token endpoint). The user must not already hold
+    another slot or another in-progress session - the one-interview-per-user rule
+    that ``/token`` enforces and that a lapsed-then-claimed slot would otherwise
+    bypass. Fails OPEN on any error: refusing on a lookup failure strands a
+    candidate.
+    """
+    try:
+        import uuid
+
+        from sqlalchemy import select, text
+
+        from app.config import settings
+        from app.database import get_session_factory, init_engine
+        from app.models import Session as InterviewSession
+
+        init_engine()
+        async with get_session_factory()() as db:
+            user_id = (
+                await db.execute(
+                    select(InterviewSession.user_id).where(
+                        InterviewSession.id == uuid.UUID(room_name)
+                    )
+                )
+            ).scalar_one_or_none()
+            if user_id is None:
+                return True
+            if settings.max_active_sessions_per_user > 0:
+                others = (
+                    await db.execute(
+                        text(
+                            "SELECT count(*) FROM sessions WHERE user_id = :uid AND id <> :sid"
+                            " AND status = 'in_progress' AND deleted_at IS NULL"
+                            " AND updated_at > now() - make_interval(mins => :mins)"
+                        ),
+                        {
+                            "uid": user_id,
+                            "sid": uuid.UUID(room_name),
+                            "mins": settings.active_session_window_minutes,
+                        },
+                    )
+                ).scalar_one()
+                if int(others) >= settings.max_active_sessions_per_user:
+                    return False
+        redis = redis_factory()
+        pointer = await redis.get(user_pointer_key(str(user_id)))
+        return not (pointer and pointer != room_name and await slot_held(redis, pointer))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "interview-worker.claim_check_failed room=%s err=%s - failing open",
+            room_name, type(exc).__name__,
+        )
+        return True
+
+
 async def decide(
     redis_factory: RedisFactory,
     room_name: str,
     *,
+    server: Any = None,
     active_local: int,
     cap: int,
     ttl_seconds: int,
     mem_per_job_mb: int,
     mem_limit_mb: int,
-    marker_ttl_seconds: int = 120,
+    marker_ttl_seconds: int = 45,
+    lease_seconds: int | None = None,
 ) -> tuple[str | None, str, int]:
     """Decide whether to accept a job. Returns ``(reject_reason, verdict, active)``.
 
     ``reject_reason`` is None to accept. Guards, in order:
 
+    A. Redis-free, on this worker: refuse a second job for a room it already
+       runs, and refuse when it has already launched ``cap`` jobs (``at_capacity``).
+       These hold during a Redis outage, when everything below fails open.
     0. A per-room job marker (``SET NX``): a second job for a room that already
-       has one is rejected before anything else is touched.
+       has one - on ANY worker - is rejected before anything else is touched.
     1. The Redis slot ledger (``cap > 0``) - authoritative and cross-process.
-       A room whose slot the token endpoint already reserved is accepted; one
-       with no reservation tries to take a slot and is rejected only if the
-       ledger is genuinely full; a Redis outage accepts.
+       A room whose slot the token endpoint already reserved (HELD) is accepted
+       and its lease is lengthened AT ONCE (only the worker may lengthen one), so
+       it cannot lapse while the job process starts; one with no reservation
+       (CLAIMED) must pass ``claim_permitted``; a full ledger rejects; a Redis
+       outage accepts.
     2. The local counter - exact where jobs share this process, harmless where
        they do not.
     3. A memory estimate: one more job's RSS above the container limit would
@@ -172,8 +272,12 @@ async def decide(
     """
     verdict, others = SLOT_UNKNOWN, 0
 
-    # One interviewer JOB per room, across every worker. First guard so a
-    # duplicate never touches the ledger. Fails open on a Redis error.
+    if room_has_job(server, room_name):
+        return "this worker already runs a job for this room", SLOT_UNKNOWN, 0
+    if at_capacity(server, cap):
+        return f"this worker already runs {cap} jobs (cap)", SLOT_UNKNOWN, cap
+
+    # One interviewer JOB per room, across every worker. Fails open on a Redis error.
     marker_set = False
     if room_name:
         try:
@@ -205,6 +309,14 @@ async def decide(
         if verdict == SLOT_FULL:
             return await _reject(
                 f"concurrency ceiling reached (slots={others} cap={cap})", verdict, others
+            )
+        if verdict == SLOT_HELD and lease_seconds:
+            await extend_lease(redis_factory, room_name, lease_seconds, refresh_marker=False)
+        if verdict == SLOT_CLAIMED and not await claim_permitted(redis_factory, room_name):
+            return await _reject(
+                "this user already holds another slot or has another interview in progress",
+                verdict,
+                others,
             )
 
     # Jobs in OTHER processes show up only in the ledger; jobs sharing this
@@ -266,6 +378,25 @@ def worker_load(server: Any, cap: int) -> float:
     return min(1.0, running / (cap + LOAD_HEADROOM_SLOTS))
 
 
+def container_cpus() -> int:
+    """CPUs available to THIS container, honouring a cgroup CPU quota.
+
+    ``os.cpu_count()`` reports the HOST's cores, so a 2-vCPU container on a 16-core
+    host would size its warm pool for 16 (review F8). livekit-agents' own CPU
+    monitor reads the cgroup quota (``cpu.max``); fall back to ``os.cpu_count()``
+    only if it cannot be imported or answers nonsense.
+    """
+    try:
+        from livekit.agents.utils.hw import get_cpu_monitor
+
+        value = float(get_cpu_monitor().cpu_count())
+        if value > 0:
+            return max(1, math.ceil(value))
+    except Exception as exc:  # noqa: BLE001 - never block worker start-up on this
+        logger.warning("interview-worker.cpu_count_fallback err=%s", type(exc).__name__)
+    return os.cpu_count() or 1
+
+
 def idle_process_target(
     configured: int | None, cap: int, cpu_count: int | None = None
 ) -> int:
@@ -278,14 +409,15 @@ def idle_process_target(
     that wait - but every warm process holds the prewarmed VAD model (~100-200 MB)
     and, after each job starts, the pool respawns one more, which on a small host
     competes for CPU with the interviews it exists to serve (replica test: p95
-    turn latency 6.7 s with 11 processes starting at once on 2 vCPU). So the
-    default is capped at two per CPU: 2 on a 2-vCPU Space (= its cap), 4 on the
-    2-vCPU/12-slot replica. This is a reasoned bound, NOT a measured optimum -
-    set WORKER_NUM_IDLE_PROCESSES to override once a host has been measured.
+    turn latency 6.7 s with 11 processes starting at once on 2 vCPU; 3.0 s with
+    this default on the 12-slot replica). So the default is capped at two per
+    CPU - the CONTAINER's CPUs (``container_cpus``) - giving 2 on a 2-vCPU Space
+    (= its cap) and 4 on the 2-vCPU/12-slot replica. A reasoned bound, not a
+    measured optimum: set WORKER_NUM_IDLE_PROCESSES to override.
     """
     if configured is not None:
         return configured
     if cap <= 0:
         return 2
-    cpus = cpu_count if cpu_count is not None else (os.cpu_count() or 1)
+    cpus = cpu_count if cpu_count is not None else container_cpus()
     return max(1, min(cap, MAX_IDLE_PROCESSES, 2 * cpus))

@@ -40,6 +40,7 @@ the DB by room name (== session_id); nothing about the candidate goes to LiveKit
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from enum import Enum
@@ -65,6 +66,9 @@ log = structlog.get_logger(__name__)
 # the worker refuses a duplicate job for a room it already runs, which covers the
 # residual race under heavy CPU contention.
 _LIVE_GRACE_SECONDS = 15.0
+
+# Slack between the critical section's own time limit and the lock TTL.
+_LOCK_MARGIN_SECONDS = 2.0
 
 
 class DispatchOutcome(str, Enum):
@@ -177,52 +181,74 @@ async def ensure_interviewer(
             return DispatchOutcome.ALREADY_CONNECTED
 
         redis = redis_getter()
-        if not await acquire_dispatch_lock(redis, room_name, settings.dispatch_lock_seconds):
+        lock_token = await acquire_dispatch_lock(redis, room_name, settings.dispatch_lock_seconds)
+        if lock_token is None:
             return DispatchOutcome.STARTING
         created = False
         try:
-            stale: list[str] = []
-            for dispatch in await lkapi.agent_dispatch.list_dispatch(room_name):
-                if dispatch.agent_name != settings.interview_agent_name:
-                    continue
-                if dispatch.state.deleted_at:
-                    continue
-                if _is_live(dispatch):
-                    log.info("agent.dispatch.live", room=room_name, dispatch_id=dispatch.id)
-                    return DispatchOutcome.STARTING
-                stale.append(dispatch.id)
-
-            # A dispatch with no live job is dead weight: it was never taken, was
-            # refused, or its job failed. Clear it so there is one live dispatch
-            # per room, then ask again.
-            for dispatch_id in stale:
+            # The critical section must finish INSIDE the lock's TTL, or a second
+            # caller enters while this one is still running (review F3). Unbounded
+            # it is several 5 s LiveKit calls plus a Redis pool wait.
+            async with asyncio.timeout(_critical_section_seconds()):
+                outcome = await _dispatch_cycle(lkapi, room_name, before_create)
+            created = outcome is DispatchOutcome.DISPATCHED
+            return outcome
+        finally:
+            # Keep the lock after a successful create (it debounces the next call);
+            # drop it on any other exit so a retry is not blocked. Compare-and-
+            # delete, and an error here must never replace the original exception
+            # (it would turn the 503 "slots full" into a generic one).
+            if not created:
                 try:
-                    await lkapi.agent_dispatch.delete_dispatch(dispatch_id, room_name)
-                except api.TwirpError as exc:
+                    await release_dispatch_lock(redis, room_name, lock_token)
+                except Exception as exc:  # noqa: BLE001
                     log.warning(
-                        "agent.dispatch.delete_failed",
+                        "agent.dispatch.lock_release_failed",
                         room=room_name,
-                        dispatch_id=dispatch_id,
-                        code=exc.code,
+                        err=type(exc).__name__,
                     )
 
-            if before_create is not None:
-                await before_create()
-            new = await lkapi.agent_dispatch.create_dispatch(
-                api.CreateAgentDispatchRequest(
-                    agent_name=settings.interview_agent_name, room=room_name
-                )
-            )
-            created = True
-            log.info(
-                "agent.dispatch.created",
+
+def _critical_section_seconds() -> float:
+    """Time allowed under the dispatch lock: strictly less than its TTL."""
+    return max(0.1, settings.dispatch_lock_seconds - _LOCK_MARGIN_SECONDS)
+
+
+async def _dispatch_cycle(
+    lkapi: Any,
+    room_name: str,
+    before_create: Callable[[], Awaitable[None]] | None,
+) -> DispatchOutcome:
+    """list -> delete dead -> reserve -> create, run while holding the room lock."""
+    stale: list[str] = []
+    for dispatch in await lkapi.agent_dispatch.list_dispatch(room_name):
+        if dispatch.agent_name != settings.interview_agent_name:
+            continue
+        if dispatch.state.deleted_at:
+            continue
+        if _is_live(dispatch):
+            log.info("agent.dispatch.live", room=room_name, dispatch_id=dispatch.id)
+            return DispatchOutcome.STARTING
+        stale.append(dispatch.id)
+
+    # A dispatch with no live job is dead weight: it was never taken, was refused,
+    # or its job failed. Clear it so there is one live dispatch per room, then
+    # ask again.
+    for dispatch_id in stale:
+        try:
+            await lkapi.agent_dispatch.delete_dispatch(dispatch_id, room_name)
+        except api.TwirpError as exc:
+            log.warning(
+                "agent.dispatch.delete_failed",
                 room=room_name,
-                dispatch_id=new.id,
-                replaced=len(stale),
+                dispatch_id=dispatch_id,
+                code=exc.code,
             )
-            return DispatchOutcome.DISPATCHED
-        finally:
-            # Keep the lock after a successful create (it debounces the next
-            # call); drop it on any other exit so a retry is not blocked.
-            if not created:
-                await release_dispatch_lock(redis, room_name)
+
+    if before_create is not None:
+        await before_create()
+    new = await lkapi.agent_dispatch.create_dispatch(
+        api.CreateAgentDispatchRequest(agent_name=settings.interview_agent_name, room=room_name)
+    )
+    log.info("agent.dispatch.created", room=room_name, dispatch_id=new.id, replaced=len(stale))
+    return DispatchOutcome.DISPATCHED

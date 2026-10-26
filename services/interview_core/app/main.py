@@ -15,12 +15,13 @@ from shared.http_observability import (
 from shared.metrics_auth import MetricsAuthError, check_metrics_auth
 from shared.observability.pii import PII_FIELDS, redact_pii_processor
 from shared.observability.sentry import init_sentry
+from shared.redis_factory import verify_redis_connection
 
 from app.config import settings
 from app.database import dispose_engine, init_engine
 from app.health import router as health_router
 from app.llm import build_default_adapter
-from app.redis_client import close_redis, init_redis
+from app.redis_client import close_redis, get_redis, init_redis
 from app.routers.api import router as api_router
 from app.routers.avatars import router as avatars_router
 from app.routers.integrity import router as integrity_router
@@ -78,6 +79,9 @@ async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
     # --- startup ---
     init_engine()
     init_redis()
+    await verify_redis_connection(
+        get_redis(), service=settings.service_name, skip=settings.app_env == "test"
+    )
     # Store the LLM adapter on app.state so all WebSocket sessions can read it
     # via websocket.app.state.llm_adapter — no module-level singleton (S4-013).
     application.state.llm_adapter = build_default_adapter()

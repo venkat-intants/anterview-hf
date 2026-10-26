@@ -62,9 +62,21 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api/rooms", tags=["rooms"])
 
-# Join token lifetime. The candidate must connect within this window; the media
-# session itself can run longer once joined. 10 min covers click-to-connect.
+# Join token lifetime CEILING. The candidate must connect within this window; the
+# media session itself can run longer once joined.
 _TOKEN_TTL = timedelta(minutes=10)
+
+
+def _join_token_ttl() -> timedelta:
+    """Token lifetime: never longer than the slot reservation that backs it.
+
+    A token that outlives its reservation lets one account stage several valid
+    tokens across lapses (mint A, wait out A's reservation, mint B, ...) and join
+    them all at once; the worker then CLAIMs a slot per room. Capping the token at
+    the reservation closes that window (security review N1). The worker's
+    ``claim_permitted`` is the second line of defence.
+    """
+    return min(_TOKEN_TTL, timedelta(seconds=settings.slot_reservation_seconds))
 
 
 class RoomTokenResponse(BaseModel):
@@ -319,7 +331,7 @@ async def create_room_token(
         api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity(f"candidate-{user_id_str}")
         .with_name("Candidate")
-        .with_ttl(_TOKEN_TTL)
+        .with_ttl(_join_token_ttl())
         .with_grants(
             api.VideoGrants(
                 room_join=True,

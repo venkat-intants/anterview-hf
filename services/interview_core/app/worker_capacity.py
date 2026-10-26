@@ -31,8 +31,12 @@ that is either waiting for its interviewer or running one.
   every <180 s let one account hold slots forever without ever joining).
 * **One reservation per user.** ``reserve_slot(user_id=...)`` records
   ``user -> session`` in the same script and refuses a second, different session
-  while the first still holds its slot (``USER_BUSY``). One account can therefore
-  hold at most one slot.
+  while the first still holds its slot (``USER_BUSY``). This bounds what ONE
+  account can hold through the API at one slot at a time - it is not an absolute
+  limit: the pointer only protects while the first reservation is unexpired
+  (a join token no longer outlives it - see ``_TOKEN_TTL`` in rooms.py), an
+  account can re-reserve after a lapse, and N accounts hold N slots. Those
+  residuals are recorded in docs/ACCEPTED-RISKS.md (AR-12).
 * ``release_slot`` (job process, shutdown callback) - frees the slot the moment
   the interview ends, on every exit path.
 * The lease is the crash backstop: a worker that dies without releasing leaves a
@@ -69,6 +73,7 @@ an over-admitted candidate; when the ledger is full it answers 503.
 from __future__ import annotations
 
 import time
+import uuid
 from enum import Enum
 from typing import Any
 
@@ -239,18 +244,39 @@ async def reset_redispatch(redis: Any, session_id: str) -> None:
     await redis.delete(redispatch_count_key(session_id))
 
 
-async def acquire_dispatch_lock(redis: Any, room: str, ttl_seconds: int) -> bool:
-    """Per-room debounce/lock around list -> delete -> create. False = held."""
-    return bool(await redis.set(dispatch_lock_key(room), "1", nx=True, ex=ttl_seconds))
+# KEYS[1] = lock; ARGV[1] = the caller's token. Delete only if WE still own it: a
+# slow caller whose lock already expired must not delete the NEW holder's lock.
+_RELEASE_LOCK_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
 
 
-async def release_dispatch_lock(redis: Any, room: str) -> None:
-    await redis.delete(dispatch_lock_key(room))
+async def acquire_dispatch_lock(redis: Any, room: str, ttl_seconds: int) -> str | None:
+    """Per-room lock/debounce around list -> delete -> create.
+
+    Returns this caller's random ownership token, or None when the lock is held.
+    """
+    token = uuid.uuid4().hex
+    acquired = await redis.set(dispatch_lock_key(room), token, nx=True, ex=ttl_seconds)
+    return token if acquired else None
+
+
+async def release_dispatch_lock(redis: Any, room: str, token: str) -> bool:
+    """Compare-and-delete: frees the lock only if *token* still owns it."""
+    return bool(await redis.eval(_RELEASE_LOCK_LUA, 1, dispatch_lock_key(room), token))
 
 
 async def claim_job_marker(redis: Any, room: str, ttl_seconds: int) -> bool:
     """One interviewer JOB per room: True if this caller is the first."""
     return bool(await redis.set(job_marker_key(room), "1", nx=True, ex=ttl_seconds))
+
+
+async def refresh_job_marker(redis: Any, room: str, ttl_seconds: int) -> None:
+    """The running job (re)sets its own marker to the interview lease."""
+    await redis.set(job_marker_key(room), "1", ex=ttl_seconds)
 
 
 async def clear_job_marker(redis: Any, room: str) -> None:

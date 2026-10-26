@@ -297,9 +297,12 @@ async def test_the_counter_always_has_a_ttl(redis: Any) -> None:
 @needs_redis
 @pytest.mark.asyncio
 async def test_dispatch_lock_and_job_marker_are_exclusive_and_expire(redis: Any) -> None:
-    assert await wc.acquire_dispatch_lock(redis, "r", 15)
-    assert not await wc.acquire_dispatch_lock(redis, "r", 15)
-    await wc.release_dispatch_lock(redis, "r")
+    token = await wc.acquire_dispatch_lock(redis, "r", 15)
+    assert token
+    assert await wc.acquire_dispatch_lock(redis, "r", 15) is None
+    assert not await wc.release_dispatch_lock(redis, "r", "not-the-owner")  # CAS
+    assert await wc.acquire_dispatch_lock(redis, "r", 15) is None  # still held
+    assert await wc.release_dispatch_lock(redis, "r", token)
     assert await wc.acquire_dispatch_lock(redis, "r", 15)
 
     assert await wc.claim_job_marker(redis, "r", 120)
@@ -307,3 +310,27 @@ async def test_dispatch_lock_and_job_marker_are_exclusive_and_expire(redis: Any)
     assert 0 < await redis.ttl(wc.job_marker_key("r")) <= 120
     await wc.clear_job_marker(redis, "r")
     assert await wc.claim_job_marker(redis, "r", 120)
+
+
+@needs_redis
+@pytest.mark.asyncio
+async def test_a_starting_jobs_marker_expires_so_it_cannot_block_a_redispatch(
+    redis: Any,
+) -> None:
+    """Review F1: a job accepted but never reaching the job process leaves its
+    marker behind. With a 120 s TTL the watchdog's whole 60 s budget was spent
+    inside it. The marker is short while STARTING..."""
+    assert await wc.claim_job_marker(redis, "r", 1)
+    assert not await wc.claim_job_marker(redis, "r", 1)
+    await asyncio.sleep(1.2)
+    assert await wc.claim_job_marker(redis, "r", 1)  # expired on its own
+
+
+@needs_redis
+@pytest.mark.asyncio
+async def test_a_running_job_stretches_its_marker_to_the_lease(redis: Any) -> None:
+    """... and the running job re-sets it to the interview lease, which also keeps
+    a second replica from accepting a duplicate mid-interview (security N2)."""
+    await wc.claim_job_marker(redis, "r", 45)
+    await wc.refresh_job_marker(redis, "r", 1800)
+    assert 1700 < await redis.ttl(wc.job_marker_key("r")) <= 1800

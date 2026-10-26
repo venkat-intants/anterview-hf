@@ -111,6 +111,27 @@ async def test_automatic_mode_issues_a_token_without_a_dispatch(
 
 
 @pytest.mark.asyncio
+async def test_a_join_token_never_outlives_its_slot_reservation(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
+    """Security N1: with a 10 min token and a 180 s reservation one account could
+    stage several valid tokens across reservation lapses and join them all."""
+    uid = str(uuid.uuid4())
+    resp = await _post_token(
+        client, str(uuid.uuid4()), _token(uid), override=_patch_db(session_user_id=uid)
+    )
+    claims = _claims(resp.json()["token"])
+    assert claims["exp"] - claims["nbf"] == settings.slot_reservation_seconds
+
+    monkeypatch.setattr(settings, "slot_reservation_seconds", 900, raising=False)
+    resp = await _post_token(
+        client, str(uuid.uuid4()), _token(uid), override=_patch_db(session_user_id=uid)
+    )
+    claims = _claims(resp.json()["token"])
+    assert claims["exp"] - claims["nbf"] == 600  # still capped at the 10 min ceiling
+
+
+@pytest.mark.asyncio
 async def test_a_fresh_token_resets_the_redispatch_budget(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch  # noqa: F811
 ) -> None:

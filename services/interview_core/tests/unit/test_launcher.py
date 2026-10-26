@@ -58,11 +58,20 @@ def _dispatch(
 
 
 class _FakeRedis:
-    """SET NX EX + DEL, which is all the dispatch lock uses."""
+    """SET NX EX + the compare-and-delete release script."""
 
-    def __init__(self, *, down: bool = False) -> None:
+    def __init__(self, *, down: bool = False, release_fails: bool = False) -> None:
         self.keys: dict[str, str] = {}
         self.down = down
+        self.release_fails = release_fails
+
+    async def eval(self, script: str, nkeys: int, key: str, token: str) -> int:
+        if self.release_fails:
+            raise ConnectionError("redis dropped during release")
+        if self.keys.get(key) == token:
+            del self.keys[key]
+            return 1
+        return 0
 
     async def set(self, key: str, value: str, *, nx: bool = False, ex: int | None = None) -> Any:
         if self.down:
@@ -382,6 +391,69 @@ async def test_the_lock_fails_closed_when_redis_is_down(monkeypatch: pytest.Monk
     with pytest.raises(ConnectionError):
         await _ensure(_FakeRedis(down=True))
     assert fake.created == []
+
+
+@pytest.mark.asyncio
+async def test_a_slow_caller_cannot_delete_the_new_holders_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review F3: the release used to be an unconditional DEL, so a caller whose
+    lock had already expired deleted the NEXT caller's lock."""
+    _use(monkeypatch, _FakeLiveKit())
+    redis = _FakeRedis()
+
+    async def hook() -> None:
+        # Our lock "expires" and someone else takes it while we are still working...
+        redis.keys[dispatch_lock_key("r")] = "someone-elses-token"
+        raise RuntimeError("then we fail and release")
+
+    with pytest.raises(RuntimeError):
+        await _ensure(redis, hook)
+    assert redis.keys[dispatch_lock_key("r")] == "someone-elses-token"
+
+
+@pytest.mark.asyncio
+async def test_a_failing_release_never_masks_the_original_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The 503 'slots full' (with Retry-After) must not turn into whatever the
+    release raised."""
+    _use(monkeypatch, _FakeLiveKit())
+
+    async def hook() -> None:
+        raise RuntimeError("ledger full")
+
+    with pytest.raises(RuntimeError, match="ledger full"):
+        await _ensure(_FakeRedis(release_fails=True), hook)
+
+
+@pytest.mark.asyncio
+async def test_the_critical_section_is_bounded_inside_the_lock_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A degraded LiveKit (several 5 s calls) must not outlive the 15 s lock and
+    let a second caller in."""
+    import asyncio
+
+    class _Slow(_FakeLiveKit):
+        async def _list_dispatch(self, room: str) -> list[Any]:
+            await asyncio.sleep(30)
+            return []
+
+    monkeypatch.setattr(settings, "dispatch_lock_seconds", 5, raising=False)
+    monkeypatch.setattr(launcher, "_LOCK_MARGIN_SECONDS", 4.9)  # bound = 0.1 s
+    assert launcher._critical_section_seconds() < settings.dispatch_lock_seconds
+    redis = _FakeRedis()
+    _use(monkeypatch, _Slow())
+    started = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await _ensure(redis)
+    assert time.monotonic() - started < 3
+    assert dispatch_lock_key("r") not in redis.keys  # released: a retry is not blocked
+
+
+def test_the_default_critical_section_is_shorter_than_the_default_lock() -> None:
+    assert launcher._critical_section_seconds() < settings.dispatch_lock_seconds
 
 
 # ------------------------------------------------------------- timeouts / errors

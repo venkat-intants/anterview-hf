@@ -51,6 +51,9 @@ class _Ledger:
         self.release_slot = AsyncMock()
         self.claim_marker = AsyncMock(return_value=marker_free)
         self.clear_marker = AsyncMock()
+        self.extend = AsyncMock(return_value=True)
+        self.refresh_marker = AsyncMock()
+        self.permitted = AsyncMock(return_value=True)
 
     def patches(self, cfg: MagicMock | None = None) -> Any:
         from contextlib import ExitStack
@@ -61,6 +64,9 @@ class _Ledger:
         stack.enter_context(patch.object(adm, "release_slot", self.release_slot))
         stack.enter_context(patch.object(adm, "claim_job_marker", self.claim_marker))
         stack.enter_context(patch.object(adm, "clear_job_marker", self.clear_marker))
+        stack.enter_context(patch.object(adm, "extend_slot", self.extend))
+        stack.enter_context(patch.object(adm, "refresh_job_marker", self.refresh_marker))
+        stack.enter_context(patch.object(adm, "claim_permitted", self.permitted))
         stack.enter_context(patch.object(wk, "_get_checkpoint_redis", MagicMock()))
         return stack
 
@@ -258,6 +264,7 @@ async def test_a_lapsed_reservation_at_accept_is_logged(
 
     with (
         patch.object(adm, "extend_slot", AsyncMock(return_value=False)),
+        patch.object(adm, "refresh_job_marker", AsyncMock()),
         caplog.at_level(logging.WARNING, logger="interview-worker"),
     ):
         assert await adm.extend_lease(MagicMock(), "room-9", 1800) is False
@@ -368,7 +375,7 @@ def test_run_registers_the_explicit_agent_name_load_fn_and_warm_pool() -> None:
         patch.object(wk, "settings", _run_settings()),
         patch.object(wk, "_configure_worker_logging"),
         patch("threading.Thread", MagicMock()),
-        patch("os.cpu_count", return_value=4),
+        patch.object(adm, "container_cpus", return_value=4),
         patch.object(wk.cli, "run_app", lambda o: captured.setdefault("options", o)),
     ):
         wk.run()

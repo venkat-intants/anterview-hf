@@ -2487,21 +2487,17 @@ async def _request_fnc(job_request: Any) -> None:
     would not offer again. ``worker_max_concurrent_jobs == 0`` disables the cap.
     """
     room_name = admission.job_room_name(job_request)
-    # A second job for a room we already run = two interviewers; refuse it
-    # owning nothing (releasing would free the running interview's slot).
-    if admission.room_has_job(_server, room_name):
-        logger.warning("interview-worker.duplicate_job_rejected room=%s", room_name)
-        await job_request.reject(terminate=False)
-        return
     reason, verdict, active = await admission.decide(
         _get_checkpoint_redis,
         room_name,
+        server=_server,
         active_local=_active_jobs,
         cap=settings.worker_max_concurrent_jobs,
         ttl_seconds=settings.slot_reservation_seconds,
         mem_per_job_mb=settings.job_memory_limit_mb,
         mem_limit_mb=settings.container_memory_limit_mb,
         marker_ttl_seconds=settings.job_marker_seconds,
+        lease_seconds=settings.slot_lease_seconds,
     )
     if reason is not None:
         logger.warning(

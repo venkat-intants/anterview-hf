@@ -13,6 +13,10 @@ from shared.security import validate_cors_origins as _validate_cors_origins
 from shared.security import validate_database_ssl as _validate_database_ssl
 from shared.security import validate_redis_tls as _validate_redis_tls
 
+# Agent names for explicit dispatch (see Settings.interview_agent_name).
+PRODUCTION_AGENT_NAME = "anthire-interviewer"
+DEV_AGENT_NAME = "anthire-dev"
+
 # app/config.py -> app -> <service> -> services -> repo root
 _SERVICE_DIR = pathlib.Path(__file__).resolve().parents[1]
 _REPO_ROOT = _SERVICE_DIR.parents[1]
@@ -222,7 +226,14 @@ class Settings(BaseSettings):
     # creates no dispatches). The API and worker ship in the same image, so a
     # change here moves them together; a mixed rollout (API named, worker
     # unnamed) would leave rooms with no interviewer, so never set it on only one.
-    interview_agent_name: str = "anthire-interviewer"
+    #
+    # DEFAULT IS ENVIRONMENT-AWARE ("auto"): the production name only when
+    # APP_ENV=production, otherwise ``anthire-dev``. Local .env files point at the
+    # SAME LiveKit project as the live Space, so a local worker that defaulted to
+    # the production name would take real candidates' dispatches (security review
+    # N4). Set INTERVIEW_AGENT_NAME explicitly to override either way; "" stays
+    # the kill switch back to automatic dispatch.
+    interview_agent_name: str = "auto"
 
     # Warm job processes. None = the job cap, bounded at 8 (see
     # interview_worker._idle_process_target). livekit-agents' default is
@@ -254,8 +265,14 @@ class Settings(BaseSettings):
     # Debounce / lock around one list->delete->create dispatch cycle. Shorter than
     # the frontend's 20 s watchdog so a legitimate second attempt is never refused.
     dispatch_lock_seconds: int = Field(default=15, ge=5, le=60)
-    # One interviewer job per room: marker TTL, covering accept -> connect.
-    job_marker_seconds: int = Field(default=120, ge=30, le=900)
+    # One interviewer job per room: marker TTL while the job is STARTING, i.e.
+    # worker_initialize_timeout_seconds (30) + slack. It must be short: a job that
+    # is accepted but never reaches the job process (init timeout, missed
+    # assignment, crash) never clears its marker, and every redispatch inside the
+    # TTL would be refused as a "duplicate" - the stranded case this exists to fix
+    # (review F1). Once the job is running, _admit re-sets the marker to the
+    # interview lease and the shutdown callback clears it.
+    job_marker_seconds: int = Field(default=45, ge=15, le=300)
     # Hard ceiling for each LiveKit API call (the library default is 60 s, which
     # would pin a request - and, before the DB session is released, a DB
     # connection - for minutes during a LiveKit incident).
@@ -386,6 +403,15 @@ class Settings(BaseSettings):
     def validate_cors_origins(cls, v: str) -> str:
         """Reject wildcard / non-http(s) origins (shared/security.py)."""
         return _validate_cors_origins(v)
+
+    @model_validator(mode="after")
+    def resolve_agent_name(self) -> "Settings":
+        """Resolve ``interview_agent_name="auto"`` from APP_ENV (see the field)."""
+        if self.interview_agent_name.strip().lower() == "auto":
+            self.interview_agent_name = (
+                PRODUCTION_AGENT_NAME if self.app_env == "production" else DEV_AGENT_NAME
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_secret_strength(self) -> "Settings":

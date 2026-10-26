@@ -77,7 +77,7 @@ same-origin and `space/Caddyfile` fans it out — no CORS, first-party cookies.
    Redis slot ledger at token time, and the worker's reported load is jobs/cap, not CPU),
    `INTERVIEW_AGENT_NAME` (explicit-dispatch name, default `anthire-interviewer`;
    empty = legacy automatic dispatch), `WORKER_NUM_IDLE_PROCESSES` (warm job
-   processes, default = the job cap), `REDIS_MAX_CONNECTIONS` /
+   processes, default `min(cap, 2 per CPU, 8)`), `REDIS_MAX_CONNECTIONS` /
    `REDIS_POOL_WAIT_SECONDS` (per-process Redis pool, defaults 50 / 3.0).
 3. **Restart the Space.** Boot order: secret check → alembic migrations →
    supervisord starts caddy + 4 services + worker.

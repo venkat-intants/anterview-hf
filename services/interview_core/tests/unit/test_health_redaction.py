@@ -48,7 +48,7 @@ def _arm_all_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     """Make every outbound client constructor blow up with a leaky message."""
     monkeypatch.setattr(health, "create_async_engine", _raiser)
     monkeypatch.setattr(health, "AsyncAnthropic", _raiser)
-    monkeypatch.setattr(health.aioredis, "from_url", _raiser)
+    monkeypatch.setattr(health, "build_redis_client", _raiser)
     monkeypatch.setattr(health.boto3, "client", _raiser)
     monkeypatch.setattr(health.httpx, "AsyncClient", _raiser)
 

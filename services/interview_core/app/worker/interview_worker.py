@@ -37,6 +37,7 @@ are not:
     app/worker/consent.py        DPDP §11 resolver + mid-session watchdog
     app/worker/session_store.py  sessions/turns writes from the worker process
     app/worker/avatar_mode.py    per-interview avatar vs audio-only choice
+    app/worker/admission.py      slot ledger, reported load, warm-process count
 
 All four are imported back into this namespace, so nothing that referred to
 ``app.worker.interview_worker.<name>`` — including every ``mock.patch`` target
@@ -113,7 +114,7 @@ from shared.redis_factory import build_redis_client
 
 from app.avatars import resolve_avatar
 from app.config import settings
-from app.worker import close_path
+from app.worker import admission, close_path
 from app.worker.avatar_mode import effective_avatar_provider, normalise_avatar_mode
 
 # IC-4: four sibling modules carved out of this file (constants, prompt,
@@ -156,12 +157,6 @@ from app.worker.session_store import (
     _persist_turns,
     _read_session_status,
     _update_session_status,
-)
-from app.worker_capacity import (
-    SlotResult,
-    extend_slot,
-    release_slot,
-    reserve_slot,
 )
 
 logger = logging.getLogger("interview-worker")
@@ -274,83 +269,14 @@ def _active_jobs_decrement() -> None:
     _active_jobs = max(0, _active_jobs - 1)
 
 
-def _job_room_name(job_or_request: Any) -> str:
-    """The LiveKit room name (== session_id) of a ``Job`` or ``JobRequest``.
-
-    Empty string when it cannot be read as a string, which every caller treats
-    as "no ledger operation" rather than an error.
-    """
-    name = getattr(getattr(job_or_request, "room", None), "name", "")
-    return name if isinstance(name, str) else ""
-
-
-# Upper bound on warm job processes whatever the cap: each holds the prewarmed
-# VAD model, and an unbounded WORKER_MAX_CONCURRENT_JOBS must not turn into an
-# unbounded number of idle processes.
-MAX_IDLE_PROCESSES = 8
-
-_SLOT_HELD = "held"  # the token endpoint already reserved this room's slot
-_SLOT_CLAIMED = "claimed"  # no reservation existed; we took a free slot
-_SLOT_FULL = "full"  # ledger is at the cap
-_SLOT_UNKNOWN = "unknown"  # Redis unreachable / no room name -> fail OPEN
-
-
-async def _claim_slot(room_name: str) -> tuple[str, int]:
-    """Confirm or take this room's slot in the Redis ledger.
-
-    Returns ``(verdict, other_slots)``: the verdict is one of the ``_SLOT_*``
-    constants and ``other_slots`` is how many OTHER interviews hold a slot
-    (0 when unknown). Never raises. A Redis failure answers ``unknown`` and the
-    caller ACCEPTS: rejecting a job because we cannot read a ledger is the one
-    outcome that strands a candidate with certainty.
-    """
-    if not room_name:
-        return _SLOT_UNKNOWN, 0
-    try:
-        result, occupied = await reserve_slot(
-            _get_checkpoint_redis(),
-            room_name,
-            cap=settings.worker_max_concurrent_jobs,
-            ttl_seconds=settings.slot_reservation_seconds,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "interview-worker.slot_claim_failed room=%s err=%s - failing open",
-            room_name, type(exc).__name__,
-        )
-        return _SLOT_UNKNOWN, 0
-    if result is SlotResult.FULL:
-        return _SLOT_FULL, occupied
-    verdict = _SLOT_HELD if result is SlotResult.HELD else _SLOT_CLAIMED
-    return verdict, max(0, occupied - 1)
-
-
+# Slot-ledger plumbing lives in app/worker/admission.py (IC-4); these bind it to
+# this process's Redis client and the configured lease length.
 async def _extend_slot_lease(room_name: str) -> None:
-    """Promote the short reservation to the interview-long lease (best-effort)."""
-    if not room_name:
-        return
-    try:
-        await extend_slot(
-            _get_checkpoint_redis(), room_name, ttl_seconds=settings.slot_lease_seconds
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "interview-worker.slot_extend_failed room=%s err=%s",
-            room_name, type(exc).__name__,
-        )
+    await admission.extend_lease(_get_checkpoint_redis, room_name, settings.slot_lease_seconds)
 
 
 async def _release_slot(room_name: str) -> None:
-    """Free this room's slot (best-effort; the lease expiry is the backstop)."""
-    if not room_name:
-        return
-    try:
-        await release_slot(_get_checkpoint_redis(), room_name)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "interview-worker.slot_release_failed room=%s err=%s",
-            room_name, type(exc).__name__,
-        )
+    await admission.release(_get_checkpoint_redis, room_name)
 
 
 # ---------------------------------------------------------------------------
@@ -1819,7 +1745,7 @@ class InterviewJob:
         _active_jobs_increment()
         # The room is named after the session (see _lookup_session); ctx.job is
         # populated before connect(), unlike ctx.room.name.
-        self._slot_room = _job_room_name(self.ctx.job)
+        self._slot_room = admission.job_room_name(self.ctx.job)
         # Promote the short token-time reservation to the interview-long lease so
         # it cannot lapse mid-interview. Best-effort — never raises.
         await _extend_slot_lease(self._slot_room)
@@ -2559,75 +2485,35 @@ def _write_heartbeat(path: str, timestamp: str) -> None:
 
 
 async def _request_fnc(job_request: Any) -> None:
-    """Gate incoming job requests against the max-concurrent-jobs and memory ceilings.
+    """Gate incoming job requests (see ``admission.decide`` for the three guards).
 
-    Called by the LiveKit framework BEFORE dispatching the job to entrypoint().
-    Rejection here is NON-terminal (``reject(terminate=False)``): LiveKit may
-    offer the job to another worker, and the candidate's re-dispatch
-    (``POST /api/rooms/{id}/redispatch``) can retry it when capacity frees.
-    The previous ``reject()`` defaulted to ``terminate=True`` - "the job will not
-    be assigned to another worker" - which is how a candidate ended up alone in
-    a room that LiveKit would never offer again.
+    Rejection is NON-terminal (``reject(terminate=False)``): LiveKit may offer the
+    job to another worker and the candidate's ``/redispatch`` can retry it when
+    capacity frees. The previous bare ``reject()`` defaults to ``terminate=True`` -
+    "the job will not be assigned to another worker" - which is how a candidate
+    ended up alone in a room LiveKit would never offer again.
 
-    Guards, in order:
-    1. The Redis slot ledger (worker_max_concurrent_jobs > 0): the authoritative,
-       cross-process count. A room whose slot the token endpoint already
-       reserved is accepted without further argument - the cap was enforced
-       atomically when the candidate asked to join. A room with no reservation
-       (a dispatch that bypassed the token endpoint) tries to take one and is
-       rejected only if the ledger is genuinely full. A Redis outage ACCEPTS.
-    2. The local counter, for deployments where jobs share this process.
-    3. Memory estimation (job_memory_limit_mb > 0 AND container_memory_limit_mb
-       > 0): if accepting one more job would push the estimated RSS above the
-       VM's hard cap, reject pre-emptively.  A spike OOM-kill terminates ALL
-       live interviews simultaneously, which is far worse than one polite
-       rejection.
-
-    ``settings.worker_max_concurrent_jobs == 0`` disables the concurrency cap
-    (not recommended for production; useful for single-job dev testing).
+    ``settings.worker_max_concurrent_jobs == 0`` disables the concurrency cap.
     """
-    cap = settings.worker_max_concurrent_jobs
-    reason: str | None = None
-    room_name = _job_room_name(job_request)
-
-    verdict, others = _SLOT_UNKNOWN, 0
-    if cap > 0:
-        verdict, others = await _claim_slot(room_name)
-        if verdict == _SLOT_FULL:
-            reason = f"concurrency ceiling reached (slots={others} cap={cap})"
-
-    # Jobs running in OTHER processes are only visible through the ledger; jobs
-    # sharing this process are only exact in the local counter. Trust the larger.
-    active = max(_active_jobs, others)
-
-    if reason is None and cap > 0 and _active_jobs >= cap:
-        reason = f"concurrency ceiling reached (active={_active_jobs} cap={cap})"
-
-    if reason is None:
-        mem_per_job = settings.job_memory_limit_mb
-        mem_limit = settings.container_memory_limit_mb
-        if mem_per_job > 0 and mem_limit > 0:
-            # Conservative estimate: jobs already running x per-job RSS.
-            # The actual prewarmed VAD model RSS (~100-200 MB) is already in
-            # the worker process and shared across jobs, so we only count
-            # the *incremental* cost per additional job here.
-            estimated_rss_mb = (active + 1) * mem_per_job
-            if estimated_rss_mb > mem_limit:
-                reason = (
-                    f"estimated RSS {estimated_rss_mb} MB would exceed "
-                    f"container limit {mem_limit} MB"
-                )
-
+    room_name = admission.job_room_name(job_request)
+    reason, verdict, active = await admission.decide(
+        _get_checkpoint_redis,
+        room_name,
+        active_local=_active_jobs,
+        cap=settings.worker_max_concurrent_jobs,
+        ttl_seconds=settings.slot_reservation_seconds,
+        mem_per_job_mb=settings.job_memory_limit_mb,
+        mem_limit_mb=settings.container_memory_limit_mb,
+    )
     if reason is not None:
         logger.warning(
             "interview-worker.admission_rejected room=%s active=%d - %s",
             room_name, active, reason,
         )
-        # Give back any slot WE just claimed or that the token endpoint held for
-        # a job we are now refusing, so the ledger does not count a ghost.
-        if verdict in (_SLOT_CLAIMED, _SLOT_HELD):
+        # Give back a slot WE just claimed (or the token endpoint held) for a job
+        # we are now refusing, so the ledger does not count a ghost.
+        if verdict in (admission.SLOT_CLAIMED, admission.SLOT_HELD):
             await _release_slot(room_name)
-        # terminate=False: do not tell LiveKit the job is dead for good.
         await job_request.reject(terminate=False)
         return
 
@@ -2637,48 +2523,8 @@ async def _request_fnc(job_request: Any) -> None:
 
 
 def _worker_load(server: Any) -> float:
-    """Report load to LiveKit as active jobs / cap, NOT container CPU.
-
-    livekit-agents' default is a 2.5 s moving average of whole-container CPU
-    against ``load_threshold``. In the single-container HF Space every API burst
-    (bcrypt, PDF, exam grading) counts towards it, so the worker flapped
-    FULL/AVAILABLE every few seconds with only three interviews running - and a
-    job offered while FULL is never re-offered. Admission here is a function of
-    one thing we control: how many interviews this worker is running.
-
-    With ``worker_load_threshold = 1.0`` the worker is AVAILABLE while
-    ``active < cap`` and FULL at ``active == cap`` - and livekit-agents also
-    uses ``load / active_jobs`` to shrink the idle-process target as the worker
-    fills, so the warm pool never pushes total processes past the cap.
-    ``server.active_jobs`` is read from the proc pool and needs no lock.
-    """
-    cap = settings.worker_max_concurrent_jobs
-    if cap <= 0:
-        return 0.0
-    try:
-        running = len(server.active_jobs)
-    except AttributeError:
-        # Never let a livekit-agents API change turn into "always FULL".
-        return 0.0
-    return min(1.0, running / cap)
-
-
-def _idle_process_target() -> int:
-    """Warm job processes to keep: configured, else the job cap (bounded).
-
-    The default was ``min(cpu_count, 4)`` = 2 on this host, so a THIRD interview
-    inside a few seconds logged "no warmed process available for job, waiting
-    for one to be created", missed its assignment timeout ("no worker
-    available") and was never re-offered. One warm process per allowed slot
-    removes that wait. Cost: each idle process holds the prewarmed VAD model
-    (~100-200 MB); livekit-agents lowers the target as jobs start (see
-    ``_worker_load``), so total processes stay near the cap, not double it.
-    """
-    configured = settings.worker_num_idle_processes
-    if configured is not None:
-        return configured
-    cap = settings.worker_max_concurrent_jobs
-    return min(cap, MAX_IDLE_PROCESSES) if cap > 0 else 2
+    """Load reported to LiveKit: jobs / cap, not container CPU (admission.worker_load)."""
+    return admission.worker_load(server, settings.worker_max_concurrent_jobs)
 
 
 def run() -> None:
@@ -2755,7 +2601,9 @@ def run() -> None:
             # exactly at the cap. Not container CPU.
             load_fnc=_worker_load,
             load_threshold=settings.worker_load_threshold,
-            num_idle_processes=_idle_process_target(),
+            num_idle_processes=admission.idle_process_target(
+                settings.worker_num_idle_processes, settings.worker_max_concurrent_jobs
+            ),
             initialize_process_timeout=settings.worker_initialize_timeout_seconds,
             agent_name=settings.interview_agent_name,
             ws_url=settings.livekit_url,

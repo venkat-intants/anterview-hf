@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import app.worker.admission as adm
 import app.worker.interview_worker as wk
 from app.worker_capacity import SlotResult
 
@@ -44,7 +45,7 @@ async def test_a_room_whose_slot_was_reserved_at_token_time_is_accepted() -> Non
     req = _request()
     with (
         patch.object(wk, "settings", _settings()),
-        patch.object(wk, "reserve_slot", AsyncMock(return_value=(SlotResult.HELD, 4))),
+        patch.object(adm, "reserve_slot", AsyncMock(return_value=(SlotResult.HELD, 4))),
         patch.object(wk, "_get_checkpoint_redis", MagicMock()),
     ):
         await wk._request_fnc(req)
@@ -58,8 +59,8 @@ async def test_a_full_ledger_rejects_non_terminally_and_does_not_release_anythin
     release = AsyncMock()
     with (
         patch.object(wk, "settings", _settings()),
-        patch.object(wk, "reserve_slot", AsyncMock(return_value=(SlotResult.FULL, 4))),
-        patch.object(wk, "release_slot", release),
+        patch.object(adm, "reserve_slot", AsyncMock(return_value=(SlotResult.FULL, 4))),
+        patch.object(adm, "release_slot", release),
         patch.object(wk, "_get_checkpoint_redis", MagicMock()),
     ):
         await wk._request_fnc(req)
@@ -73,7 +74,7 @@ async def test_a_redis_outage_accepts_rather_than_stranding_the_candidate() -> N
     req = _request()
     with (
         patch.object(wk, "settings", _settings()),
-        patch.object(wk, "reserve_slot", AsyncMock(side_effect=ConnectionError("down"))),
+        patch.object(adm, "reserve_slot", AsyncMock(side_effect=ConnectionError("down"))),
         patch.object(wk, "_get_checkpoint_redis", MagicMock()),
     ):
         await wk._request_fnc(req)
@@ -91,8 +92,8 @@ async def test_other_jobs_in_the_ledger_count_towards_the_memory_gate() -> None:
     with (
         patch.object(wk, "settings", cfg),
         # 3 slots held in total, i.e. 2 OTHERS + this room -> (2+1)*150 = 450 > 400
-        patch.object(wk, "reserve_slot", AsyncMock(return_value=(SlotResult.RESERVED, 3))),
-        patch.object(wk, "release_slot", release),
+        patch.object(adm, "reserve_slot", AsyncMock(return_value=(SlotResult.RESERVED, 3))),
+        patch.object(adm, "release_slot", release),
         patch.object(wk, "_get_checkpoint_redis", MagicMock()),
     ):
         original = wk._active_jobs
@@ -107,7 +108,7 @@ async def test_other_jobs_in_the_ledger_count_towards_the_memory_gate() -> None:
 
 @pytest.mark.asyncio
 async def test_claim_slot_with_no_room_name_is_a_no_op() -> None:
-    assert await wk._claim_slot("") == (wk._SLOT_UNKNOWN, 0)
+    assert await adm.claim_slot(MagicMock(), "", cap=4, ttl_seconds=60) == (adm.SLOT_UNKNOWN, 0)
 
 
 @pytest.mark.asyncio
@@ -162,24 +163,16 @@ def test_the_default_threshold_makes_the_worker_full_exactly_at_the_cap() -> Non
 
 
 def test_idle_processes_default_to_the_job_cap() -> None:
-    with patch.object(
-        wk, "settings", _settings(worker_num_idle_processes=None, worker_max_concurrent_jobs=4)
-    ):
-        assert wk._idle_process_target() == 4
+    assert adm.idle_process_target(None, 4) == 4
 
 
 def test_idle_processes_are_bounded_whatever_the_cap() -> None:
-    with patch.object(
-        wk, "settings", _settings(worker_num_idle_processes=None, worker_max_concurrent_jobs=500)
-    ):
-        assert wk._idle_process_target() == wk.MAX_IDLE_PROCESSES
+    assert adm.idle_process_target(None, 500) == adm.MAX_IDLE_PROCESSES
 
 
 def test_idle_processes_can_be_set_explicitly_including_zero() -> None:
-    with patch.object(wk, "settings", _settings(worker_num_idle_processes=0)):
-        assert wk._idle_process_target() == 0
-    with patch.object(wk, "settings", _settings(worker_num_idle_processes=2)):
-        assert wk._idle_process_target() == 2
+    assert adm.idle_process_target(0, 4) == 0
+    assert adm.idle_process_target(2, 4) == 2
 
 
 # --------------------------------------------------------------- registration

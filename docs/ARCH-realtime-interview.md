@@ -228,7 +228,7 @@ main remaining value — its STT/TTS plugins — which is another reason the thi
   (worker FULL at that instant, no warmed process, assignment timeout) was never
   offered again — the candidate sat alone until the room timed out (12.7 min
   observed in the 2026-10 load test). Now:
-  - the worker registers as `INTERVIEW_AGENT_NAME` (default `anthire-interviewer`);
+  - the worker registers as `INTERVIEW_AGENT_NAME` (default environment-aware: `anthire-interviewer` when `APP_ENV=production`, otherwise `anthire-dev`, so a local worker never takes real dispatches by default);
     `POST /api/rooms/{id}/token` embeds a dispatch for that name in the join token
     (`RoomConfiguration.agents`). LiveKit applies it when the candidate's join
     CREATES the room, the same moment automatic dispatch fired; a rejoin to a room
@@ -278,8 +278,8 @@ main remaining value — its STT/TTS plugins — which is another reason the thi
   over-admitted one (it answers 503 when full).
   `INTERVIEW_AGENT_NAME=""` restores automatic dispatch on both sides — API and
   worker ship in one image, so they switch together; never set it on only one.
-  **Every local `.env` must set a different `INTERVIEW_AGENT_NAME`** (or never run a
-  worker): the LiveKit project is shared with the Space, and a local worker with the
+  **A local worker defaults to `anthire-dev`, but two developers share it — set your
+  own `INTERVIEW_AGENT_NAME`** (or never run a worker): the LiveKit project is shared with the Space, and a local worker with the
   same name — or an unnamed one, which receives automatic dispatch for every new
   room — would answer real candidates' rooms.
 

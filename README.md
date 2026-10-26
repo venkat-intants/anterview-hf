@@ -75,7 +75,7 @@ same-origin and `space/Caddyfile` fans it out — no CORS, first-party cookies.
    (`none` = voice-only default; `tavus`/`simli` need their keys),
    `WORKER_MAX_CONCURRENT_JOBS` (default 2 — sized for 2 vCPU; enforced by an atomic
    Redis slot ledger at token time, and the worker's reported load is jobs/cap, not CPU),
-   `INTERVIEW_AGENT_NAME` (explicit-dispatch name, default `anthire-interviewer`;
+   `INTERVIEW_AGENT_NAME` (explicit-dispatch name; default is environment-aware: `anthire-interviewer` only when `APP_ENV=production`, else `anthire-dev`;
    empty = legacy automatic dispatch), `WORKER_NUM_IDLE_PROCESSES` (warm job
    processes, default `min(cap, 2 per CPU, 8)`), `REDIS_MAX_CONNECTIONS` /
    `REDIS_POOL_WAIT_SECONDS` (per-process Redis pool, defaults 50 / 3.0).

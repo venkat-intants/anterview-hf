@@ -26,12 +26,12 @@ import structlog
 from anthropic import AsyncAnthropic
 from botocore.client import Config as BotoConfig
 from fastapi import APIRouter
+from shared.redis_factory import build_redis_client
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.sql import text
 
 from app.config import settings
 from app.dependencies import ServiceUserDep
-from shared.redis_factory import build_redis_client
 
 log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/health", tags=["health"])

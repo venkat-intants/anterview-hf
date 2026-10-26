@@ -559,9 +559,19 @@ async def _lookup_session(room_name: str) -> SessionContext:
                 session_id=session_id,
             )
     except Exception as exc:  # noqa: BLE001
-        logger.warning(
-            "interview-worker: _lookup_session DB query failed room=%s err=%s",
-            room_name, type(exc).__name__,
+        # Falling back to a default context keeps the interview alive, but it
+        # also turns a CODE bug into a generic interview that nobody notices:
+        # an unmapped Job column (AttributeError) did exactly that to every live
+        # session until the 2026-10 load test, because only the exception TYPE
+        # was logged. So: log the message too, and log programming errors
+        # (as opposed to a DB outage) at ERROR with a traceback so they page.
+        is_code_bug = isinstance(exc, AttributeError | TypeError | KeyError | NameError)
+        log_fn = logger.error if is_code_bug else logger.warning
+        log_fn(
+            "interview-worker: _lookup_session failed room=%s exc_type=%s err=%s "
+            "-> starting with a GENERIC SessionContext (no job title/JD/resume)",
+            room_name, type(exc).__name__, str(exc)[:300],
+            exc_info=is_code_bug,
         )
         return SessionContext()
 

@@ -38,6 +38,7 @@ from sqlalchemy import (
     Boolean,
     ForeignKey,
     Integer,
+    String,
     Text,
     UniqueConstraint,
     Uuid,
@@ -92,6 +93,19 @@ class Job(Base):
     # B-033 — hiring company for "at <company>" phrasing (column owned by the
     # data_gateway migration 20260529_0004; NULL for generic practice roles).
     company_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Role context the live interviewer and the role engine read. These three
+    # columns exist in the DB and are mapped identically in data_gateway
+    # (app/models.py: competencies JSONB NOT NULL, department TEXT NULL,
+    # interview_type VARCHAR(16) NOT NULL DEFAULT 'screening'). They were NOT
+    # mapped here, so ``interview_worker._lookup_session`` raised AttributeError
+    # on ``job.competencies``; its broad ``except`` swallowed it and EVERY live
+    # interview ran as a generic "the role" interview (no title, JD, resume or
+    # skills) - found by the 2026-10 load test. Keep this block in step with
+    # data_gateway; tests/unit/test_job_model_mapping.py pins the three names.
+    competencies: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
+    department: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # interview_type: 'screening' | 'technical' | 'hr'
+    interview_type: Mapped[str] = mapped_column(String(16), default="screening", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True))

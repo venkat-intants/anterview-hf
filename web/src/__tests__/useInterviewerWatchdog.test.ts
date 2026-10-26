@@ -138,6 +138,41 @@ describe('useInterviewerWatchdog', () => {
     expect(redispatch).toHaveBeenCalledTimes(1);
   });
 
+  it('stops at once, with limitReached, when the server refuses further re-dispatches', async () => {
+    const redispatch = vi.fn(() => Promise.reject(new Error('429')));
+    const { result } = renderHook(() =>
+      useInterviewerWatchdog({
+        enabled: true,
+        hasInterviewer: () => false,
+        redispatch,
+        isFinalError: () => true,
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(T);
+    });
+    expect(result.current.status).toBe('unavailable');
+    expect(result.current.limitReached).toBe(true);
+    expect(redispatch).toHaveBeenCalledTimes(1);
+  });
+
+  it('a non-final failure does not set limitReached', async () => {
+    const redispatch = vi.fn(() => Promise.reject(new Error('503')));
+    const { result } = renderHook(() =>
+      useInterviewerWatchdog({
+        enabled: true,
+        hasInterviewer: () => false,
+        redispatch,
+        isFinalError: () => false,
+      }),
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(T);
+    });
+    expect(result.current.limitReached).toBe(false);
+    expect(result.current.status).toBe('retrying');
+  });
+
   it('stops the timers when the room disconnects', () => {
     const { rerender, redispatch } = setup();
     rerender({ enabled: false });

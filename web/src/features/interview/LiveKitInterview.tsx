@@ -80,6 +80,7 @@ export default function LiveKitInterview({
     interviewerStatus,
     redispatchAttempt,
     maxRedispatch,
+    redispatchLimitReached,
     retryInterviewer,
   } = useLiveKitInterview(sessionId, cameraConsented);
 
@@ -303,7 +304,9 @@ export default function LiveKitInterview({
                 {t('interview.interviewerUnavailableTitle')}
               </p>
               <p className="max-w-sm text-caption text-ash">
-                {t('interview.interviewerUnavailableSub')}
+                {redispatchLimitReached
+                  ? t('interview.interviewerLimitReached')
+                  : t('interview.interviewerUnavailableSub')}
               </p>
               <Button onClick={() => void retryInterviewer()} variant="secondary">
                 {t('interview.tryAgain')}

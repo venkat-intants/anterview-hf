@@ -35,6 +35,12 @@ interface Options {
   hasInterviewer: () => boolean;
   /** Ask the backend to dispatch the interviewer again. Failures are non-fatal. */
   redispatch: () => Promise<unknown>;
+  /**
+   * Is this redispatch failure final (e.g. the server's per-session ceiling,
+   * HTTP 429)? Then retrying is pointless: stop waiting and say so, instead of
+   * counting down to a generic "unavailable" with no explanation.
+   */
+  isFinalError?: (error: unknown) => boolean;
   timeoutMs?: number;
   maxRedispatch?: number;
 }
@@ -44,6 +50,8 @@ export interface InterviewerWatchdog {
   /** Re-dispatches requested so far (0 until the first timeout). */
   attempt: number;
   maxRedispatch: number;
+  /** True when we stopped because the server refused further re-dispatches. */
+  limitReached: boolean;
   /** Call when a remote participant appears. */
   markJoined: () => void;
   /** Back to 'waiting' with a fresh budget — call at the start of each connect. */
@@ -54,19 +62,23 @@ export function useInterviewerWatchdog({
   enabled,
   hasInterviewer,
   redispatch,
+  isFinalError,
   timeoutMs = INTERVIEWER_JOIN_TIMEOUT_MS,
   maxRedispatch = MAX_REDISPATCH,
 }: Options): InterviewerWatchdog {
   const [status, setStatus] = useState<InterviewerStatus>('waiting');
   const [attempt, setAttempt] = useState(0);
+  const [limitReached, setLimitReached] = useState(false);
 
   // Latest callbacks without re-arming the timer every render.
   const hasInterviewerRef = useRef(hasInterviewer);
   const redispatchRef = useRef(redispatch);
+  const isFinalErrorRef = useRef(isFinalError);
   useEffect(() => {
     hasInterviewerRef.current = hasInterviewer;
     redispatchRef.current = redispatch;
-  }, [hasInterviewer, redispatch]);
+    isFinalErrorRef.current = isFinalError;
+  }, [hasInterviewer, redispatch, isFinalError]);
 
   const markJoined = useCallback(() => {
     setStatus('joined');
@@ -75,6 +87,7 @@ export function useInterviewerWatchdog({
   const reset = useCallback(() => {
     setStatus('waiting');
     setAttempt(0);
+    setLimitReached(false);
   }, []);
 
   useEffect(() => {
@@ -91,8 +104,14 @@ export function useInterviewerWatchdog({
       }
       setAttempt(attempt + 1);
       setStatus('retrying');
-      // Fire and forget: a failed request just means the next timeout decides.
-      redispatchRef.current().catch(() => undefined);
+      // A failed request just means the next timeout decides - unless the server
+      // said it will not try again, which the candidate must be told.
+      redispatchRef.current().catch((error: unknown) => {
+        if (isFinalErrorRef.current?.(error)) {
+          setLimitReached(true);
+          setStatus('unavailable');
+        }
+      });
     }, timeoutMs);
 
     return () => {
@@ -102,5 +121,5 @@ export function useInterviewerWatchdog({
     // exactly one further timeout.
   }, [enabled, status, attempt, timeoutMs, maxRedispatch]);
 
-  return { status, attempt, maxRedispatch, markJoined, reset };
+  return { status, attempt, maxRedispatch, limitReached, markJoined, reset };
 }

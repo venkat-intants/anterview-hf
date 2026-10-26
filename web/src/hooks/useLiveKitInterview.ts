@@ -26,6 +26,7 @@ import {
 import { getRoomToken, redispatchInterviewer } from '../api/rooms';
 import { toast } from '../lib/toast';
 import { errorMessage } from '@/lib/errorMessage';
+import { ApiError } from '../api/client';
 import { useInterviewerWatchdog } from './useInterviewerWatchdog';
 import type { InterviewerStatus } from './useInterviewerWatchdog';
 
@@ -86,6 +87,8 @@ export interface UseLiveKitInterviewReturn {
   redispatchAttempt: number;
   /** Re-dispatches we will request before giving up. */
   maxRedispatch: number;
+  /** True when the server refused further re-dispatches for this session (429). */
+  redispatchLimitReached: boolean;
   /** Leave and rejoin with a fresh token + slot reservation. */
   retryInterviewer: () => Promise<void>;
 }
@@ -204,16 +207,22 @@ export function useLiveKitInterview(
   // participant is agent-side (see the note at the top of the file).
   const hasInterviewer = useCallback(() => (roomRef.current?.remoteParticipants.size ?? 0) > 0, []);
   const redispatch = useCallback(() => redispatchInterviewer(sessionIdRef.current), []);
+  const isRedispatchLimit = useCallback(
+    (e: unknown) => e instanceof ApiError && e.status === 429,
+    [],
+  );
   const {
     status: interviewerStatus,
     attempt: redispatchAttempt,
     maxRedispatch,
+    limitReached: redispatchLimitReached,
     markJoined: markInterviewerJoined,
     reset: resetInterviewerWatchdog,
   } = useInterviewerWatchdog({
     enabled: status === 'connected',
     hasInterviewer,
     redispatch,
+    isFinalError: isRedispatchLimit,
   });
 
   const handleParticipantConnected = useCallback(
@@ -371,10 +380,29 @@ export function useLiveKitInterview(
 
   // Give up on this room and join afresh: a new token also re-reserves the
   // server-side interview slot, which may have lapsed while we waited.
+  //
+  // This must NOT go through disconnect()/the public 'disconnected' status:
+  // LiveKitInterview treats 'disconnected' as "the interview ended" and navigates
+  // to the scorecard page, which stranded the candidate on a page that polls for
+  // a scorecard that will never exist. So the old room's listeners are removed
+  // first (its teardown events then reach nobody) and the status goes straight
+  // from 'connected' to connecting.
   const retryInterviewer = useCallback(async () => {
-    await disconnect();
+    const room = roomRef.current;
+    roomRef.current = null;
+    if (room) {
+      room.removeAllListeners();
+      try {
+        await room.disconnect();
+      } catch {
+        // Already disconnected - ignore.
+      }
+    }
+    setIsMicEnabled(false);
+    setIsCameraEnabled(false);
+    isConnectingRef.current = false;
     await connect();
-  }, [disconnect, connect]);
+  }, [connect]);
 
   // ---------------------------------------------------------------------------
   // toggleMic
@@ -443,6 +471,7 @@ export function useLiveKitInterview(
     interviewerStatus,
     redispatchAttempt,
     maxRedispatch,
+    redispatchLimitReached,
     retryInterviewer,
   };
 }
